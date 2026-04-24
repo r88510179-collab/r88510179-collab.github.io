@@ -1,0 +1,713 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Samuel-Ashley Bennett | IT Administrator</title>
+<meta name="description" content="Portfolio of Samuel-Ashley Bennett. IT administrator specializing in identity management, cloud infrastructure, and systems automation." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg-alt: #f7f8fa;
+    --bg-card: #ffffff;
+    --ink: #0f172a;
+    --ink-soft: #334155;
+    --ink-mute: #64748b;
+    --ink-faint: #94a3b8;
+    --rule: #e2e8f0;
+    --rule-soft: #f1f5f9;
+    --accent: #0d5c63;
+    --accent-hover: #094449;
+    --accent-soft: #e6f0f1;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  a {
+    color: var(--accent);
+    text-decoration: none;
+    transition: color 0.12s ease;
+  }
+  a:hover { color: var(--accent-hover); text-decoration: underline; text-underline-offset: 3px; }
+
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 32px; }
+  @media (max-width: 600px) { .wrap { padding: 0 20px; } }
+
+  /* Top Nav */
+  nav.topnav {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: rgba(255, 255, 255, 0.88);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--rule);
+  }
+  nav.topnav .inner {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 16px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+  }
+  @media (max-width: 600px) { nav.topnav .inner { padding: 14px 20px; } }
+  nav.topnav .links {
+    display: flex;
+    gap: 28px;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  nav.topnav .links a {
+    color: var(--ink-soft);
+  }
+  nav.topnav .links a:hover { color: var(--accent); text-decoration: none; }
+  @media (max-width: 580px) { nav.topnav .links { display: none; } }
+
+  /* Hero */
+  .hero {
+    padding: 88px 0 64px;
+  }
+  .hero .kicker {
+    display: inline-block;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 5px 12px;
+    border-radius: 4px;
+    margin-bottom: 24px;
+  }
+  .hero h1 {
+    font-weight: 700;
+    font-size: clamp(36px, 5.5vw, 52px);
+    line-height: 1.08;
+    letter-spacing: -0.025em;
+    margin: 0 0 20px;
+    color: var(--ink);
+  }
+  .hero .tagline {
+    font-size: 19px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    max-width: 640px;
+    margin: 0 0 36px;
+    font-weight: 400;
+  }
+  .hero .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+  }
+  .hero .meta .tag {
+    font-size: 13px;
+    color: var(--ink-soft);
+    background: var(--bg-alt);
+    border: 1px solid var(--rule);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-weight: 500;
+  }
+
+  /* Section structure */
+  section {
+    padding: 64px 0;
+    border-top: 1px solid var(--rule);
+  }
+
+  .section-head {
+    margin-bottom: 40px;
+  }
+  .section-head .num {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+    letter-spacing: 0.05em;
+    font-weight: 500;
+    margin-bottom: 10px;
+  }
+  .section-head h2 {
+    font-weight: 700;
+    font-size: 30px;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    margin: 0;
+    color: var(--ink);
+  }
+  .section-head .lead {
+    margin-top: 12px;
+    color: var(--ink-mute);
+    font-size: 15px;
+    max-width: 600px;
+  }
+
+  p { margin: 0 0 14px; }
+  p:last-child { margin-bottom: 0; }
+
+  /* Case Study */
+  .case-study {
+    background: var(--bg-card);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .cs-header {
+    background: var(--bg-alt);
+    padding: 28px 36px;
+    border-bottom: 1px solid var(--rule);
+  }
+  @media (max-width: 600px) { .cs-header { padding: 22px 20px; } }
+  .cs-header .cs-tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    font-weight: 500;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+  }
+  .cs-header h3 {
+    font-weight: 700;
+    font-size: 24px;
+    line-height: 1.2;
+    letter-spacing: -0.015em;
+    margin: 0 0 8px;
+    color: var(--ink);
+  }
+  .cs-header .cs-meta {
+    font-size: 13px;
+    color: var(--ink-mute);
+    font-family: var(--mono);
+  }
+  .cs-body {
+    padding: 32px 36px;
+  }
+  @media (max-width: 600px) { .cs-body { padding: 26px 20px; } }
+  .cs-body h4 {
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 28px 0 12px;
+  }
+  .cs-body h4:first-child { margin-top: 0; }
+  .cs-body p {
+    color: var(--ink-soft);
+    font-size: 15.5px;
+    line-height: 1.65;
+  }
+  .cs-body ul {
+    margin: 0;
+    padding-left: 20px;
+    list-style: none;
+  }
+  .cs-body ul li {
+    position: relative;
+    padding-left: 16px;
+    margin-bottom: 8px;
+    color: var(--ink-soft);
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  .cs-body ul li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 10px;
+    width: 5px;
+    height: 5px;
+    background: var(--accent);
+    border-radius: 1px;
+  }
+  .cs-body .tools {
+    font-family: var(--mono);
+    font-size: 13.5px;
+    color: var(--ink-soft);
+    background: var(--bg-alt);
+    padding: 14px 18px;
+    border-radius: 6px;
+    border-left: 3px solid var(--accent);
+    line-height: 1.8;
+  }
+  .cs-body .pull {
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent);
+    padding: 18px 22px;
+    margin: 28px 0 0;
+    border-radius: 0 6px 6px 0;
+    font-size: 15.5px;
+    line-height: 1.6;
+    color: var(--ink);
+    font-weight: 500;
+  }
+
+  /* Projects */
+  .projects { display: grid; gap: 20px; }
+  .project {
+    background: var(--bg-card);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 28px 32px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  @media (max-width: 600px) { .project { padding: 22px 20px; } }
+  .project:hover {
+    border-color: var(--accent);
+    box-shadow: 0 4px 16px rgba(13, 92, 99, 0.06);
+  }
+  .project .p-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 16px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+  .project h3 {
+    font-weight: 700;
+    font-size: 20px;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+    margin: 0;
+    color: var(--ink);
+  }
+  .project .p-num {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-mute);
+    letter-spacing: 0.05em;
+  }
+  .project .p-sub {
+    font-size: 13px;
+    color: var(--ink-mute);
+    font-family: var(--mono);
+    margin-bottom: 16px;
+  }
+  .project p {
+    color: var(--ink-soft);
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  .project .stack {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--rule-soft);
+    display: grid;
+    gap: 6px;
+  }
+  .project .stack-row {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    line-height: 1.6;
+  }
+  .project .stack-row b {
+    color: var(--accent);
+    font-weight: 500;
+    margin-right: 8px;
+  }
+  .project .links {
+    display: flex;
+    gap: 8px;
+    margin-top: 20px;
+    flex-wrap: wrap;
+  }
+  .project .links a {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 7px 14px;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    color: var(--ink);
+    background: var(--bg);
+    transition: all 0.12s ease;
+  }
+  .project .links a:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+    text-decoration: none;
+  }
+  .project .links a.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+  }
+  .project .links a.primary:hover {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+  }
+
+  /* Skills grid */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 28px;
+  }
+  @media (max-width: 620px) {
+    .two-col { grid-template-columns: 1fr; gap: 20px; }
+  }
+  .col-card {
+    background: var(--bg-card);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 24px 26px;
+  }
+  .col-card h4 {
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 16px;
+  }
+  .col-card ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .col-card li {
+    padding: 9px 0;
+    color: var(--ink);
+    font-size: 14.5px;
+    line-height: 1.5;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .col-card li:last-child { border-bottom: none; }
+  .col-card li .sub {
+    display: block;
+    color: var(--ink-mute);
+    font-size: 12.5px;
+    margin-top: 3px;
+    font-family: var(--mono);
+  }
+
+  /* Contact */
+  .contact-card {
+    background: var(--bg-alt);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 32px 36px;
+  }
+  @media (max-width: 600px) { .contact-card { padding: 24px 20px; } }
+  .contact-grid {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 16px 24px;
+    font-size: 15px;
+  }
+  @media (max-width: 580px) {
+    .contact-grid { grid-template-columns: 1fr; gap: 4px 0; }
+    .contact-grid .k { margin-top: 12px; }
+    .contact-grid .k:first-child { margin-top: 0; }
+  }
+  .contact-grid .k {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+    padding-top: 3px;
+    font-weight: 500;
+  }
+  .contact-grid .v { color: var(--ink); word-break: break-word; }
+
+  /* Footer */
+  footer {
+    padding: 40px 0 56px;
+    border-top: 1px solid var(--rule);
+    color: var(--ink-mute);
+    font-size: 13px;
+    font-family: var(--mono);
+    text-align: center;
+  }
+  footer .dot {
+    display: inline-block;
+    width: 4px;
+    height: 4px;
+    background: var(--accent);
+    border-radius: 50%;
+    margin: 0 10px;
+    vertical-align: 3px;
+  }
+</style>
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="inner">
+    <div class="links">
+      <a href="#about">About</a>
+      <a href="#case-study">Experience</a>
+      <a href="#projects">Projects</a>
+      <a href="#contact">Contact</a>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap">
+
+<header class="hero" id="about">
+  <span class="kicker">Portfolio · 2026</span>
+  <h1>Samuel-Ashley Bennett</h1>
+  <p class="tagline">
+    IT administrator working toward a senior systems role with a focus on identity, cloud infrastructure, and automation. Most of my hands-on experience lives in Microsoft Entra, Intune, and the M365 stack.
+  </p>
+  <div class="meta">
+    <span class="tag">IT Administrator</span>
+    <span class="tag">Identity &amp; Access</span>
+    <span class="tag">Zero Trust</span>
+    <span class="tag">Cloud Infrastructure</span>
+    <span class="tag">Automation</span>
+  </div>
+</header>
+
+<section id="case-study">
+  <div class="section-head">
+    <div class="num">01 — Featured Experience</div>
+    <h2>Cloud Migration Case Study</h2>
+    <p class="lead">
+      The largest project I've contributed to in my career so far. Here's what it looked like, what I owned, and how it landed.
+    </p>
+  </div>
+
+  <div class="case-study">
+    <div class="cs-header">
+      <div class="cs-tag">Case Study</div>
+      <h3>On-Prem to M365 Migration at ~1,000 Users</h3>
+      <div class="cs-meta">Professional services environment · 2023 · Key contributor</div>
+    </div>
+
+    <div class="cs-body">
+      <p>
+        I contributed to a multi-phase migration from on-prem Active Directory and Exchange to Microsoft 365, running alongside a Cisco to Teams Phone cutover. The work touched every user, every device, and the phone system.
+      </p>
+
+      <h4>Problem</h4>
+      <p>
+        The firm was operating on aging on-prem infrastructure with growing limits around scale, remote access, and modern authentication. Leadership committed to a full cloud migration covering identity, mail, collaboration, and telephony in one coordinated effort.
+      </p>
+
+      <h4>Approach</h4>
+      <p>
+        The project broke into overlapping phases: AD audit and inventory, identity sync and MFA rollout, mailbox cutover, device enrollment through Intune, Teams rollout as the new collaboration layer, Cisco phone decommission, and cleanup of stale on-prem objects. Teams doubled as the telephony replacement, which meant the voice cutover had to land on the same schedule as the chat rollout.
+      </p>
+
+      <h4>What I Owned</h4>
+      <ul>
+        <li>AD auditing and inventorying across the full user base</li>
+        <li>MFA rollout end to end, including user communication and exception handling</li>
+        <li>Authentication troubleshooting during and after cutover</li>
+        <li>Batch planning and cutover scheduling</li>
+        <li>Outlook profile fixes for users hitting post-migration issues</li>
+        <li>Device enrollment into Intune</li>
+        <li>Teams rollout, including the Cisco phone migration</li>
+        <li>Admin process design in Teams Admin Center and PowerShell</li>
+        <li>Stale AD object cleanup after decommission</li>
+      </ul>
+
+      <h4>Tools</h4>
+      <div class="tools">
+        Microsoft Entra (Azure AD) · Intune · Exchange Online · Teams Admin Center · PowerShell (ExchangeOnlineManagement, MicrosoftTeams modules) · on-prem Active Directory
+      </div>
+
+      <h4>Automation I Built Along the Way</h4>
+      <p>
+        Part of what I owned was standardizing how the admin team connected to Exchange Online and Teams. We were running the same setup steps by hand every time someone spun up a new PowerShell session. I wrote a helper module that handles module installation, connection functions for EXO and Teams, and optional drive mapping, all inside a managed block pattern so it doesn't overwrite anyone's existing PowerShell profile.
+      </p>
+      <p>
+        Small piece of automation, but it removed a recurring friction point for the team and kept paying off once we moved into day-two operations.
+      </p>
+
+      <h4>Outcome</h4>
+      <p>
+        The migration completed successfully across ~1,000 users with no data loss. Users stayed working through cutover. The MFA and Teams rollouts both landed cleanly, which for a project of this size meant hundreds of change-management touchpoints ending without fire drills.
+      </p>
+
+      <div class="pull">
+        The MFA and Teams rollouts were the two pieces I'm most proud of. Both had the biggest human surface area, and both landed.
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="projects">
+  <div class="section-head">
+    <div class="num">02 — Personal Projects</div>
+    <h2>Things I've Built</h2>
+    <p class="lead">
+      Hobby projects I built and shipped on my own time. Each one is live, in use, and iterated on over many commits. Not tutorial work.
+    </p>
+  </div>
+
+  <div class="projects">
+
+    <article class="project">
+      <div class="p-head">
+        <h3>BetTracker</h3>
+        <span class="p-num">01 / 03</span>
+      </div>
+      <div class="p-sub">Discord automation platform · Fly.io · Multi-LLM</div>
+      <p>
+        A production Discord automation platform running on Fly.io. It ingests content from multiple channel types, uses a rotating set of LLM providers for AI-powered parsing, and persists structured data for downstream analysis.
+      </p>
+      <p>
+        The piece I'm proudest of is the cost engineering. When the original ingestion pipeline started climbing past budget, I rebuilt it to run under $5 per month without losing functionality. Same muscle I'd apply to evaluating AI tools inside an enterprise: figure out what the tool actually costs to run, and make sure that cost scales with value.
+      </p>
+      <div class="stack">
+        <div class="stack-row"><b>Runtime:</b>Node.js, discord.js, SQLite on a persistent volume</div>
+        <div class="stack-row"><b>Deploy:</b>Docker, Fly.io remote volumes</div>
+        <div class="stack-row"><b>AI layer:</b>Multi-provider rotation (Groq, Gemini, Mistral, OpenRouter) with fallback logic</div>
+      </div>
+      <div class="links">
+        <a href="https://github.com/r88510179-collab/discord" target="_blank" rel="noopener" class="primary">View Repository</a>
+      </div>
+    </article>
+
+    <article class="project">
+      <div class="p-head">
+        <h3>¡Vamos! Spanish Learning</h3>
+        <span class="p-num">02 / 03</span>
+      </div>
+      <div class="p-sub">Progressive Web App · PWA · Vercel</div>
+      <p>
+        A free 12-month Spanish learning program I built for my son and me to work through together. It's structured around Honduran Spanish specifically, with audio pronunciation on every word, 48 weekly lessons, a toddler-mode interface with touch interactions for my son to use directly, and offline support through a web manifest.
+      </p>
+      <p>
+        A real product I use daily, shipped to production, and iterated on over 120+ commits. It's the project that taught me the most about building something people actually depend on.
+      </p>
+      <div class="stack">
+        <div class="stack-row"><b>Stack:</b>Vanilla HTML, CSS, JS. No framework.</div>
+        <div class="stack-row"><b>PWA:</b>Installable to home screen, offline via manifest, localStorage persistence</div>
+        <div class="stack-row"><b>Deploy:</b>Vercel with custom domain</div>
+      </div>
+      <div class="links">
+        <a href="https://vamos-spanish.vercel.app" target="_blank" rel="noopener" class="primary">Live Site</a>
+        <a href="https://github.com/r88510179-collab/vamos-spanish" target="_blank" rel="noopener">View Repository</a>
+      </div>
+    </article>
+
+    <article class="project">
+      <div class="p-head">
+        <h3>60-Day Security Engineering Sprint</h3>
+        <span class="p-num">03 / 03</span>
+      </div>
+      <div class="p-sub">Self-directed learning tracker · Vercel</div>
+      <p>
+        A single-page web app I built to track my push into security engineering. It structures the 60-day plan across the areas I'm going deeper on: conditional access, MFA design, identity governance, Google Workspace administration, and the fundamentals behind CISSP and CCSP study.
+      </p>
+      <p>
+        Less flashy than the other two, but it's the clearest window into what I'm actively doing to grow into a senior systems role.
+      </p>
+      <div class="stack">
+        <div class="stack-row"><b>Stack:</b>Static HTML, vanilla JS</div>
+        <div class="stack-row"><b>Deploy:</b>Vercel</div>
+      </div>
+      <div class="links">
+        <a href="https://60-days-two.vercel.app" target="_blank" rel="noopener" class="primary">Live Site</a>
+        <a href="https://github.com/r88510179-collab/60-days" target="_blank" rel="noopener">View Repository</a>
+      </div>
+    </article>
+
+  </div>
+</section>
+
+<section id="skills">
+  <div class="section-head">
+    <div class="num">03 — Capabilities</div>
+    <h2>What I Work With</h2>
+  </div>
+
+  <div class="two-col">
+    <div class="col-card">
+      <h4>Identity &amp; Cloud</h4>
+      <ul>
+        <li>Microsoft Entra (Azure AD)</li>
+        <li>Microsoft Intune</li>
+        <li>Exchange Online</li>
+        <li>Teams Admin Center</li>
+        <li>On-prem Active Directory</li>
+        <li>Google Workspace <span class="sub">In progress</span></li>
+      </ul>
+    </div>
+    <div class="col-card">
+      <h4>Automation &amp; Tooling</h4>
+      <ul>
+        <li>PowerShell (EXO &amp; Teams modules)</li>
+        <li>Node.js</li>
+        <li>Docker</li>
+        <li>Fly.io, Vercel</li>
+        <li>Git &amp; GitHub</li>
+        <li>SQLite, LLM provider APIs</li>
+      </ul>
+    </div>
+    <div class="col-card">
+      <h4>Security Concepts</h4>
+      <ul>
+        <li>Zero Trust principles</li>
+        <li>Conditional access design</li>
+        <li>MFA (phishing-resistant, authenticator, SMS)</li>
+        <li>Identity lifecycle &amp; access reviews</li>
+        <li>Device compliance policies</li>
+        <li>Least privilege &amp; PIM</li>
+      </ul>
+    </div>
+    <div class="col-card">
+      <h4>Certifications</h4>
+      <ul>
+        <li>Google IT Support Professional Certificate <span class="sub">Coursera</span></li>
+        <li>Microsoft 365 Administration <span class="sub">E5 sandbox labs, in progress</span></li>
+        <li>CISSP &amp; CCSP domains <span class="sub">Self-study in progress</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="contact">
+  <div class="section-head">
+    <div class="num">04 — Contact</div>
+    <h2>Get in Touch</h2>
+  </div>
+
+  <div class="contact-card">
+    <div class="contact-grid">
+      <div class="k">Email</div>
+      <div class="v"><a href="mailto:thenextepisodeproject@gmail.com">thenextepisodeproject@gmail.com</a></div>
+
+      <div class="k">LinkedIn</div>
+      <div class="v"><a href="https://www.linkedin.com/in/samuel-b-181782a0" target="_blank" rel="noopener">linkedin.com/in/samuel-b-181782a0</a></div>
+
+      <div class="k">GitHub</div>
+      <div class="v"><a href="https://github.com/r88510179-collab" target="_blank" rel="noopener">github.com/r88510179-collab</a></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  © 2026 Samuel-Ashley Bennett<span class="dot"></span>Built with HTML, CSS, and care
+</footer>
+
+</div>
+
+</body>
+</html>
