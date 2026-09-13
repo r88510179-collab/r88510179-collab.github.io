@@ -11,7 +11,7 @@
 </head>
 <body>
 <main class="wrap">
-<div class="top"><div><h1 class="title">NFL Pool Tracker</h1><div class="sub">Week 1 · Sep 13–14, 2026 · D.C. · JC · DJS · Thaddius</div></div><div class="live"><span class="dot" id="dot"></span><span id="sync">Connecting to live scores…</span></div></div>
+<div class="top"><div><h1 class="title">NFL Pool Tracker</h1><div class="sub">Week 1 · Sep 13–14, 2026 · D.C. · JC · DJS · Thaddeus</div></div><div class="live"><span class="dot" id="dot"></span><span id="sync">Connecting to live scores…</span></div></div>
 <div class="grid">
 <section class="panel standings"><div class="section-title">Live standings</div><table><thead><tr><th>RK</th><th>Entry</th><th class="c">W</th><th class="c">L</th><th class="c">Left</th><th class="c hide-sm">MNF</th><th class="c">TB</th></tr></thead><tbody id="standings"></tbody></table></section>
 <section class="panel summary"><div class="stat"><span>Final</span><b id="finals">0/14</b></div><div class="stat"><span>Live</span><b id="liveCount">0</b></div><div class="stat"><span>Left</span><b id="left">14</b></div><div class="stat"><span>MNF total</span><b id="mnf">—</b></div></section>
@@ -22,7 +22,7 @@
 <script>
 const matchups=[['CHI','CAR'],['TB','CIN'],['NO','DET'],['BUF','HOU'],['BAL','IND'],['CLE','JAX'],['ATL','PIT'],['NYJ','TEN'],['ARI','LAC'],['MIA','LV'],['GB','MIN'],['WAS','PHI'],['DAL','NYG'],['DEN','KC']];
 const numberToTeam={1:'CHI',2:'CAR',3:'TB',4:'CIN',5:'NO',6:'DET',7:'BUF',8:'HOU',9:'BAL',10:'IND',11:'CLE',12:'JAX',13:'ATL',14:'PIT',15:'NYJ',16:'TEN',17:'ARI',18:'LAC',19:'MIA',20:'LV',21:'GB',22:'MIN',23:'WAS',24:'PHI',25:'DAL',26:'NYG',27:'DEN',28:'KC'};
-const people=[{name:'D.C.',nums:[1,4,6,8,9,12,14,15,18,20,22,24,25,27],mnf:48},{name:'JC',nums:[1,4,6,7,9,12,14,15,18,19,22,24,26,28],mnf:52},{name:'DJS',nums:[1,4,6,8,9,12,14,16,18,20,21,24,25,27],mnf:40},{name:'Thaddius',nums:[1,4,6,7,10,12,13,15,18,20,22,24,26,28],mnf:45}].map(p=>({...p,picks:p.nums.map(n=>numberToTeam[n])}));
+const people=[{name:'D.C.',nums:[1,4,6,8,9,12,14,15,18,20,22,24,25,27],mnf:48},{name:'JC',nums:[1,4,6,7,9,12,14,15,18,19,22,24,26,28],mnf:52},{name:'DJS',nums:[1,4,6,8,9,12,14,16,18,20,21,24,25,27],mnf:40},{name:'Thaddeus',nums:[1,4,6,7,10,12,13,15,18,20,22,24,26,28],mnf:45}].map(p=>({...p,picks:p.nums.map(n=>numberToTeam[n])}));
 let games=matchups.map(([away,home])=>({away,home,state:'pre',completed:false,winner:null,awayScore:null,homeScore:null,detail:'Scheduled'}));
 const aliases={JAC:'JAX',WSH:'WAS'};const norm=x=>aliases[x]||x;
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
