@@ -74,7 +74,9 @@ async function verifySchedule(config){
   if(j.events.length<games.length)throw new Error(`NFL feed has ${j.events.length} games but the sheet has ${games.length}.`);
   return{...config,games};
 }
-async function prepareCandidate(c){let cfg=structuredClone(c.config);const localErrors=validateConfig(cfg);if(localErrors.length)throw new Error(localErrors.join(' · '));cfg=await verifySchedule(cfg);c.config=cfg;scheduleVerified=true;renderReview()}
+async function prepareCandidate(c){
+  let cfg=structuredClone(c.config);const localErrors=validateConfig(cfg);if(localErrors.length)throw new Error(localErrors.join(' · '));cfg=await verifySchedule(cfg);c.config=cfg;scheduleVerified=true;renderReview();
+}
 
 function renderReview(){
   if(!candidate)return;$('review').hidden=false;const cfg=candidate.config;$('reviewTitle').textContent=`Week ${cfg.week} · ${cfg.games.length} games`;
