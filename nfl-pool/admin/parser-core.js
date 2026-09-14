@@ -38,7 +38,12 @@ function targetMatch(line,target){
 
 function parseWeekGroup(week,lines,filename,season){
   const errors=[],seenPair=new Set(),matchups=[];
-  for(const line of lines){const m=matchupFromLine(line);if(!m)continue;if(m.error){errors.push(m.error);continue}const key=`${m.awayNumber}-${m.homeNumber}`;if(!seenPair.has(key)){seenPair.add(key);matchups.push(m)}}
+  for(const line of lines){
+    const m=matchupFromLine(line);if(!m)continue;if(m.error){errors.push(m.error);continue}
+    const key=`${m.awayNumber}-${m.homeNumber}`;
+    if(seenPair.has(key)){errors.push(`Duplicate matchup pair ${key}`);continue}
+    seenPair.add(key);matchups.push(m);
+  }
   matchups.sort((a,b)=>Math.min(a.awayNumber,a.homeNumber)-Math.min(b.awayNumber,b.homeNumber));
   if(!matchups.length)return null;
   const gameCount=matchups.length,numberToGame=new Map();
