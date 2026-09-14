@@ -6,10 +6,11 @@
   const nativeFetch=window.fetch.bind(window);
 
   window.fetch=function(input,init){
+    if(input instanceof Request)return nativeFetch(input,init);
+
     let url;
     try{
-      const raw=input instanceof Request?input.url:input;
-      url=new URL(raw,window.location.href);
+      url=new URL(input,window.location.href);
     }catch(_){
       return nativeFetch(input,init);
     }
