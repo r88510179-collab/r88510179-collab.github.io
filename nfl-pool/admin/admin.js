@@ -1,35 +1,57 @@
-import {createClient} from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';
 import {TARGETS,detectWeek,groupPdfTextItems,parseDocumentGroups,chooseBestCandidate,validateConfig} from './parser-core.js?v=1';
 
-const SUPABASE_URL='https://txbrowtmemwldywdpgiy.supabase.co';
-const SUPABASE_KEY='sb_publishable_oJ-Cg1WcikC1Wio70Ek_Dw_dKvJpgMd';
-const SCORE_URL=`${SUPABASE_URL}/functions/v1/nfl-pool-scores-v2`;
+const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
+const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
+const ESPN_SCOREBOARD='https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
 const ADMIN_EMAIL='djsmokke@gmail.com';
-const SEASON=2026;
-const supabase=createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:true,detectSessionInUrl:true,autoRefreshToken:true}});
+const now=new Date(),DEFAULT_SEASON=now.getUTCMonth()<2?now.getUTCFullYear()-1:now.getUTCFullYear();
+const neon=createClient({auth:{url:NEON_AUTH_URL},dataApi:{url:NEON_DATA_URL}});
 
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const norm=x=>({JAC:'JAX',WSH:'WAS'}[x]||x);
 let session=null,currentFile=null,candidates=[],candidate=null,scheduleVerified=false;
 
+function selectedSeason(){const n=Number($('season').value);if(!Number.isInteger(n)||n<2020||n>2100)throw new Error('Season must be between 2020 and 2100.');return n}
 function message(text,type='info'){$('message').className=`notice ${type}`;$('message').textContent=text;$('message').hidden=!text}
-function setBusy(on,text='Working…'){$('busy').hidden=!on;$('busyText').textContent=text;$('parseBtn').disabled=on;$('publishBtn').disabled=on||!candidate||!scheduleVerified||!session}
+function setBusy(on,text='Working…'){$('busy').hidden=!on;$('busyText').textContent=text;$('parseBtn').disabled=on||!currentFile;$('publishBtn').disabled=on||!candidate||!scheduleVerified||!session;$('sendCode').disabled=on;$('verifyCode').disabled=on;$('season').disabled=on}
 
-async function refreshSession(){const {data:{session:s}}=await supabase.auth.getSession();session=s;if(session&&session.user?.email?.toLowerCase()!==ADMIN_EMAIL){await supabase.auth.signOut();session=null}renderAuth()}
+async function refreshSession(){
+  const result=await neon.auth.getSession();
+  const data=result?.data||null,user=data?.user||null,s=data?.session||null;
+  if(result?.error)console.warn('Session check failed',result.error);
+  session=s&&user?{session:s,user}:null;
+  if(session&&session.user?.email?.toLowerCase()!==ADMIN_EMAIL){await neon.auth.signOut();session=null}
+  renderAuth();
+}
 function renderAuth(){const signed=!!session;$('signedOut').hidden=signed;$('signedIn').hidden=!signed;$('signedEmail').textContent=signed?session.user.email:'';$('publishBtn').disabled=!signed||!candidate||!scheduleVerified;$('authState').textContent=signed?'AUTHORIZED':'SIGN IN REQUIRED';$('authState').className=`pill ${signed?'ok':'warn'}`}
 
-$('sendLink').addEventListener('click',async()=>{
-  $('sendLink').disabled=true;message('');
-  const redirect=new URL('./',location.href).href.split('#')[0].split('?')[0];
-  const {error}=await supabase.auth.signInWithOtp({email:ADMIN_EMAIL,options:{emailRedirectTo:redirect,shouldCreateUser:true}});
-  $('sendLink').disabled=false;
-  if(error){message(`Could not send sign-in link: ${error.message}`,'error');return}
-  message(`Magic sign-in link sent to ${ADMIN_EMAIL}. Open it on this device, then return here.`,'success');
+$('sendCode').addEventListener('click',async()=>{
+  $('sendCode').disabled=true;message('');
+  try{
+    const {error}=await neon.auth.emailOtp.sendVerificationOtp({email:ADMIN_EMAIL,type:'sign-in'});
+    if(error)throw error;
+    $('otpWrap').hidden=false;$('otp').focus();message(`Sign-in code sent to ${ADMIN_EMAIL}.`,'success');
+  }catch(e){message(`Could not send sign-in code: ${e.message||e}`,'error')}
+  finally{$('sendCode').disabled=false}
 });
-$('signOut').addEventListener('click',async()=>{await supabase.auth.signOut();session=null;renderAuth();message('Signed out.','info')});
-supabase.auth.onAuthStateChange((_event,s)=>{session=s;if(session?.user?.email?.toLowerCase()!==ADMIN_EMAIL)session=null;renderAuth()});
+$('verifyCode').addEventListener('click',async()=>{
+  const otp=$('otp').value.trim();if(!/^\d{4,10}$/.test(otp)){message('Enter the numeric code from your email.','error');return}
+  setBusy(true,'Verifying sign-in…');message('');
+  try{
+    const {error}=await neon.auth.signIn.emailOtp({email:ADMIN_EMAIL,otp});if(error)throw error;
+    $('otp').value='';$('otpWrap').hidden=true;await refreshSession();
+    if(!session)throw new Error('Authentication completed but no authorized session was created.');
+    message('Signed in securely.','success');
+  }catch(e){message(`Sign-in failed: ${e.message||e}`,'error')}
+  finally{setBusy(false)}
+});
+$('otp').addEventListener('keydown',e=>{if(e.key==='Enter'){$('verifyCode').click()}});
+$('signOut').addEventListener('click',async()=>{await neon.auth.signOut();session=null;renderAuth();message('Signed out.','info')});
 
+$('season').value=String(DEFAULT_SEASON);
+$('season').addEventListener('change',()=>{candidate=null;candidates=[];scheduleVerified=false;$('review').hidden=true;$('publishResult').hidden=true;message('Season changed. Read the weekly sheet again.','info')});
 $('file').addEventListener('change',()=>{currentFile=$('file').files?.[0]||null;$('fileName').textContent=currentFile?`${currentFile.name} · ${(currentFile.size/1024).toFixed(0)} KB`:'No file selected';$('parseBtn').disabled=!currentFile});
 $('drop').addEventListener('dragover',e=>{e.preventDefault();$('drop').classList.add('over')});
 $('drop').addEventListener('dragleave',()=>$('drop').classList.remove('over'));
@@ -55,9 +77,9 @@ async function spreadsheetGroups(file){
 async function fileGroups(file){const ext=file.name.toLowerCase().split('.').pop();if(ext==='pdf'||file.type==='application/pdf')return pdfGroups(file);if(['xlsx','xls','xlsm'].includes(ext))return spreadsheetGroups(file);throw new Error('Use a PDF, XLSX, XLS, or XLSM weekly sheet.')}
 
 $('parseBtn').addEventListener('click',async()=>{
-  if(!currentFile)return;setBusy(true,'Reading weekly sheet…');message('');scheduleVerified=false;candidate=null;candidates=[];$('review').hidden=true;
+  if(!currentFile)return;setBusy(true,'Reading weekly sheet…');message('');scheduleVerified=false;candidate=null;candidates=[];$('review').hidden=true;$('publishResult').hidden=true;
   try{
-    const groups=await fileGroups(currentFile);candidates=parseDocumentGroups(groups,{filename:currentFile.name,season:SEASON});
+    const groups=await fileGroups(currentFile),season=selectedSeason();candidates=parseDocumentGroups(groups,{filename:currentFile.name,season});
     const valid=candidates.filter(c=>!c.errors.length&&c.config.participants.length===TARGETS.length);
     if(!valid.length){const details=candidates.map(c=>`Week ${c.week}: ${c.errors.join('; ')||'not all tracked entries found'}`).join(' | ');throw new Error(`No complete tracked week was found. ${details}`)}
     candidate=chooseBestCandidate(candidates);renderCandidateSelector(valid);await prepareCandidate(candidate);message(`Week ${candidate.week} parsed and matched to the NFL schedule. Review it before publishing.`,'success');
@@ -69,17 +91,16 @@ function renderCandidateSelector(valid){const sel=$('detectedWeek');sel.innerHTM
 
 function eventPair(event){const cs=event?.competitions?.[0]?.competitors||[],a=cs.find(x=>x.homeAway==='away'),h=cs.find(x=>x.homeAway==='home');return{away:norm(a?.team?.abbreviation),home:norm(h?.team?.abbreviation)}}
 async function verifySchedule(config){
-  const r=await fetch(`${SCORE_URL}?season=${config.season}&week=${config.week}&t=${Date.now()}`,{cache:'no-store'});if(!r.ok)throw new Error(`NFL schedule feed returned ${r.status}`);const j=await r.json();if(!Array.isArray(j.events)||!j.events.length)throw new Error('NFL schedule feed returned no games.');
+  const url=`${ESPN_SCOREBOARD}?dates=${config.season}&seasontype=2&week=${config.week}&limit=100&_=${Date.now()}`;
+  const r=await fetch(url,{cache:'no-store',headers:{Accept:'application/json'}});if(!r.ok)throw new Error(`NFL schedule feed returned ${r.status}`);const j=await r.json();if(!Array.isArray(j.events)||!j.events.length)throw new Error('NFL schedule feed returned no games.');
   const games=config.games.map((g,i)=>{const matches=j.events.filter(e=>{const p=eventPair(e);return p.away===norm(g.away)&&p.home===norm(g.home)});if(matches.length!==1)throw new Error(`Schedule mismatch for ${g.away} at ${g.home}. Found ${matches.length} matching NFL games.`);const e=matches[0];return{...g,index:i,eventId:String(e.id||''),date:String(e.date||'').slice(0,10)}});
   if(j.events.length<games.length)throw new Error(`NFL feed has ${j.events.length} games but the sheet has ${games.length}.`);
   return{...config,games};
 }
-async function prepareCandidate(c){
-  let cfg=structuredClone(c.config);const localErrors=validateConfig(cfg);if(localErrors.length)throw new Error(localErrors.join(' · '));cfg=await verifySchedule(cfg);c.config=cfg;scheduleVerified=true;renderReview();
-}
+async function prepareCandidate(c){let cfg=structuredClone(c.config);const localErrors=validateConfig(cfg);if(localErrors.length)throw new Error(localErrors.join(' · '));cfg=await verifySchedule(cfg);c.config=cfg;scheduleVerified=true;renderReview()}
 
 function renderReview(){
-  if(!candidate)return;$('review').hidden=false;const cfg=candidate.config;$('reviewTitle').textContent=`Week ${cfg.week} · ${cfg.games.length} games`;
+  if(!candidate)return;$('review').hidden=false;const cfg=candidate.config;$('reviewTitle').textContent=`${cfg.season} · Week ${cfg.week} · ${cfg.games.length} games`;
   $('gameReview').innerHTML=cfg.games.map((g,i)=>`<tr><td>${i+1}</td><td><b>${g.awayNumber}</b> ${esc(g.awayName||g.away)}</td><td>at</td><td><b>${g.homeNumber}</b> ${esc(g.homeName||g.home)}</td><td>${esc(g.date||'—')}</td></tr>`).join('');
   $('entryReview').innerHTML=cfg.participants.map(p=>`<tr><td>${esc(p.displayName)}</td><td class="nums">${p.pickNumbers.join(' ')}</td><td><b>${p.tiebreak}</b></td></tr>`).join('');
   const tb=$('tiebreakGame');tb.innerHTML=cfg.games.map((g,i)=>`<option value="${i}">${i+1}. ${g.away} at ${g.home}</option>`).join('');tb.value=String(cfg.tiebreakGameIndex);tb.onchange=()=>{cfg.tiebreakGameIndex=Number(tb.value)};
@@ -93,12 +114,16 @@ $('publishBtn').addEventListener('click',async()=>{
   const cfg=structuredClone(candidate.config),errors=validateConfig(cfg);if(errors.length){message(errors.join(' · '),'error');return}
   setBusy(true,'Publishing and locking week…');message('');
   try{
-    const {data:existing,error:readError}=await supabase.from('nfl_pool_weeks').select('season,week,status,revision').eq('season',cfg.season).eq('week',cfg.week).maybeSingle();if(readError)throw readError;
+    const {data:rows,error:readError}=await neon.from('nfl_pool_weeks').select('season,week,status,revision').eq('season',cfg.season).eq('week',cfg.week).limit(1);if(readError)throw readError;
+    const existing=Array.isArray(rows)&&rows.length?rows[0]:null;
     if(existing?.status==='locked'&&!$('replaceLocked').checked)throw new Error(`Week ${cfg.week} is already locked. Check “replace locked week” only if you intentionally need to correct it.`);
-    const now=new Date().toISOString(),digest=await sha256(currentFile),revision=(existing?.revision||0)+1;
+    const nowIso=new Date().toISOString(),digest=await sha256(currentFile),revision=(existing?.revision||0)+1;
     cfg.source={kind:'weekly-upload',filename:currentFile.name,sha256:digest};
-    const row={season:cfg.season,week:cfg.week,status:'locked',config:cfg,source_filename:currentFile.name,source_sha256:digest,revision,published_at:now,locked_at:now,updated_at:now};
-    const {error}=await supabase.from('nfl_pool_weeks').upsert(row,{onConflict:'season,week'});if(error)throw error;
+    const row={season:cfg.season,week:cfg.week,status:'locked',config:cfg,source_filename:currentFile.name,source_sha256:digest,revision,published_at:nowIso,locked_at:nowIso,updated_at:nowIso};
+    let write;
+    if(existing)write=await neon.from('nfl_pool_weeks').update(row).eq('season',cfg.season).eq('week',cfg.week).select('season,week,revision');
+    else write=await neon.from('nfl_pool_weeks').insert(row).select('season,week,revision');
+    if(write.error)throw write.error;
     message(`Week ${cfg.week} published and locked successfully. Revision ${revision}.`,'success');$('publishResult').hidden=false;$('trackerLink').href=`../?season=${cfg.season}&week=${cfg.week}`;$('replaceLocked').checked=false;
   }catch(e){message(e.message||String(e),'error')}
   finally{setBusy(false)}
