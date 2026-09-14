@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#070b12">
+<title>NFL Pool Admin</title>
+<link rel="stylesheet" href="../style.css?v=race-v1">
+<link rel="stylesheet" href="../slate.css?v=slate-v1">
+<link rel="stylesheet" href="admin.css?v=1">
+</head>
+<body>
+<main class="admin-wrap">
+<header class="admin-top">
+  <div><div class="eyebrow">Pool Center</div><h1>NFL Pool Admin</h1><p>Upload the weekly pool sheet, verify the four tracked entries, then publish and lock the week.</p></div>
+  <div class="admin-actions"><span id="authState" class="pill warn">SIGN IN REQUIRED</span><a href="../" class="back">← Tracker</a></div>
+</header>
+
+<section class="admin-card auth-card">
+  <div class="section-head"><div><h2>1. Secure sign-in</h2><p>Only the authorized publisher can save weekly picks.</p></div></div>
+  <div id="signedOut" class="auth-row"><div><b>Authorized email</b><div class="muted">djsmokke@gmail.com</div></div><button id="sendLink" class="primary">Send magic link</button></div>
+  <div id="signedIn" class="auth-row" hidden><div><b>Signed in</b><div class="muted" id="signedEmail"></div></div><button id="signOut" class="ghost">Sign out</button></div>
+</section>
+
+<section class="admin-card">
+  <div class="section-head"><div><h2>2. Upload weekly sheet</h2><p>PDF and Excel files are parsed in your browser. The numbered picks are the authoritative source.</p></div></div>
+  <label id="drop" class="drop">
+    <input id="file" type="file" accept=".pdf,.xlsx,.xls,.xlsm,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+    <span class="drop-title">Choose file or drop it here</span>
+    <span id="fileName" class="muted">No file selected</span>
+  </label>
+  <div class="row-actions"><button id="parseBtn" class="primary" disabled>Read & validate sheet</button><div id="busy" class="busy" hidden><span class="spinner"></span><span id="busyText">Working…</span></div></div>
+  <div id="weekChoice" class="field" hidden><label for="detectedWeek">Multiple complete weeks detected</label><select id="detectedWeek"></select></div>
+</section>
+
+<section id="review" class="admin-card" hidden>
+  <div class="section-head"><div><h2>3. Review before publishing</h2><p id="reviewTitle"></p></div></div>
+  <div id="validation" class="validation"></div>
+  <div class="review-grid">
+    <div><h3>Tracked entries</h3><div class="table-scroll"><table class="admin-table"><thead><tr><th>Entry</th><th>Picks</th><th>TB</th></tr></thead><tbody id="entryReview"></tbody></table></div></div>
+    <div><h3>Matchup number key</h3><div class="table-scroll games-scroll"><table class="admin-table"><thead><tr><th>#</th><th>Away</th><th></th><th>Home</th><th>Date</th></tr></thead><tbody id="gameReview"></tbody></table></div></div>
+  </div>
+  <div class="publish-box">
+    <div class="field"><label for="tiebreakGame">Designated tiebreak game</label><select id="tiebreakGame"></select><small>Defaults to the last matchup in the sheet. Change it here if the pool sheet uses another game.</small></div>
+    <label class="replace"><input id="replaceLocked" type="checkbox"> Replace this week if it is already locked <span>(corrections only)</span></label>
+    <button id="publishBtn" class="publish" disabled>Publish & lock week</button>
+    <div id="publishResult" hidden><a id="trackerLink" class="tracker-link" href="../">Open published week →</a></div>
+  </div>
+</section>
+
+<div id="message" class="notice" hidden></div>
+<footer class="admin-foot">The uploaded file is parsed locally. Only the validated weekly configuration and file fingerprint are stored; the source file itself is not uploaded.</footer>
+</main>
+<script type="module" src="admin.js?v=1"></script>
+</body>
+</html>
