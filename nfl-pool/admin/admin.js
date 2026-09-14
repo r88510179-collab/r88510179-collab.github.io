@@ -1,5 +1,5 @@
 import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';
-import {TARGETS,detectWeek,groupPdfTextItems,parseDocumentGroups,chooseBestCandidate,validateConfig} from './parser-core.js?v=1';
+import {TARGETS,detectWeek,groupPdfTextItems,parseDocumentGroups,chooseBestCandidate,validateConfig} from './parser-core.js?v=2';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
@@ -26,6 +26,10 @@ async function refreshSession(){
   renderAuth();
 }
 function renderAuth(){const signed=!!session;$('signedOut').hidden=signed;$('signedIn').hidden=!signed;$('signedEmail').textContent=signed?session.user.email:'';$('publishBtn').disabled=!signed||!candidate||!scheduleVerified;$('authState').textContent=signed?'AUTHORIZED':'SIGN IN REQUIRED';$('authState').className=`pill ${signed?'ok':'warn'}`}
+function setCurrentFile(file){
+  currentFile=file||null;candidates=[];candidate=null;scheduleVerified=false;$('review').hidden=true;$('publishResult').hidden=true;$('replaceLocked').checked=false;
+  $('fileName').textContent=currentFile?`${currentFile.name} · ${(currentFile.size/1024).toFixed(0)} KB`:'No file selected';$('parseBtn').disabled=!currentFile;$('publishBtn').disabled=true;
+}
 
 $('sendCode').addEventListener('click',async()=>{
   $('sendCode').disabled=true;message('');
@@ -51,11 +55,11 @@ $('otp').addEventListener('keydown',e=>{if(e.key==='Enter'){$('verifyCode').clic
 $('signOut').addEventListener('click',async()=>{await neon.auth.signOut();session=null;renderAuth();message('Signed out.','info')});
 
 $('season').value=String(DEFAULT_SEASON);
-$('season').addEventListener('change',()=>{candidate=null;candidates=[];scheduleVerified=false;$('review').hidden=true;$('publishResult').hidden=true;message('Season changed. Read the weekly sheet again.','info')});
-$('file').addEventListener('change',()=>{currentFile=$('file').files?.[0]||null;$('fileName').textContent=currentFile?`${currentFile.name} · ${(currentFile.size/1024).toFixed(0)} KB`:'No file selected';$('parseBtn').disabled=!currentFile});
+$('season').addEventListener('change',()=>{candidate=null;candidates=[];scheduleVerified=false;$('review').hidden=true;$('publishResult').hidden=true;$('replaceLocked').checked=false;$('publishBtn').disabled=true;message('Season changed. Read the weekly sheet again.','info')});
+$('file').addEventListener('change',()=>setCurrentFile($('file').files?.[0]||null));
 $('drop').addEventListener('dragover',e=>{e.preventDefault();$('drop').classList.add('over')});
 $('drop').addEventListener('dragleave',()=>$('drop').classList.remove('over'));
-$('drop').addEventListener('drop',e=>{e.preventDefault();$('drop').classList.remove('over');const f=e.dataTransfer.files?.[0];if(f){currentFile=f;$('fileName').textContent=`${f.name} · ${(f.size/1024).toFixed(0)} KB`;$('parseBtn').disabled=false}});
+$('drop').addEventListener('drop',e=>{e.preventDefault();$('drop').classList.remove('over');const f=e.dataTransfer.files?.[0];if(f)setCurrentFile(f)});
 
 async function pdfGroups(file){
   const pdfjs=await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs');
