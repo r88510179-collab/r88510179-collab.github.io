@@ -44,7 +44,14 @@ function parseWeekGroup(week,lines,filename,season){
   const gameCount=matchups.length,numberToGame=new Map();
   matchups.forEach((g,i)=>{if(numberToGame.has(g.awayNumber)||numberToGame.has(g.homeNumber))errors.push('Duplicate matchup number');numberToGame.set(g.awayNumber,i);numberToGame.set(g.homeNumber,i)});
   const participants=[];
-  for(const target of TARGETS){let hit=null;for(const line of lines){const h=targetMatch(line,target);if(h&&h.nums.length>=gameCount+1){hit=h;break}}if(!hit){errors.push(`Missing ${target.displayName}`);continue}const pickNumbers=hit.nums.slice(0,gameCount),tiebreak=hit.nums[gameCount],seenGames=new Set();for(const n of pickNumbers){const gi=numberToGame.get(n);if(gi===undefined)errors.push(`${target.displayName}: pick ${n} is not in the matchup key`);else if(seenGames.has(gi))errors.push(`${target.displayName}: two picks in matchup ${gi+1}`);else seenGames.add(gi)}if(seenGames.size!==gameCount)errors.push(`${target.displayName}: expected ${gameCount} unique game picks, found ${seenGames.size}`);if(!Number.isInteger(tiebreak))errors.push(`${target.displayName}: missing tiebreak total`);participants.push({id:target.id,displayName:target.displayName,sourceName:hit.sourceName,pickNumbers,tiebreak})}
+  for(const target of TARGETS){
+    let hit=null,wrongFieldCount=null;
+    for(const line of lines){const h=targetMatch(line,target);if(!h)continue;if(h.nums.length===gameCount+2){hit=h;break}wrongFieldCount=h.nums.length}
+    if(!hit){if(wrongFieldCount!==null)errors.push(`${target.displayName}: expected ${gameCount+2} numeric fields (${gameCount} picks + Pts + W), found ${wrongFieldCount}`);else errors.push(`Missing ${target.displayName}`);continue}
+    const pickNumbers=hit.nums.slice(0,gameCount),tiebreak=hit.nums[gameCount],seenGames=new Set();
+    for(const n of pickNumbers){const gi=numberToGame.get(n);if(gi===undefined)errors.push(`${target.displayName}: pick ${n} is not in the matchup key`);else if(seenGames.has(gi))errors.push(`${target.displayName}: two picks in matchup ${gi+1}`);else seenGames.add(gi)}
+    if(seenGames.size!==gameCount)errors.push(`${target.displayName}: expected ${gameCount} unique game picks, found ${seenGames.size}`);if(!Number.isInteger(tiebreak))errors.push(`${target.displayName}: missing tiebreak total`);participants.push({id:target.id,displayName:target.displayName,sourceName:hit.sourceName,pickNumbers,tiebreak})
+  }
   const games=matchups.map((g,index)=>({index,awayNumber:g.awayNumber,homeNumber:g.homeNumber,away:g.away,home:g.home,awayName:g.awayName,homeName:g.homeName}));
   return{week,gameCount,errors,config:{schemaVersion:1,season,week,label:`Week ${week}`,tiePoints:0,tiebreakGameIndex:Math.max(0,games.length-1),games,participants,source:{kind:'weekly-upload',filename}}};
 }
