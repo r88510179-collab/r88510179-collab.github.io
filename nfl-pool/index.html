@@ -7,6 +7,7 @@
 <title>NFL Pool Live Tracker</title>
 <link rel="stylesheet" href="style.css?v=race-v1">
 <link rel="stylesheet" href="slate.css?v=slate-v1">
+<link rel="stylesheet" href="weekly.css?v=weekly-v1">
 </head>
 <body>
 <main class="wrap">
@@ -16,7 +17,11 @@
     <div class="brandcopy">
       <div class="eyebrow">Pool Center</div>
       <h1 class="title">NFL Pick'em Live</h1>
-      <div class="week">Week 1 · Sep 13–14, 2026 · D.C. · JC · DJS · Thaddeus</div>
+      <div class="week" id="weekLine">Loading weekly pool…</div>
+      <div class="week-tools">
+        <select id="weekSelect" class="week-select" aria-label="Choose pool week"><option>Loading…</option></select>
+        <a class="admin-mini" href="admin/">Admin</a>
+      </div>
     </div>
   </div>
   <div class="feed" aria-live="polite"><span class="dot" id="dot"></span><span id="sync">Connecting…</span></div>
@@ -30,29 +35,29 @@
       <div class="note" id="leaderNote">Standings update automatically as games go final.</div>
     </div>
     <div class="metrics">
-      <div class="metric"><span>Final</span><b id="finals">0/14</b></div>
+      <div class="metric"><span>Final</span><b id="finals">0/—</b></div>
       <div class="metric"><span>Live</span><b id="liveCount">0</b></div>
-      <div class="metric"><span>Remaining</span><b id="left">14</b></div>
-      <div class="metric"><span>MNF Total</span><b id="mnf">—</b></div>
+      <div class="metric"><span>Remaining</span><b id="left">—</b></div>
+      <div class="metric"><span>TB Total</span><b id="mnf">—</b></div>
     </div>
   </section>
 
   <section class="card standings" aria-labelledby="stand-title">
     <div class="head"><h2 id="stand-title">Standings</h2><div class="meta">Wins · losses · left</div></div>
-    <table><thead><tr><th>RK</th><th>Entry</th><th class="c">W</th><th class="c">L</th><th class="c">Left</th><th class="c hide">MNF</th><th class="c">TB</th></tr></thead><tbody id="standings"></tbody></table>
+    <table><thead><tr><th>RK</th><th>Entry</th><th class="c">W</th><th class="c">L</th><th class="c">Left</th><th class="c hide">TB</th><th class="c">Diff</th></tr></thead><tbody id="standings"></tbody></table>
   </section>
 
   <aside class="card pulse" aria-labelledby="pulse-title">
-    <div class="head" style="padding:0 0 9px"><h2 id="pulse-title">Pool Pulse</h2><div class="meta">Week 1</div></div>
+    <div class="head" style="padding:0 0 9px"><h2 id="pulse-title">Pool Pulse</h2><div class="meta" id="pulseWeek">Week —</div></div>
     <div class="pulse-grid">
-      <div class="pulse-box"><span>Entries</span><b>4</b></div>
-      <div class="pulse-box"><span>Games</span><b>14</b></div>
+      <div class="pulse-box"><span>Entries</span><b id="entryCount">—</b></div>
+      <div class="pulse-box"><span>Games</span><b id="gameCount">—</b></div>
       <div class="pulse-box"><span>Best W</span><b id="bestWins">0</b></div>
-      <div class="pulse-box"><span>Swing Left</span><b id="swingLeft">8</b></div>
+      <div class="pulse-box"><span>Swing Left</span><b id="swingLeft">—</b></div>
     </div>
     <div class="progressline"><span>Slate progress</span><span id="progressText">0%</span></div>
     <div class="progress"><i id="progressBar"></i></div>
-    <div class="tb" id="tbNote">MNF guesses: D.C. 48 · JC 52 · DJS 40 · Thaddeus 45.</div>
+    <div class="tb" id="tbNote">Tiebreak guesses load with the selected week.</div>
   </aside>
 
   <section class="card race" aria-labelledby="race-title">
@@ -75,8 +80,8 @@
     <div class="scroll"><table><thead id="pickHead"></thead><tbody id="pickBody"></tbody></table></div>
   </section>
 </div>
-<footer class="foot"><span>Final NFL outcomes only · NFL ties = 0 points · MNF tiebreak activates after DEN–KC is final.</span><span>Server-side live scoreboard · 20 sec refresh</span></footer>
+<footer class="foot"><span id="footerRule">Final NFL outcomes only · NFL ties = 0 points.</span><span>ESPN live scoreboard · 20 sec refresh</span></footer>
 </main>
-<script src="app.js?v=slate-v2" defer></script>
+<script src="weekly-app.js?v=weekly-v2" defer></script>
 </body>
 </html>
