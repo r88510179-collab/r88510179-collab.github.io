@@ -102,7 +102,7 @@ $('parseBtn').addEventListener('click',async()=>{
     const selected=chooseBestCandidate(localCandidates);assertFileContext(sourceFile,sourceGeneration,operation);
     candidates=localCandidates;candidate=selected;candidateFile=sourceFile;candidateFileGeneration=sourceGeneration;renderCandidateSelector(valid,sourceFile,sourceGeneration);
     await prepareCandidate(candidate,sourceFile,sourceGeneration,operation);assertFileContext(sourceFile,sourceGeneration,operation);
-    message(`Week ${candidate.week} parsed with ${candidate.config.competitionSize||candidate.config.participants.length} competition entries and matched to the NFL schedule. Review it before publishing.`,'success');
+    message(candidate.config.fullFieldReady===true?`Week ${candidate.week} parsed with ${candidate.config.competitionSize} competition entries and matched to the NFL schedule. Review it before publishing.`:`Week ${candidate.week} parsed. Full-field metrics unavailable — regular competition field could not be validated. The four tracked entries remain valid.`,'success');
   }catch(e){
     if(e?.name==='StaleFileContext')return;
     if(fileContextCurrent(sourceFile,sourceGeneration)&&operation===parseGeneration){message(e.message||String(e),'error');invalidateParsedState()}
@@ -146,8 +146,8 @@ function renderReview(){
   $('gameReview').innerHTML=cfg.games.map((g,i)=>`<tr><td>${i+1}</td><td><b>${g.awayNumber}</b> ${esc(g.awayName||g.away)}</td><td>at</td><td><b>${g.homeNumber}</b> ${esc(g.homeName||g.home)}</td><td>${esc(g.date||'—')}</td></tr>`).join('');
   $('entryReview').innerHTML=cfg.participants.map(p=>`<tr><td>${esc(p.displayName)}</td><td class="nums">${p.pickNumbers.join(' ')}</td><td><b>${p.tiebreak}</b></td></tr>`).join('');
   const tb=$('tiebreakGame');tb.innerHTML=cfg.games.map((g,i)=>`<option value="${i}">${i+1}. ${g.away} at ${g.home}</option>`).join('');tb.value=String(cfg.tiebreakGameIndex);tb.onchange=()=>{cfg.tiebreakGameIndex=Number(tb.value)};
-  const fieldWarning=cfg.fieldIssueCount?`<span class="field-warn">⚠ ${cfg.fieldIssueCount} anonymous field row${cfg.fieldIssueCount===1?'':'s'} contain ${cfg.fieldInvalidPickCount||0} invalid pick cell${cfg.fieldInvalidPickCount===1?'':'s'} · those cells score 0</span>`:'<span class="check">✓ Full-field picks complete</span>';
-  $('validation').innerHTML=scheduleVerified?`<span class="check">✓ Tracked picks valid</span><span class="check">✓ Four tracked entries found</span><span class="check">✓ ${cfg.competitionSize||cfg.participants.length} competition entries captured</span><span class="check">✓ Other names excluded from stored config</span>${fieldWarning}<span class="check">✓ NFL schedule matched</span>`:'<span class="bad">Schedule verification required</span>';
+  const fieldWarning=cfg.fullFieldReady===true?`<span class="check">✓ Full-field regular Pick'em data validated · ${cfg.competitionSize} entries</span>`:`<span class="field-warn">⚠ Full-field metrics unavailable — regular competition field could not be validated. The four tracked entries remain valid.</span>`;
+  $('validation').innerHTML=scheduleVerified?`<span class="check">✓ Tracked picks valid</span><span class="check">✓ Four tracked entries found</span><span class="check">✓ Anonymous privacy allowlist enforced</span>${fieldWarning}<span class="check">✓ NFL schedule matched</span>`:'<span class="bad">Schedule verification required</span>';
   $('publishBtn').disabled=!canPublish();
 }
 
