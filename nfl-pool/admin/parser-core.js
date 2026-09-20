@@ -10,8 +10,7 @@ const TEAM_ALIASES={
 };
 
 const clean=s=>String(s??'').replace(/\s+/g,' ').trim();
-const escapeRegex=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\const clean=s=>String(s??'').replace(/\s+/g,' ').trim();
-const nameKey=s=>clean(s).toLowerCase().replace(/[^a-z0-9]/g,'');');
+const escapeRegex=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 
 export function teamAbbr(name){
   const raw=clean(name).toLowerCase().replace(/[.]/g,'');
