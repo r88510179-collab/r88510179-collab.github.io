@@ -34,7 +34,7 @@ export function carryForwardWeekHints(groups){
 export function groupPdfTextItems(items){
   const rows=[];
   for(const item of items||[]){const text=clean(item?.str);if(!text)continue;const tr=item?.transform||[];const x=Number(tr[4]??0),y=Number(tr[5]??0);let row=rows.find(r=>Math.abs(r.y-y)<=1.5);if(!row){row={y,parts:[]};rows.push(row)}row.parts.push({x,text})}
-  return rows.sort((a,b)=>b.y-a.y).map(r=>r.parts.sort((a,b)=>a.x-b.x).map(p=>p.text).join(' ').replace(/\s+/g,' ').trim()).filter(Boolean);
+  return rows.sort((a,b)=>b.y-a.y).map((r,rowIndex)=>{const parts=r.parts.sort((a,b)=>a.x-b.x);const text=parts.map(p=>p.text).join(' ').replace(/\s+/g,' ').trim();return{text,y:r.y,rowIndex,parts:parts.map(p=>({x:p.x,text:p.text}))}}).filter(r=>r.text);
 }
 
 function matchupFromLine(line){
