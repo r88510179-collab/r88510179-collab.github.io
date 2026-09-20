@@ -1,5 +1,5 @@
 import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';
-import {TARGETS,detectWeek,groupPdfTextItems,carryForwardWeekHints,parseDocumentGroups,chooseBestCandidate,validateConfig} from './parser-core.js?v=4';
+import {TARGETS,detectWeek,groupPdfTextItems,carryForwardWeekHints,parseDocumentGroups,chooseBestCandidate,validateConfig} from './parser-core.js?v=5';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
@@ -97,7 +97,7 @@ $('parseBtn').addEventListener('click',async()=>{
     const selected=chooseBestCandidate(localCandidates);assertFileContext(sourceFile,sourceGeneration,operation);
     candidates=localCandidates;candidate=selected;candidateFile=sourceFile;candidateFileGeneration=sourceGeneration;renderCandidateSelector(valid,sourceFile,sourceGeneration);
     await prepareCandidate(candidate,sourceFile,sourceGeneration,operation);assertFileContext(sourceFile,sourceGeneration,operation);
-    message(`Week ${candidate.week} parsed and matched to the NFL schedule. Review it before publishing.`,'success');
+    message(`Week ${candidate.week} parsed with ${candidate.config.competitionSize||candidate.config.participants.length} competition entries and matched to the NFL schedule. Review it before publishing.`,'success');
   }catch(e){
     if(e?.name==='StaleFileContext')return;
     if(fileContextCurrent(sourceFile,sourceGeneration)&&operation===parseGeneration){message(e.message||String(e),'error');invalidateParsedState()}
@@ -105,7 +105,7 @@ $('parseBtn').addEventListener('click',async()=>{
 });
 
 function renderCandidateSelector(valid,sourceFile,sourceGeneration){
-  const sel=$('detectedWeek');sel.innerHTML=valid.map(c=>`<option value="${c.week}">Week ${c.week} · ${c.gameCount} games</option>`).join('');sel.value=String(candidate.week);$('weekChoice').hidden=valid.length<2;
+  const sel=$('detectedWeek');sel.innerHTML=valid.map(c=>`<option value="${c.week}">Week ${c.week} · ${c.gameCount} games · ${c.config.competitionSize||c.config.participants.length} entries</option>`).join('');sel.value=String(candidate.week);$('weekChoice').hidden=valid.length<2;
   sel.onchange=async()=>{
     assertFileContext(sourceFile,sourceGeneration);const operation=++parseGeneration;candidate=valid.find(c=>c.week===Number(sel.value));candidateFile=sourceFile;candidateFileGeneration=sourceGeneration;scheduleVerified=false;$('publishBtn').disabled=true;setBusy(true,'Checking NFL schedule…');message('');
     try{await prepareCandidate(candidate,sourceFile,sourceGeneration,operation);assertFileContext(sourceFile,sourceGeneration,operation);message(`Week ${candidate.week} selected and verified.`,'success')}
@@ -137,11 +137,11 @@ async function prepareCandidate(c,sourceFile,sourceGeneration,operation){
 }
 
 function renderReview(){
-  if(!candidate)return;$('review').hidden=false;const cfg=candidate.config;$('reviewTitle').textContent=`${cfg.season} · Week ${cfg.week} · ${cfg.games.length} games`;
+  if(!candidate)return;$('review').hidden=false;const cfg=candidate.config;$('reviewTitle').textContent=`${cfg.season} · Week ${cfg.week} · ${cfg.games.length} games · ${cfg.competitionSize||cfg.participants.length} entries`;
   $('gameReview').innerHTML=cfg.games.map((g,i)=>`<tr><td>${i+1}</td><td><b>${g.awayNumber}</b> ${esc(g.awayName||g.away)}</td><td>at</td><td><b>${g.homeNumber}</b> ${esc(g.homeName||g.home)}</td><td>${esc(g.date||'—')}</td></tr>`).join('');
   $('entryReview').innerHTML=cfg.participants.map(p=>`<tr><td>${esc(p.displayName)}</td><td class="nums">${p.pickNumbers.join(' ')}</td><td><b>${p.tiebreak}</b></td></tr>`).join('');
   const tb=$('tiebreakGame');tb.innerHTML=cfg.games.map((g,i)=>`<option value="${i}">${i+1}. ${g.away} at ${g.home}</option>`).join('');tb.value=String(cfg.tiebreakGameIndex);tb.onchange=()=>{cfg.tiebreakGameIndex=Number(tb.value)};
-  $('validation').innerHTML=scheduleVerified?'<span class="check">✓ Numeric picks valid</span><span class="check">✓ Four tracked entries found</span><span class="check">✓ NFL schedule matched</span>':'<span class="bad">Schedule verification required</span>';
+  $('validation').innerHTML=scheduleVerified?`<span class="check">✓ Numeric picks valid</span><span class="check">✓ Four tracked entries found</span><span class="check">✓ ${cfg.competitionSize||cfg.participants.length} competition entries captured</span><span class="check">✓ Other names excluded from stored config</span><span class="check">✓ NFL schedule matched</span>`:'<span class="bad">Schedule verification required</span>';
   $('publishBtn').disabled=!canPublish();
 }
 
