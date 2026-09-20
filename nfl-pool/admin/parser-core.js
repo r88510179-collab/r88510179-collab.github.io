@@ -206,43 +206,42 @@ export function validateConfig(config){
   if(!config)return ['No configuration'];
   const games=config.games||[],participants=config.participants||[],fieldEntries=config.fieldEntries;
   if(!games.length)errors.push('No games found');
-  if(participants.length!==TARGETS.length)errors.push(`Expected ${TARGETS.length} tracked entries`);
+  if(participants.length!==TARGETS.length)errors.push('Expected '+TARGETS.length+' tracked entries');
   if(!Number.isInteger(config.tiebreakGameIndex)||config.tiebreakGameIndex<0||config.tiebreakGameIndex>=games.length)errors.push('Invalid tiebreak game');
   const nums=new Map(),teamPairs=new Set();
   games.forEach((g,i)=>{
-    const teamKey=`${normalizeTeamCode(g?.away)}-${normalizeTeamCode(g?.home)}`;
-    if(teamPairs.has(teamKey))errors.push(`Duplicate matchup teams ${teamKey}`);else teamPairs.add(teamKey);
-    for(const n of [g.awayNumber,g.homeNumber]){if(!Number.isInteger(n))errors.push(`Game ${i+1}: invalid number`);else if(nums.has(n))errors.push(`Duplicate number ${n}`);else nums.set(n,i)}
+    const teamKey=normalizeTeamCode(g?.away)+'-'+normalizeTeamCode(g?.home);
+    if(teamPairs.has(teamKey))errors.push('Duplicate matchup teams '+teamKey);else teamPairs.add(teamKey);
+    for(const n of [g.awayNumber,g.homeNumber]){if(!Number.isInteger(n))errors.push('Game '+(i+1)+': invalid number');else if(nums.has(n))errors.push('Duplicate number '+n);else nums.set(n,i)}
   });
   const validateEntry=(p,label)=>{
-    if(!Number.isInteger(p?.tiebreak))errors.push(`${label}: invalid tiebreak`);
-    if(!Array.isArray(p?.pickNumbers)||p.pickNumbers.length!==games.length)errors.push(`${label}: wrong pick count`);
+    if(!Number.isInteger(p?.tiebreak))errors.push(label+': invalid tiebreak');
+    if(!Array.isArray(p?.pickNumbers)||p.pickNumbers.length!==games.length)errors.push(label+': wrong pick count');
     const seen=new Set();
-    for(const n of p?.pickNumbers||[]){if(!nums.has(n))errors.push(`${label}: unknown pick ${n}`);else seen.add(nums.get(n))}
-    if(seen.size!==games.length)errors.push(`${label}: not exactly one pick per game`);
+    for(const n of p?.pickNumbers||[]){if(!nums.has(n))errors.push(label+': unknown pick '+n);else seen.add(nums.get(n))}
+    if(seen.size!==games.length)errors.push(label+': not exactly one pick per game');
   };
   participants.forEach(p=>validateEntry(p,p.displayName||'Tracked entry'));
-  if(fieldEntries!==undefined){
-    if(!Array.isArray(fieldEntries))errors.push('Field entries must be an array');
+
+  if(config.fullFieldReady===true){
+    if(!Array.isArray(fieldEntries)||!fieldEntries.length)errors.push('Full-field ready requires anonymous field entries');
     else{
-      const ids=new Set();let issueRows=0,invalidPicks=0;
+      const ids=new Set(),allowed=['id','pickNumbers','tiebreak'].sort();
       fieldEntries.forEach((p,i)=>{
-        const label=`Field entry ${i+1}`;
-        if(!p||typeof p.id!=='string'||!p.id)errors.push(`${label}: missing id`);
-        else if(ids.has(p.id))errors.push(`Duplicate field entry id ${p.id}`);
-        else ids.add(p.id);
-        if(p&&('displayName' in p||'sourceName' in p||'name' in p))errors.push(`${label}: names must not be stored`);
-        if(!Array.isArray(p?.pickNumbers)||p.pickNumbers.length!==games.length)errors.push(`${label}: wrong pick count`);
-        if(!Number.isInteger(p?.tiebreak))errors.push(`${label}: invalid tiebreak`);
-        let rowIssues=0;
-        (p?.pickNumbers||[]).forEach((n,gi)=>{const g=games[gi];if(!Number.isInteger(n)||!g||n!==g.awayNumber&&n!==g.homeNumber){rowIssues++;invalidPicks++}});
-        if(rowIssues)issueRows++;
+        const label='Field entry '+(i+1);
+        if(!p||typeof p!=='object'||Array.isArray(p)){errors.push(label+': invalid object');return}
+        const keys=Object.keys(p).sort();
+        if(keys.length!==allowed.length||keys.some((k,ki)=>k!==allowed[ki]))errors.push(label+': only id, pickNumbers, and tiebreak are allowed');
+        if(typeof p.id!=='string'||!p.id)errors.push(label+': missing id');
+        else if(ids.has(p.id))errors.push('Duplicate field entry id '+p.id);else ids.add(p.id);
+        validateEntry(p,label);
       });
       const expected=participants.length+fieldEntries.length;
-      if(config.competitionSize!==undefined&&config.competitionSize!==expected)errors.push(`Competition size mismatch: expected ${expected}`);
-      if(config.fieldIssueCount!==undefined&&config.fieldIssueCount!==issueRows)errors.push(`Field issue count mismatch: expected ${issueRows}`);
-      if(config.fieldInvalidPickCount!==undefined&&config.fieldInvalidPickCount!==invalidPicks)errors.push(`Field invalid-pick count mismatch: expected ${invalidPicks}`);
+      if(config.competitionSize!==expected)errors.push('Competition size mismatch: expected '+expected);
+      if(config.fullFieldEntryCount!==undefined&&config.fullFieldEntryCount!==fieldEntries.length)errors.push('Full-field entry count mismatch: expected '+fieldEntries.length);
     }
+  }else if(Array.isArray(fieldEntries)&&fieldEntries.length){
+    errors.push('Anonymous field entries must not be published when fullFieldReady is false');
   }
   return [...new Set(errors)];
 }
