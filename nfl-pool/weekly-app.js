@@ -56,24 +56,30 @@ function validateConfig(c){
   c.participants.forEach(p=>validateEntry(p,p?.displayName||'tracked',true));
   if(c.fieldEntries!==undefined){
     if(!Array.isArray(c.fieldEntries))throw new Error('Invalid field entry list');
-    const ids=new Set();
+    const ids=new Set();let issueRows=0,invalidPicks=0;
     c.fieldEntries.forEach((p,i)=>{
       if(!p||typeof p.id!=='string'||!p.id||ids.has(p.id))throw new Error(`Invalid field entry ${i+1}`);
       ids.add(p.id);
       if('displayName' in p||'sourceName' in p||'name' in p)throw new Error('Field entry names must not be published');
-      validateEntry(p,`field ${i+1}`);
+      if(!Array.isArray(p.pickNumbers)||p.pickNumbers.length!==c.games.length||!Number.isInteger(p.tiebreak))throw new Error(`Invalid field entry ${i+1}`);
+      let rowIssues=0;
+      p.pickNumbers.forEach((n,gi)=>{const g=c.games[gi];if(!Number.isInteger(n)||!g||n!==g.awayNumber&&n!==g.homeNumber){rowIssues++;invalidPicks++}});
+      if(rowIssues)issueRows++;
     });
     const expected=c.participants.length+c.fieldEntries.length;
     if(c.competitionSize!==undefined&&c.competitionSize!==expected)throw new Error('Competition size mismatch');
+    if(c.fieldIssueCount!==undefined&&c.fieldIssueCount!==issueRows)throw new Error('Field issue count mismatch');
+    if(c.fieldInvalidPickCount!==undefined&&c.fieldInvalidPickCount!==invalidPicks)throw new Error('Field invalid-pick count mismatch');
   }
   return c;
 }
 function applyConfig(c){
   CFG=validateConfig(c);M=CFG.games.map(g=>[norm(g.away),norm(g.home)]);
   const numberMap=new Map();CFG.games.forEach((g,i)=>{numberMap.set(g.awayNumber,{i,team:norm(g.away)});numberMap.set(g.homeNumber,{i,team:norm(g.home)})});
-  const mapEntry=(p,id,name=null)=>{const picks=Array(M.length).fill(null);p.pickNumbers.forEach(n=>{const hit=numberMap.get(n);picks[hit.i]=hit.team});return{name,id,mnf:p.tiebreak,picks,pickNumbers:p.pickNumbers.slice()}};
-  P=CFG.participants.map((p,pi)=>mapEntry(p,p.id||String(pi),p.displayName));
-  F=(CFG.fieldEntries||[]).map((p,fi)=>mapEntry(p,p.id||`field-${fi+1}`));
+  const mapTracked=(p,id,name)=>{const picks=Array(M.length).fill(null);p.pickNumbers.forEach(n=>{const hit=numberMap.get(n);picks[hit.i]=hit.team});return{name,id,mnf:p.tiebreak,picks,pickNumbers:p.pickNumbers.slice()}};
+  const mapField=(p,fi)=>{const picks=p.pickNumbers.map((n,i)=>{const g=CFG.games[i];if(n===g.awayNumber)return norm(g.away);if(n===g.homeNumber)return norm(g.home);return null});return{name:null,id:p.id||`field-${fi+1}`,mnf:p.tiebreak,picks,pickNumbers:p.pickNumbers.slice()}};
+  P=CFG.participants.map((p,pi)=>mapTracked(p,p.id||String(pi),p.displayName));
+  F=(CFG.fieldEntries||[]).map(mapField);
   TIEBREAK_INDEX=CFG.tiebreakGameIndex;G=M.map(([away,home])=>({away,home,state:'pre',completed:false,winner:null,awayScore:null,homeScore:null,detail:'Scheduled',eventId:null}));renderStaticLabels();
 }
 function formatWeekDates(){
