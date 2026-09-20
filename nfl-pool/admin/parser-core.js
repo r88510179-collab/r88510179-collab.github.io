@@ -69,6 +69,12 @@ function trailingParticipantRow(line,fieldCount){
   return{sourceName,nums:numeric.map(Number)};
 }
 
+function looksLikeDamagedParticipantRow(line,gameCount){
+  const tokens=clean(line).split(' ');
+  const numericCount=tokens.reduce((n,token)=>n+(/^\d+$/.test(token)?1:0),0);
+  return tokens.length>=gameCount+1&&numericCount>=gameCount;
+}
+
 function validatePickNumbers(label,pickNumbers,tiebreak,numberToGame,gameCount){
   const errors=[],seenGames=new Set();
   for(const n of pickNumbers){
@@ -113,11 +119,13 @@ function parseWeekGroup(week,lines,filename,season){
   }
 
   const fieldEntries=[];
-  let fieldOrdinal=0,fieldIssueCount=0,fieldInvalidPickCount=0;
+  let fieldOrdinal=0,fieldIssueCount=0,fieldInvalidPickCount=0,unparseableFieldRows=0;
   for(const line of lines){
     if(matchupFromLine(line))continue;
+    if(TARGETS.some(target=>targetMatch(line,target)))continue;
     const row=trailingParticipantRow(line,gameCount+2);
-    if(!row||trackedTargetForName(row.sourceName))continue;
+    if(!row){if(looksLikeDamagedParticipantRow(line,gameCount))unparseableFieldRows++;continue}
+    if(trackedTargetForName(row.sourceName))continue;
     const pickNumbers=row.nums.slice(0,gameCount),tiebreak=row.nums[gameCount];
     let invalidPicks=0;
     pickNumbers.forEach((n,i)=>{const g=matchups[i];if(n!==g.awayNumber&&n!==g.homeNumber)invalidPicks++});
@@ -125,6 +133,7 @@ function parseWeekGroup(week,lines,filename,season){
     fieldOrdinal++;
     fieldEntries.push({id:`field-${String(fieldOrdinal).padStart(3,'0')}`,pickNumbers,tiebreak});
   }
+  if(unparseableFieldRows)errors.push(`${unparseableFieldRows} anonymous competition row${unparseableFieldRows===1?' has':'s have'} a missing or nonnumeric pick cell; correct the source sheet before publishing`);
 
   const games=matchups.map((g,index)=>({index,awayNumber:g.awayNumber,homeNumber:g.homeNumber,away:g.away,home:g.home,awayName:g.awayName,homeName:g.homeName}));
   const competitionSize=participants.length+fieldEntries.length;
