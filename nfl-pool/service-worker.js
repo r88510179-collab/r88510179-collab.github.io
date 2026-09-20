@@ -11,6 +11,8 @@ const SHELL=[
   './pwa.js?v=1',
   './manifest.webmanifest',
   './assets/pool-center-icon.svg',
+  './assets/pool-center-icon-192.svg',
+  './assets/pool-center-icon-512.svg',
   './admin/',
   './admin/index.html',
   './admin/admin.css?v=premium-v1',
