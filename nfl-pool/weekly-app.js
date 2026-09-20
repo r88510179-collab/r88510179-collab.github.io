@@ -11,7 +11,8 @@ let CFG=null,M=[],P=[],F=[],TIEBREAK_INDEX=0,G=[],gen=0,ctl=null,lastFetchedAt=n
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const norm=x=>ALIAS[x]||x;
-const score=x=>{let n;if(typeof x==='string'){const v=x.trim();if(!v||!/^\d+$/.test(v))return null;n=Number(v)}else if(typeof x==='number')n=x;else return null;return Number.isFinite(n)&&Number.isInteger(n)&&n>=0?n:null};
+const PoolMath=globalThis.PoolMath;if(!PoolMath)throw new Error('Pool math unavailable');
+const score=PoolMath.score;
 const VALID_VIEWS=new Set(['home','standings','games','picks']);
 function currentView(){const q=new URLSearchParams(location.search).get('view');return VALID_VIEWS.has(q)?q:'home'}
 function setView(view,{push=false,scroll=true}={}){
@@ -54,22 +55,22 @@ function validateConfig(c){
     if(seen.size!==c.games.length)throw new Error(`${label}: incomplete picks`);
   };
   c.participants.forEach(p=>validateEntry(p,p?.displayName||'tracked',true));
-  if(c.fieldEntries!==undefined){
+  if(c.fullFieldReady===true){
+    if(c.fullFieldValidationVersion!==2)throw new Error('Unsupported full-field validation version');
     if(!Array.isArray(c.fieldEntries))throw new Error('Invalid field entry list');
-    const ids=new Set();let issueRows=0,invalidPicks=0;
+    const ids=new Set();
     c.fieldEntries.forEach((p,i)=>{
-      if(!p||typeof p.id!=='string'||!p.id||ids.has(p.id))throw new Error(`Invalid field entry ${i+1}`);
-      ids.add(p.id);
-      if('displayName' in p||'sourceName' in p||'name' in p)throw new Error('Field entry names must not be published');
-      if(!Array.isArray(p.pickNumbers)||p.pickNumbers.length!==c.games.length||!Number.isInteger(p.tiebreak))throw new Error(`Invalid field entry ${i+1}`);
-      let rowIssues=0;
-      p.pickNumbers.forEach((n,gi)=>{const g=c.games[gi];if(!Number.isInteger(n)||!g||n!==g.awayNumber&&n!==g.homeNumber){rowIssues++;invalidPicks++}});
-      if(rowIssues)issueRows++;
+      const label=`Field entry ${i+1}`,keys=p&&typeof p==='object'&&!Array.isArray(p)?Object.keys(p).sort():[];
+      if(keys.join(',')!=='id,pickNumbers,tiebreak')throw new Error('Anonymous field entries contain an unapproved key');
+      if(typeof p.id!=='string'||!p.id||ids.has(p.id))throw new Error(`Invalid field entry ${i+1}`);
+      ids.add(p.id);validateEntry(p,label,false);
+      p.pickNumbers.forEach((n,gi)=>{const g=c.games[gi];if(n!==g.awayNumber&&n!==g.homeNumber)throw new Error(`${label}: shifted pick at game ${gi+1}`)});
     });
     const expected=c.participants.length+c.fieldEntries.length;
-    if(c.competitionSize!==undefined&&c.competitionSize!==expected)throw new Error('Competition size mismatch');
-    if(c.fieldIssueCount!==undefined&&c.fieldIssueCount!==issueRows)throw new Error('Field issue count mismatch');
-    if(c.fieldInvalidPickCount!==undefined&&c.fieldInvalidPickCount!==invalidPicks)throw new Error('Field invalid-pick count mismatch');
+    if(c.competitionSize!==expected)throw new Error('Competition size mismatch');
+    if(c.fullFieldEntryCount!==undefined&&c.fullFieldEntryCount!==c.fieldEntries.length)throw new Error('Full-field entry count mismatch');
+  }else if(Array.isArray(c.fieldEntries)&&c.fieldEntries.length){
+    throw new Error('Field entries require fullFieldReady=true');
   }
   return c;
 }
@@ -79,7 +80,7 @@ function applyConfig(c){
   const mapTracked=(p,id,name)=>{const picks=Array(M.length).fill(null);p.pickNumbers.forEach(n=>{const hit=numberMap.get(n);picks[hit.i]=hit.team});return{name,id,mnf:p.tiebreak,picks,pickNumbers:p.pickNumbers.slice()}};
   const mapField=(p,fi)=>{const picks=p.pickNumbers.map((n,i)=>{const g=CFG.games[i];if(n===g.awayNumber)return norm(g.away);if(n===g.homeNumber)return norm(g.home);return null});return{name:null,id:p.id||`field-${fi+1}`,mnf:p.tiebreak,picks,pickNumbers:p.pickNumbers.slice()}};
   P=CFG.participants.map((p,pi)=>mapTracked(p,p.id||String(pi),p.displayName));
-  F=(CFG.fieldEntries||[]).map(mapField);
+  F=CFG.fullFieldReady===true?(CFG.fieldEntries||[]).map(mapField):[];
   TIEBREAK_INDEX=CFG.tiebreakGameIndex;G=M.map(([away,home])=>({away,home,state:'pre',completed:false,winner:null,awayScore:null,homeScore:null,detail:'Scheduled',eventId:null}));renderStaticLabels();
 }
 function formatWeekDates(){
@@ -87,55 +88,29 @@ function formatWeekDates(){
   if(!dates.length)return `${CFG.season} season`;const lo=new Date(Math.min(...dates)),hi=new Date(Math.max(...dates));const fmt=d=>d.toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'UTC'});return lo.valueOf()===hi.valueOf()?`${fmt(lo)}, ${CFG.season}`:`${fmt(lo)}–${fmt(hi)}, ${CFG.season}`;
 }
 function renderStaticLabels(){
-  $('weekLine').textContent=`Week ${CFG.week} · ${formatWeekDates()} · ${P.map(p=>p.name).join(' · ')}`;$('pulseWeek').textContent=`Week ${CFG.week}`;$('entryCount').textContent=fieldAvailable()?CFG.competitionSize:P.length;$('gameCount').textContent=M.length;$('finals').textContent=`0/${M.length}`;$('left').textContent=M.length;$('tbNote').textContent=`Tiebreak guesses: ${P.map(p=>`${p.name} ${p.mnf}`).join(' · ')}.`;const [a,h]=M[TIEBREAK_INDEX];$('footerRule').textContent=`Final NFL outcomes only · NFL ties = 0 points · ${a}–${h} tiebreak activates when that game is final.${fieldAvailable()?' Full-field entries are stored without competitor names.':''}`;
+  $('weekLine').textContent=`Week ${CFG.week} · ${formatWeekDates()} · ${P.map(p=>p.name).join(' · ')}`;$('pulseWeek').textContent=`Week ${CFG.week}`;$('entryCount').textContent=fieldAvailable()?CFG.competitionSize:'—';$('gameCount').textContent=M.length;$('finals').textContent=`0/${M.length}`;$('left').textContent=M.length;$('tbNote').textContent=`Tiebreak guesses: ${P.map(p=>`${p.name} ${p.mnf}`).join(' · ')}.`;const [a,h]=M[TIEBREAK_INDEX];$('footerRule').textContent=`Final NFL outcomes only · NFL ties = 0 points · ${a}–${h} tiebreak activates when that game is final.${fieldAvailable()?' Full-field entries are stored without competitor names.':''}`;
 }
-function stats(p,games=G){let w=0,l=0,left=0;games.forEach((g,i)=>{if(g.completed){if(g.winner)p.picks[i]===g.winner?w++:l++}else left++});return{w,l,left}}
-function tiebreak(games=G){const g=games[TIEBREAK_INDEX],a=score(g?.awayScore),h=score(g?.homeScore),ok=a!==null&&h!==null;return{final:!!(g?.completed&&ok),total:ok&&(g.state==='in'||g.completed)?a+h:null}}
+function stats(p,games=G){return PoolMath.stats(p,games)}
+function tiebreak(games=G){return PoolMath.tiebreak(games,TIEBREAK_INDEX)}
 function rows(games=G){const t=tiebreak(games);return P.map((p,i)=>({...p,...stats(p,games),diff:t.final?Math.abs(p.mnf-t.total):null,i})).sort((a,b)=>b.w-a.w||a.l-b.l||(t.final?a.diff-b.diff:0)||a.i-b.i)}
 function topIndices(wins,t=tiebreak()){const best=Math.max(...wins);let leaders=wins.map((w,i)=>w===best?i:-1).filter(i=>i>=0);if(t.final&&leaders.length>1){const bestDiff=Math.min(...leaders.map(i=>Math.abs(P[i].mnf-t.total)));leaders=leaders.filter(i=>Math.abs(P[i].mnf-t.total)===bestDiff)}return leaders}
 function tiedWith(a,b,t=tiebreak()){return a.w===b.w&&a.l===b.l&&(!t.final||a.diff===b.diff)}
-function fieldAvailable(){return Array.isArray(CFG?.fieldEntries)&&Number.isInteger(CFG?.competitionSize)&&CFG.competitionSize===P.length+F.length&&F.length>0}
+function fieldAvailable(){return CFG?.fullFieldReady===true&&CFG?.fullFieldValidationVersion===2&&Array.isArray(CFG?.fieldEntries)&&Number.isInteger(CFG?.competitionSize)&&CFG.competitionSize===P.length+F.length}
 function allCompetitionEntries(){return fieldAvailable()?[...P.map((p,i)=>({...p,_order:i,_tracked:true})),...F.map((p,i)=>({...p,_order:P.length+i,_tracked:false}))]:[]}
-function sameFieldStanding(a,b,t){return !!a&&!!b&&a.w===b.w&&a.l===b.l&&(!t.final||a.diff===b.diff)}
-function rankCompetition(games=G){
-  if(!fieldAvailable())return null;
-  const t=tiebreak(games),all=allCompetitionEntries();
-  const ranked=all.map(p=>({...p,...stats(p,games),diff:t.final?Math.abs(p.mnf-t.total):null}))
-    .sort((a,b)=>b.w-a.w||a.l-b.l||(t.final?a.diff-b.diff:0)||a._order-b._order);
-  let rank=1;
-  ranked.forEach((p,i)=>{if(i&&!sameFieldStanding(p,ranked[i-1],t))rank=i+1;p.rank=rank});
-  ranked.forEach(p=>{p.tieCount=ranked.filter(x=>sameFieldStanding(x,p,t)).length});
-  return{rows:ranked,byId:new Map(ranked.map(p=>[p.id,p])),size:ranked.length,bestWins:ranked[0]?.w??0,t};
-}
-function fieldSnapshot(games=G){
-  const base=rankCompetition(games);if(!base)return null;
-  const metrics=new Map();
-  for(const p of P){
-    const current=base.byId.get(p.id);
-    const ceilingGames=games.map((g,i)=>g.completed?g:{...g,state:'post',completed:true,winner:p.picks[i],awayScore:null,homeScore:null,detail:'Ceiling simulation'});
-    const ceiling=rankCompetition(ceilingGames)?.byId.get(p.id)||current;
-    metrics.set(p.id,{
-      rank:current.rank,
-      tieCount:current.tieCount,
-      topPercent:Math.max(1,Math.ceil(current.rank/base.size*100)),
-      behind:Math.max(0,base.bestWins-current.w),
-      ceilingRank:ceiling.rank,
-      ceilingTieCount:ceiling.tieCount,
-      aliveForFirst:ceiling.rank===1
-    });
-  }
-  return{...base,metrics};
-}
+function rankCompetition(games=G){return fieldAvailable()?PoolMath.rankCompetition(allCompetitionEntries(),games,TIEBREAK_INDEX):null}
+function fieldSnapshot(games=G){return fieldAvailable()?PoolMath.fieldSnapshot(P,F,games,TIEBREAK_INDEX):null}
 function fieldRankLabel(metric){if(!metric)return'—';return`${metric.tieCount>1?'T-':'#'}${metric.rank}`}
 function ceilingRankLabel(metric){if(!metric)return'—';return`${metric.ceilingTieCount>1?'T-':'#'}${metric.ceilingRank}`}
 function fieldShare(gameIndex,team){
   if(!fieldAvailable())return null;
-  const all=allCompetitionEntries(),count=all.reduce((n,p)=>n+(p.picks[gameIndex]===team?1:0),0),pct=Math.round(count/all.length*100);
-  return{count,total:all.length,pct};
+  const [away,home]=M[gameIndex]||[],ownership=PoolMath.ownershipForGame(allCompetitionEntries(),gameIndex,away,home);
+  if(team!==away&&team!==home)return null;
+  const count=team===away?ownership.awayCount:ownership.homeCount,pct=team===away?ownership.awayPct:ownership.homePct;
+  return{count,total:ownership.denominator,denominator:ownership.denominator,pct,invalidCount:ownership.invalidCount};
 }
 function fieldShareText(gameIndex,team){
   const share=fieldShare(gameIndex,team);if(!share)return'';
-  return`${share.pct}% of field`;
+  return`${share.count}/${share.denominator} valid · ${share.pct}% of field`;
 }
 function fieldShareClass(gameIndex,team){const share=fieldShare(gameIndex,team);return share&&share.pct<=35?' contrarian':''}
 function gameIndexForTeam(team){return M.findIndex(([a,h])=>a===team||h===team)}
@@ -168,8 +143,8 @@ function renderSwings(race){
   if(!ids.length){$('swingList').innerHTML='<div class="empty">No swing games remain. The race is decided by finalized results and, if needed, the tiebreak.</div>';return}
   $('swingList').innerHTML=ids.map(i=>{
     const g=G[i],show=g.state==='in',as=score(g.awayScore),hs=score(g.homeScore),awayShare=fieldShare(i,g.away),homeShare=fieldShare(i,g.home);
-    const awayField=awayShare?`<div class="field-share${awayShare.pct<=35?' contrarian':''}">${awayShare.pct}% of ${awayShare.total} entries</div>`:'';
-    const homeField=homeShare?`<div class="field-share${homeShare.pct<=35?' contrarian':''}">${homeShare.pct}% of ${homeShare.total} entries</div>`:'';
+    const awayField=awayShare?`<div class="field-share${awayShare.pct<=35?' contrarian':''}">${awayShare.count}/${awayShare.denominator} valid · ${awayShare.pct}%</div>`:'';
+    const homeField=homeShare?`<div class="field-share${homeShare.pct<=35?' contrarian':''}">${homeShare.count}/${homeShare.denominator} valid · ${homeShare.pct}%</div>`:'';
     return`<div class="swing-item"><div class="swing-side"><div class="swing-team">${badge(g.away)} ${esc(g.away)}</div><div class="pickers">${pickerNames(i,g.away,race)}</div>${awayField}</div><div class="swing-mid"><div class="swing-state">${esc(state(g))}</div><div class="swing-score">${show?`${as??'—'}–${hs??'—'}`:'vs'}</div></div><div class="swing-side home"><div class="swing-team">${esc(g.home)} ${badge(g.home)}</div><div class="pickers">${pickerNames(i,g.home,race)}</div>${homeField}</div><div class="impact-grid"><div class="impact"><b>${esc(g.away)}</b> ${esc(impactText(i,g.away,race))}</div><div class="impact"><b>${esc(g.home)}</b> ${esc(impactText(i,g.home,race))}</div><div class="impact tie-impact"><b>TIE</b> ${esc(impactText(i,null,race))}</div></div></div>`;
   }).join('');
 }
@@ -178,12 +153,12 @@ function render(){
   if(!CFG)return;
   const r=rows(),lead=r[0],f=G.filter(g=>g.completed).length,live=G.filter(g=>g.state==='in'&&!g.completed).length,t=tiebreak(),finalWinners=f===M.length?topIndices(P.map(p=>stats(p).w),t):[],race=raceStatus(),field=fieldSnapshot();
   let rank=1;
-  $('fieldSummary').textContent=field?`${field.size} entries · field names anonymized`:'Full-field data not published for this week';
+  $('fieldSummary').textContent=field?`${field.size} entries · field names anonymized`:'Full-field data unavailable for this week.';
   $('standings').innerHTML=r.map((p,i)=>{
     if(i&&!tiedWith(p,r[i-1],t))rank=i+1;
     const leadTie=tiedWith(p,lead,t),fm=field?.metrics.get(p.id),overall=fm?fieldRankLabel(fm):'—',back=fm?(fm.behind?fm.behind:'—'):'—',ceiling=fm?ceilingRankLabel(fm):'—';
     const overallSub=fm?`<span class="standing-sub">Top ${fm.topPercent}% · ${fm.tieCount>1?`${fm.tieCount} tied`:'solo'}</span>`:'<span class="standing-sub">field unavailable</span>';
-    const ceilingSub=fm?`<span class="standing-sub">${fm.aliveForFirst?'1st still reachable':'best possible'}</span>`:'';
+    const ceilingSub=fm?`<span class="standing-sub">all picks win${fm.ceilingTiebreakProjected?'':' · unresolved tiebreak not projected'}</span>`:'';
     return`<tr class="${leadTie?'leadrow':''}"><td>${rank}</td><td class="entry">${esc(p.name)}</td><td class="c"><span class="standing-overall">${overall}</span>${overallSub}</td><td class="c w">${p.w}</td><td class="c l">${p.l}</td><td class="c">${p.left}</td><td class="c">${back}</td><td class="c"><span class="standing-overall">${ceiling}</span>${ceilingSub}</td><td class="c">${p.mnf}${p.diff!=null?`<span class="standing-sub">Δ ${p.diff}</span>`:''}</td></tr>`;
   }).join('');
 
@@ -192,7 +167,7 @@ function render(){
     $('homeStandings').innerHTML=r.map((p,i)=>{
       if(i&&!tiedWith(p,r[i-1],t))hrank=i+1;
       const leadTie=tiedWith(p,lead,t),fm=field?.metrics.get(p.id);
-      const fieldHtml=fm?`<span class="home-field"><b>${fieldRankLabel(fm)} / ${field.size}</b><small>Top ${fm.topPercent}% · ${fm.behind?`${fm.behind} back`:'field lead'} · max ${ceilingRankLabel(fm)}</small></span>`:`<span class="home-left">${p.left} left</span>`;
+      const fieldHtml=fm?`<span class="home-field"><b>${fieldRankLabel(fm)} / ${field.size}</b><small>Top ${fm.topPercent}% · ${fm.behind?`${fm.behind} back`:'field lead'} · win ceiling ${ceilingRankLabel(fm)}${fm.ceilingTiebreakProjected?'':' · TB unresolved'}</small></span>`:`<span class="home-left">${p.left} left</span>`;
       return`<div class="home-standing-row ${leadTie?'lead':''}"><span class="home-rank">${hrank}</span><span class="home-entry">${esc(p.name)}</span><span class="home-record">${p.w}–${p.l}</span>${fieldHtml}</div>`;
     }).join('');
   }
@@ -203,7 +178,7 @@ function render(){
   if($('homeGamePreview'))$('homeGamePreview').innerHTML=orderedGames.slice(0,3).map(({g})=>gameMarkup(g)).join('');
 
   $('pickHead').innerHTML='<tr><th class="name">Entry</th>'+M.map(([a,h],i)=>{
-    const away=fieldShare(i,a),home=fieldShare(i,h),ownership=away&&home?`<div class="matchup-ownership"><span>${away.pct}%</span><span>${home.pct}%</span></div>`:'';
+    const away=fieldShare(i,a),home=fieldShare(i,h),ownership=away&&home?`<div class="matchup-ownership"><span>${away.count}/${away.denominator} · ${away.pct}%</span><span>${home.count}/${home.denominator} · ${home.pct}%</span></div>`:'';
     return`<th class="c matchup-head"><span class="matchup-team">${badge(a,'tiny')}${esc(a)}</span><span class="matchup-slash">/</span><span class="matchup-team">${badge(h,'tiny')}${esc(h)}</span>${ownership}</th>`;
   }).join('')+'</tr>';
   $('pickBody').innerHTML=P.map(p=>'<tr><td class="name">'+esc(p.name)+'</td>'+p.picks.map((pick,i)=>{const g=G[i],done=g.completed,ok=done&&g.winner&&pick===g.winner,tie=done&&!g.winner;return`<td class="c ${tie?'neutral':done?(ok?'ok':'bad'):'pending'}"><span class="pick-choice">${pickTeam(pick)}<span class="pick-result">${tie?'0':done?(ok?'✓':'✕'):''}</span></span></td>`}).join('')+'</tr>').join('');
@@ -214,9 +189,9 @@ function render(){
   }else{
     $('leaderName').textContent=lead?.name||'—';$('leaderRecord').textContent=lead?`${lead.w}–${lead.l}`:'0–0';$('leaderKicker').textContent=f===M.length?'Group winner':'Group leader';
     const fm=lead&&field?field.metrics.get(lead.id):null,ties=lead?r.filter(x=>tiedWith(x,lead,t)).length:0;
-    $('leaderNote').textContent=fm?`Overall ${fieldRankLabel(fm)} of ${field.size} · Top ${fm.topPercent}% · ${fm.behind?`${fm.behind} back`:'at the field lead'} · ceiling ${ceilingRankLabel(fm)}.`:ties>1&&!t.final?`${ties} tracked entries are tied. Full-field data is not published for this week.`:`${f} of ${M.length} games are final. Full-field data is not published for this week.`;
+    $('leaderNote').textContent=fm?`Overall ${fieldRankLabel(fm)} of ${field.size} · Top ${fm.topPercent}% · ${fm.behind?`${fm.behind} back`:'at the field lead'} · win ceiling ${ceilingRankLabel(fm)}${fm.ceilingTiebreakProjected?'.':'; unresolved tiebreak not projected.'}`:ties>1&&!t.final?`${ties} tracked entries are tied. Full-field data unavailable for this week.`:`${f} of ${M.length} games are final. Full-field data unavailable for this week.`;
   }
-  $('bestWins').textContent=field?.bestWins??lead?.w??0;
+  $('bestWins').textContent=field?field.bestWins:'—';
   const pc=Math.round(f/M.length*100);$('progressText').textContent=`${pc}%`;$('progressBar').style.width=`${pc}%`;
   $('tbNote').textContent=t.final?`Tiebreak final total: ${t.total}. Tiebreak differences are active.`:`Tiebreak guesses: ${P.map(p=>`${p.name} ${p.mnf}`).join(' · ')}.`;
   renderRace(race);renderSwings(race);
