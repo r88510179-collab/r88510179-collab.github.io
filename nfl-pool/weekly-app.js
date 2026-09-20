@@ -54,22 +54,19 @@ function validateConfig(c){
     if(seen.size!==c.games.length)throw new Error(`${label}: incomplete picks`);
   };
   c.participants.forEach(p=>validateEntry(p,p?.displayName||'tracked',true));
-  if(c.fieldEntries!==undefined){
-    if(!Array.isArray(c.fieldEntries))throw new Error('Invalid field entry list');
-    const ids=new Set();let issueRows=0,invalidPicks=0;
+  if(c.fullFieldReady===true){
+    if(!Array.isArray(c.fieldEntries)||!c.fieldEntries.length)throw new Error('Full-field ready requires anonymous entries');
+    const ids=new Set(),allowed=['id','pickNumbers','tiebreak'].sort();
     c.fieldEntries.forEach((p,i)=>{
-      if(!p||typeof p.id!=='string'||!p.id||ids.has(p.id))throw new Error(`Invalid field entry ${i+1}`);
-      ids.add(p.id);
-      if('displayName' in p||'sourceName' in p||'name' in p)throw new Error('Field entry names must not be published');
-      if(!Array.isArray(p.pickNumbers)||p.pickNumbers.length!==c.games.length||!Number.isInteger(p.tiebreak))throw new Error(`Invalid field entry ${i+1}`);
-      let rowIssues=0;
-      p.pickNumbers.forEach((n,gi)=>{const g=c.games[gi];if(!Number.isInteger(n)||!g||n!==g.awayNumber&&n!==g.homeNumber){rowIssues++;invalidPicks++}});
-      if(rowIssues)issueRows++;
+      if(!p||typeof p!=='object'||Array.isArray(p))throw new Error(`Invalid field entry ${i+1}`);
+      const keys=Object.keys(p).sort();
+      if(keys.length!==allowed.length||keys.some((k,ki)=>k!==allowed[ki]))throw new Error('Field entries may contain only id, pickNumbers, and tiebreak');
+      if(typeof p.id!=='string'||!p.id||ids.has(p.id))throw new Error(`Invalid field entry ${i+1}`);
+      ids.add(p.id);validateEntry(p,`field ${i+1}`);
     });
     const expected=c.participants.length+c.fieldEntries.length;
-    if(c.competitionSize!==undefined&&c.competitionSize!==expected)throw new Error('Competition size mismatch');
-    if(c.fieldIssueCount!==undefined&&c.fieldIssueCount!==issueRows)throw new Error('Field issue count mismatch');
-    if(c.fieldInvalidPickCount!==undefined&&c.fieldInvalidPickCount!==invalidPicks)throw new Error('Field invalid-pick count mismatch');
+    if(c.competitionSize!==expected)throw new Error('Competition size mismatch');
+    if(c.fullFieldEntryCount!==undefined&&c.fullFieldEntryCount!==c.fieldEntries.length)throw new Error('Full-field entry count mismatch');
   }
   return c;
 }
@@ -94,7 +91,7 @@ function tiebreak(games=G){const g=games[TIEBREAK_INDEX],a=score(g?.awayScore),h
 function rows(games=G){const t=tiebreak(games);return P.map((p,i)=>({...p,...stats(p,games),diff:t.final?Math.abs(p.mnf-t.total):null,i})).sort((a,b)=>b.w-a.w||a.l-b.l||(t.final?a.diff-b.diff:0)||a.i-b.i)}
 function topIndices(wins,t=tiebreak()){const best=Math.max(...wins);let leaders=wins.map((w,i)=>w===best?i:-1).filter(i=>i>=0);if(t.final&&leaders.length>1){const bestDiff=Math.min(...leaders.map(i=>Math.abs(P[i].mnf-t.total)));leaders=leaders.filter(i=>Math.abs(P[i].mnf-t.total)===bestDiff)}return leaders}
 function tiedWith(a,b,t=tiebreak()){return a.w===b.w&&a.l===b.l&&(!t.final||a.diff===b.diff)}
-function fieldAvailable(){return Array.isArray(CFG?.fieldEntries)&&Number.isInteger(CFG?.competitionSize)&&CFG.competitionSize===P.length+F.length&&F.length>0}
+function fieldAvailable(){return CFG?.fullFieldReady===true&&Array.isArray(CFG?.fieldEntries)&&Number.isInteger(CFG?.competitionSize)&&CFG.competitionSize===P.length+F.length&&F.length>0}
 function allCompetitionEntries(){return fieldAvailable()?[...P.map((p,i)=>({...p,_order:i,_tracked:true})),...F.map((p,i)=>({...p,_order:P.length+i,_tracked:false}))]:[]}
 function sameFieldStanding(a,b,t){return !!a&&!!b&&a.w===b.w&&a.l===b.l&&(!t.final||a.diff===b.diff)}
 function rankCompetition(games=G){
