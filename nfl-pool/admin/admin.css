@@ -50,8 +50,8 @@ button{font:inherit}
 .field select{width:100%;max-width:420px;min-height:42px;border:1px solid var(--admin-line);border-radius:9px;background:#090c11;color:var(--text);padding:0 10px}
 .field small{display:block;color:var(--muted);margin-top:5px;font-size:10px}
 .validation{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 14px}
-.check,.bad{border:1px solid #2b6247;background:#0d2118;color:#8ce3b2;padding:5px 8px;border-radius:999px;font-size:10px;font-weight:900}
-.bad{border-color:#71343a;background:#2b1114;color:#ff989f}
+.check,.bad,.field-warn{border:1px solid #2b6247;background:#0d2118;color:#8ce3b2;padding:5px 8px;border-radius:999px;font-size:10px;font-weight:900}
+.bad{border-color:#71343a;background:#2b1114;color:#ff989f}.field-warn{border-color:#725c29;background:#241d0e;color:#ffd278}
 .review-grid{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:16px}
 .review-grid h3{font-size:13px;text-transform:uppercase;letter-spacing:.04em}
 .table-scroll{overflow:auto;border:1px solid var(--admin-line);border-radius:10px;max-width:100%;background:#090c11}
