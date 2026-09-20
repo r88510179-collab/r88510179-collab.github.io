@@ -1,5 +1,7 @@
 'use strict';
 
+import {competitionRanks,ownershipShare} from './public-math.js?v=1';
+
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
 const ESPN_SCOREBOARD='https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
@@ -97,11 +99,7 @@ function sameFieldStanding(a,b,t){return !!a&&!!b&&a.w===b.w&&a.l===b.l&&(!t.fin
 function rankCompetition(games=G){
   if(!fieldAvailable())return null;
   const t=tiebreak(games),all=allCompetitionEntries();
-  const ranked=all.map(p=>({...p,...stats(p,games),diff:t.final?Math.abs(p.mnf-t.total):null}))
-    .sort((a,b)=>b.w-a.w||a.l-b.l||(t.final?a.diff-b.diff:0)||a._order-b._order);
-  let rank=1;
-  ranked.forEach((p,i)=>{if(i&&!sameFieldStanding(p,ranked[i-1],t))rank=i+1;p.rank=rank});
-  ranked.forEach(p=>{p.tieCount=ranked.filter(x=>sameFieldStanding(x,p,t)).length});
+  const ranked=competitionRanks(all.map(p=>({...p,...stats(p,games),diff:t.final?Math.abs(p.mnf-t.total):null})),{tiebreakFinal:t.final});
   return{rows:ranked,byId:new Map(ranked.map(p=>[p.id,p])),size:ranked.length,bestWins:ranked[0]?.w??0,t};
 }
 function fieldSnapshot(games=G){
@@ -127,8 +125,7 @@ function fieldRankLabel(metric){if(!metric)return'—';return`${metric.tieCount>
 function ceilingRankLabel(metric){if(!metric)return'—';return`${metric.ceilingTieCount>1?'T-':'#'}${metric.ceilingRank}`}
 function fieldShare(gameIndex,team){
   if(!fieldAvailable())return null;
-  const all=allCompetitionEntries(),valid=all.filter(p=>M[gameIndex]?.includes(p.picks[gameIndex])),count=valid.reduce((n,p)=>n+(p.picks[gameIndex]===team?1:0),0),pct=valid.length?Math.round(count/valid.length*100):0;
-  return{count,total:valid.length,denominator:valid.length,pct};
+  return ownershipShare(allCompetitionEntries(),gameIndex,team,M[gameIndex]||[]);
 }
 function fieldShareText(gameIndex,team){
   const share=fieldShare(gameIndex,team);if(!share)return'';
