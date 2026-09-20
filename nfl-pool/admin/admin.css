@@ -8,7 +8,7 @@ body:before{opacity:.05}
 .admin-wrap{position:relative;z-index:1;width:min(1180px,calc(100% - 28px));margin:0 auto;padding:24px 0 50px}
 .admin-top{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid #ffffff0d}
 .admin-brand{display:flex;align-items:center;gap:13px}
-.admin-brand-icon{width:58px;height:58px;border-radius:15px;box-shadow:0 10px 28px #0008,0 0 0 1px #ffffff14}
+.admin-brand-icon{width:58px;height:58px;border-radius:15px;box-shadow:0 10px 28px #0008,0 0 0 1px #ffffff14}.admin-league{display:flex;align-items:center;gap:6px;color:#c6454b;text-transform:uppercase;letter-spacing:.15em;font-size:9px;font-weight:950}.admin-nfl-shield{width:17px;height:17px;object-fit:contain;filter:drop-shadow(0 2px 4px #0008)}
 .admin-top h1{margin:3px 0 4px;font-size:clamp(27px,5vw,42px);letter-spacing:-.04em;text-transform:uppercase}
 .admin-top p{margin:0;color:var(--muted);max-width:720px;font-size:12px}
 .eyebrow{text-transform:uppercase;letter-spacing:.16em;font-size:9px;font-weight:950;color:#c6454b}
