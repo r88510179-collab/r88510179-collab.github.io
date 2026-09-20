@@ -75,6 +75,29 @@ function regularParticipantRow(line,matchups){
 
 function median(values){const a=values.slice().sort((x,y)=>x-y),m=Math.floor(a.length/2);return a.length%2?a[m]:(a[m-1]+a[m])/2}
 
+function pdfRowGap(a,b){
+  const ay=Number(a?.row?.y),by=Number(b?.row?.y);
+  return Number.isFinite(ay)&&Number.isFinite(by)?Math.abs(ay-by):null;
+}
+
+function pdfParticipantSpacingModel(pageMap){
+  const anchoredPages=new Set();
+  for(const [page,pageRecords] of pageMap){if(pageRecords.some(r=>r.tracked&&r.geometryMatch))anchoredPages.add(page)}
+  const anchorGaps=[];
+  for(const page of anchoredPages){
+    const pageRecords=pageMap.get(page)||[];
+    for(let i=1;i<pageRecords.length;i++){
+      const prev=pageRecords[i-1],next=pageRecords[i];
+      if(!prev.geometryMatch||!next.geometryMatch||(!prev.tracked&&!next.tracked))continue;
+      const gap=pdfRowGap(prev,next);if(Number.isFinite(gap)&&gap>0)anchorGaps.push(gap);
+    }
+  }
+  if(anchorGaps.length<2)return null;
+  const normalGap=median(anchorGaps),deviations=anchorGaps.map(g=>Math.abs(g-normalGap)),mad=median(deviations);
+  const tolerance=Math.max(normalGap*0.75,Math.min(normalGap,mad*4));
+  return{normalGap,maxGap:normalGap+tolerance};
+}
+
 function pdfParticipantGeometry(row,parsed,gameCount){
   if(!row||row.kind!=='pdf'||!Array.isArray(row.parts)||!parsed)return null;
   const tokens=[];
@@ -134,13 +157,16 @@ function pdfTableBoundary(sourceRows,matchups){
 
   const pageMap=new Map();
   for(const record of records){const p=record.row.pageNumber??0;if(!pageMap.has(p))pageMap.set(p,[]);pageMap.get(p).push(record)}
+  for(const pageRecords of pageMap.values())pageRecords.sort((a,b)=>(a.row.rowIndex??0)-(b.row.rowIndex??0)||Number(b.row.y??0)-Number(a.row.y??0));
+  const spacing=pdfParticipantSpacingModel(pageMap);
   const runs=[];
   for(const [page,pageRecords] of [...pageMap.entries()].sort((a,b)=>a[0]-b[0])){
-    pageRecords.sort((a,b)=>(a.row.rowIndex??0)-(b.row.rowIndex??0)||Number(b.row.y??0)-Number(a.row.y??0));
     let current=null;
     pageRecords.forEach((record,pos)=>{
       if(record.geometryMatch){
-        if(!current){current={page,records:[],startPos:pos,endPos:pos,pageSize:pageRecords.length};runs.push(current)}
+        const prev=current?.records[current.records.length-1]||null,gap=prev?pdfRowGap(prev,record):null;
+        const yContinuous=!prev||(spacing&&Number.isFinite(gap)&&gap<=spacing.maxGap);
+        if(!current||!yContinuous){current={page,records:[],startPos:pos,endPos:pos,pageSize:pageRecords.length};runs.push(current)}
         current.records.push(record);current.endPos=pos;
       }else current=null;
     });
@@ -156,7 +182,19 @@ function pdfTableBoundary(sourceRows,matchups){
   };
   const headerFingerprint=anchorRuns.map(headerBefore).find(Boolean)||null;
   const hasMatchingHeader=run=>!!headerFingerprint&&headerBefore(run)===headerFingerprint;
-  const strictEdgeContinuation=(prev,next)=>prev.endPos===prev.pageSize-1&&next.startPos<=1&&next.records.length>=2;
+  const allYs=records.map(r=>Number(r.row?.y)).filter(Number.isFinite),documentTopY=allYs.length?Math.max(...allYs):null;
+  const edgeBand=spacing?spacing.maxGap*2:null;
+  const nearPhysicalBottom=run=>{
+    if(!edgeBand)return false;
+    const y=Number(run.records[run.records.length-1]?.row?.y);
+    return Number.isFinite(y)&&y>=0&&y<=edgeBand;
+  };
+  const nearPhysicalTop=run=>{
+    if(!edgeBand||!Number.isFinite(documentTopY))return false;
+    const y=Number(run.records[0]?.row?.y);
+    return Number.isFinite(y)&&documentTopY-y<=edgeBand;
+  };
+  const strictEdgeContinuation=(prev,next)=>prev.endPos===prev.pageSize-1&&next.startPos<=1&&next.records.length>=2&&nearPhysicalBottom(prev)&&nearPhysicalTop(next);
   const canContinue=(prev,next)=>next.page===prev.page+1&&(hasMatchingHeader(next)||strictEdgeContinuation(prev,next));
 
   let frontier=seed;

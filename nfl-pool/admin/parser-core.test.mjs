@@ -39,6 +39,18 @@ function parse(lines,extra={}){
 function pdfGroup(lines,page){
   return{week:2,lines,sourceRows:sourceRows(lines,page),pageNumber:page,pageFingerprint:`page-${page}-${lines.join('|')}`};
 }
+function rowsAt(lines,page,ys){
+  const rows=sourceRows(lines,page);
+  rows.forEach((row,i)=>{if(Number.isFinite(ys?.[i]))row.y=ys[i]});
+  return rows;
+}
+function applyRegularHeaderGeometry(rows,headerText='Entry Pts W'){
+  for(const row of rows){
+    if(row.text!==headerText)continue;
+    row.parts=[{x:10,text:'Entry'},{x:520,text:'Pts'},{x:544,text:'W'}];
+  }
+  return rows;
+}
 
 {
   const c=parse([...matchups,...tracked,anonA]);
@@ -155,14 +167,96 @@ function pdfGroup(lines,page){
   assert.equal(JSON.stringify(c.config).toLowerCase().includes('survivor'),false);
 }
 {
-  const page1=[...matchups,'PICKEM ENTRIES',tracked[0],tracked[1],anonA];
-  const page2=['PICKEM ENTRIES CONTINUED',tracked[2],tracked[3],anonB];
-  const c=parseDocumentGroups([pdfGroup(page1,1),pdfGroup(page2,2)],{filename:'continuation.pdf',season:2026})[0];
+  // TEST E — real page-edge continuation: prior run reaches the physical bottom band, next run starts in the top band.
+  const page1=[...matchups,tracked[0],tracked[1],anonA],page2=[tracked[2],tracked[3],anonB];
+  const y1=page1.map((_,i)=>760-i*12);y1[y1.length-3]=48;y1[y1.length-2]=36;y1[y1.length-1]=24;
+  const y2=[760,748,736];
+  const groups=[
+    {week:2,lines:page1,sourceRows:rowsAt(page1,1,y1),pageNumber:1,pageFingerprint:'real-edge-page-1'},
+    {week:2,lines:page2,sourceRows:rowsAt(page2,2,y2),pageNumber:2,pageFingerprint:'real-edge-page-2'}
+  ];
+  const c=parseDocumentGroups(groups,{filename:'continuation.pdf',season:2026})[0];
   assert.deepEqual(c.errors,[]);
   assert.deepEqual(c.fullFieldIssues,[]);
   assert.equal(c.config.fullFieldReady,true);
   assert.equal(c.config.fieldEntries.length,2);
   assert.equal(c.config.competitionSize,6);
+}
+{
+  // TEST A — same X geometry after a large same-page whitespace gap must not enlarge the field.
+  const mystery='Mystery Leader 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 60 0';
+  const lines=[...matchups,...tracked,anonA,mystery],rows=sourceRows(lines,1);
+  rows[rows.length-1].y=rows[rows.length-2].y-96;
+  const c=parse(lines,{sourceRows:rows,pageFingerprint:'large-gap-one'});
+  assert.deepEqual(c.errors,[]);
+  assert.equal(c.config.participants.length,4);
+  assert.equal(c.config.fullFieldReady,false);
+  assert.equal(c.competitionSize,4);
+  assert.equal(c.config.fieldEntries,undefined);
+  assert(c.fullFieldIssues.some(x=>x.includes('outside the proven regular participant table')));
+}
+{
+  // TEST B — an internally consistent aligned mini-table beyond the gap is still a separate ambiguous region.
+  const falseA='Mystery Leader 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 60 0';
+  const falseB='Mystery Runner 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 61 0';
+  const lines=[...matchups,...tracked,anonA,falseA,falseB],rows=sourceRows(lines,1);
+  rows[rows.length-2].y=rows[rows.length-3].y-96;rows[rows.length-1].y=rows[rows.length-2].y-12;
+  const c=parse(lines,{sourceRows:rows,pageFingerprint:'large-gap-multi'});
+  assert.deepEqual(c.errors,[]);
+  assert.equal(c.config.participants.length,4);
+  assert.equal(c.config.fullFieldReady,false);
+  assert.equal(c.competitionSize,4);
+  assert.equal(c.config.fieldEntries,undefined);
+}
+{
+  // TEST C — small non-uniform drift remains within the table-derived cadence tolerance.
+  const lines=[...matchups,...tracked,anonA],rows=sourceRows(lines,1),start=matchups.length;
+  [560,547,535,521,509].forEach((y,i)=>{rows[start+i].y=y});
+  const c=parse(lines,{sourceRows:rows,pageFingerprint:'normal-drift'});
+  assert.deepEqual(c.errors,[]);
+  assert.deepEqual(c.fullFieldIssues,[]);
+  assert.equal(c.config.fullFieldReady,true);
+  assert.equal(c.config.competitionSize,5);
+}
+{
+  // TEST D — ordinary consistent same-page table spacing remains accepted.
+  const c=parse([...matchups,...tracked,anonA],{pageFingerprint:'normal-spacing'});
+  assert.deepEqual(c.errors,[]);
+  assert.deepEqual(c.fullFieldIssues,[]);
+  assert.equal(c.config.fullFieldReady,true);
+  assert.equal(c.config.competitionSize,5);
+}
+{
+  // TEST F — aligned participant rows on a later page are not continuation without header or physical edge proof.
+  const falseA='Later Leader 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 60 0';
+  const falseB='Later Runner 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 61 0';
+  const page1=[...matchups,...tracked,anonA],page2=[falseA,falseB];
+  const c=parseDocumentGroups([pdfGroup(page1,1),pdfGroup(page2,2)],{filename:'later-table.pdf',season:2026})[0];
+  assert.deepEqual(c.errors,[]);
+  assert.equal(c.config.participants.length,4);
+  assert.equal(c.config.fullFieldReady,false);
+  assert.equal(c.competitionSize,4);
+  assert.equal(c.config.fieldEntries,undefined);
+}
+{
+  // TEST G — repeated regular-table header with compatible Pts/W geometry is sufficient continuation proof.
+  const header='Entry Pts W';
+  const page1=[...matchups,header,tracked[0],tracked[1],anonA],page2=[header,tracked[2],tracked[3],anonB];
+  const rows1=applyRegularHeaderGeometry(sourceRows(page1,1),header),rows2=applyRegularHeaderGeometry(sourceRows(page2,2),header);
+  const c=parseDocumentGroups([
+    {week:2,lines:page1,sourceRows:rows1,pageNumber:1,pageFingerprint:'header-page-1'},
+    {week:2,lines:page2,sourceRows:rows2,pageNumber:2,pageFingerprint:'header-page-2'}
+  ],{filename:'header-continuation.pdf',season:2026})[0];
+  assert.deepEqual(c.errors,[]);
+  assert.deepEqual(c.fullFieldIssues,[]);
+  assert.equal(c.config.fullFieldReady,true);
+  assert.equal(c.config.competitionSize,6);
+}
+{
+  // Explicitly preserve names that contain digits and hyphens.
+  const c=parse([...matchups,...tracked,'7-11 Guy 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0']);
+  assert.equal(c.config.fullFieldReady,true);
+  assert.equal(c.config.fieldEntries.length,1);
 }
 {
   const c=parse([...matchups,...tracked,anonA,'OTHER WEEKLY CONTEST','Contest Leader 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 60 0']);
