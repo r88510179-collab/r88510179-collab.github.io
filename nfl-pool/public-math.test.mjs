@@ -63,8 +63,8 @@ import {competitionRanks,ownershipShare,scoreEntry,tiebreakState} from './public
   const scenarioEnd=source.indexOf('function renderRace',scenarioStart);
   assert(scenarioStart>=0&&scenarioEnd>scenarioStart,'tracked scenario/race block must be identifiable');
   const scenarioBlock=source.slice(scenarioStart,scenarioEnd);
-  assert.match(scenarioBlock,/\\bP\\.(?:map|forEach)\\b/,'scenario engine must operate on tracked P entries');
-  assert.doesNotMatch(scenarioBlock,/\\bF\\b|allCompetitionEntries\\s*\\(|rankCompetition\\s*\\(|fieldSnapshot\\s*\\(/,'anonymous full-field entries must not enter the tracked scenario/race engine');
+  assert.match(scenarioBlock,/\bP\.(?:map|forEach)\b/,'scenario engine must operate on tracked P entries');
+  assert.doesNotMatch(scenarioBlock,/\bF\b|allCompetitionEntries\s*\(|rankCompetition\s*\(|fieldSnapshot\s*\(/,'anonymous full-field entries must not enter the tracked scenario/race engine');
 }
 
 console.log('public competition rank, tiebreak, ownership denominator, tracked scenario scope, and ceiling wording regressions passed');
