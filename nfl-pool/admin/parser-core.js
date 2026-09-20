@@ -46,7 +46,7 @@ function targetRowIdentity(line,target){
   const s=clean(line);
   for(const alias of target.aliases){
     const m=s.match(new RegExp('^('+escapeRegex(clean(alias))+')\\s+(.+)$','i'));
-    if(m&&/^\\d+$/.test(clean(m[2]).split(' ')[0]))return true;
+    if(m&&/^\d+$/.test(clean(m[2]).split(' ')[0]))return true;
   }
   return false;
 }
@@ -62,7 +62,7 @@ function regularParticipantRow(line,matchups){
   for(let start=1;start<tokens.length;start++){
     if(tokens.length-start!==gameCount+2)continue;
     const nums=tokens.slice(start);
-    if(!nums.every(token=>/^\\d+$/.test(token)))continue;
+    if(!nums.every(token=>/^\d+$/.test(token)))continue;
     const values=nums.map(Number);
     let valid=true;
     for(let i=0;i<gameCount;i++){const g=matchups[i],n=values[i];if(n!==g.awayNumber&&n!==g.homeNumber){valid=false;break}}
@@ -74,9 +74,9 @@ function regularParticipantRow(line,matchups){
 }
 
 function spreadsheetContract(sourceRows,gameCount){
-  const header=(sourceRows||[]).find(r=>r&&r.kind==='spreadsheet'&&Array.isArray(r.cells)&&r.cells.some(c=>/^pts(?:\\/tiebreak)?$/i.test(clean(c)))&&r.cells.some(c=>/^w$/i.test(clean(c))));
+  const header=(sourceRows||[]).find(r=>r&&r.kind==='spreadsheet'&&Array.isArray(r.cells)&&r.cells.some(c=>/^pts(?:\/tiebreak)?$/i.test(clean(c)))&&r.cells.some(c=>/^w$/i.test(clean(c))));
   if(!header)return null;
-  const cells=header.cells.map(clean),ptsIndex=cells.findIndex(c=>/^pts(?:\\/tiebreak)?$/i.test(c)),wIndex=cells.findIndex(c=>/^w$/i.test(c));
+  const cells=header.cells.map(clean),ptsIndex=cells.findIndex(c=>/^pts(?:\/tiebreak)?$/i.test(c)),wIndex=cells.findIndex(c=>/^w$/i.test(c));
   if(ptsIndex<0||wIndex!==ptsIndex+1||ptsIndex-gameCount<1)return null;
   return{sheetName:header.sheetName,headerRowNumber:header.rowNumber,nameIndex:ptsIndex-gameCount-1,pickStart:ptsIndex-gameCount,ptsIndex,wIndex};
 }
@@ -86,7 +86,7 @@ function spreadsheetParticipantRow(sourceRow,contract,matchups){
   const cells=(sourceRow.cells||[]).map(clean);
   if(cells.length<=contract.wIndex)return null;
   const sourceName=cells[contract.nameIndex],pickCells=cells.slice(contract.pickStart,contract.ptsIndex),tail=cells.slice(contract.ptsIndex,contract.wIndex+1),extra=cells.slice(contract.wIndex+1).filter(Boolean);
-  if(!sourceName||extra.length||pickCells.length!==matchups.length||!pickCells.every(v=>/^\\d+$/.test(v))||!tail.every(v=>/^\\d+$/.test(v)))return null;
+  if(!sourceName||extra.length||pickCells.length!==matchups.length||!pickCells.every(v=>/^\d+$/.test(v))||!tail.every(v=>/^\d+$/.test(v)))return null;
   const pickNumbers=pickCells.map(Number);
   for(let i=0;i<matchups.length;i++){const g=matchups[i],n=pickNumbers[i];if(n!==g.awayNumber&&n!==g.homeNumber)return null}
   return{sourceName,pickNumbers,tiebreak:Number(tail[0]),wins:Number(tail[1])};
@@ -94,8 +94,8 @@ function spreadsheetParticipantRow(sourceRow,contract,matchups){
 
 function looksLikeDamagedParticipantRow(line,gameCount){
   const tokens=clean(line).split(' ');
-  const numericCount=tokens.reduce((n,token)=>n+(/^\\d+$/.test(token)?1:0),0);
-  return tokens.length>=gameCount+1&&numericCount>=gameCount&&tokens.some(t=>!/^\\d+$/.test(t));
+  const numericCount=tokens.reduce((n,token)=>n+(/^\d+$/.test(token)?1:0),0);
+  return tokens.length>=gameCount+1&&numericCount>=gameCount&&tokens.some(t=>!/^\d+$/.test(t));
 }
 
 function validatePickNumbers(label,pickNumbers,tiebreak,numberToGame,gameCount){
