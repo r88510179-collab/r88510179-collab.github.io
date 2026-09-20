@@ -1,5 +1,5 @@
 import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';
-import {TARGETS,detectWeek,groupPdfTextItems,parseDocumentGroups,chooseBestCandidate,validateConfig} from './parser-core.js?v=3';
+import {TARGETS,detectWeek,groupPdfTextItems,carryForwardWeekHints,parseDocumentGroups,chooseBestCandidate,validateConfig} from './parser-core.js?v=4';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
@@ -18,7 +18,7 @@ function selectedSeason(){const n=Number($('season').value);if(!Number.isInteger
 function message(text,type='info'){$('message').className=`notice ${type}`;$('message').textContent=text;$('message').hidden=!text}
 function fileContextCurrent(file,generation){return !!file&&currentFile===file&&fileGeneration===generation}
 function canPublish(){return !!session&&!!candidate&&scheduleVerified&&candidateFile===currentFile&&candidateFileGeneration===fileGeneration}
-function setBusy(on,text='Working…'){$('busy').hidden=!on;$('busyText').textContent=text;$('parseBtn').disabled=on||!currentFile;$('publishBtn').disabled=on||!canPublish();$('sendCode').disabled=on;$('verifyCode').disabled=on;$('season').disabled=on}
+function setBusy(on,text='Working…'){$('busy').hidden=!on;$('busyText').textContent=text;$('parseBtn').disabled=on||!currentFile;$('publishBtn').disabled=on||!canPublish();$('sendCode').disabled=on;$('verifyCode').disabled=on;$('season').disabled=on;$('detectedWeek').disabled=on;$('tiebreakGame').disabled=on;$('replaceLocked').disabled=on}
 function staleFileError(){const e=new Error('Selected file changed while validation was running.');e.name='StaleFileContext';return e}
 function assertFileContext(file,generation,operation=null){if(!fileContextCurrent(file,generation)||(operation!==null&&operation!==parseGeneration))throw staleFileError()}
 function invalidateParsedState(){candidates=[];candidate=null;scheduleVerified=false;candidateFile=null;candidateFileGeneration=-1;$('review').hidden=true;$('publishResult').hidden=true;$('weekChoice').hidden=true;$('replaceLocked').checked=false;$('publishBtn').disabled=true}
@@ -76,7 +76,7 @@ async function pdfGroups(file){
     const page=await pdf.getPage(n),content=await page.getTextContent(),lines=groupPdfTextItems(content.items),week=lines.map(detectWeek).find(Boolean)||null;
     groups.push({week,lines});
   }
-  return groups;
+  return carryForwardWeekHints(groups);
 }
 async function spreadsheetGroups(file){
   const XLSX=await import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/xlsx.mjs');
@@ -118,7 +118,16 @@ function eventPair(event){const cs=event?.competitions?.[0]?.competitors||[],a=c
 async function verifySchedule(config){
   const url=`${ESPN_SCOREBOARD}?dates=${config.season}&seasontype=2&week=${config.week}&limit=100&_=${Date.now()}`;
   const r=await fetch(url,{cache:'no-store',headers:{Accept:'application/json'}});if(!r.ok)throw new Error(`NFL schedule feed returned ${r.status}`);const j=await r.json();if(!Array.isArray(j.events)||!j.events.length)throw new Error('NFL schedule feed returned no games.');
-  const games=config.games.map((g,i)=>{const matches=j.events.filter(e=>{const p=eventPair(e);return p.away===norm(g.away)&&p.home===norm(g.home)});if(matches.length!==1)throw new Error(`Schedule mismatch for ${g.away} at ${g.home}. Found ${matches.length} matching NFL games.`);const e=matches[0];return{...g,index:i,eventId:String(e.id||''),date:String(e.date||'').slice(0,10)}});
+  const usedEventIds=new Set();
+  const games=config.games.map((g,i)=>{
+    const matches=j.events.filter(e=>{const p=eventPair(e);return p.away===norm(g.away)&&p.home===norm(g.home)});
+    if(matches.length!==1)throw new Error(`Schedule mismatch for ${g.away} at ${g.home}. Found ${matches.length} matching NFL games.`);
+    const e=matches[0],eventId=String(e.id||'');
+    if(!eventId)throw new Error(`Schedule event for ${g.away} at ${g.home} is missing an event ID.`);
+    if(usedEventIds.has(eventId))throw new Error(`Schedule event ${eventId} was matched to more than one pool game.`);
+    usedEventIds.add(eventId);
+    return{...g,index:i,eventId,date:String(e.date||'').slice(0,10)};
+  });
   if(j.events.length<games.length)throw new Error(`NFL feed has ${j.events.length} games but the sheet has ${games.length}.`);
   return{...config,games};
 }
@@ -141,14 +150,15 @@ $('publishBtn').addEventListener('click',async()=>{
   if(!session||session.user?.email?.toLowerCase()!==ADMIN_EMAIL){message('Sign in before publishing.','error');return}
   const publishFile=currentFile,publishGeneration=fileGeneration,publishCandidate=candidate;
   if(!publishCandidate||!scheduleVerified||!fileContextCurrent(publishFile,publishGeneration)||candidateFile!==publishFile||candidateFileGeneration!==publishGeneration){invalidateParsedState();message('The selected file changed or is no longer validated. Read and validate it again before publishing.','error');return}
-  const cfg=structuredClone(publishCandidate.config),errors=validateConfig(cfg);if(errors.length){message(errors.join(' · '),'error');return}
   publishInFlight=true;$('file').disabled=true;setBusy(true,'Publishing and locking week…');message('');
-  const assertPublishContext=()=>{if(!fileContextCurrent(publishFile,publishGeneration)||candidate!==publishCandidate||candidateFile!==publishFile||candidateFileGeneration!==publishGeneration||!scheduleVerified)throw staleFileError()};
+  const cfg=structuredClone(publishCandidate.config),configSnapshot=JSON.stringify(publishCandidate.config),replaceLocked=$('replaceLocked').checked,errors=validateConfig(cfg);
+  const assertPublishContext=()=>{if(!fileContextCurrent(publishFile,publishGeneration)||candidate!==publishCandidate||candidateFile!==publishFile||candidateFileGeneration!==publishGeneration||!scheduleVerified||JSON.stringify(publishCandidate.config)!==configSnapshot)throw staleFileError()};
   try{
+    if(errors.length)throw new Error(errors.join(' · '));
     assertPublishContext();
     const {data:rows,error:readError}=await neon.from('nfl_pool_weeks').select('season,week,status,revision').eq('season',cfg.season).eq('week',cfg.week).limit(1);if(readError)throw readError;assertPublishContext();
     const existing=Array.isArray(rows)&&rows.length?rows[0]:null;
-    if(existing?.status==='locked'&&!$('replaceLocked').checked)throw new Error(`Week ${cfg.week} is already locked. Check “replace locked week” only if you intentionally need to correct it.`);
+    if(existing?.status==='locked'&&!replaceLocked)throw new Error(`Week ${cfg.week} is already locked. Check “replace locked week” only if you intentionally need to correct it.`);
     const digest=await sha256(publishFile);assertPublishContext();const nowIso=new Date().toISOString(),revision=(existing?.revision||0)+1;
     cfg.source={kind:'weekly-upload',filename:publishFile.name,sha256:digest};
     const row={season:cfg.season,week:cfg.week,status:'locked',config:cfg,source_filename:publishFile.name,source_sha256:digest,revision,published_at:nowIso,locked_at:nowIso,updated_at:nowIso};
@@ -158,7 +168,7 @@ $('publishBtn').addEventListener('click',async()=>{
     if(write.error)throw write.error;
     if(fileContextCurrent(publishFile,publishGeneration)){message(`Week ${cfg.week} published and locked successfully. Revision ${revision}.`,'success');$('publishResult').hidden=false;$('trackerLink').href=`../?season=${cfg.season}&week=${cfg.week}`;$('replaceLocked').checked=false}
   }catch(e){
-    if(e?.name==='StaleFileContext'){invalidateParsedState();message('The selected file changed before publishing completed. Validate the current file again.','error')}
+    if(e?.name==='StaleFileContext'){invalidateParsedState();message('The selected file or publish settings changed before publishing completed. Validate the current file again.','error')}
     else message(e.message||String(e),'error')
   }finally{publishInFlight=false;$('file').disabled=false;setBusy(false)}
 });
