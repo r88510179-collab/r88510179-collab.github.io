@@ -90,13 +90,24 @@ a{color:inherit}
 .meta{color:var(--dim);font-size:9px}
 .text-action{border:0;background:none;color:#d84a50;font-size:10px;font-weight:900;cursor:pointer;padding:5px}
 .home-standings{padding:0 12px 12px}
-.home-standing-row{display:grid;grid-template-columns:30px minmax(0,1fr) auto auto;gap:8px;align-items:center;padding:10px 8px;border-top:1px solid #ffffff0c}
+.home-standing-row{display:grid;grid-template-columns:28px minmax(0,1fr) auto minmax(112px,auto);gap:8px;align-items:center;padding:10px 8px;border-top:1px solid #ffffff0c}
 .home-standing-row:first-child{border-top:0}
 .home-standing-row.lead{background:linear-gradient(90deg,#c62b3217,transparent);border-radius:9px}
 .home-rank{color:var(--dim);font-size:11px;font-weight:850}
 .home-entry{font-weight:900;font-size:12px}
 .home-record{font-weight:950;font-variant-numeric:tabular-nums}
 .home-left{color:var(--dim);font-size:9px}
+.home-field{display:flex;flex-direction:column;align-items:flex-end;min-width:0;text-align:right}
+.home-field b{font-size:10px;font-weight:950;color:#eef0f3;font-variant-numeric:tabular-nums}
+.home-field small{margin-top:2px;color:var(--dim);font-size:7px;white-space:nowrap}
+.standings table{min-width:760px}
+.standing-overall{font-weight:950;color:#eef0f3}
+.standing-sub{display:block;margin-top:2px;color:var(--dim);font-size:7px;font-weight:700}
+.field-share{margin-top:4px;color:#8d949d;font-size:7px;font-weight:850;letter-spacing:.02em}
+.field-share.contrarian{color:var(--gold)}
+.field-pct{display:block;margin-top:2px;color:#737b85;font-size:7px;font-weight:850;text-transform:none;letter-spacing:0}
+.root-chip .field-pct{display:inline;margin:0;color:#737b85;font-size:7px}
+.field-unavailable{color:var(--dim);font-style:italic}
 .pulse{padding:0 12px 12px}
 .pulse-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
 .pulse-box{padding:9px;border:1px solid #ffffff10;border-radius:10px;background:#090c11}
@@ -159,7 +170,7 @@ th.c,td.c{text-align:center}
 .impact-grid{grid-column:1/-1}
 .picks{padding-bottom:6px}
 .picks table{min-width:760px}
-.picks th,.picks td{white-space:nowrap;padding:8px;font-size:10px}.matchup-head{min-width:78px}.matchup-team{display:inline-flex;align-items:center;gap:3px}.matchup-slash{display:inline-block;margin:0 3px;color:#50565e}.pick-choice{display:inline-flex;align-items:center;justify-content:center;gap:5px}.pick-team{display:inline-flex;align-items:center;gap:4px;font-weight:950}.pick-result{min-width:10px;font-weight:950}
+.picks th,.picks td{white-space:nowrap;padding:8px;font-size:10px}.matchup-head{min-width:90px;vertical-align:top}.matchup-team{display:inline-flex;align-items:center;gap:3px}.matchup-slash{display:inline-block;margin:0 3px;color:#50565e}.matchup-ownership{display:flex;justify-content:center;gap:10px;margin-top:3px}.matchup-ownership span{color:#737b85;font-size:7px;font-weight:850;text-transform:none;letter-spacing:0}.pick-choice{display:inline-flex;align-items:center;justify-content:center;gap:5px}.pick-team{display:inline-flex;align-items:center;gap:4px;font-weight:950}.pick-result{min-width:10px;font-weight:950}
 .name{position:sticky;left:0;z-index:2;background:#11151b!important;font-weight:900;box-shadow:1px 0 var(--line)}
 .ok{color:var(--green);font-weight:950}.bad{color:#ef6970}.pending{color:#858c95}.neutral{color:var(--gold)}
 .error{margin:7px 0 0;padding:8px;border:1px solid #d52d3459;background:#d52d3412;border-radius:9px;color:#ffb1b5;font-size:9px}
@@ -184,6 +195,7 @@ th.c,td.c{text-align:center}
   .hero-stadium{grid-template-columns:1fr;min-height:0}.hero-nfl-shield{left:16px;top:12px;width:27px;height:27px}.hero-main{padding:47px 17px 16px}.metrics{border-left:0;border-top:1px solid #ffffff12;grid-template-columns:repeat(4,1fr);padding:8px}
   .metric{padding:8px 6px}.metric b{font-size:17px}.metric span{font-size:7px}
   .home-grid,.race-grid{grid-template-columns:1fr}
+  .home-standing-row{grid-template-columns:24px minmax(0,1fr) auto minmax(96px,auto);gap:6px}.home-field small{font-size:6.5px}
   .gamegrid{grid-template-columns:1fr}
   .page-title{padding-top:6px}.page-title p{max-width:92%}
 }
