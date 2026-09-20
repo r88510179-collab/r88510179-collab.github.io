@@ -1,12 +1,13 @@
 'use strict';
-const CACHE='pool-center-shell-v3';
+const CACHE='pool-center-shell-v4';
 const SHELL=[
   './',
   './index.html',
   './style.css?v=premium-v3',
   './slate.css?v=slate-v1',
   './weekly.css?v=premium-v2',
-  './weekly-app.js?v=weekly-v7',
+  './public-math.js?v=1',
+  './weekly-app.js?v=weekly-v8',
   './score-feed-proxy.js?v=1',
   './pwa.js?v=1',
   './manifest.webmanifest',
@@ -16,8 +17,8 @@ const SHELL=[
   './admin/',
   './admin/index.html',
   './admin/admin.css?v=premium-v3',
-  './admin/admin.js?v=5',
-  './admin/parser-core.js?v=5'
+  './admin/admin.js?v=6',
+  './admin/parser-core.js?v=6'
 ];
 self.addEventListener('install',event=>{
   event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)).then(()=>self.skipWaiting()));
