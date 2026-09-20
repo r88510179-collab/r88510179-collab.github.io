@@ -15,7 +15,7 @@ const SHELL=[
   './assets/pool-center-icon-512.svg',
   './admin/',
   './admin/index.html',
-  './admin/admin.css?v=premium-v2',
+  './admin/admin.css?v=premium-v3',
   './admin/admin.js?v=5',
   './admin/parser-core.js?v=5'
 ];
