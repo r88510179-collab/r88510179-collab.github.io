@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
-import {carryForwardWeekHints,parseDocumentGroups,validateConfig} from './parser-core.js';
+import {readFileSync} from 'node:fs';
+
+const parserSource=readFileSync(new URL('./parser-core.js',import.meta.url),'utf8');
+const parserUrl='data:text/javascript;base64,'+Buffer.from(parserSource).toString('base64');
+const {carryForwardWeekHints,parseDocumentGroups,validateConfig}=await import(parserUrl);
 
 const matchups=[
   '1) Panthers at 2) Falcons',
