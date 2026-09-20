@@ -39,7 +39,9 @@ async function staleWhileRevalidate(request){
   const cache=await caches.open(CACHE);
   const cached=await cache.match(request);
   const network=fetch(request).then(response=>{if(response&&response.ok)cache.put(request,response.clone());return response}).catch(()=>null);
-  return cached||network||Response.error();
+  if(cached){network;return cached}
+  const response=await network;
+  return response||Response.error();
 }
 self.addEventListener('fetch',event=>{
   const request=event.request;
