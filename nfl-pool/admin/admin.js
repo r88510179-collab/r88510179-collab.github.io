@@ -1,5 +1,5 @@
 import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';
-import {TARGETS,detectWeek,groupPdfTextItems,carryForwardWeekHints,parseDocumentGroups,chooseBestCandidate,validateConfig} from './parser-core.js?v=5';
+import {TARGETS,detectWeek,groupPdfTextItems,carryForwardWeekHints,parseDocumentGroups,chooseBestCandidate,validateConfig} from './parser-core.js?v=6';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
@@ -73,15 +73,20 @@ async function pdfGroups(file){
   pdfjs.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs';
   const data=new Uint8Array(await file.arrayBuffer()),pdf=await pdfjs.getDocument({data}).promise,groups=[];
   for(let n=1;n<=pdf.numPages;n++){
-    const page=await pdf.getPage(n),content=await page.getTextContent(),lines=groupPdfTextItems(content.items),week=lines.map(detectWeek).find(Boolean)||null;
-    groups.push({week,lines});
+    const page=await pdf.getPage(n),content=await page.getTextContent(),sourceRows=groupPdfTextItems(content.items).map(r=>({...r,kind:'pdf',pageNumber:n})),lines=sourceRows.map(r=>r.text),week=lines.map(detectWeek).find(Boolean)||null;
+    groups.push({week,lines,sourceRows,pageNumber:n,pageFingerprint:lines.join('\n').replace(/\s+/g,' ').trim().toLowerCase()});
   }
   return carryForwardWeekHints(groups);
 }
 async function spreadsheetGroups(file){
   const XLSX=await import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/xlsx.mjs');
   const wb=XLSX.read(await file.arrayBuffer(),{type:'array'}),groups=[];
-  for(const sheetName of wb.SheetNames){const ws=wb.Sheets[sheetName],rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''}),lines=rows.map(row=>row.map(v=>String(v).trim()).filter(Boolean).join(' ')).filter(Boolean),week=detectWeek(sheetName)||lines.map(detectWeek).find(Boolean)||null;groups.push({week,lines})}
+  for(const sheetName of wb.SheetNames){
+    const ws=wb.Sheets[sheetName],rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''});
+    const sourceRows=rows.map((row,i)=>{const cells=row.map(v=>String(v).trim());return{kind:'spreadsheet',sheetName,rowNumber:i+1,cells,text:cells.filter(Boolean).join(' ')}}).filter(r=>r.text);
+    const lines=sourceRows.map(r=>r.text),week=detectWeek(sheetName)||lines.map(detectWeek).find(Boolean)||null;
+    groups.push({week,lines,sourceRows,sheetName});
+  }
   return groups;
 }
 async function fileGroups(file){const ext=file.name.toLowerCase().split('.').pop();if(ext==='pdf'||file.type==='application/pdf')return pdfGroups(file);if(['xlsx','xls','xlsm'].includes(ext))return spreadsheetGroups(file);throw new Error('Use a PDF, XLSX, XLS, or XLSM weekly sheet.')}
