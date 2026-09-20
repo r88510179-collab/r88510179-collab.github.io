@@ -118,8 +118,15 @@ function sourceRowKey(row){
 }
 
 function parseWeekGroup(week,weekGroups,filename,season){
-  const errors=[],fullFieldIssues=[],lines=[],sourceRows=[];
-  for(const group of weekGroups||[]){for(const line of group.lines||[])lines.push(clean(line));for(const row of group.sourceRows||[])sourceRows.push(row)}
+  const errors=[],fullFieldIssues=[],lines=[],sourceRows=[],pageFingerprints=new Set();
+  for(const group of weekGroups||[]){
+    if(group.pageFingerprint){
+      if(pageFingerprints.has(group.pageFingerprint)){fullFieldIssues.push('Duplicate PDF page or repeated source table region detected');continue}
+      pageFingerprints.add(group.pageFingerprint);
+    }
+    for(const line of group.lines||[])lines.push(clean(line));
+    for(const row of group.sourceRows||[])sourceRows.push(row);
+  }
   const seenPair=new Set(),seenTeams=new Set(),matchups=[];
   for(const line of lines){
     const m=matchupFromLine(line);if(!m)continue;if(m.error){errors.push(m.error);continue}
@@ -151,13 +158,6 @@ function parseWeekGroup(week,weekGroups,filename,season){
     if(!target.aliases.some(alias=>exactName(alias)===exactName(parsed.sourceName))){errors.push(target.displayName+': participant identity mismatch');continue}
     errors.push(...validatePickNumbers(target.displayName,parsed.pickNumbers,parsed.tiebreak,numberToGame,gameCount));
     participants.push({id:target.id,displayName:target.displayName,sourceName:parsed.sourceName,pickNumbers:parsed.pickNumbers,tiebreak:parsed.tiebreak});
-  }
-
-  const pageFingerprints=new Set();
-  for(const group of weekGroups||[]){
-    if(!group.pageFingerprint)continue;
-    if(pageFingerprints.has(group.pageFingerprint))fullFieldIssues.push('Duplicate PDF page or repeated source table region detected');
-    pageFingerprints.add(group.pageFingerprint);
   }
 
   const temporary=[],seenSourceKeys=new Set();
