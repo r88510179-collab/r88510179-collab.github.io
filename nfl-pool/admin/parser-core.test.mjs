@@ -90,4 +90,39 @@ function parse(lines){
   assert(errors.includes('Duplicate matchup teams JAX-DEN'));
 }
 
-console.log('parser-core Week 2 hardening regressions passed');
+{
+  const candidate=parse([
+    ...matchups,
+    ...tracked,
+    'Juice 1 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0',
+    'Rosie 500 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 55 0',
+  ]);
+  assert.deepEqual(candidate.errors,[]);
+  assert.equal(candidate.config.competitionSize,6);
+  assert.equal(candidate.config.fieldEntries.length,2);
+  assert.deepEqual(candidate.config.fieldEntries[0].pickNumbers,[1,3,5,7,9,11,13,15,17,19,21,23,25,27,29]);
+  assert.equal(candidate.config.fieldEntries[0].tiebreak,44);
+  assert.equal('displayName' in candidate.config.fieldEntries[0],false);
+  assert.equal('sourceName' in candidate.config.fieldEntries[0],false);
+}
+
+{
+  const candidate=parse([
+    ...matchups,
+    ...tracked,
+    'Broken Entry 1 2 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0',
+  ]);
+  assert(candidate.errors.some(e=>e.startsWith('Broken Entry:')));
+}
+
+{
+  const candidate=parse([...matchups,...tracked,'Anonymous 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0']);
+  const config=structuredClone(candidate.config);
+  config.fieldEntries[0].displayName='Do not persist me';
+  config.competitionSize=999;
+  const errors=validateConfig(config);
+  assert(errors.some(e=>e.includes('names must not be stored')));
+  assert(errors.some(e=>e.includes('Competition size mismatch')));
+}
+
+console.log('parser-core Week 2 hardening + full-field regressions passed');
