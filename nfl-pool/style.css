@@ -67,6 +67,7 @@ a{color:inherit}
   linear-gradient(180deg,#20242b,#0a0d11 72%);
   border-color:#493039
 }
+.hero-stadium:before{content:"";position:absolute;right:4%;top:8%;width:min(240px,30vw);aspect-ratio:1;background:url('assets/pool-center-icon.svg') center/contain no-repeat;opacity:.10;filter:saturate(.7);pointer-events:none}
 .hero-stadium:after{content:"";position:absolute;inset:auto 0 0;height:45%;background:
   linear-gradient(90deg,transparent 49.7%,#c52b3236 50%,transparent 50.3%),
   repeating-linear-gradient(90deg,transparent 0 9.6%,#ffffff0a 9.8% 10%,transparent 10.2% 20%);
