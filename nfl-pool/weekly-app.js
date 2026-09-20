@@ -127,8 +127,8 @@ function fieldRankLabel(metric){if(!metric)return'—';return`${metric.tieCount>
 function ceilingRankLabel(metric){if(!metric)return'—';return`${metric.ceilingTieCount>1?'T-':'#'}${metric.ceilingRank}`}
 function fieldShare(gameIndex,team){
   if(!fieldAvailable())return null;
-  const all=allCompetitionEntries(),count=all.reduce((n,p)=>n+(p.picks[gameIndex]===team?1:0),0),pct=Math.round(count/all.length*100);
-  return{count,total:all.length,pct};
+  const all=allCompetitionEntries(),valid=all.filter(p=>M[gameIndex]?.includes(p.picks[gameIndex])),count=valid.reduce((n,p)=>n+(p.picks[gameIndex]===team?1:0),0),pct=valid.length?Math.round(count/valid.length*100):0;
+  return{count,total:valid.length,denominator:valid.length,pct};
 }
 function fieldShareText(gameIndex,team){
   const share=fieldShare(gameIndex,team);if(!share)return'';
@@ -175,12 +175,12 @@ function render(){
   if(!CFG)return;
   const r=rows(),lead=r[0],f=G.filter(g=>g.completed).length,live=G.filter(g=>g.state==='in'&&!g.completed).length,t=tiebreak(),finalWinners=f===M.length?topIndices(P.map(p=>stats(p).w),t):[],race=raceStatus(),field=fieldSnapshot();
   let rank=1;
-  $('fieldSummary').textContent=field?`${field.size} entries · field names anonymized`:'Full-field data not published for this week';
+  $('fieldSummary').textContent=field?`${field.size} entries · field names anonymized`:'Full-field data unavailable for this week.';
   $('standings').innerHTML=r.map((p,i)=>{
     if(i&&!tiedWith(p,r[i-1],t))rank=i+1;
     const leadTie=tiedWith(p,lead,t),fm=field?.metrics.get(p.id),overall=fm?fieldRankLabel(fm):'—',back=fm?(fm.behind?fm.behind:'—'):'—',ceiling=fm?ceilingRankLabel(fm):'—';
     const overallSub=fm?`<span class="standing-sub">Top ${fm.topPercent}% · ${fm.tieCount>1?`${fm.tieCount} tied`:'solo'}</span>`:'<span class="standing-sub">field unavailable</span>';
-    const ceilingSub=fm?`<span class="standing-sub">${fm.aliveForFirst?'1st still reachable':'best possible'}</span>`:'';
+    const ceilingSub=fm?`<span class="standing-sub">WIN CEILING${t.final?'':' · unresolved tiebreak not projected'}</span>`:'';
     return`<tr class="${leadTie?'leadrow':''}"><td>${rank}</td><td class="entry">${esc(p.name)}</td><td class="c"><span class="standing-overall">${overall}</span>${overallSub}</td><td class="c w">${p.w}</td><td class="c l">${p.l}</td><td class="c">${p.left}</td><td class="c">${back}</td><td class="c"><span class="standing-overall">${ceiling}</span>${ceilingSub}</td><td class="c">${p.mnf}${p.diff!=null?`<span class="standing-sub">Δ ${p.diff}</span>`:''}</td></tr>`;
   }).join('');
 
@@ -189,7 +189,7 @@ function render(){
     $('homeStandings').innerHTML=r.map((p,i)=>{
       if(i&&!tiedWith(p,r[i-1],t))hrank=i+1;
       const leadTie=tiedWith(p,lead,t),fm=field?.metrics.get(p.id);
-      const fieldHtml=fm?`<span class="home-field"><b>${fieldRankLabel(fm)} / ${field.size}</b><small>Top ${fm.topPercent}% · ${fm.behind?`${fm.behind} back`:'field lead'} · max ${ceilingRankLabel(fm)}</small></span>`:`<span class="home-left">${p.left} left</span>`;
+      const fieldHtml=fm?`<span class="home-field"><b>${fieldRankLabel(fm)} / ${field.size}</b><small>Top ${fm.topPercent}% · ${fm.behind?`${fm.behind} back`:'field lead'} · win ceiling ${ceilingRankLabel(fm)}${t.final?'':' · unresolved tiebreak not projected'}</small></span>`:`<span class="home-left">${p.left} left</span>`;
       return`<div class="home-standing-row ${leadTie?'lead':''}"><span class="home-rank">${hrank}</span><span class="home-entry">${esc(p.name)}</span><span class="home-record">${p.w}–${p.l}</span>${fieldHtml}</div>`;
     }).join('');
   }
@@ -211,7 +211,7 @@ function render(){
   }else{
     $('leaderName').textContent=lead?.name||'—';$('leaderRecord').textContent=lead?`${lead.w}–${lead.l}`:'0–0';$('leaderKicker').textContent=f===M.length?'Group winner':'Group leader';
     const fm=lead&&field?field.metrics.get(lead.id):null,ties=lead?r.filter(x=>tiedWith(x,lead,t)).length:0;
-    $('leaderNote').textContent=fm?`Overall ${fieldRankLabel(fm)} of ${field.size} · Top ${fm.topPercent}% · ${fm.behind?`${fm.behind} back`:'at the field lead'} · ceiling ${ceilingRankLabel(fm)}.`:ties>1&&!t.final?`${ties} tracked entries are tied. Full-field data is not published for this week.`:`${f} of ${M.length} games are final. Full-field data is not published for this week.`;
+    $('leaderNote').textContent=fm?`Overall ${fieldRankLabel(fm)} of ${field.size} · Top ${fm.topPercent}% · ${fm.behind?`${fm.behind} back`:'at the field lead'} · win ceiling ${ceilingRankLabel(fm)}${t.final?'.':' · unresolved tiebreak not projected.'}`:ties>1&&!t.final?`${ties} tracked entries are tied. Full-field data is not published for this week.`:`${f} of ${M.length} games are final. Full-field data is not published for this week.`;
   }
   $('bestWins').textContent=field?.bestWins??lead?.w??0;
   const pc=Math.round(f/M.length*100);$('progressText').textContent=`${pc}%`;$('progressBar').style.width=`${pc}%`;
