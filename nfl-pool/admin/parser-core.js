@@ -43,50 +43,8 @@ function matchupFromLine(line){
 function targetMatch(line,target){
   const s=clean(line);
   for(const alias of target.aliases){
-    const m=s.match(new RegExp(`^(${escapeRegex(clean(alias))})(?=\\s+\\d+\\b)\\s+(.*)export const TARGETS=[
-  {id:'dc',displayName:'D.C.',aliases:['D.C.','D.C','DC']},
-  {id:'jc',displayName:'JC',aliases:['JC']},
-  {id:'djs',displayName:'DJS',aliases:['DJS']},
-  {id:'thaddeus',displayName:'Thaddeus',aliases:['Thaddius','Thaddeus']},
-];
-
-const TEAM_ALIASES={
-  cardinals:'ARI',falcons:'ATL',ravens:'BAL',bills:'BUF',panthers:'CAR',bears:'CHI',bengals:'CIN',browns:'CLE',cowboys:'DAL',broncos:'DEN',lions:'DET',packers:'GB',texans:'HOU',colts:'IND',jaguars:'JAX',jags:'JAX',chiefs:'KC',raiders:'LV',chargers:'LAC',rams:'LAR',dolphins:'MIA',vikings:'MIN',patriots:'NE',pats:'NE',saints:'NO',giants:'NYG',jets:'NYJ',eagles:'PHI',steelers:'PIT','49ers':'SF',niners:'SF',seahawks:'SEA',buccaneers:'TB',bucs:'TB',titans:'TEN',commanders:'WAS',washington:'WAS'
-};
-
-const clean=s=>String(s??'').replace(/\s+/g,' ').trim();
-const escapeRegex=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\const clean=s=>String(s??'').replace(/\s+/g,' ').trim();
-const nameKey=s=>clean(s).toLowerCase().replace(/[^a-z0-9]/g,'');');
-
-export function teamAbbr(name){
-  const raw=clean(name).toLowerCase().replace(/[.]/g,'');
-  if(TEAM_ALIASES[raw])return TEAM_ALIASES[raw];
-  for(const [key,val] of Object.entries(TEAM_ALIASES))if(raw.endsWith(key)||raw.includes(` ${key}`))return val;
-  return null;
-}
-
-export function detectWeek(text){const m=clean(text).match(/\bWeek\s+(\d{1,2})\b/i);return m?Number(m[1]):null}
-
-export function carryForwardWeekHints(groups){
-  let active=null;
-  return (groups||[]).map(group=>{
-    if(Number.isInteger(group?.week))active=group.week;
-    return {...group,week:active};
-  });
-}
-
-export function groupPdfTextItems(items){
-  const rows=[];
-  for(const item of items||[]){const text=clean(item?.str);if(!text)continue;const tr=item?.transform||[];const x=Number(tr[4]??0),y=Number(tr[5]??0);let row=rows.find(r=>Math.abs(r.y-y)<=1.5);if(!row){row={y,parts:[]};rows.push(row)}row.parts.push({x,text})}
-  return rows.sort((a,b)=>b.y-a.y).map(r=>r.parts.sort((a,b)=>a.x-b.x).map(p=>p.text).join(' ').replace(/\s+/g,' ').trim()).filter(Boolean);
-}
-
-function matchupFromLine(line){
-  const s=clean(line);const m=s.match(/(?:^|\s)(\d{1,2})\)\s*([A-Za-z0-9 .'-]+?)\s+at\s+(\d{1,2})\)\s*([A-Za-z0-9 .'-]+?)(?=\s*$)/i);
-  if(!m)return null;const awayNumber=Number(m[1]),homeNumber=Number(m[3]),awayName=clean(m[2]),homeName=clean(m[4]),away=teamAbbr(awayName),home=teamAbbr(homeName);if(!away||!home)return{error:`Unknown team name in: ${s}`};return{awayNumber,homeNumber,awayName,homeName,away,home};
-}
-
-,'i'));
+    const pattern='^('+escapeRegex(clean(alias))+')(?=\\s+\\d+\\b)\\s+(.*)$';
+    const m=s.match(new RegExp(pattern,'i'));
     if(!m)continue;
     const nums=(m[2].match(/\b\d+\b/g)||[]).map(Number);
     return{sourceName:m[1],nums};
