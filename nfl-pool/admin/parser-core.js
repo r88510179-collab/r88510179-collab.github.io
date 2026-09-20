@@ -10,7 +10,9 @@ const TEAM_ALIASES={
 };
 
 const clean=s=>String(s??'').replace(/\s+/g,' ').trim();
-const escapeRegex=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+const escapeRegex=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\const clean=s=>String(s??'').replace(/\s+/g,' ').trim();
+const escapeRegex=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');');
+const normalizeTeamCode=x=>{const code=String(x??'').toUpperCase();return({JAC:'JAX',WSH:'WAS'}[code]||code)};
 
 export function teamAbbr(name){
   const raw=clean(name).toLowerCase().replace(/[.]/g,'');
@@ -101,7 +103,7 @@ export function validateConfig(config){
   if(!Number.isInteger(config.tiebreakGameIndex)||config.tiebreakGameIndex<0||config.tiebreakGameIndex>=games.length)errors.push('Invalid tiebreak game');
   const nums=new Map(),teamPairs=new Set();
   games.forEach((g,i)=>{
-    const teamKey=`${g?.away||''}-${g?.home||''}`;
+    const teamKey=`${normalizeTeamCode(g?.away)}-${normalizeTeamCode(g?.home)}`;
     if(teamPairs.has(teamKey))errors.push(`Duplicate matchup teams ${teamKey}`);else teamPairs.add(teamKey);
     for(const n of [g.awayNumber,g.homeNumber]){if(!Number.isInteger(n))errors.push(`Game ${i+1}: invalid number`);else if(nums.has(n))errors.push(`Duplicate number ${n}`);else nums.set(n,i)}
   });
