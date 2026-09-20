@@ -73,6 +73,111 @@ function regularParticipantRow(line,matchups){
   return candidates.length===1?candidates[0]:null;
 }
 
+function median(values){const a=values.slice().sort((x,y)=>x-y),m=Math.floor(a.length/2);return a.length%2?a[m]:(a[m-1]+a[m])/2}
+
+function pdfParticipantGeometry(row,parsed,gameCount){
+  if(!row||row.kind!=='pdf'||!Array.isArray(row.parts)||!parsed)return null;
+  const tokens=[];
+  for(const part of row.parts){
+    const x=Number(part?.x);if(!Number.isFinite(x))continue;
+    for(const token of clean(part?.text).split(' ').filter(Boolean))tokens.push({token,x});
+  }
+  const tailCount=gameCount+2;
+  if(tokens.length<=tailCount)return null;
+  const tail=tokens.slice(-tailCount);
+  if(!tail.every(t=>/^\d+$/.test(t.token)))return null;
+  const expected=[...(parsed.pickNumbers||[]),parsed.tiebreak,parsed.wins].map(String);
+  if(expected.length!==tail.length||tail.some((t,i)=>t.token!==expected[i]))return null;
+  const numericXs=tail.map(t=>t.x),distinct=new Set(numericXs.map(x=>x.toFixed(2))).size;
+  if(distinct<Math.min(6,tailCount))return null;
+  return{nameX:tokens[0]?.x,numericXs};
+}
+
+function pdfHeaderFingerprint(row,ref){
+  if(!row||row.kind!=='pdf'||!Array.isArray(row.parts))return null;
+  const tokens=[];
+  for(const part of row.parts){
+    const x=Number(part?.x);if(!Number.isFinite(x))continue;
+    for(const token of clean(part?.text).split(' ').filter(Boolean))tokens.push({token,x});
+  }
+  const pts=tokens.find(t=>/^pts(?:\/tiebreak)?$/i.test(t.token)),win=tokens.find(t=>/^w$/i.test(t.token));
+  if(!pts||!win)return null;
+  const last=ref.numericXs.length-1;
+  if(Math.abs(pts.x-ref.numericXs[last-1])>8||Math.abs(win.x-ref.numericXs[last])>8)return null;
+  return clean(row.text).toLowerCase();
+}
+
+function pdfTableBoundary(sourceRows,matchups){
+  const pdfRows=(sourceRows||[]).filter(r=>r?.kind==='pdf').slice().sort((a,b)=>(a.pageNumber??0)-(b.pageNumber??0)||(a.rowIndex??0)-(b.rowIndex??0)||Number(b.y??0)-Number(a.y??0));
+  if(!pdfRows.length)return null;
+  const gameCount=matchups.length,records=pdfRows.map(row=>{
+    const parsed=matchupFromLine(row.text)?null:regularParticipantRow(row.text,matchups);
+    return{row,parsed,tracked:parsed?trackedTargetForName(parsed.sourceName):null,geometry:parsed?pdfParticipantGeometry(row,parsed,gameCount):null};
+  });
+  const trackedRecords=records.filter(r=>r.tracked);
+  const issues=[];
+  if(trackedRecords.length!==TARGETS.length){issues.push('PDF regular participant table could not be anchored to all tracked entries');return{accepted:new Set(),records,issues};}
+  const geometries=trackedRecords.map(r=>r.geometry);
+  if(geometries.some(g=>!g)){issues.push('PDF regular participant table column geometry could not be proven');return{accepted:new Set(),records,issues};}
+  const nameXs=geometries.map(g=>g.nameX),nameSpread=Math.max(...nameXs)-Math.min(...nameXs);
+  const columnXs=Array.from({length:gameCount+2},(_,i)=>geometries.map(g=>g.numericXs[i]));
+  if(nameSpread>14||columnXs.some(xs=>Math.max(...xs)-Math.min(...xs)>8)){
+    issues.push('PDF regular participant table geometry is inconsistent across tracked entries');return{accepted:new Set(),records,issues};
+  }
+  const ref={nameX:median(nameXs),numericXs:columnXs.map(median)};
+  const matchesGeometry=record=>{
+    const g=record.geometry;if(!g)return false;
+    if(Math.abs(g.nameX-ref.nameX)>14)return false;
+    return g.numericXs.every((x,i)=>Math.abs(x-ref.numericXs[i])<=8);
+  };
+  records.forEach(r=>{r.geometryMatch=!!(r.parsed&&matchesGeometry(r));});
+
+  const pageMap=new Map();
+  for(const record of records){const p=record.row.pageNumber??0;if(!pageMap.has(p))pageMap.set(p,[]);pageMap.get(p).push(record)}
+  const runs=[];
+  for(const [page,pageRecords] of [...pageMap.entries()].sort((a,b)=>a[0]-b[0])){
+    pageRecords.sort((a,b)=>(a.row.rowIndex??0)-(b.row.rowIndex??0)||Number(b.row.y??0)-Number(a.row.y??0));
+    let current=null;
+    pageRecords.forEach((record,pos)=>{
+      if(record.geometryMatch){
+        if(!current){current={page,records:[],startPos:pos,endPos:pos,pageSize:pageRecords.length};runs.push(current)}
+        current.records.push(record);current.endPos=pos;
+      }else current=null;
+    });
+  }
+  const anchorRuns=runs.filter(run=>run.records.some(r=>r.tracked)).sort((a,b)=>a.page-b.page||a.startPos-b.startPos);
+  if(!anchorRuns.length){issues.push('PDF regular participant table region could not be anchored');return{accepted:new Set(),records,issues};}
+  const seed=anchorRuns[0],acceptedRuns=new Set([seed]);
+  const pageRuns=new Map();for(const run of runs){if(!pageRuns.has(run.page))pageRuns.set(run.page,[]);pageRuns.get(run.page).push(run)}
+  const headerBefore=run=>{
+    const pageRecords=pageMap.get(run.page)||[];
+    for(let i=run.startPos-1;i>=Math.max(0,run.startPos-4);i--){const fingerprint=pdfHeaderFingerprint(pageRecords[i]?.row,ref);if(fingerprint)return fingerprint}
+    return null;
+  };
+  const headerFingerprint=anchorRuns.map(headerBefore).find(Boolean)||null;
+  const hasMatchingHeader=run=>!!headerFingerprint&&headerBefore(run)===headerFingerprint;
+  const strictEdgeContinuation=(prev,next)=>prev.endPos===prev.pageSize-1&&next.startPos<=1&&next.records.length>=2;
+  const canContinue=(prev,next)=>next.page===prev.page+1&&(hasMatchingHeader(next)||strictEdgeContinuation(prev,next));
+
+  let frontier=seed;
+  while(frontier){
+    const nextPage=frontier.page+1,candidates=(pageRuns.get(nextPage)||[]).filter(run=>canContinue(frontier,run));
+    if(candidates.length!==1)break;
+    frontier=candidates[0];acceptedRuns.add(frontier);
+  }
+  frontier=seed;
+  while(frontier){
+    const prevPage=frontier.page-1,candidates=(pageRuns.get(prevPage)||[]).filter(run=>canContinue(run,frontier));
+    if(candidates.length!==1)break;
+    frontier=candidates[0];acceptedRuns.add(frontier);
+  }
+  if(anchorRuns.some(run=>!acceptedRuns.has(run)))issues.push('Tracked entries do not form one continuous PDF participant-table chain');
+  const accepted=new Set();for(const run of acceptedRuns)for(const record of run.records)accepted.add(sourceRowKey(record.row));
+  const outside=records.filter(r=>r.parsed&&!r.tracked&&!accepted.has(sourceRowKey(r.row)));
+  if(outside.length)issues.push('Participant-shaped PDF row exists outside the proven regular participant table');
+  return{accepted,records,issues};
+}
+
 function spreadsheetContract(sourceRows,gameCount){
   const header=(sourceRows||[]).find(r=>r&&r.kind==='spreadsheet'&&Array.isArray(r.cells)&&r.cells.some(c=>/^pts(?:\/tiebreak)?$/i.test(clean(c)))&&r.cells.some(c=>/^w$/i.test(clean(c))));
   if(!header)return null;
@@ -141,8 +246,10 @@ function parseWeekGroup(week,weekGroups,filename,season){
 
   const sourceByText=new Map();
   for(const row of sourceRows){const t=clean(row.text);if(t&&!sourceByText.has(t))sourceByText.set(t,[]);if(t)sourceByText.get(t).push(row)}
-  const sheetContract=spreadsheetContract(sourceRows,gameCount);
-  if(sourceRows.some(r=>r.kind==='spreadsheet')&&!sheetContract)fullFieldIssues.push('Spreadsheet regular-pool headers could not be proven');
+  const sheetContract=spreadsheetContract(sourceRows,gameCount),hasSpreadsheet=sourceRows.some(r=>r.kind==='spreadsheet'),hasPdf=sourceRows.some(r=>r.kind==='pdf');
+  if(hasSpreadsheet&&!sheetContract)fullFieldIssues.push('Spreadsheet regular-pool headers could not be proven');
+  const pdfBoundary=hasPdf?pdfTableBoundary(sourceRows,matchups):null;
+  if(pdfBoundary)fullFieldIssues.push(...pdfBoundary.issues);
   const parseLine=line=>{
     const matches=sourceByText.get(clean(line))||[];
     if(sheetContract&&matches.length===1&&matches[0].kind==='spreadsheet')return spreadsheetParticipantRow(matches[0],sheetContract,matchups);
@@ -161,19 +268,33 @@ function parseWeekGroup(week,weekGroups,filename,season){
   }
 
   const temporary=[],seenSourceKeys=new Set();
+  const considerRow=(row,parsed)=>{
+    if(!parsed||trackedTargetForName(parsed.sourceName))return;
+    const rowErrors=validatePickNumbers('Anonymous field entry',parsed.pickNumbers,parsed.tiebreak,numberToGame,gameCount);
+    if(rowErrors.length){fullFieldIssues.push('An anonymous regular-pool entry failed pick validation');return}
+    const key=sourceRowKey(row);
+    if(seenSourceKeys.has(key)){fullFieldIssues.push('Duplicate source participant row detected');return}
+    seenSourceKeys.add(key);
+    temporary.push({sourceName:parsed.sourceName,pickNumbers:parsed.pickNumbers,tiebreak:parsed.tiebreak});
+  };
+
+  if(hasPdf){
+    const accepted=pdfBoundary?.accepted||new Set();
+    for(const row of sourceRows){
+      if(row?.kind!=='pdf'||!accepted.has(sourceRowKey(row)))continue;
+      considerRow(row,regularParticipantRow(row.text,matchups));
+    }
+  }else if(hasSpreadsheet){
+    for(const row of sourceRows){if(row?.kind!=='spreadsheet')continue;considerRow(row,spreadsheetParticipantRow(row,sheetContract,matchups))}
+  }else{
+    fullFieldIssues.push('Regular participant-table source region could not be proven');
+  }
+
   for(const line of lines){
     if(matchupFromLine(line))continue;
     if(TARGETS.some(target=>targetRowIdentity(line,target)))continue;
     const row=parseLine(line);
-    if(!row){if(looksLikeDamagedParticipantRow(line,gameCount))fullFieldIssues.push('A supposed regular-pool participant row is structurally invalid');continue}
-    if(trackedTargetForName(row.sourceName))continue;
-    const rowErrors=validatePickNumbers('Anonymous field entry',row.pickNumbers,row.tiebreak,numberToGame,gameCount);
-    if(rowErrors.length){fullFieldIssues.push('An anonymous regular-pool entry failed pick validation');continue}
-    const matches=sourceByText.get(clean(line))||[];
-    const key=matches.length===1?sourceRowKey(matches[0]):'text:'+clean(line);
-    if(seenSourceKeys.has(key)){fullFieldIssues.push('Duplicate source participant row detected');continue}
-    seenSourceKeys.add(key);
-    temporary.push({sourceName:row.sourceName,pickNumbers:row.pickNumbers,tiebreak:row.tiebreak});
+    if(!row&&looksLikeDamagedParticipantRow(line,gameCount))fullFieldIssues.push('A supposed regular-pool participant row is structurally invalid');
   }
   if(!temporary.length)fullFieldIssues.push('No validated anonymous regular-pool entries were found');
 
@@ -182,7 +303,7 @@ function parseWeekGroup(week,weekGroups,filename,season){
   const games=matchups.map((g,index)=>({index,awayNumber:g.awayNumber,homeNumber:g.homeNumber,away:g.away,home:g.home,awayName:g.awayName,homeName:g.homeName}));
   const config={schemaVersion:1,season,week,label:'Week '+week,tiePoints:0,tiebreakGameIndex:Math.max(0,games.length-1),games,participants,fullFieldReady,fullFieldValidationVersion:2,source:{kind:'weekly-upload',filename}};
   if(fullFieldReady){config.fieldEntries=fieldEntries;config.fullFieldEntryCount=fieldEntries.length;config.competitionSize=participants.length+fieldEntries.length}
-  return{week,gameCount,errors,fullFieldIssues,competitionSize:fullFieldReady?config.competitionSize:participants.length,config};
+  return{week,gameCount,errors,fullFieldIssues:[...new Set(fullFieldIssues)],competitionSize:fullFieldReady?config.competitionSize:participants.length,config};
 }
 
 export function parseDocumentGroups(groups,{filename='weekly-picks',season=2026}={}){

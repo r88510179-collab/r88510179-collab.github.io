@@ -19,11 +19,25 @@ const tracked=[
 const anonA='Alpha 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0';
 const anonB='Beta 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 55 0';
 
-function parse(lines,extra={}){
-  return parseDocumentGroups([{week:2,lines,...extra}],{filename:'fixture.pdf',season:2026})[0];
+function participantTail(line){
+  const tokens=String(line).trim().split(/\s+/),tail=tokens.slice(-17);
+  return tail.length===17&&tail.every(t=>/^\d+$/.test(t));
 }
 function sourceRows(lines,page=1){
-  return lines.map((text,rowIndex)=>({kind:'pdf',pageNumber:page,y:700-rowIndex*10,rowIndex,text,parts:[{x:10,text}]}));
+  return lines.map((text,rowIndex)=>{
+    const tokens=String(text).trim().split(/\s+/);
+    const parts=participantTail(text)
+      ?[{x:10,text:tokens.slice(0,-17).join(' ')},...tokens.slice(-17).map((token,i)=>({x:160+i*24,text:token}))]
+      :[{x:10,text}];
+    return{kind:'pdf',pageNumber:page,y:760-rowIndex*12,rowIndex,text,parts};
+  });
+}
+function parse(lines,extra={}){
+  const page=extra.pageNumber||1,rows=extra.sourceRows||sourceRows(lines,page),pageFingerprint=extra.pageFingerprint||lines.join('\n').replace(/\s+/g,' ').trim().toLowerCase();
+  return parseDocumentGroups([{week:2,lines,sourceRows:rows,pageNumber:page,pageFingerprint,...extra}],{filename:'fixture.pdf',season:2026})[0];
+}
+function pdfGroup(lines,page){
+  return{week:2,lines,sourceRows:sourceRows(lines,page),pageNumber:page,pageFingerprint:`page-${page}-${lines.join('|')}`};
 }
 
 {
@@ -124,4 +138,51 @@ function sourceRows(lines,page=1){
   assert(validateConfig(cfg).some(e=>e.includes('not exactly one pick per game')));
 }
 
-console.log('parser-core regular-pool boundary, fail-closed field, duplicate, and privacy regressions passed');
+
+{
+  const c=parse([...matchups,...tracked,anonA,'SECONDARY RESULTS','Survivor Results 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 51 0']);
+  assert.deepEqual(c.errors,[]);
+  assert.equal(c.config.participants.length,4);
+  assert.equal(c.config.fullFieldReady,false);
+  assert.equal(c.competitionSize,4);
+  assert.equal(c.config.fieldEntries,undefined);
+  assert(c.fullFieldIssues.some(x=>x.includes('outside the proven regular participant table')));
+}
+{
+  const c=parse([...matchups,...tracked,anonA,'SURVIVOR SECTION','Survivor Results 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 51 0']);
+  assert.equal(c.config.fullFieldReady,false);
+  assert.equal(c.config.fieldEntries,undefined);
+  assert.equal(JSON.stringify(c.config).toLowerCase().includes('survivor'),false);
+}
+{
+  const page1=[...matchups,'PICKEM ENTRIES',tracked[0],tracked[1],anonA];
+  const page2=['PICKEM ENTRIES CONTINUED',tracked[2],tracked[3],anonB];
+  const c=parseDocumentGroups([pdfGroup(page1,1),pdfGroup(page2,2)],{filename:'continuation.pdf',season:2026})[0];
+  assert.deepEqual(c.errors,[]);
+  assert.deepEqual(c.fullFieldIssues,[]);
+  assert.equal(c.config.fullFieldReady,true);
+  assert.equal(c.config.fieldEntries.length,2);
+  assert.equal(c.config.competitionSize,6);
+}
+{
+  const c=parse([...matchups,...tracked,anonA,'OTHER WEEKLY CONTEST','Contest Leader 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 60 0']);
+  assert.equal(c.config.fullFieldReady,false);
+  assert.equal(c.competitionSize,4);
+  assert.equal(c.config.fieldEntries,undefined);
+}
+{
+  const header=['Entry',...Array.from({length:15},(_,i)=>`Pick${i+1}`),'Pts','W'];
+  const rows=[['Week 2'],...matchups.map(line=>[line]),header,...[...tracked,anonA].map(line=>{
+    const tokens=line.split(/\s+/),tail=tokens.slice(-17),name=tokens.slice(0,-17).join(' ');
+    return[name,...tail];
+  })];
+  const sheetRows=rows.map((cells,i)=>({kind:'spreadsheet',sheetName:'Week 2',rowNumber:i+1,cells,text:cells.filter(Boolean).join(' ')}));
+  const c=parseDocumentGroups([{week:2,lines:sheetRows.map(r=>r.text),sourceRows:sheetRows,sheetName:'Week 2'}],{filename:'fixture.xlsx',season:2026})[0];
+  assert.deepEqual(c.errors,[]);
+  assert.deepEqual(c.fullFieldIssues,[]);
+  assert.equal(c.config.fullFieldReady,true);
+  assert.equal(c.config.competitionSize,5);
+  assert.equal(Object.keys(c.config.fieldEntries[0]).sort().join(','),'id,pickNumbers,tiebreak');
+}
+
+console.log('parser-core regular-table region, continuation, fail-closed field, duplicate, and privacy regressions passed');

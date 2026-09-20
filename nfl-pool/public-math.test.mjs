@@ -59,8 +59,12 @@ import {competitionRanks,ownershipShare,scoreEntry,tiebreakState} from './public
   assert(source.includes('WIN CEILING'));
   assert(source.includes('unresolved tiebreak not projected'));
   assert(!source.includes("'best possible'"));
-  assert(source.includes('const swings=swingIndexes(true,games)'));
-  assert(source.includes('P.map('));
+  const scenarioStart=source.indexOf('function swingIndexes');
+  const scenarioEnd=source.indexOf('function renderRace',scenarioStart);
+  assert(scenarioStart>=0&&scenarioEnd>scenarioStart,'tracked scenario/race block must be identifiable');
+  const scenarioBlock=source.slice(scenarioStart,scenarioEnd);
+  assert.match(scenarioBlock,/\\bP\\.(?:map|forEach)\\b/,'scenario engine must operate on tracked P entries');
+  assert.doesNotMatch(scenarioBlock,/\\bF\\b|allCompetitionEntries\\s*\\(|rankCompetition\\s*\\(|fieldSnapshot\\s*\\(/,'anonymous full-field entries must not enter the tracked scenario/race engine');
 }
 
-console.log('public competition rank, tiebreak, ownership denominator, and ceiling wording regressions passed');
+console.log('public competition rank, tiebreak, ownership denominator, tracked scenario scope, and ceiling wording regressions passed');
