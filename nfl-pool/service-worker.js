@@ -28,7 +28,10 @@ self.addEventListener('activate',event=>{
 async function networkFirst(request,fallback){
   try{
     const response=await fetch(request);
-    if(response&&response.ok){const cache=await caches.open(CACHE);cache.put(request,response.clone())}
+    if(response&&response.ok){
+      const cache=await caches.open(CACHE);
+      await cache.put(request,response.clone());
+    }
     return response;
   }catch(err){
     const cached=await caches.match(request);
@@ -37,25 +40,17 @@ async function networkFirst(request,fallback){
     throw err;
   }
 }
-async function staleWhileRevalidate(request){
-  const cache=await caches.open(CACHE);
-  const cached=await cache.match(request);
-  const network=fetch(request).then(response=>{if(response&&response.ok)cache.put(request,response.clone());return response}).catch(()=>null);
-  if(cached){network;return cached}
-  const response=await network;
-  return response||Response.error();
-}
 self.addEventListener('fetch',event=>{
   const request=event.request;
   if(request.method!=='GET')return;
   const url=new URL(request.url);
   if(url.origin!==self.location.origin)return;
   if(request.mode==='navigate'){
-    const fallback=url.pathname.includes('/admin/')?'./admin/index.html':'./index.html';
+    const fallback=/\/nfl-pool\/admin(?:\/|$)/.test(url.pathname)?'./admin/index.html':'./index.html';
     event.respondWith(networkFirst(request,fallback));
     return;
   }
   if(/\.(?:css|js|svg|webmanifest)$/i.test(url.pathname)||url.pathname.endsWith('/')){
-    event.respondWith(staleWhileRevalidate(request));
+    event.respondWith(networkFirst(request));
   }
 });
