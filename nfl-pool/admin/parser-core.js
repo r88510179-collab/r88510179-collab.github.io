@@ -10,8 +10,7 @@ const TEAM_ALIASES={
 };
 
 const clean=s=>String(s??'').replace(/\s+/g,' ').trim();
-const escapeRegex=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\const clean=s=>String(s??'').replace(/\s+/g,' ').trim();
-const escapeRegex=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');');
+const escapeRegex=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 const normalizeTeamCode=x=>{const code=String(x??'').toUpperCase();return({JAC:'JAX',WSH:'WAS'}[code]||code)};
 
 export function teamAbbr(name){
