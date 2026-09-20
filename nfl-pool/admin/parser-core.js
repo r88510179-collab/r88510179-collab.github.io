@@ -125,6 +125,7 @@ function validatePickNumbers(label,pickNumbers,tiebreak,numberToGame,gameCount){
 function numericDensity(row){const tokens=tokenMeta(row);return tokens.reduce((n,t)=>n+(integerToken(t.text)!==null?1:0),0)}
 function isExplicitSurvivorBoundary(row){return /\bsurvivor\b/i.test(rowText(row))}
 function isBenignTableText(row){const s=rowText(row);return !s||/\bweek\s+\d+\b/i.test(s)||/\bpts\b/i.test(s)&&/\bw\b/i.test(s)||/^page\s+\d+/i.test(s)}
+function hasRegularPdfHeader(rows){return rows.some(row=>/\bpts\b/i.test(rowText(row))&&/\bw\b/i.test(rowText(row)))}
 function sourceLocator(row){
   if(rowKind(row)==='pdf')return`pdf:${row.pageNumber??'?'}:${row.rowIndex??'?'}:${Number.isFinite(row.y)?row.y.toFixed(2):'?'}`;
   if(rowKind(row)==='spreadsheet')return`sheet:${row.sheetName??'?'}:${row.rowNumber??row.rowIndex??'?'}`;
@@ -149,8 +150,9 @@ function spreadsheetContract(rows,gameCount){
     if(pts<gameCount||w!==pts+1)return;
     const pickStart=pts-gameCount;
     if(pickStart<1)return;
-    const trailing=cells.slice(w+1).filter(Boolean);
-    headers.push({index:i,pickStart,pickColumns:Array.from({length:gameCount},(_,n)=>pickStart+n),ptsColumn:pts,wColumn:w,trailing,explicitSurvivor:trailing.length>0&&trailing.every(x=>/survivor/i.test(x))});
+    const trailing=cells.slice(w+1).filter(Boolean),explicitSurvivor=trailing.length>0&&trailing.every(x=>/survivor/i.test(x));
+    if(trailing.length&&!explicitSurvivor)return;
+    headers.push({index:i,pickStart,pickColumns:Array.from({length:gameCount},(_,n)=>pickStart+n),ptsColumn:pts,wColumn:w,trailing,explicitSurvivor});
   });
   return headers.length===1?headers[0]:null;
 }
@@ -186,6 +188,7 @@ function buildFullField(rows,matchups,trackedRows,sourceGroups){
   const isSheet=spreadsheetRows.length>0;
   const sheetContract=isSheet?spreadsheetContract(rows,gameCount):null;
   if(isSheet&&!sheetContract)errors.push('regular competition spreadsheet columns could not be established');
+  if(!isSheet&&!hasRegularPdfHeader(rows))errors.push('regular weekly PDF table contract could not be established (Pts/W header missing)');
 
   const trackedParsed=[];
   for(const {row,parsed} of trackedRows)if(parsed?.status==='valid')trackedParsed.push(parsed);
