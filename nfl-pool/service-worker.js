@@ -1,12 +1,12 @@
 'use strict';
-const CACHE='pool-center-shell-v1';
+const CACHE='pool-center-shell-v2';
 const SHELL=[
   './',
   './index.html',
-  './style.css?v=premium-v1',
+  './style.css?v=premium-v2',
   './slate.css?v=slate-v1',
-  './weekly.css?v=premium-v1',
-  './weekly-app.js?v=weekly-v5',
+  './weekly.css?v=premium-v2',
+  './weekly-app.js?v=weekly-v6',
   './score-feed-proxy.js?v=1',
   './pwa.js?v=1',
   './manifest.webmanifest',
@@ -15,7 +15,7 @@ const SHELL=[
   './assets/pool-center-icon-512.svg',
   './admin/',
   './admin/index.html',
-  './admin/admin.css?v=premium-v1',
+  './admin/admin.css?v=premium-v2',
   './admin/admin.js?v=4',
   './admin/parser-core.js?v=4'
 ];
