@@ -1,5 +1,5 @@
 import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';
-import {TARGETS,detectWeek,groupPdfTextItems,carryForwardWeekHints,parseDocumentGroups,chooseBestCandidate,validateConfig} from './parser-core.js?v=5';
+import {TARGETS,detectWeek,groupPdfTextItems,carryForwardWeekHints,parseDocumentGroups,chooseBestCandidate,validateConfig} from './parser-core.js?v=6';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
@@ -73,15 +73,20 @@ async function pdfGroups(file){
   pdfjs.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs';
   const data=new Uint8Array(await file.arrayBuffer()),pdf=await pdfjs.getDocument({data}).promise,groups=[];
   for(let n=1;n<=pdf.numPages;n++){
-    const page=await pdf.getPage(n),content=await page.getTextContent(),lines=groupPdfTextItems(content.items),week=lines.map(detectWeek).find(Boolean)||null;
-    groups.push({week,lines});
+    const page=await pdf.getPage(n),content=await page.getTextContent(),rows=groupPdfTextItems(content.items,{pageNumber:n}),lines=rows.map(r=>r.text),week=lines.map(detectWeek).find(Boolean)||null;
+    groups.push({sourceType:'pdf',pageNumber:n,pageFingerprint:lines.join('\n'),week,rows});
   }
   return carryForwardWeekHints(groups);
 }
 async function spreadsheetGroups(file){
   const XLSX=await import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/xlsx.mjs');
   const wb=XLSX.read(await file.arrayBuffer(),{type:'array'}),groups=[];
-  for(const sheetName of wb.SheetNames){const ws=wb.Sheets[sheetName],rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''}),lines=rows.map(row=>row.map(v=>String(v).trim()).filter(Boolean).join(' ')).filter(Boolean),week=detectWeek(sheetName)||lines.map(detectWeek).find(Boolean)||null;groups.push({week,lines})}
+  for(const sheetName of wb.SheetNames){
+    const ws=wb.Sheets[sheetName],raw=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''});
+    const rows=raw.map((cells,i)=>{const normalized=cells.map(v=>String(v??'').trim()),text=normalized.filter(Boolean).join(' ');return{kind:'spreadsheet',sheetName,rowNumber:i+1,cells:normalized,text}}).filter(r=>r.text);
+    const week=detectWeek(sheetName)||rows.map(detectWeek).find(Boolean)||null;
+    groups.push({sourceType:'spreadsheet',sheetName,week,rows});
+  }
   return groups;
 }
 async function fileGroups(file){const ext=file.name.toLowerCase().split('.').pop();if(ext==='pdf'||file.type==='application/pdf')return pdfGroups(file);if(['xlsx','xls','xlsm'].includes(ext))return spreadsheetGroups(file);throw new Error('Use a PDF, XLSX, XLS, or XLSM weekly sheet.')}
@@ -97,7 +102,7 @@ $('parseBtn').addEventListener('click',async()=>{
     const selected=chooseBestCandidate(localCandidates);assertFileContext(sourceFile,sourceGeneration,operation);
     candidates=localCandidates;candidate=selected;candidateFile=sourceFile;candidateFileGeneration=sourceGeneration;renderCandidateSelector(valid,sourceFile,sourceGeneration);
     await prepareCandidate(candidate,sourceFile,sourceGeneration,operation);assertFileContext(sourceFile,sourceGeneration,operation);
-    message(`Week ${candidate.week} parsed with ${candidate.config.competitionSize||candidate.config.participants.length} competition entries and matched to the NFL schedule. Review it before publishing.`,'success');
+    message(candidate.config.fullFieldReady===true?`Week ${candidate.week} parsed with ${candidate.config.competitionSize} validated regular-pool entries and matched to the NFL schedule. Review it before publishing.`:`Week ${candidate.week} tracked entries are valid and matched to the NFL schedule. Full-field metrics are unavailable because the regular competition field could not be validated.`,'success');
   }catch(e){
     if(e?.name==='StaleFileContext')return;
     if(fileContextCurrent(sourceFile,sourceGeneration)&&operation===parseGeneration){message(e.message||String(e),'error');invalidateParsedState()}
@@ -105,7 +110,7 @@ $('parseBtn').addEventListener('click',async()=>{
 });
 
 function renderCandidateSelector(valid,sourceFile,sourceGeneration){
-  const sel=$('detectedWeek');sel.innerHTML=valid.map(c=>`<option value="${c.week}">Week ${c.week} · ${c.gameCount} games · ${c.config.competitionSize||c.config.participants.length} entries</option>`).join('');sel.value=String(candidate.week);$('weekChoice').hidden=valid.length<2;
+  const sel=$('detectedWeek');sel.innerHTML=valid.map(c=>`<option value="${c.week}">Week ${c.week} · ${c.gameCount} games · ${c.config.fullFieldReady===true?`${c.config.competitionSize} validated entries`:'4 tracked · field unavailable'}</option>`).join('');sel.value=String(candidate.week);$('weekChoice').hidden=valid.length<2;
   sel.onchange=async()=>{
     assertFileContext(sourceFile,sourceGeneration);const operation=++parseGeneration;candidate=valid.find(c=>c.week===Number(sel.value));candidateFile=sourceFile;candidateFileGeneration=sourceGeneration;scheduleVerified=false;$('publishBtn').disabled=true;setBusy(true,'Checking NFL schedule…');message('');
     try{await prepareCandidate(candidate,sourceFile,sourceGeneration,operation);assertFileContext(sourceFile,sourceGeneration,operation);message(`Week ${candidate.week} selected and verified.`,'success')}
@@ -141,8 +146,10 @@ function renderReview(){
   $('gameReview').innerHTML=cfg.games.map((g,i)=>`<tr><td>${i+1}</td><td><b>${g.awayNumber}</b> ${esc(g.awayName||g.away)}</td><td>at</td><td><b>${g.homeNumber}</b> ${esc(g.homeName||g.home)}</td><td>${esc(g.date||'—')}</td></tr>`).join('');
   $('entryReview').innerHTML=cfg.participants.map(p=>`<tr><td>${esc(p.displayName)}</td><td class="nums">${p.pickNumbers.join(' ')}</td><td><b>${p.tiebreak}</b></td></tr>`).join('');
   const tb=$('tiebreakGame');tb.innerHTML=cfg.games.map((g,i)=>`<option value="${i}">${i+1}. ${g.away} at ${g.home}</option>`).join('');tb.value=String(cfg.tiebreakGameIndex);tb.onchange=()=>{cfg.tiebreakGameIndex=Number(tb.value)};
-  const fieldWarning=cfg.fieldIssueCount?`<span class="field-warn">⚠ ${cfg.fieldIssueCount} anonymous field row${cfg.fieldIssueCount===1?'':'s'} contain ${cfg.fieldInvalidPickCount||0} invalid pick cell${cfg.fieldInvalidPickCount===1?'':'s'} · those cells score 0</span>`:'<span class="check">✓ Full-field picks complete</span>';
-  $('validation').innerHTML=scheduleVerified?`<span class="check">✓ Tracked picks valid</span><span class="check">✓ Four tracked entries found</span><span class="check">✓ ${cfg.competitionSize||cfg.participants.length} competition entries captured</span><span class="check">✓ Other names excluded from stored config</span>${fieldWarning}<span class="check">✓ NFL schedule matched</span>`:'<span class="bad">Schedule verification required</span>';
+  const fieldStatus=cfg.fullFieldReady===true
+    ?'<span class="check">✓ Regular Pick\'em full field validated</span><span class="check">✓ Anonymous field entries contain only id, pickNumbers and tiebreak</span>'
+    :'<span class="field-warn">⚠ Full-field metrics unavailable — regular competition field could not be validated. The four tracked entries remain valid.</span>';
+  $('validation').innerHTML=scheduleVerified?`<span class="check">✓ Tracked picks valid</span><span class="check">✓ Four tracked entries found</span>${cfg.fullFieldReady===true?`<span class="check">✓ ${cfg.competitionSize} regular Pick\'em entries captured</span>`:''}${fieldStatus}<span class="check">✓ NFL schedule matched</span>`:'<span class="bad">Schedule verification required</span>';
   $('publishBtn').disabled=!canPublish();
 }
 
