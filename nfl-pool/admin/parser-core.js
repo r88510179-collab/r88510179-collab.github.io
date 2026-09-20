@@ -12,6 +12,7 @@ const TEAM_ALIASES={
 const clean=s=>String(s??'').replace(/\s+/g,' ').trim();
 const escapeRegex=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 const normalizeTeamCode=x=>{const code=String(x??'').toUpperCase();return({JAC:'JAX',WSH:'WAS'}[code]||code)};
+const exactName=s=>clean(s).toLowerCase();
 
 export function teamAbbr(name){
   const raw=clean(name).toLowerCase().replace(/[.]/g,'');
@@ -53,6 +54,34 @@ function targetMatch(line,target){
   return null;
 }
 
+function trackedTargetForName(name){
+  const n=exactName(name);
+  return TARGETS.find(target=>target.aliases.some(alias=>exactName(alias)===n))||null;
+}
+
+function trailingParticipantRow(line,fieldCount){
+  const s=clean(line),tokens=s.split(' ');
+  if(tokens.length<fieldCount+1)return null;
+  const start=tokens.length-fieldCount,numeric=tokens.slice(start);
+  if(!numeric.every(token=>/^\d+$/.test(token)))return null;
+  const sourceName=clean(tokens.slice(0,start).join(' '));
+  if(!sourceName)return null;
+  return{sourceName,nums:numeric.map(Number)};
+}
+
+function validatePickNumbers(label,pickNumbers,tiebreak,numberToGame,gameCount){
+  const errors=[],seenGames=new Set();
+  for(const n of pickNumbers){
+    const gi=numberToGame.get(n);
+    if(gi===undefined)errors.push(`${label}: pick ${n} is not in the matchup key`);
+    else if(seenGames.has(gi))errors.push(`${label}: two picks in matchup ${gi+1}`);
+    else seenGames.add(gi);
+  }
+  if(seenGames.size!==gameCount)errors.push(`${label}: expected ${gameCount} unique game picks, found ${seenGames.size}`);
+  if(!Number.isInteger(tiebreak))errors.push(`${label}: missing tiebreak total`);
+  return errors;
+}
+
 function parseWeekGroup(week,lines,filename,season){
   const errors=[],seenPair=new Set(),seenTeams=new Set(),matchups=[];
   for(const line of lines){
@@ -67,6 +96,7 @@ function parseWeekGroup(week,lines,filename,season){
   if(!matchups.length)return null;
   const gameCount=matchups.length,numberToGame=new Map();
   matchups.forEach((g,i)=>{if(numberToGame.has(g.awayNumber)||numberToGame.has(g.homeNumber))errors.push('Duplicate matchup number');numberToGame.set(g.awayNumber,i);numberToGame.set(g.homeNumber,i)});
+
   const participants=[];
   for(const target of TARGETS){
     const hits=[],wrongFieldCounts=[];
@@ -77,12 +107,31 @@ function parseWeekGroup(week,lines,filename,season){
       else errors.push(`Missing ${target.displayName}`);
       continue;
     }
-    const hit=hits[0],pickNumbers=hit.nums.slice(0,gameCount),tiebreak=hit.nums[gameCount],seenGames=new Set();
-    for(const n of pickNumbers){const gi=numberToGame.get(n);if(gi===undefined)errors.push(`${target.displayName}: pick ${n} is not in the matchup key`);else if(seenGames.has(gi))errors.push(`${target.displayName}: two picks in matchup ${gi+1}`);else seenGames.add(gi)}
-    if(seenGames.size!==gameCount)errors.push(`${target.displayName}: expected ${gameCount} unique game picks, found ${seenGames.size}`);if(!Number.isInteger(tiebreak))errors.push(`${target.displayName}: missing tiebreak total`);participants.push({id:target.id,displayName:target.displayName,sourceName:hit.sourceName,pickNumbers,tiebreak})
+    const hit=hits[0],pickNumbers=hit.nums.slice(0,gameCount),tiebreak=hit.nums[gameCount];
+    errors.push(...validatePickNumbers(target.displayName,pickNumbers,tiebreak,numberToGame,gameCount));
+    participants.push({id:target.id,displayName:target.displayName,sourceName:hit.sourceName,pickNumbers,tiebreak});
   }
+
+  const fieldEntries=[];
+  let fieldOrdinal=0;
+  for(const line of lines){
+    if(matchupFromLine(line))continue;
+    const row=trailingParticipantRow(line,gameCount+2);
+    if(!row)continue;
+    const pickNumbers=row.nums.slice(0,gameCount),tiebreak=row.nums[gameCount];
+    const rowErrors=validatePickNumbers('Competition entry',pickNumbers,tiebreak,numberToGame,gameCount);
+    if(rowErrors.length){
+      errors.push(...rowErrors.map(e=>`${row.sourceName}: ${e.replace(/^Competition entry:\s*/,'')}`));
+      continue;
+    }
+    if(trackedTargetForName(row.sourceName))continue;
+    fieldOrdinal++;
+    fieldEntries.push({id:`field-${String(fieldOrdinal).padStart(3,'0')}`,pickNumbers,tiebreak});
+  }
+
   const games=matchups.map((g,index)=>({index,awayNumber:g.awayNumber,homeNumber:g.homeNumber,away:g.away,home:g.home,awayName:g.awayName,homeName:g.homeName}));
-  return{week,gameCount,errors,config:{schemaVersion:1,season,week,label:`Week ${week}`,tiePoints:0,tiebreakGameIndex:Math.max(0,games.length-1),games,participants,source:{kind:'weekly-upload',filename}}};
+  const competitionSize=participants.length+fieldEntries.length;
+  return{week,gameCount,errors,competitionSize,config:{schemaVersion:1,season,week,label:`Week ${week}`,tiePoints:0,tiebreakGameIndex:Math.max(0,games.length-1),games,participants,fieldEntries,competitionSize,source:{kind:'weekly-upload',filename}}};
 }
 
 export function parseDocumentGroups(groups,{filename='weekly-picks',season=2026}={}){
@@ -96,7 +145,7 @@ export function chooseBestCandidate(candidates){const valid=(candidates||[]).fil
 export function validateConfig(config){
   const errors=[];
   if(!config)return ['No configuration'];
-  const games=config.games||[],participants=config.participants||[];
+  const games=config.games||[],participants=config.participants||[],fieldEntries=config.fieldEntries;
   if(!games.length)errors.push('No games found');
   if(participants.length!==TARGETS.length)errors.push(`Expected ${TARGETS.length} tracked entries`);
   if(!Number.isInteger(config.tiebreakGameIndex)||config.tiebreakGameIndex<0||config.tiebreakGameIndex>=games.length)errors.push('Invalid tiebreak game');
@@ -106,6 +155,29 @@ export function validateConfig(config){
     if(teamPairs.has(teamKey))errors.push(`Duplicate matchup teams ${teamKey}`);else teamPairs.add(teamKey);
     for(const n of [g.awayNumber,g.homeNumber]){if(!Number.isInteger(n))errors.push(`Game ${i+1}: invalid number`);else if(nums.has(n))errors.push(`Duplicate number ${n}`);else nums.set(n,i)}
   });
-  participants.forEach(p=>{if(!Number.isInteger(p.tiebreak))errors.push(`${p.displayName}: invalid tiebreak`);if(!Array.isArray(p.pickNumbers)||p.pickNumbers.length!==games.length)errors.push(`${p.displayName}: wrong pick count`);const seen=new Set();for(const n of p.pickNumbers||[]){if(!nums.has(n))errors.push(`${p.displayName}: unknown pick ${n}`);else seen.add(nums.get(n))}if(seen.size!==games.length)errors.push(`${p.displayName}: not exactly one pick per game`)});
+  const validateEntry=(p,label)=>{
+    if(!Number.isInteger(p?.tiebreak))errors.push(`${label}: invalid tiebreak`);
+    if(!Array.isArray(p?.pickNumbers)||p.pickNumbers.length!==games.length)errors.push(`${label}: wrong pick count`);
+    const seen=new Set();
+    for(const n of p?.pickNumbers||[]){if(!nums.has(n))errors.push(`${label}: unknown pick ${n}`);else seen.add(nums.get(n))}
+    if(seen.size!==games.length)errors.push(`${label}: not exactly one pick per game`);
+  };
+  participants.forEach(p=>validateEntry(p,p.displayName||'Tracked entry'));
+  if(fieldEntries!==undefined){
+    if(!Array.isArray(fieldEntries))errors.push('Field entries must be an array');
+    else{
+      const ids=new Set();
+      fieldEntries.forEach((p,i)=>{
+        const label=`Field entry ${i+1}`;
+        if(!p||typeof p.id!=='string'||!p.id)errors.push(`${label}: missing id`);
+        else if(ids.has(p.id))errors.push(`Duplicate field entry id ${p.id}`);
+        else ids.add(p.id);
+        if(p&&('displayName' in p||'sourceName' in p||'name' in p))errors.push(`${label}: names must not be stored`);
+        validateEntry(p,label);
+      });
+      const expected=participants.length+fieldEntries.length;
+      if(config.competitionSize!==undefined&&config.competitionSize!==expected)errors.push(`Competition size mismatch: expected ${expected}`);
+    }
+  }
   return [...new Set(errors)];
 }
