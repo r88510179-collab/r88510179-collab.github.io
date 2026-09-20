@@ -81,4 +81,13 @@ function parse(lines){
   assert(errors.includes('Duplicate matchup teams CAR-ATL'));
 }
 
+{
+  const candidate=parse([...matchups,...tracked]);
+  const config=structuredClone(candidate.config);
+  config.games[14].away='JAC';
+  config.games[14].home='DEN';
+  const errors=validateConfig(config);
+  assert(errors.includes('Duplicate matchup teams JAX-DEN'));
+}
+
 console.log('parser-core Week 2 hardening regressions passed');
