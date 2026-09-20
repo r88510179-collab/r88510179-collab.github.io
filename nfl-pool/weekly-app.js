@@ -69,8 +69,6 @@ function validateConfig(c){
     const expected=c.participants.length+c.fieldEntries.length;
     if(c.competitionSize!==expected)throw new Error('Competition size mismatch');
     if(c.fullFieldEntryCount!==undefined&&c.fullFieldEntryCount!==c.fieldEntries.length)throw new Error('Full-field entry count mismatch');
-  }else if(Array.isArray(c.fieldEntries)&&c.fieldEntries.length){
-    throw new Error('Field entries require fullFieldReady=true');
   }
   return c;
 }
