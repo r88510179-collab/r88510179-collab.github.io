@@ -7,7 +7,7 @@ const TEAM_COLORS={ARI:'#97233F',ATL:'#A71930',BAL:'#241773',BUF:'#00338D',CAR:'
 const ALIAS={JAC:'JAX',WSH:'WAS'};
 const ESPN_LOGO_CODE={WAS:'wsh'};
 
-let CFG=null,M=[],P=[],TIEBREAK_INDEX=0,G=[],gen=0,ctl=null,lastFetchedAt=null,anonToken=null,anonExpiresAt=0,anonRequest=null;
+let CFG=null,M=[],P=[],F=[],TIEBREAK_INDEX=0,G=[],gen=0,ctl=null,lastFetchedAt=null,anonToken=null,anonExpiresAt=0,anonRequest=null;
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const norm=x=>ALIAS[x]||x;
@@ -44,20 +44,36 @@ function validateConfig(c){
     if(!g||typeof g.away!=='string'||typeof g.home!=='string')throw new Error(`Invalid game ${i+1}`);
     if(!Number.isInteger(g.awayNumber)||!Number.isInteger(g.homeNumber)||g.awayNumber===g.homeNumber)throw new Error(`Invalid pick numbers for game ${i+1}`);
     if(numbers.has(g.awayNumber)||numbers.has(g.homeNumber))throw new Error('Duplicate pick number');
-    numbers.set(g.awayNumber,{i,team:g.away});numbers.set(g.homeNumber,{i,team:g.home});
+    numbers.set(g.awayNumber,{i,team:norm(g.away)});numbers.set(g.homeNumber,{i,team:norm(g.home)});
   });
-  c.participants.forEach(p=>{
-    if(typeof p.displayName!=='string'||!Array.isArray(p.pickNumbers)||p.pickNumbers.length!==c.games.length||!Number.isInteger(p.tiebreak))throw new Error(`Invalid entry ${p?.displayName||''}`);
+  const validateEntry=(p,label,tracked=false)=>{
+    if(tracked&&typeof p?.displayName!=='string')throw new Error(`Invalid entry ${label}`);
+    if(!Array.isArray(p?.pickNumbers)||p.pickNumbers.length!==c.games.length||!Number.isInteger(p?.tiebreak))throw new Error(`Invalid entry ${label}`);
     const seen=new Set();
-    p.pickNumbers.forEach(n=>{const x=numbers.get(n);if(!x)throw new Error(`${p.displayName}: unknown pick ${n}`);if(seen.has(x.i))throw new Error(`${p.displayName}: multiple picks for game ${x.i+1}`);seen.add(x.i)});
-    if(seen.size!==c.games.length)throw new Error(`${p.displayName}: incomplete picks`);
-  });
+    p.pickNumbers.forEach(n=>{const x=numbers.get(n);if(!x)throw new Error(`${label}: unknown pick ${n}`);if(seen.has(x.i))throw new Error(`${label}: multiple picks for game ${x.i+1}`);seen.add(x.i)});
+    if(seen.size!==c.games.length)throw new Error(`${label}: incomplete picks`);
+  };
+  c.participants.forEach(p=>validateEntry(p,p?.displayName||'tracked',true));
+  if(c.fieldEntries!==undefined){
+    if(!Array.isArray(c.fieldEntries))throw new Error('Invalid field entry list');
+    const ids=new Set();
+    c.fieldEntries.forEach((p,i)=>{
+      if(!p||typeof p.id!=='string'||!p.id||ids.has(p.id))throw new Error(`Invalid field entry ${i+1}`);
+      ids.add(p.id);
+      if('displayName' in p||'sourceName' in p||'name' in p)throw new Error('Field entry names must not be published');
+      validateEntry(p,`field ${i+1}`);
+    });
+    const expected=c.participants.length+c.fieldEntries.length;
+    if(c.competitionSize!==undefined&&c.competitionSize!==expected)throw new Error('Competition size mismatch');
+  }
   return c;
 }
 function applyConfig(c){
   CFG=validateConfig(c);M=CFG.games.map(g=>[norm(g.away),norm(g.home)]);
   const numberMap=new Map();CFG.games.forEach((g,i)=>{numberMap.set(g.awayNumber,{i,team:norm(g.away)});numberMap.set(g.homeNumber,{i,team:norm(g.home)})});
-  P=CFG.participants.map((p,pi)=>{const picks=Array(M.length).fill(null);p.pickNumbers.forEach(n=>{const hit=numberMap.get(n);picks[hit.i]=hit.team});return{name:p.displayName,id:p.id||String(pi),mnf:p.tiebreak,picks,pickNumbers:p.pickNumbers.slice()}});
+  const mapEntry=(p,id,name=null)=>{const picks=Array(M.length).fill(null);p.pickNumbers.forEach(n=>{const hit=numberMap.get(n);picks[hit.i]=hit.team});return{name,id,mnf:p.tiebreak,picks,pickNumbers:p.pickNumbers.slice()}};
+  P=CFG.participants.map((p,pi)=>mapEntry(p,p.id||String(pi),p.displayName));
+  F=(CFG.fieldEntries||[]).map((p,fi)=>mapEntry(p,p.id||`field-${fi+1}`));
   TIEBREAK_INDEX=CFG.tiebreakGameIndex;G=M.map(([away,home])=>({away,home,state:'pre',completed:false,winner:null,awayScore:null,homeScore:null,detail:'Scheduled',eventId:null}));renderStaticLabels();
 }
 function formatWeekDates(){
