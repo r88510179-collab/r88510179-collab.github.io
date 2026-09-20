@@ -26,6 +26,6 @@ document.addEventListener('click',async event=>{
 });
 window.addEventListener('appinstalled',()=>{deferredInstallPrompt=null;syncInstallUi()});
 if('serviceWorker' in navigator){
-  window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js',{scope:'./'}).catch(err=>console.warn('Pool Center service worker registration failed',err)));
+  window.addEventListener('load',()=>navigator.serviceWorker.register('/nfl-pool/service-worker.js',{scope:'/nfl-pool/'}).catch(err=>console.warn('Pool Center service worker registration failed',err)));
 }
 syncInstallUi();
