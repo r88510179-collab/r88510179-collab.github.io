@@ -142,7 +142,7 @@ async function prepareCandidate(c,sourceFile,sourceGeneration,operation){
 }
 
 function renderReview(){
-  if(!candidate)return;$('review').hidden=false;const cfg=candidate.config;$('reviewTitle').textContent=`${cfg.season} · Week ${cfg.week} · ${cfg.games.length} games · ${cfg.competitionSize||cfg.participants.length} entries`;
+  if(!candidate)return;$('review').hidden=false;const cfg=candidate.config;$('reviewTitle').textContent=cfg.fullFieldReady===true?`${cfg.season} · Week ${cfg.week} · ${cfg.games.length} games · ${cfg.competitionSize} validated regular-pool entries`:`${cfg.season} · Week ${cfg.week} · ${cfg.games.length} games · 4 tracked entries · full field unavailable`;
   $('gameReview').innerHTML=cfg.games.map((g,i)=>`<tr><td>${i+1}</td><td><b>${g.awayNumber}</b> ${esc(g.awayName||g.away)}</td><td>at</td><td><b>${g.homeNumber}</b> ${esc(g.homeName||g.home)}</td><td>${esc(g.date||'—')}</td></tr>`).join('');
   $('entryReview').innerHTML=cfg.participants.map(p=>`<tr><td>${esc(p.displayName)}</td><td class="nums">${p.pickNumbers.join(' ')}</td><td><b>${p.tiebreak}</b></td></tr>`).join('');
   const tb=$('tiebreakGame');tb.innerHTML=cfg.games.map((g,i)=>`<option value="${i}">${i+1}. ${g.away} at ${g.home}</option>`).join('');tb.value=String(cfg.tiebreakGameIndex);tb.onchange=()=>{cfg.tiebreakGameIndex=Number(tb.value)};
