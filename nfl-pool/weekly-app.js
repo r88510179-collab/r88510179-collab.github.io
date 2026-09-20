@@ -1,6 +1,6 @@
 'use strict';
 
-import {competitionRanks,ownershipShare} from './public-math.js?v=1';
+import {competitionRanks,ownershipShare,scoreEntry,tiebreakState} from './public-math.js?v=2';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
@@ -88,8 +88,8 @@ function formatWeekDates(){
 function renderStaticLabels(){
   $('weekLine').textContent=`Week ${CFG.week} · ${formatWeekDates()} · ${P.map(p=>p.name).join(' · ')}`;$('pulseWeek').textContent=`Week ${CFG.week}`;$('entryCount').textContent=fieldAvailable()?CFG.competitionSize:P.length;$('gameCount').textContent=M.length;$('finals').textContent=`0/${M.length}`;$('left').textContent=M.length;$('tbNote').textContent=`Tiebreak guesses: ${P.map(p=>`${p.name} ${p.mnf}`).join(' · ')}.`;const [a,h]=M[TIEBREAK_INDEX];$('footerRule').textContent=`Final NFL outcomes only · NFL ties = 0 points · ${a}–${h} tiebreak activates when that game is final.${fieldAvailable()?' Full-field entries are stored without competitor names.':''}`;
 }
-function stats(p,games=G){let w=0,l=0,left=0;games.forEach((g,i)=>{if(g.completed){if(g.winner)p.picks[i]===g.winner?w++:l++}else left++});return{w,l,left}}
-function tiebreak(games=G){const g=games[TIEBREAK_INDEX],a=score(g?.awayScore),h=score(g?.homeScore),ok=a!==null&&h!==null;return{final:!!(g?.completed&&ok),total:ok&&(g.state==='in'||g.completed)?a+h:null}}
+function stats(p,games=G){return scoreEntry(p.picks,games)}
+function tiebreak(games=G){return tiebreakState(games[TIEBREAK_INDEX])}
 function rows(games=G){const t=tiebreak(games);return P.map((p,i)=>({...p,...stats(p,games),diff:t.final?Math.abs(p.mnf-t.total):null,i})).sort((a,b)=>b.w-a.w||a.l-b.l||(t.final?a.diff-b.diff:0)||a.i-b.i)}
 function topIndices(wins,t=tiebreak()){const best=Math.max(...wins);let leaders=wins.map((w,i)=>w===best?i:-1).filter(i=>i>=0);if(t.final&&leaders.length>1){const bestDiff=Math.min(...leaders.map(i=>Math.abs(P[i].mnf-t.total)));leaders=leaders.filter(i=>Math.abs(P[i].mnf-t.total)===bestDiff)}return leaders}
 function tiedWith(a,b,t=tiebreak()){return a.w===b.w&&a.l===b.l&&(!t.final||a.diff===b.diff)}
