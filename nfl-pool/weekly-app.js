@@ -81,13 +81,58 @@ function formatWeekDates(){
   if(!dates.length)return `${CFG.season} season`;const lo=new Date(Math.min(...dates)),hi=new Date(Math.max(...dates));const fmt=d=>d.toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'UTC'});return lo.valueOf()===hi.valueOf()?`${fmt(lo)}, ${CFG.season}`:`${fmt(lo)}–${fmt(hi)}, ${CFG.season}`;
 }
 function renderStaticLabels(){
-  $('weekLine').textContent=`Week ${CFG.week} · ${formatWeekDates()} · ${P.map(p=>p.name).join(' · ')}`;$('pulseWeek').textContent=`Week ${CFG.week}`;$('entryCount').textContent=P.length;$('gameCount').textContent=M.length;$('finals').textContent=`0/${M.length}`;$('left').textContent=M.length;$('tbNote').textContent=`Tiebreak guesses: ${P.map(p=>`${p.name} ${p.mnf}`).join(' · ')}.`;const [a,h]=M[TIEBREAK_INDEX];$('footerRule').textContent=`Final NFL outcomes only · NFL ties = 0 points · ${a}–${h} tiebreak activates when that game is final.`;
+  $('weekLine').textContent=`Week ${CFG.week} · ${formatWeekDates()} · ${P.map(p=>p.name).join(' · ')}`;$('pulseWeek').textContent=`Week ${CFG.week}`;$('entryCount').textContent=fieldAvailable()?CFG.competitionSize:P.length;$('gameCount').textContent=M.length;$('finals').textContent=`0/${M.length}`;$('left').textContent=M.length;$('tbNote').textContent=`Tiebreak guesses: ${P.map(p=>`${p.name} ${p.mnf}`).join(' · ')}.`;const [a,h]=M[TIEBREAK_INDEX];$('footerRule').textContent=`Final NFL outcomes only · NFL ties = 0 points · ${a}–${h} tiebreak activates when that game is final.${fieldAvailable()?' Full-field entries are stored without competitor names.':''}`;
 }
 function stats(p,games=G){let w=0,l=0,left=0;games.forEach((g,i)=>{if(g.completed){if(g.winner)p.picks[i]===g.winner?w++:l++}else left++});return{w,l,left}}
 function tiebreak(games=G){const g=games[TIEBREAK_INDEX],a=score(g?.awayScore),h=score(g?.homeScore),ok=a!==null&&h!==null;return{final:!!(g?.completed&&ok),total:ok&&(g.state==='in'||g.completed)?a+h:null}}
 function rows(games=G){const t=tiebreak(games);return P.map((p,i)=>({...p,...stats(p,games),diff:t.final?Math.abs(p.mnf-t.total):null,i})).sort((a,b)=>b.w-a.w||a.l-b.l||(t.final?a.diff-b.diff:0)||a.i-b.i)}
 function topIndices(wins,t=tiebreak()){const best=Math.max(...wins);let leaders=wins.map((w,i)=>w===best?i:-1).filter(i=>i>=0);if(t.final&&leaders.length>1){const bestDiff=Math.min(...leaders.map(i=>Math.abs(P[i].mnf-t.total)));leaders=leaders.filter(i=>Math.abs(P[i].mnf-t.total)===bestDiff)}return leaders}
 function tiedWith(a,b,t=tiebreak()){return a.w===b.w&&a.l===b.l&&(!t.final||a.diff===b.diff)}
+function fieldAvailable(){return Array.isArray(CFG?.fieldEntries)&&Number.isInteger(CFG?.competitionSize)&&CFG.competitionSize===P.length+F.length&&F.length>0}
+function allCompetitionEntries(){return fieldAvailable()?[...P.map((p,i)=>({...p,_order:i,_tracked:true})),...F.map((p,i)=>({...p,_order:P.length+i,_tracked:false}))]:[]}
+function sameFieldStanding(a,b,t){return !!a&&!!b&&a.w===b.w&&a.l===b.l&&(!t.final||a.diff===b.diff)}
+function rankCompetition(games=G){
+  if(!fieldAvailable())return null;
+  const t=tiebreak(games),all=allCompetitionEntries();
+  const ranked=all.map(p=>({...p,...stats(p,games),diff:t.final?Math.abs(p.mnf-t.total):null}))
+    .sort((a,b)=>b.w-a.w||a.l-b.l||(t.final?a.diff-b.diff:0)||a._order-b._order);
+  let rank=1;
+  ranked.forEach((p,i)=>{if(i&&!sameFieldStanding(p,ranked[i-1],t))rank=i+1;p.rank=rank});
+  ranked.forEach(p=>{p.tieCount=ranked.filter(x=>sameFieldStanding(x,p,t)).length});
+  return{rows:ranked,byId:new Map(ranked.map(p=>[p.id,p])),size:ranked.length,bestWins:ranked[0]?.w??0,t};
+}
+function fieldSnapshot(games=G){
+  const base=rankCompetition(games);if(!base)return null;
+  const metrics=new Map();
+  for(const p of P){
+    const current=base.byId.get(p.id);
+    const ceilingGames=games.map((g,i)=>g.completed?g:{...g,state:'post',completed:true,winner:p.picks[i],awayScore:null,homeScore:null,detail:'Ceiling simulation'});
+    const ceiling=rankCompetition(ceilingGames)?.byId.get(p.id)||current;
+    metrics.set(p.id,{
+      rank:current.rank,
+      tieCount:current.tieCount,
+      topPercent:Math.max(1,Math.ceil(current.rank/base.size*100)),
+      behind:Math.max(0,base.bestWins-current.w),
+      ceilingRank:ceiling.rank,
+      ceilingTieCount:ceiling.tieCount,
+      aliveForFirst:ceiling.rank===1
+    });
+  }
+  return{...base,metrics};
+}
+function fieldRankLabel(metric){if(!metric)return'—';return`${metric.tieCount>1?'T-':'#'}${metric.rank}`}
+function ceilingRankLabel(metric){if(!metric)return'—';return`${metric.ceilingTieCount>1?'T-':'#'}${metric.ceilingRank}`}
+function fieldShare(gameIndex,team){
+  if(!fieldAvailable())return null;
+  const all=allCompetitionEntries(),count=all.reduce((n,p)=>n+(p.picks[gameIndex]===team?1:0),0),pct=Math.round(count/all.length*100);
+  return{count,total:all.length,pct};
+}
+function fieldShareText(gameIndex,team){
+  const share=fieldShare(gameIndex,team);if(!share)return'';
+  return`${share.pct}% of field`;
+}
+function fieldShareClass(gameIndex,team){const share=fieldShare(gameIndex,team);return share&&share.pct<=35?' contrarian':''}
+function gameIndexForTeam(team){return M.findIndex(([a,h])=>a===team||h===team)}
 function state(g){return g.completed?(g.winner?'FINAL':'FINAL TIE'):g.state==='in'?(g.detail||'LIVE'):(g.detail||'SCHEDULED')}
 function teamLogoUrl(t){const team=norm(String(t||'').toUpperCase()),code=ESPN_LOGO_CODE[team]||team.toLowerCase();return`https://a.espncdn.com/i/teamlogos/nfl/500/${encodeURIComponent(code)}.png`}
 function badge(t,size=''){const team=norm(String(t||'').toUpperCase());return`<span class="badge${size?` ${size}`:''}" style="--tc:${TEAM_COLORS[team]||'#33465f'}" aria-hidden="true"><span class="badge-fallback">${esc(team)}</span><img class="team-logo" src="${teamLogoUrl(team)}" alt="" loading="lazy" decoding="async" onerror="this.hidden=true"></span>`}
