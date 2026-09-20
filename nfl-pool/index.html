@@ -12,7 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="preconnect" href="https://a.espncdn.com">
 <link rel="icon" href="assets/pool-center-icon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="style.css?v=premium-v2">
+<link rel="stylesheet" href="style.css?v=premium-v3">
 <link rel="stylesheet" href="slate.css?v=slate-v1">
 <link rel="stylesheet" href="weekly.css?v=premium-v2">
 </head>
@@ -71,9 +71,9 @@
         <aside class="card pulse" aria-labelledby="pulse-title">
           <div class="head compact"><div><span class="section-kicker">Week pulse</span><h2 id="pulse-title">Pool Status</h2></div><div class="meta" id="pulseWeek">Week —</div></div>
           <div class="pulse-grid">
-            <div class="pulse-box"><span>Entries</span><b id="entryCount">—</b></div>
+            <div class="pulse-box"><span>Pool Size</span><b id="entryCount">—</b></div>
             <div class="pulse-box"><span>Games</span><b id="gameCount">—</b></div>
-            <div class="pulse-box"><span>Best W</span><b id="bestWins">0</b></div>
+            <div class="pulse-box"><span>Field Best</span><b id="bestWins">0</b></div>
             <div class="pulse-box"><span>Swing Left</span><b id="swingLeft">—</b></div>
           </div>
           <div class="progressline"><span>Slate progress</span><span id="progressText">0%</span></div>
@@ -84,7 +84,7 @@
 
       <div class="home-grid race-grid">
         <section class="card race" aria-labelledby="race-title">
-          <div class="head"><div><span class="section-kicker">Scenario engine</span><h2 id="race-title">Race Status</h2><div class="meta">Exact remaining-outcome math · ties included</div></div><div class="meta" id="scenarioCount">—</div></div>
+          <div class="head"><div><span class="section-kicker">Your four entries</span><h2 id="race-title">Group Scenarios</h2><div class="meta">Exact remaining-outcome math inside your group · field position tracked separately</div></div><div class="meta" id="scenarioCount">—</div></div>
           <div class="race-list" id="raceList"></div>
         </section>
         <section class="card home-games-card">
@@ -95,10 +95,10 @@
     </section>
 
     <section class="view-panel" data-view-panel="standings" hidden>
-      <section class="page-title"><span class="section-kicker">Pool leaderboard</span><h1>Standings</h1><p>Wins, losses, remaining games and tiebreak position for every tracked entry.</p></section>
+      <section class="page-title"><span class="section-kicker">Your group vs the field</span><h1>Standings</h1><p>Only your four entries are shown. Overall rank, percentile, gap and ceiling use every valid entry from the uploaded pool sheet.</p></section>
       <section class="card standings" aria-labelledby="stand-title">
-        <div class="head"><h2 id="stand-title">Live Standings</h2><div class="meta">W · L · left · tiebreak</div></div>
-        <div class="table-wrap"><table><thead><tr><th>RK</th><th>Entry</th><th class="c">W</th><th class="c">L</th><th class="c">Left</th><th class="c">TB</th><th class="c">Diff</th></tr></thead><tbody id="standings"></tbody></table></div>
+        <div class="head"><h2 id="stand-title">Your Group</h2><div class="meta" id="fieldSummary">Field data unavailable</div></div>
+        <div class="table-wrap"><table><thead><tr><th>Group</th><th>Entry</th><th class="c">Overall</th><th class="c">W</th><th class="c">L</th><th class="c">Left</th><th class="c">Back</th><th class="c">Ceiling</th><th class="c">TB</th></tr></thead><tbody id="standings"></tbody></table></div>
       </section>
     </section>
 
@@ -109,13 +109,13 @@
         <div class="gamegrid" id="gamegrid"></div><div id="error" aria-live="polite"></div>
       </section>
       <section class="card swings" aria-labelledby="swing-title">
-        <div class="head"><div><span class="section-kicker">Rooting guide</span><h2 id="swing-title">Swing Games</h2><div class="meta">Games where the four entries disagree</div></div><div class="meta" id="swingMeta">—</div></div>
+        <div class="head"><div><span class="section-kicker">Rooting guide</span><h2 id="swing-title">Swing Games</h2><div class="meta">Your four entries disagree · full-field pick ownership shown when available</div></div><div class="meta" id="swingMeta">—</div></div>
         <div class="swing-list" id="swingList"></div>
       </section>
     </section>
 
     <section class="view-panel" data-view-panel="picks" hidden>
-      <section class="page-title"><span class="section-kicker">Weekly selections</span><h1>Picks</h1><p>Side-by-side picks for D.C., JC, DJS and Thaddeus.</p></section>
+      <section class="page-title"><span class="section-kicker">Weekly selections</span><h1>Picks</h1><p>Side-by-side picks for D.C., JC, DJS and Thaddeus. Matchup headers show full-field ownership when available.</p></section>
       <section class="card picks" aria-labelledby="picks-title">
         <div class="head"><h2 id="picks-title">Pick Board</h2><div class="meta">✓ correct · ✕ incorrect · tie = 0</div></div>
         <div class="scroll"><table><thead id="pickHead"></thead><tbody id="pickBody"></tbody></table></div>
@@ -134,7 +134,7 @@
 </nav>
 
 <script src="score-feed-proxy.js?v=1"></script>
-<script src="weekly-app.js?v=weekly-v6" defer></script>
+<script src="weekly-app.js?v=weekly-v7" defer></script>
 <script src="pwa.js?v=1" defer></script>
 </body>
 </html>
