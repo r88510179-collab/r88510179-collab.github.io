@@ -95,10 +95,10 @@
     </section>
 
     <section class="view-panel" data-view-panel="standings" hidden>
-      <section class="page-title"><span class="section-kicker">Your group vs the field</span><h1>Standings</h1><p>Only your four entries are shown. Overall rank, percentile, gap and ceiling use every valid entry from the uploaded pool sheet.</p></section>
+      <section class="page-title"><span class="section-kicker">Your group vs the field</span><h1>Standings</h1><p>Only your four entries are shown. Overall rank, percentile, gap and win ceiling use every validated regular Pick'em entry from the uploaded pool sheet.</p></section>
       <section class="card standings" aria-labelledby="stand-title">
         <div class="head"><h2 id="stand-title">Your Group</h2><div class="meta" id="fieldSummary">Field data unavailable</div></div>
-        <div class="table-wrap"><table><thead><tr><th>Group</th><th>Entry</th><th class="c">Overall</th><th class="c">W</th><th class="c">L</th><th class="c">Left</th><th class="c">Back</th><th class="c">Ceiling</th><th class="c">TB</th></tr></thead><tbody id="standings"></tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>Group</th><th>Entry</th><th class="c">Overall</th><th class="c">W</th><th class="c">L</th><th class="c">Left</th><th class="c">Back</th><th class="c">Win Ceiling</th><th class="c">TB</th></tr></thead><tbody id="standings"></tbody></table></div>
       </section>
     </section>
 
@@ -134,7 +134,8 @@
 </nav>
 
 <script src="score-feed-proxy.js?v=1"></script>
-<script src="weekly-app.js?v=weekly-v7" defer></script>
+<script src="public-math.js?v=1"></script>
+<script src="weekly-app.js?v=weekly-v8" defer></script>
 <script src="pwa.js?v=1" defer></script>
 </body>
 </html>
