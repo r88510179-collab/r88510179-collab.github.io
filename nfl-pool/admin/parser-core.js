@@ -42,16 +42,13 @@ function matchupFromLine(line){
   if(!m)return null;const awayNumber=Number(m[1]),homeNumber=Number(m[3]),awayName=clean(m[2]),homeName=clean(m[4]),away=teamAbbr(awayName),home=teamAbbr(homeName);if(!away||!home)return{error:`Unknown team name in: ${s}`};return{awayNumber,homeNumber,awayName,homeName,away,home};
 }
 
-function targetMatch(line,target){
+function targetRowIdentity(line,target){
   const s=clean(line);
   for(const alias of target.aliases){
-    const pattern='^('+escapeRegex(clean(alias))+')(?=\\s+\\d+\\b)\\s+(.*)$';
-    const m=s.match(new RegExp(pattern,'i'));
-    if(!m)continue;
-    const nums=(m[2].match(/\b\d+\b/g)||[]).map(Number);
-    return{sourceName:m[1],nums};
+    const m=s.match(new RegExp('^('+escapeRegex(clean(alias))+')\\s+(.+)$','i'));
+    if(m&&/^\\d+$/.test(clean(m[2]).split(' ')[0]))return true;
   }
-  return null;
+  return false;
 }
 
 function trackedTargetForName(name){
@@ -59,43 +56,75 @@ function trackedTargetForName(name){
   return TARGETS.find(target=>target.aliases.some(alias=>exactName(alias)===n))||null;
 }
 
-function trailingParticipantRow(line,fieldCount){
-  const s=clean(line),tokens=s.split(' ');
-  if(tokens.length<fieldCount+1)return null;
-  const start=tokens.length-fieldCount,numeric=tokens.slice(start);
-  if(!numeric.every(token=>/^\d+$/.test(token)))return null;
-  const sourceName=clean(tokens.slice(0,start).join(' '));
-  if(!sourceName)return null;
-  return{sourceName,nums:numeric.map(Number)};
+function regularParticipantRow(line,matchups){
+  const tokens=clean(line).split(' ').filter(Boolean),gameCount=matchups.length,candidates=[];
+  if(tokens.length<gameCount+3)return null;
+  for(let start=1;start<tokens.length;start++){
+    if(tokens.length-start!==gameCount+2)continue;
+    const nums=tokens.slice(start);
+    if(!nums.every(token=>/^\\d+$/.test(token)))continue;
+    const values=nums.map(Number);
+    let valid=true;
+    for(let i=0;i<gameCount;i++){const g=matchups[i],n=values[i];if(n!==g.awayNumber&&n!==g.homeNumber){valid=false;break}}
+    if(!valid)continue;
+    const sourceName=clean(tokens.slice(0,start).join(' '));if(!sourceName)continue;
+    candidates.push({sourceName,pickNumbers:values.slice(0,gameCount),tiebreak:values[gameCount],wins:values[gameCount+1]});
+  }
+  return candidates.length===1?candidates[0]:null;
+}
+
+function spreadsheetContract(sourceRows,gameCount){
+  const header=(sourceRows||[]).find(r=>r&&r.kind==='spreadsheet'&&Array.isArray(r.cells)&&r.cells.some(c=>/^pts(?:\\/tiebreak)?$/i.test(clean(c)))&&r.cells.some(c=>/^w$/i.test(clean(c))));
+  if(!header)return null;
+  const cells=header.cells.map(clean),ptsIndex=cells.findIndex(c=>/^pts(?:\\/tiebreak)?$/i.test(c)),wIndex=cells.findIndex(c=>/^w$/i.test(c));
+  if(ptsIndex<0||wIndex!==ptsIndex+1||ptsIndex-gameCount<1)return null;
+  return{sheetName:header.sheetName,headerRowNumber:header.rowNumber,nameIndex:ptsIndex-gameCount-1,pickStart:ptsIndex-gameCount,ptsIndex,wIndex};
+}
+
+function spreadsheetParticipantRow(sourceRow,contract,matchups){
+  if(!sourceRow||sourceRow.kind!=='spreadsheet'||!contract||sourceRow.sheetName!==contract.sheetName||sourceRow.rowNumber===contract.headerRowNumber)return null;
+  const cells=(sourceRow.cells||[]).map(clean);
+  if(cells.length<=contract.wIndex)return null;
+  const sourceName=cells[contract.nameIndex],pickCells=cells.slice(contract.pickStart,contract.ptsIndex),tail=cells.slice(contract.ptsIndex,contract.wIndex+1),extra=cells.slice(contract.wIndex+1).filter(Boolean);
+  if(!sourceName||extra.length||pickCells.length!==matchups.length||!pickCells.every(v=>/^\\d+$/.test(v))||!tail.every(v=>/^\\d+$/.test(v)))return null;
+  const pickNumbers=pickCells.map(Number);
+  for(let i=0;i<matchups.length;i++){const g=matchups[i],n=pickNumbers[i];if(n!==g.awayNumber&&n!==g.homeNumber)return null}
+  return{sourceName,pickNumbers,tiebreak:Number(tail[0]),wins:Number(tail[1])};
 }
 
 function looksLikeDamagedParticipantRow(line,gameCount){
   const tokens=clean(line).split(' ');
-  const numericCount=tokens.reduce((n,token)=>n+(/^\d+$/.test(token)?1:0),0);
-  return tokens.length>=gameCount+1&&numericCount>=gameCount;
+  const numericCount=tokens.reduce((n,token)=>n+(/^\\d+$/.test(token)?1:0),0);
+  return tokens.length>=gameCount+1&&numericCount>=gameCount&&tokens.some(t=>!/^\\d+$/.test(t));
 }
 
 function validatePickNumbers(label,pickNumbers,tiebreak,numberToGame,gameCount){
   const errors=[],seenGames=new Set();
-  for(const n of pickNumbers){
+  for(const n of pickNumbers||[]){
     const gi=numberToGame.get(n);
-    if(gi===undefined)errors.push(`${label}: pick ${n} is not in the matchup key`);
-    else if(seenGames.has(gi))errors.push(`${label}: two picks in matchup ${gi+1}`);
+    if(gi===undefined)errors.push(label+': pick '+n+' is not in the matchup key');
+    else if(seenGames.has(gi))errors.push(label+': two picks in matchup '+(gi+1));
     else seenGames.add(gi);
   }
-  if(seenGames.size!==gameCount)errors.push(`${label}: expected ${gameCount} unique game picks, found ${seenGames.size}`);
-  if(!Number.isInteger(tiebreak))errors.push(`${label}: missing tiebreak total`);
+  if((pickNumbers||[]).length!==gameCount||seenGames.size!==gameCount)errors.push(label+': expected exactly one pick for each of '+gameCount+' games');
+  if(!Number.isInteger(tiebreak))errors.push(label+': missing tiebreak total');
   return errors;
 }
 
-function parseWeekGroup(week,lines,filename,season){
-  const errors=[],seenPair=new Set(),seenTeams=new Set(),matchups=[];
+function sourceRowKey(row){
+  if(row&&row.kind==='pdf')return 'pdf:'+(row.pageNumber??'?')+':'+Number(row.y??0).toFixed(2)+':'+clean(row.text);
+  if(row&&row.kind==='spreadsheet')return 'sheet:'+(row.sheetName??'?')+':'+(row.rowNumber??'?')+':'+(row.cells||[]).map(clean).join('|');
+  return 'text:'+clean(row&&row.text!==undefined?row.text:row);
+}
+
+function parseWeekGroup(week,weekGroups,filename,season){
+  const errors=[],fullFieldIssues=[],lines=[],sourceRows=[];
+  for(const group of weekGroups||[]){for(const line of group.lines||[])lines.push(clean(line));for(const row of group.sourceRows||[])sourceRows.push(row)}
+  const seenPair=new Set(),seenTeams=new Set(),matchups=[];
   for(const line of lines){
     const m=matchupFromLine(line);if(!m)continue;if(m.error){errors.push(m.error);continue}
-    const key=`${m.awayNumber}-${m.homeNumber}`;
-    if(seenPair.has(key)){errors.push(`Duplicate matchup pair ${key}`);continue}
-    const teamKey=`${m.away}-${m.home}`;
-    if(seenTeams.has(teamKey)){errors.push(`Duplicate matchup teams ${teamKey}`);continue}
+    const key=m.awayNumber+'-'+m.homeNumber;if(seenPair.has(key)){errors.push('Duplicate matchup pair '+key);continue}
+    const teamKey=m.away+'-'+m.home;if(seenTeams.has(teamKey)){errors.push('Duplicate matchup teams '+teamKey);continue}
     seenPair.add(key);seenTeams.add(teamKey);matchups.push(m);
   }
   matchups.sort((a,b)=>Math.min(a.awayNumber,a.homeNumber)-Math.min(b.awayNumber,b.homeNumber));
@@ -103,47 +132,71 @@ function parseWeekGroup(week,lines,filename,season){
   const gameCount=matchups.length,numberToGame=new Map();
   matchups.forEach((g,i)=>{if(numberToGame.has(g.awayNumber)||numberToGame.has(g.homeNumber))errors.push('Duplicate matchup number');numberToGame.set(g.awayNumber,i);numberToGame.set(g.homeNumber,i)});
 
+  const sourceByText=new Map();
+  for(const row of sourceRows){const t=clean(row.text);if(t&&!sourceByText.has(t))sourceByText.set(t,[]);if(t)sourceByText.get(t).push(row)}
+  const sheetContract=spreadsheetContract(sourceRows,gameCount);
+  if(sourceRows.some(r=>r.kind==='spreadsheet')&&!sheetContract)fullFieldIssues.push('Spreadsheet regular-pool headers could not be proven');
+  const parseLine=line=>{
+    const matches=sourceByText.get(clean(line))||[];
+    if(sheetContract&&matches.length===1&&matches[0].kind==='spreadsheet')return spreadsheetParticipantRow(matches[0],sheetContract,matchups);
+    return regularParticipantRow(line,matchups);
+  };
+
   const participants=[];
   for(const target of TARGETS){
-    const hits=[],wrongFieldCounts=[];
-    for(const line of lines){const h=targetMatch(line,target);if(!h)continue;if(h.nums.length===gameCount+2)hits.push(h);else wrongFieldCounts.push(h.nums.length)}
-    if(hits.length!==1){
-      if(hits.length>1)errors.push(`Multiple ${target.displayName} rows found`);
-      else if(wrongFieldCounts.length)errors.push(`${target.displayName}: expected ${gameCount+2} numeric fields (${gameCount} picks + Pts + W), found ${[...new Set(wrongFieldCounts)].join(', ')}`);
-      else errors.push(`Missing ${target.displayName}`);
-      continue;
-    }
-    const hit=hits[0],pickNumbers=hit.nums.slice(0,gameCount),tiebreak=hit.nums[gameCount];
-    errors.push(...validatePickNumbers(target.displayName,pickNumbers,tiebreak,numberToGame,gameCount));
-    participants.push({id:target.id,displayName:target.displayName,sourceName:hit.sourceName,pickNumbers,tiebreak});
+    const sourceHits=lines.filter(line=>targetRowIdentity(line,target));
+    if(sourceHits.length!==1){errors.push(sourceHits.length>1?'Multiple '+target.displayName+' rows found':'Missing '+target.displayName);continue}
+    const parsed=parseLine(sourceHits[0]);
+    if(!parsed){errors.push(target.displayName+': regular weekly row is structurally invalid');continue}
+    if(!target.aliases.some(alias=>exactName(alias)===exactName(parsed.sourceName))){errors.push(target.displayName+': participant identity mismatch');continue}
+    errors.push(...validatePickNumbers(target.displayName,parsed.pickNumbers,parsed.tiebreak,numberToGame,gameCount));
+    participants.push({id:target.id,displayName:target.displayName,sourceName:parsed.sourceName,pickNumbers:parsed.pickNumbers,tiebreak:parsed.tiebreak});
   }
 
-  const fieldEntries=[];
-  let fieldOrdinal=0,fieldIssueCount=0,fieldInvalidPickCount=0,unparseableFieldRows=0;
+  const pageFingerprints=new Set();
+  for(const group of weekGroups||[]){
+    if(!group.pageFingerprint)continue;
+    if(pageFingerprints.has(group.pageFingerprint))fullFieldIssues.push('Duplicate PDF page or repeated source table region detected');
+    pageFingerprints.add(group.pageFingerprint);
+  }
+
+  const temporary=[],seenSourceKeys=new Set();
   for(const line of lines){
     if(matchupFromLine(line))continue;
-    if(TARGETS.some(target=>targetMatch(line,target)))continue;
-    const row=trailingParticipantRow(line,gameCount+2);
-    if(!row){if(looksLikeDamagedParticipantRow(line,gameCount))unparseableFieldRows++;continue}
+    if(TARGETS.some(target=>targetRowIdentity(line,target)))continue;
+    const row=parseLine(line);
+    if(!row){if(looksLikeDamagedParticipantRow(line,gameCount))fullFieldIssues.push('A supposed regular-pool participant row is structurally invalid');continue}
     if(trackedTargetForName(row.sourceName))continue;
-    const pickNumbers=row.nums.slice(0,gameCount),tiebreak=row.nums[gameCount];
-    let invalidPicks=0;
-    pickNumbers.forEach((n,i)=>{const g=matchups[i];if(n!==g.awayNumber&&n!==g.homeNumber)invalidPicks++});
-    if(invalidPicks){fieldIssueCount++;fieldInvalidPickCount+=invalidPicks}
-    fieldOrdinal++;
-    fieldEntries.push({id:`field-${String(fieldOrdinal).padStart(3,'0')}`,pickNumbers,tiebreak});
+    const rowErrors=validatePickNumbers('Anonymous field entry',row.pickNumbers,row.tiebreak,numberToGame,gameCount);
+    if(rowErrors.length){fullFieldIssues.push('An anonymous regular-pool entry failed pick validation');continue}
+    const matches=sourceByText.get(clean(line))||[];
+    const key=matches.length===1?sourceRowKey(matches[0]):'text:'+clean(line);
+    if(seenSourceKeys.has(key)){fullFieldIssues.push('Duplicate source participant row detected');continue}
+    seenSourceKeys.add(key);
+    temporary.push({sourceName:row.sourceName,pickNumbers:row.pickNumbers,tiebreak:row.tiebreak});
   }
-  if(unparseableFieldRows)errors.push(`${unparseableFieldRows} anonymous competition row${unparseableFieldRows===1?' has':'s have'} a missing or nonnumeric pick cell; correct the source sheet before publishing`);
+  if(!temporary.length)fullFieldIssues.push('No validated anonymous regular-pool entries were found');
 
+  const fullFieldReady=errors.length===0&&fullFieldIssues.length===0;
+  const fieldEntries=fullFieldReady?temporary.map((row,i)=>({id:'field-'+String(i+1).padStart(3,'0'),pickNumbers:row.pickNumbers.slice(),tiebreak:row.tiebreak})):[];
   const games=matchups.map((g,index)=>({index,awayNumber:g.awayNumber,homeNumber:g.homeNumber,away:g.away,home:g.home,awayName:g.awayName,homeName:g.homeName}));
-  const competitionSize=participants.length+fieldEntries.length;
-  return{week,gameCount,errors,competitionSize,config:{schemaVersion:1,season,week,label:`Week ${week}`,tiePoints:0,tiebreakGameIndex:Math.max(0,games.length-1),games,participants,fieldEntries,competitionSize,fieldIssueCount,fieldInvalidPickCount,source:{kind:'weekly-upload',filename}}};
+  const config={schemaVersion:1,season,week,label:'Week '+week,tiePoints:0,tiebreakGameIndex:Math.max(0,games.length-1),games,participants,fullFieldReady,fullFieldValidationVersion:2,source:{kind:'weekly-upload',filename}};
+  if(fullFieldReady){config.fieldEntries=fieldEntries;config.fullFieldEntryCount=fieldEntries.length;config.competitionSize=participants.length+fieldEntries.length}
+  return{week,gameCount,errors,fullFieldIssues,competitionSize:fullFieldReady?config.competitionSize:participants.length,config};
 }
 
 export function parseDocumentGroups(groups,{filename='weekly-picks',season=2026}={}){
   const byWeek=new Map();
-  for(const group of groups||[]){const hinted=Number.isInteger(group.week)?group.week:null;let current=hinted;for(const line of group.lines||[]){const found=detectWeek(line);if(found)current=found;if(!current)continue;if(!byWeek.has(current))byWeek.set(current,[]);byWeek.get(current).push(clean(line))}}
-  const candidates=[];for(const [week,lines] of byWeek){const parsed=parseWeekGroup(week,lines,filename,season);if(parsed)candidates.push(parsed)}return candidates.sort((a,b)=>a.week-b.week);
+  for(const group of carryForwardWeekHints(groups||[])){
+    let current=Number.isInteger(group.week)?group.week:null;
+    for(const line of group.lines||[]){const found=detectWeek(line);if(found)current=found}
+    if(!current)continue;
+    if(!byWeek.has(current))byWeek.set(current,[]);
+    byWeek.get(current).push(group);
+  }
+  const candidates=[];
+  for(const [week,weekGroups] of byWeek){const parsed=parseWeekGroup(week,weekGroups,filename,season);if(parsed)candidates.push(parsed)}
+  return candidates.sort((a,b)=>a.week-b.week);
 }
 
 export function chooseBestCandidate(candidates){const valid=(candidates||[]).filter(c=>!c.errors.length&&c.config.participants.length===TARGETS.length);return valid.length?valid[valid.length-1]:null}
