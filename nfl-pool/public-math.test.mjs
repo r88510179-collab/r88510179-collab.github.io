@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {competitionRanks,ownershipShare} from './public-math.js';
+import {competitionRanks,ownershipShare,scoreEntry,tiebreakState} from './public-math.js';
 
 {
   const ranked=competitionRanks([
@@ -40,6 +40,19 @@ import {competitionRanks,ownershipShare} from './public-math.js';
   assert.deepEqual(b,{count:1,denominator:3,total:3,pct:33});
   assert.equal(a.pct+b.pct,100);
 }
+{
+  const tied=scoreEntry(['A','B'],[
+    {completed:true,winner:null},
+    {completed:false,winner:null}
+  ]);
+  assert.deepEqual(tied,{w:0,l:0,left:1});
+}
+{
+  assert.deepEqual(tiebreakState({completed:false,state:'pre',awayScore:null,homeScore:null}),{final:false,total:null});
+  assert.deepEqual(tiebreakState({completed:false,state:'in',awayScore:'14',homeScore:'10'}),{final:false,total:24});
+  assert.deepEqual(tiebreakState({completed:true,state:'post',awayScore:'21',homeScore:'17'}),{final:true,total:38});
+}
+
 {
   const source=readFileSync(new URL('./weekly-app.js',import.meta.url),'utf8');
   assert(source.includes("CFG?.fullFieldReady===true"));
