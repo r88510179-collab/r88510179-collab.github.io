@@ -35,7 +35,7 @@ a{color:inherit}
 .brand-icon{width:48px;height:48px;border-radius:13px;box-shadow:0 8px 24px #0009,0 0 0 1px #ffffff12}
 .brand-copy{display:flex;flex-direction:column;min-width:0}
 .brand-copy b{font-size:20px;line-height:1;letter-spacing:.055em;font-weight:950}
-.brand-copy small{margin-top:5px;color:#b84a50;font-size:9px;font-weight:900;letter-spacing:.19em}
+.league-line{display:flex;align-items:center;gap:5px;margin-top:4px;min-height:16px}.league-shield{width:15px;height:15px;object-fit:contain;filter:drop-shadow(0 2px 4px #0008)}.brand-copy small{color:#c54b51;font-size:9px;font-weight:900;letter-spacing:.16em}
 .header-actions{display:flex;align-items:center;gap:8px}
 .feed{display:flex;align-items:center;gap:7px;border:1px solid var(--line);background:#0b0e13e8;padding:8px 10px;border-radius:999px;font-size:10px;color:var(--muted);white-space:nowrap}
 .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px currentColor}
@@ -72,7 +72,7 @@ a{color:inherit}
   linear-gradient(90deg,transparent 49.7%,#c52b3236 50%,transparent 50.3%),
   repeating-linear-gradient(90deg,transparent 0 9.6%,#ffffff0a 9.8% 10%,transparent 10.2% 20%);
   clip-path:polygon(16% 100%,37% 0,63% 0,84% 100%);opacity:.7;pointer-events:none}
-.hero-main{position:relative;z-index:1;padding:28px 26px;align-self:center}
+.hero-nfl-shield{position:absolute;z-index:2;left:24px;top:16px;width:30px;height:30px;object-fit:contain;filter:drop-shadow(0 5px 12px #000a)}.hero-main{position:relative;z-index:1;padding:54px 26px 28px;align-self:center}
 .kicker{font-size:9px;color:#d84a50;font-weight:950;text-transform:uppercase;letter-spacing:.16em}
 .leader{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-top:5px}
 .leader-name{font-size:clamp(34px,7vw,56px);font-weight:950;letter-spacing:-.045em;text-transform:uppercase}
@@ -116,7 +116,7 @@ a{color:inherit}
 .status-pill.clinched,.status-pill.winner{color:#a7ebc2;background:#42c97915;border-color:#42c97945}
 .status-pill.out,.status-pill.final{color:#a3a8ae;background:#ffffff08;border-color:#ffffff14}
 .rooting{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
-.root-chip{font-size:8px;font-weight:900;padding:3px 5px;border-radius:6px;background:#080b0f;border:1px solid #ffffff10;color:#b8bdc4}
+.root-chip{display:inline-flex;align-items:center;gap:4px;font-size:8px;font-weight:900;padding:3px 5px;border-radius:6px;background:#080b0f;border:1px solid #ffffff10;color:#b8bdc4}
 .home-game-preview{padding:0 12px 12px;display:grid;gap:6px}
 .page-title{padding:12px 3px 10px}
 .page-title h1{margin:2px 0 3px;font-size:clamp(28px,7vw,42px);letter-spacing:-.035em;text-transform:uppercase}
@@ -137,7 +137,7 @@ th.c,td.c{text-align:center}
 .game{min-width:0;min-height:62px;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:6px;padding:9px;border-radius:11px;border:1px solid #ffffff10;background:linear-gradient(180deg,#11151b,#090c10)}
 .team{min-width:0;display:flex;align-items:center;gap:6px}
 .team.home{justify-content:flex-end}
-.badge{width:27px;height:27px;flex:0 0 auto;border-radius:7px;display:grid;place-items:center;background:linear-gradient(145deg,var(--tc,#333),#090c11);border:1px solid #ffffff18;color:#fff;font-size:7px;font-weight:950;box-shadow:inset 0 0 0 1px #0004}
+.badge{position:relative;width:30px;height:30px;flex:0 0 auto;border-radius:8px;display:grid;place-items:center;overflow:hidden;background:radial-gradient(circle at 50% 35%,color-mix(in srgb,var(--tc,#33465f) 45%,#11151b),#080b0f 72%);border:1px solid #ffffff20;color:#fff;font-size:7px;font-weight:950;box-shadow:inset 0 0 0 1px #0005,0 3px 8px #0005}.badge-fallback{position:relative;z-index:0;opacity:.3;font-size:7px;font-weight:950}.team-logo{position:absolute;z-index:1;inset:2px;width:calc(100% - 4px);height:calc(100% - 4px);object-fit:contain;filter:drop-shadow(0 2px 3px #0008)}.badge.mini{width:22px;height:22px;border-radius:6px}.badge.tiny{width:16px;height:16px;border-radius:4px;border-color:#ffffff16}.badge.tiny .team-logo{inset:1px;width:calc(100% - 2px);height:calc(100% - 2px)}.badge.tiny .badge-fallback{font-size:5px}
 .abbr{font-size:11px;font-weight:950}
 .score{font-size:18px;font-weight:950}
 .status{min-width:62px;text-align:center;color:var(--dim);font-size:8px;font-weight:900;text-transform:uppercase;line-height:1.1}
@@ -159,7 +159,7 @@ th.c,td.c{text-align:center}
 .impact-grid{grid-column:1/-1}
 .picks{padding-bottom:6px}
 .picks table{min-width:760px}
-.picks th,.picks td{white-space:nowrap;padding:8px;font-size:10px}
+.picks th,.picks td{white-space:nowrap;padding:8px;font-size:10px}.matchup-head{min-width:78px}.matchup-team{display:inline-flex;align-items:center;gap:3px}.matchup-slash{display:inline-block;margin:0 3px;color:#50565e}.pick-choice{display:inline-flex;align-items:center;justify-content:center;gap:5px}.pick-team{display:inline-flex;align-items:center;gap:4px;font-weight:950}.pick-result{min-width:10px;font-weight:950}
 .name{position:sticky;left:0;z-index:2;background:#11151b!important;font-weight:900;box-shadow:1px 0 var(--line)}
 .ok{color:var(--green);font-weight:950}.bad{color:#ef6970}.pending{color:#858c95}.neutral{color:var(--gold)}
 .error{margin:7px 0 0;padding:8px;border:1px solid #d52d3459;background:#d52d3412;border-radius:9px;color:#ffb1b5;font-size:9px}
@@ -178,10 +178,10 @@ th.c,td.c{text-align:center}
   .app-shell{padding:10px 10px 20px}
   .app-header{padding-top:max(4px,env(safe-area-inset-top))}
   .brand-icon{width:42px;height:42px;border-radius:11px}
-  .brand-copy b{font-size:17px}.brand-copy small{font-size:7px}
+  .brand-copy b{font-size:17px}.brand-copy small{font-size:7px}.league-shield{width:13px;height:13px}
   .feed{padding:7px 8px;font-size:8px;max-width:142px;overflow:hidden;text-overflow:ellipsis}
   .week-strip{margin:9px 0;padding:9px 10px}.week-select{min-width:126px;min-height:38px;font-size:11px}
-  .hero-stadium{grid-template-columns:1fr;min-height:0}.hero-main{padding:22px 17px 16px}.metrics{border-left:0;border-top:1px solid #ffffff12;grid-template-columns:repeat(4,1fr);padding:8px}
+  .hero-stadium{grid-template-columns:1fr;min-height:0}.hero-nfl-shield{left:16px;top:12px;width:27px;height:27px}.hero-main{padding:47px 17px 16px}.metrics{border-left:0;border-top:1px solid #ffffff12;grid-template-columns:repeat(4,1fr);padding:8px}
   .metric{padding:8px 6px}.metric b{font-size:17px}.metric span{font-size:7px}
   .home-grid,.race-grid{grid-template-columns:1fr}
   .gamegrid{grid-template-columns:1fr}
@@ -194,6 +194,6 @@ th.c,td.c{text-align:center}
   .root-chip{font-size:7px}
   .swing-item{grid-template-columns:minmax(0,1fr) 45px minmax(0,1fr);gap:5px}
   .swing-side{padding:6px}.swing-team{font-size:9px}
-  .brand-copy small{display:none}
+  .brand-copy small{display:none}.league-line{margin-top:2px}.league-shield{width:14px;height:14px}
 }
 @media(display-mode:standalone){body{overscroll-behavior-y:none}.app-header{padding-top:max(8px,env(safe-area-inset-top))}}
