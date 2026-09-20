@@ -1,0 +1,57 @@
+{
+  "id": "/nfl-pool/",
+  "name": "Pool Center",
+  "short_name": "Pool Center",
+  "description": "Live NFL pick'em pool standings, games, picks and weekly race tracking.",
+  "start_url": "/nfl-pool/?view=home",
+  "scope": "/nfl-pool/",
+  "display": "standalone",
+  "background_color": "#07090d",
+  "theme_color": "#0b0e13",
+  "categories": [
+    "sports",
+    "entertainment"
+  ],
+  "icons": [
+    {
+      "src": "assets/pool-center-icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/pool-center-icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/pool-center-icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Standings",
+      "short_name": "Standings",
+      "url": "/nfl-pool/?view=standings"
+    },
+    {
+      "name": "Games",
+      "short_name": "Games",
+      "url": "/nfl-pool/?view=games"
+    },
+    {
+      "name": "Picks",
+      "short_name": "Picks",
+      "url": "/nfl-pool/?view=picks"
+    },
+    {
+      "name": "Admin",
+      "short_name": "Admin",
+      "url": "/nfl-pool/admin/"
+    }
+  ]
+}

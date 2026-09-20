@@ -11,6 +11,23 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const norm=x=>ALIAS[x]||x;
 const score=x=>{let n;if(typeof x==='string'){const v=x.trim();if(!v||!/^\d+$/.test(v))return null;n=Number(v)}else if(typeof x==='number')n=x;else return null;return Number.isFinite(n)&&Number.isInteger(n)&&n>=0?n:null};
+const VALID_VIEWS=new Set(['home','standings','games','picks']);
+function currentView(){const q=new URLSearchParams(location.search).get('view');return VALID_VIEWS.has(q)?q:'home'}
+function setView(view,{push=false,scroll=true}={}){
+  const next=VALID_VIEWS.has(view)?view:'home';
+  document.querySelectorAll('[data-view-panel]').forEach(panel=>{panel.hidden=panel.dataset.viewPanel!==next});
+  document.querySelectorAll('[data-view-target]').forEach(btn=>{if(btn.closest('.bottom-nav'))btn.setAttribute('aria-current',btn.dataset.viewTarget===next?'page':'false')});
+  document.body.dataset.view=next;
+  document.title=next==='home'?'Pool Center':`Pool Center · ${next[0].toUpperCase()+next.slice(1)}`;
+  if(push){const u=new URL(location.href);u.searchParams.set('view',next);history.pushState({view:next},'',u)}
+  document.querySelectorAll('.app-menu[open]').forEach(menu=>menu.removeAttribute('open'));
+  if(scroll)window.scrollTo({top:0,behavior:'smooth'});
+}
+function setupViewNavigation(){
+  document.addEventListener('click',event=>{const hit=event.target.closest('[data-view-target]');if(!hit)return;event.preventDefault();setView(hit.dataset.viewTarget,{push:true})});
+  window.addEventListener('popstate',()=>setView(currentView(),{push:false,scroll:false}));
+  setView(currentView(),{push:false,scroll:false});
+}
 
 function jwtExpiry(token){try{const part=token.split('.')[1],json=atob(part.replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(part.length/4)*4,'=')),exp=Number(JSON.parse(json)?.exp);return Number.isFinite(exp)?exp*1000:0}catch{return 0}}
 async function anonymousToken(){if(anonToken&&Date.now()<anonExpiresAt-60000)return anonToken;if(!anonRequest){anonRequest=fetch(`${NEON_AUTH_URL}/token/anonymous`,{cache:'no-store',headers:{Accept:'application/json'}}).then(async r=>{if(!r.ok)throw new Error(`anonymous auth ${r.status}`);const j=await r.json();if(!j?.token)throw new Error('anonymous auth returned no token');anonToken=j.token;anonExpiresAt=jwtExpiry(anonToken)||Date.now()+5*60*1000;return anonToken}).finally(()=>{anonRequest=null})}return anonRequest}
@@ -77,8 +94,12 @@ function renderSwings(race){const ids=swingIndexes(true);$('swingMeta').textCont
 function gameOrder(){const rank=g=>g.state==='in'?0:!g.completed?1:2;return G.map((g,i)=>({g,i})).sort((a,b)=>rank(a.g)-rank(b.g)||a.i-b.i)}
 function render(){
   if(!CFG)return;const r=rows(),lead=r[0],f=G.filter(g=>g.completed).length,live=G.filter(g=>g.state==='in'&&!g.completed).length,t=tiebreak(),finalWinners=f===M.length?topIndices(P.map(p=>stats(p).w),t):[],race=raceStatus();let rank=1;
-  $('standings').innerHTML=r.map((p,i)=>{if(i&&!tiedWith(p,r[i-1],t))rank=i+1;const leadTie=tiedWith(p,lead,t);return`<tr class="${leadTie?'leadrow':''}"><td>${rank}</td><td class="entry">${esc(p.name)}</td><td class="c w">${p.w}</td><td class="c l">${p.l}</td><td class="c">${p.left}</td><td class="c hide">${p.mnf}</td><td class="c">${p.diff??'—'}</td></tr>`}).join('');
-  $('gamegrid').innerHTML=gameOrder().map(({g})=>{const show=g.state==='in'||g.completed,cl=g.completed?(g.winner?'final':'final tie'):g.state==='in'?'live':'pre',as=score(g.awayScore),hs=score(g.homeScore);return`<div class="game ${cl}"><div class="team ${g.winner===g.away?'winner':''}">${badge(g.away)}<span class="abbr">${esc(g.away)}</span>${show?`<span class="score">${as??'—'}</span>`:''}</div><div class="status">${esc(state(g))}</div><div class="team home ${g.winner===g.home?'winner':''}">${show?`<span class="score">${hs??'—'}</span>`:''}<span class="abbr">${esc(g.home)}</span>${badge(g.home)}</div></div>`}).join('');
+  $('standings').innerHTML=r.map((p,i)=>{if(i&&!tiedWith(p,r[i-1],t))rank=i+1;const leadTie=tiedWith(p,lead,t);return`<tr class="${leadTie?'leadrow':''}"><td>${rank}</td><td class="entry">${esc(p.name)}</td><td class="c w">${p.w}</td><td class="c l">${p.l}</td><td class="c">${p.left}</td><td class="c">${p.mnf}</td><td class="c">${p.diff??'—'}</td></tr>`}).join('');
+  if($('homeStandings')){let hrank=1;$('homeStandings').innerHTML=r.map((p,i)=>{if(i&&!tiedWith(p,r[i-1],t))hrank=i+1;const leadTie=tiedWith(p,lead,t);return`<div class="home-standing-row ${leadTie?'lead':''}"><span class="home-rank">${hrank}</span><span class="home-entry">${esc(p.name)}</span><span class="home-record">${p.w}–${p.l}</span><span class="home-left">${p.left} left</span></div>`}).join('')}
+  const orderedGames=gameOrder();
+  const gameMarkup=g=>{const show=g.state==='in'||g.completed,cl=g.completed?(g.winner?'final':'final tie'):g.state==='in'?'live':'pre',as=score(g.awayScore),hs=score(g.homeScore);return`<div class="game ${cl}"><div class="team ${g.winner===g.away?'winner':''}">${badge(g.away)}<span class="abbr">${esc(g.away)}</span>${show?`<span class="score">${as??'—'}</span>`:''}</div><div class="status">${esc(state(g))}</div><div class="team home ${g.winner===g.home?'winner':''}">${show?`<span class="score">${hs??'—'}</span>`:''}<span class="abbr">${esc(g.home)}</span>${badge(g.home)}</div></div>`};
+  $('gamegrid').innerHTML=orderedGames.map(({g})=>gameMarkup(g)).join('');
+  if($('homeGamePreview'))$('homeGamePreview').innerHTML=orderedGames.slice(0,3).map(({g})=>gameMarkup(g)).join('');
   $('pickHead').innerHTML='<tr><th class="name">Entry</th>'+M.map(([a,h])=>`<th class="c">${esc(a)}/${esc(h)}</th>`).join('')+'</tr>';
   $('pickBody').innerHTML=P.map(p=>'<tr><td class="name">'+esc(p.name)+'</td>'+p.picks.map((pick,i)=>{const g=G[i],done=g.completed,ok=done&&g.winner&&pick===g.winner,tie=done&&!g.winner;return`<td class="c ${tie?'neutral':done?(ok?'ok':'bad'):'pending'}">${esc(pick)}${tie?' · 0':done?(ok?' ✓':' ✕'):''}</td>`}).join('')+'</tr>').join('');
   $('finals').textContent=`${f}/${M.length}`;$('liveCount').textContent=live;$('left').textContent=M.length-f;$('mnf').textContent=t.total==null?'—':t.total+(t.final?'':'*');
@@ -96,4 +117,5 @@ async function loadWeeks(){
   const token=await anonymousToken(),url=`${NEON_DATA_URL}/nfl_pool_weeks?select=season,week,status,config,revision,published_at,locked_at&status=eq.locked&order=season.asc,week.asc`,r=await fetch(url,{cache:'no-store',headers:{Authorization:`Bearer ${token}`,Accept:'application/json'}});if(!r.ok)throw new Error(`week data ${r.status}`);const data=await r.json();if(!Array.isArray(data)||!data.length)throw new Error('No published pool weeks found');
   const select=$('weekSelect');select.innerHTML=data.map(x=>`<option value="${x.season}-${x.week}">${x.season} · Week ${x.week}</option>`).join('');const qs=new URLSearchParams(location.search),requested=Number(qs.get('week')),season=Number(qs.get('season'))||Math.max(...data.map(x=>x.season));let chosen=requested?data.find(x=>x.season===season&&x.week===requested):null;if(!chosen)chosen=data[data.length-1];select.value=`${chosen.season}-${chosen.week}`;select.addEventListener('change',()=>{const [s,w]=select.value.split('-');const u=new URL(location.href);u.searchParams.set('season',s);u.searchParams.set('week',w);location.href=u.toString()});applyConfig(chosen.config);render();await update();
 }
+setupViewNavigation();
 $('refresh').addEventListener('click',update);loadWeeks().catch(e=>{$('sync').textContent='CONFIG UNAVAILABLE';$('dot').style.background='var(--red)';$('error').innerHTML=`<div class="error">Unable to load weekly pool data: ${esc(e.message)}</div>`;console.error(e)});setInterval(()=>{if(CFG)update()},20000);

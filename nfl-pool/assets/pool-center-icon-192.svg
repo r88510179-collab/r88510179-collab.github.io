@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 512 512" role="img" aria-label="Pool Center">
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#151b22"/><stop offset="1" stop-color="#07090d"/></linearGradient>
+  <linearGradient id="red" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#ef4b52"/><stop offset=".52" stop-color="#c52b32"/><stop offset="1" stop-color="#7d1016"/></linearGradient>
+  <linearGradient id="edge" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f6b0b4"/><stop offset=".25" stop-color="#7b1015"/><stop offset=".7" stop-color="#f06a70"/><stop offset="1" stop-color="#590b0f"/></linearGradient>
+  <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%"><feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#000" flood-opacity=".72"/></filter>
+  <filter id="glow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="28"/></filter>
+</defs>
+<rect width="512" height="512" rx="104" fill="url(#bg)"/>
+<ellipse cx="256" cy="265" rx="162" ry="172" fill="#d52d34" opacity=".16" filter="url(#glow)"/>
+<g filter="url(#shadow)">
+  <path d="M256 78 401 134v126c0 91-54 157-145 197-91-40-145-106-145-197V134z" fill="#0c0f14" stroke="url(#edge)" stroke-width="15" stroke-linejoin="round"/>
+  <path d="M256 101 378 148v111c0 73-42 128-122 167-80-39-122-94-122-167V148z" fill="none" stroke="url(#red)" stroke-width="18" stroke-linejoin="round"/>
+  <path d="M166 174h88c31 0 53 20 53 50 0 30-22 50-53 50h-43v82h-45zm45 38v25h39c9 0 15-5 15-13s-6-12-15-12z" fill="url(#red)" stroke="#571015" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M354 198c-15-18-34-27-58-27-52 0-88 40-88 93 0 54 36 95 88 95 25 0 46-10 61-29l-31-29c-8 10-17 15-29 15-25 0-42-21-42-52 0-30 17-50 42-50 12 0 22 5 30 15z" fill="url(#red)" stroke="#571015" stroke-width="5" stroke-linejoin="round"/>
+  <g stroke="#8f171d" stroke-width="10" stroke-linecap="round">
+    <path d="M151 330 231 380"/><path d="M158 306 245 360"/><path d="M176 291 256 341"/>
+  </g>
+  <g stroke="#ef6c72" stroke-width="2" opacity=".85">
+    <path d="M151 330 231 380"/><path d="M158 306 245 360"/><path d="M176 291 256 341"/>
+  </g>
+</g>
+</svg>
