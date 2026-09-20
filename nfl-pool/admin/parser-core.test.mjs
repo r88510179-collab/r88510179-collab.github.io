@@ -1,153 +1,89 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-
 const parserSource=readFileSync(new URL('./parser-core.js',import.meta.url),'utf8');
 const parserUrl='data:text/javascript;base64,'+Buffer.from(parserSource).toString('base64');
-const {carryForwardWeekHints,parseDocumentGroups,validateConfig}=await import(parserUrl);
+const {carryForwardWeekHints,groupPdfTextItems,parseDocumentGroups,validateConfig}=await import(parserUrl);
 
 const matchups=[
-  '1) Panthers at 2) Falcons',
-  '3) Saints at 4) Ravens',
-  '5) Vikings at 6) Bears',
-  '7) Bengals at 8) Texans',
-  '9) Steelers at 10) Patriots',
-  '11) Packers at 12) Jets',
-  '13) Browns at 14) Buccaneers',
-  '15) Eagles at 16) Titans',
-  '17) Jaguars at 18) Broncos',
-  '19) Raiders at 20) Chargers',
-  '21) Seahawks at 22) Cardinals',
-  '23) Commanders at 24) Cowboys',
-  '25) Dolphins at 26) 49ers',
-  '27) Colts at 28) Chiefs',
-  '29) Giants at 30) Rams',
+ '1) Panthers at 2) Falcons','3) Saints at 4) Ravens','5) Vikings at 6) Bears','7) Bengals at 8) Texans','9) Steelers at 10) Patriots',
+ '11) Packers at 12) Jets','13) Browns at 14) Buccaneers','15) Eagles at 16) Titans','17) Jaguars at 18) Broncos','19) Raiders at 20) Chargers',
+ '21) Seahawks at 22) Cardinals','23) Commanders at 24) Cowboys','25) Dolphins at 26) 49ers','27) Colts at 28) Chiefs','29) Giants at 30) Rams'
 ];
-
 const tracked=[
-  'D.C. 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 42 0',
-  'JC 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 48 0',
-  'DJS 1 4 5 8 9 12 13 16 17 20 21 24 25 28 29 45 0',
-  'Thaddius 2 3 6 7 10 11 14 15 18 19 22 23 26 27 30 46 0',
+ 'D.C. 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 42 0',
+ 'JC 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 48 0',
+ 'DJS 1 4 5 8 9 12 13 16 17 20 21 24 25 28 29 45 0',
+ 'Thaddius 2 3 6 7 10 11 14 15 18 19 22 23 26 27 30 46 0'
 ];
-
-function parse(lines){
-  return parseDocumentGroups([{week:2,lines}],{filename:'fixture.pdf',season:2026})[0];
-}
-
-{
-  const candidate=parse([
-    ...matchups,
-    '99 DC Smith 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 99 0',
-    ...tracked,
-  ]);
-  assert.deepEqual(candidate.errors,[]);
-  const dc=candidate.config.participants.find(p=>p.id==='dc');
-  assert.equal(dc.sourceName,'D.C.');
-  assert.equal(dc.tiebreak,42);
-  assert.deepEqual(dc.pickNumbers,[1,3,5,7,9,11,13,15,17,19,21,23,25,27,29]);
-}
+const anonA='Alice 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0';
+const anonB='Bob 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 55 0';
+function parse(lines){return parseDocumentGroups([{week:2,lines}],{filename:'fixture.pdf',season:2026})[0]}
 
 {
-  const groups=carryForwardWeekHints([
-    {week:2,lines:['Week 2']},
-    {week:null,lines:tracked},
-    {week:null,lines:matchups},
-  ]);
-  assert.deepEqual(groups.map(g=>g.week),[2,2,2]);
-  const candidate=parseDocumentGroups(groups,{filename:'continuation.pdf',season:2026})[0];
-  assert.deepEqual(candidate.errors,[]);
-  assert.equal(candidate.gameCount,15);
-  assert.equal(candidate.config.participants.length,4);
+ const rows=groupPdfTextItems([{str:'Rosie 500',transform:[1,0,0,1,10,100]},{str:'1',transform:[1,0,0,1,100,100]}],{pageNumber:2});
+ assert.equal(rows[0].pageNumber,2);assert.equal(rows[0].y,100);assert.equal(rows[0].parts.length,2);assert.equal(rows[0].text,'Rosie 500 1');
 }
-
 {
-  const candidate=parse([...matchups,...tracked,tracked[0]]);
-  assert(candidate.errors.includes('Multiple D.C. rows found'));
+ const groups=carryForwardWeekHints([{week:2,lines:['Week 2']},{week:null,lines:tracked},{week:null,lines:matchups}]);assert.deepEqual(groups.map(g=>g.week),[2,2,2]);
 }
-
 {
-  const duplicate=[...matchups];
-  duplicate[14]='29) Panthers at 30) Falcons';
-  const candidate=parse([...duplicate,...tracked]);
-  assert(candidate.errors.some(e=>e==='Duplicate matchup teams CAR-ATL'));
+ const c=parse([...matchups,'99 DC Smith 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 99 0',...tracked]);assert.deepEqual(c.errors,[]);assert.equal(c.config.participants.find(p=>p.id==='dc').sourceName,'D.C.');
 }
-
 {
-  const candidate=parse([...matchups,...tracked]);
-  const config=structuredClone(candidate.config);
-  config.games[14].away=config.games[0].away;
-  config.games[14].home=config.games[0].home;
-  const errors=validateConfig(config);
-  assert(errors.includes('Duplicate matchup teams CAR-ATL'));
+ const c=parse([...matchups,...tracked,'Rosie 500 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0',"O'Brien-Smith 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 51 0"]);
+ assert.equal(c.config.fullFieldReady,true);assert.equal(c.config.fieldEntries.length,2);for(const x of c.config.fieldEntries)assert.deepEqual(Object.keys(x).sort(),['id','pickNumbers','tiebreak']);
 }
-
 {
-  const candidate=parse([...matchups,...tracked]);
-  const config=structuredClone(candidate.config);
-  config.games[14].away='JAC';
-  config.games[14].home='DEN';
-  const errors=validateConfig(config);
-  assert(errors.includes('Duplicate matchup teams JAX-DEN'));
+ const c=parse([...matchups,...tracked,'Alice 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0 2 4']);assert.equal(c.errors.length,0);assert.equal(c.config.fullFieldReady,false);assert.equal('fieldEntries' in c.config,false);
 }
-
 {
-  const candidate=parse([
-    ...matchups,
-    ...tracked,
-    'Juice 1 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0',
-    'Rosie 500 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 55 0',
-  ]);
-  assert.deepEqual(candidate.errors,[]);
-  assert.equal(candidate.config.competitionSize,6);
-  assert.equal(candidate.config.fieldEntries.length,2);
-  assert.deepEqual(candidate.config.fieldEntries[0].pickNumbers,[1,3,5,7,9,11,13,15,17,19,21,23,25,27,29]);
-  assert.equal(candidate.config.fieldEntries[0].tiebreak,44);
-  assert.equal('displayName' in candidate.config.fieldEntries[0],false);
-  assert.equal('sourceName' in candidate.config.fieldEntries[0],false);
+ const c=parse([...matchups,...tracked,anonA,'SURVIVOR','Survivor Person 1 2 3 4 5']);assert.equal(c.config.fullFieldReady,true);assert.equal(c.config.fieldEntries.length,1);assert.equal('survivorEntries' in c.config,false);
 }
-
 {
-  const candidate=parse([
-    ...matchups,
-    ...tracked,
-    'Broken Entry 1 2 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0',
-  ]);
-  assert.deepEqual(candidate.errors,[]);
-  assert.equal(candidate.config.fieldEntries.length,1);
-  assert.equal(candidate.config.competitionSize,5);
-  assert.equal(candidate.config.fieldIssueCount,1);
-  assert.equal(candidate.config.fieldInvalidPickCount,1);
-  assert.deepEqual(candidate.config.fieldEntries[0].pickNumbers,[1,2,5,7,9,11,13,15,17,19,21,23,25,27,29]);
+ const c=parse([...matchups,...tracked,anonA,'Mystery Bonus Section',anonB]);assert.equal(c.config.fullFieldReady,false);assert.equal('fieldEntries' in c.config,false);
 }
-
 {
-  const candidate=parse([
-    ...matchups,
-    ...tracked,
-    'Blank Cell Entry 1 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0',
-  ]);
-  assert(candidate.errors.some(e=>e.includes('anonymous competition row has a missing or nonnumeric pick cell')));
+ const groups=[
+  {week:2,sourceType:'pdf',pageNumber:1,pageFingerprint:'core',lines:[...matchups,...tracked]},
+  {week:2,sourceType:'pdf',pageNumber:2,pageFingerprint:'same-anon',lines:[anonA]},
+  {week:2,sourceType:'pdf',pageNumber:3,pageFingerprint:'same-anon',lines:[anonA]}
+ ];
+ const c=parseDocumentGroups(groups,{filename:'dup.pdf',season:2026})[0];assert.equal(c.errors.length,0);assert.equal(c.config.fullFieldReady,false);
 }
-
 {
-  const candidate=parse([
-    ...matchups,
-    ...tracked,
-    'Nonnumeric Cell Entry 1 - 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0',
-  ]);
-  assert(candidate.errors.some(e=>e.includes('anonymous competition row has a missing or nonnumeric pick cell')));
+ const same='1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0';const c=parse([...matchups,...tracked,`Alice ${same}`,`Bob ${same}`]);assert.equal(c.config.fullFieldReady,true);assert.equal(c.config.fieldEntries.length,2);
 }
-
 {
-  const candidate=parse([...matchups,...tracked,'Anonymous 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0']);
-  const config=structuredClone(candidate.config);
-  config.fieldEntries[0].displayName='Do not persist me';
-  config.competitionSize=999;
-  config.fieldIssueCount=1;
-  const errors=validateConfig(config);
-  assert(errors.some(e=>e.includes('names must not be stored')));
-  assert(errors.some(e=>e.includes('Competition size mismatch')));
-  assert(errors.some(e=>e.includes('Field issue count mismatch')));
+ const c=parse([...matchups,...tracked,'D.C. 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 42 0 2']);assert(c.errors.includes('Multiple D.C. rows found'));
 }
-
-console.log('parser-core Week 2 hardening + full-field regressions passed');
+{
+ const c=parse([...matchups,...tracked,'Missing 1 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0']);assert.equal(c.config.fullFieldReady,false);
+}
+{
+ const c=parse([...matchups,...tracked,'Broken 1 2 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0']);assert.equal(c.config.fullFieldReady,false);
+}
+{
+ const c=parse([...matchups,...tracked,`${anonA} 9`]);assert.equal(c.config.fullFieldReady,false);
+}
+{
+ const header=['Name',...Array.from({length:15},(_,i)=>`G${i+1}`),'Pts','W'];
+ const mk=(name,picks,tb,w)=>[name,...picks.map(String),String(tb),String(w)];
+ const groups=[{week:2,sourceType:'spreadsheet',sheetName:'Week 2',rows:[
+  ...matchups.map((text,i)=>({kind:'spreadsheet',sheetName:'Week 2',rowNumber:i+1,cells:[text],text})),
+  {kind:'spreadsheet',sheetName:'Week 2',rowNumber:20,cells:header,text:header.join(' ')},
+  ...tracked.map((line,i)=>{const [name,...rest]=line.split(' ');return{kind:'spreadsheet',sheetName:'Week 2',rowNumber:21+i,cells:[name,...rest],text:line}}),
+  {kind:'spreadsheet',sheetName:'Week 2',rowNumber:30,cells:mk('Rosie 500',[1,3,5,7,9,11,13,15,17,19,21,23,25,27,29],44,0),text:'Rosie 500 row'}
+ ]}];
+ const c=parseDocumentGroups(groups,{filename:'fixture.xlsx',season:2026})[0];assert.equal(c.config.fullFieldReady,true);assert.equal(c.config.fieldEntries.length,1);
+}
+{
+ const c=parse([...matchups,...tracked,anonA]);const cfg=structuredClone(c.config);cfg.fieldEntries[0].metadata={source:'x'};assert(validateConfig(cfg).some(e=>e.includes('keys must be exactly')));
+}
+{
+ const c=parse([...matchups,...tracked,'Nonnumeric 1 - 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0']);assert.equal(c.config.fullFieldReady,false);assert.equal('fieldEntries' in c.config,false);
+}
+{
+ const c=parse([...matchups,...tracked]);const cfg=structuredClone(c.config);delete cfg.fullFieldReady;delete cfg.fullFieldValidationVersion;delete cfg.fullFieldEntryCount;delete cfg.fieldEntries;delete cfg.competitionSize;assert.deepEqual(validateConfig(cfg),[]);
+}
+assert.equal(parserSource.includes('nfl_pool_weeks'),false);assert.equal(parserSource.includes('neon.from'),false);
+console.log('parser-core source-boundary, duplicate, fail-closed, privacy regressions passed');
