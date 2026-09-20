@@ -17,7 +17,7 @@ const tracked=[
 ];
 const anonA='Alice 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0';
 const anonB='Bob 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 55 0';
-function parse(lines){return parseDocumentGroups([{week:2,lines}],{filename:'fixture.pdf',season:2026})[0]}
+function parse(lines){return parseDocumentGroups([{week:2,lines:['Name Picks Pts W',...lines]}],{filename:'fixture.pdf',season:2026})[0]}
 
 {
  const rows=groupPdfTextItems([{str:'Rosie 500',transform:[1,0,0,1,10,100]},{str:'1',transform:[1,0,0,1,100,100]}],{pageNumber:2});
@@ -44,7 +44,7 @@ function parse(lines){return parseDocumentGroups([{week:2,lines}],{filename:'fix
 }
 {
  const groups=[
-  {week:2,sourceType:'pdf',pageNumber:1,pageFingerprint:'core',lines:[...matchups,...tracked]},
+  {week:2,sourceType:'pdf',pageNumber:1,pageFingerprint:'core',lines:['Name Picks Pts W',...matchups,...tracked]},
   {week:2,sourceType:'pdf',pageNumber:2,pageFingerprint:'same-anon',lines:[anonA]},
   {week:2,sourceType:'pdf',pageNumber:3,pageFingerprint:'same-anon',lines:[anonA]}
  ];
@@ -84,6 +84,16 @@ function parse(lines){return parseDocumentGroups([{week:2,lines}],{filename:'fix
 }
 {
  const c=parse([...matchups,...tracked]);const cfg=structuredClone(c.config);delete cfg.fullFieldReady;delete cfg.fullFieldValidationVersion;delete cfg.fullFieldEntryCount;delete cfg.fieldEntries;delete cfg.competitionSize;assert.deepEqual(validateConfig(cfg),[]);
+}
+
+{
+ const c=parseDocumentGroups([{week:2,lines:[...matchups,...tracked,anonA]}],{filename:'no-header.pdf',season:2026})[0];assert.equal(c.errors.length,0);assert.equal(c.config.fullFieldReady,false);
+}
+{
+ const header=['Name',...Array.from({length:15},(_,i)=>`G${i+1}`),'Pts','W','Mystery'];
+ const rows=[...matchups.map((text,i)=>({kind:'spreadsheet',sheetName:'Week 2',rowNumber:i+1,cells:[text],text})),{kind:'spreadsheet',sheetName:'Week 2',rowNumber:20,cells:header,text:header.join(' ')}];
+ for(const [i,line] of tracked.entries()){const [name,...rest]=line.split(' ');rows.push({kind:'spreadsheet',sheetName:'Week 2',rowNumber:21+i,cells:[name,...rest,''],text:line})}
+ const c=parseDocumentGroups([{week:2,sourceType:'spreadsheet',sheetName:'Week 2',rows}],{filename:'unknown-extra.xlsx',season:2026})[0];assert.equal(c.errors.length,0);assert.equal(c.config.fullFieldReady,false);
 }
 assert.equal(parserSource.includes('nfl_pool_weeks'),false);assert.equal(parserSource.includes('neon.from'),false);
 console.log('parser-core source-boundary, duplicate, fail-closed, privacy regressions passed');
