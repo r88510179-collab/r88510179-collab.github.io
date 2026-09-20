@@ -6,7 +6,7 @@ const SHELL=[
   './style.css?v=premium-v3',
   './slate.css?v=slate-v1',
   './weekly.css?v=premium-v2',
-  './weekly-app.js?v=weekly-v7',
+  './weekly-app.js?v=weekly-v8',
   './score-feed-proxy.js?v=1',
   './pwa.js?v=1',
   './manifest.webmanifest',
