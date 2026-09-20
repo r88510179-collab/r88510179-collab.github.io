@@ -113,25 +113,22 @@ function parseWeekGroup(week,lines,filename,season){
   }
 
   const fieldEntries=[];
-  let fieldOrdinal=0;
+  let fieldOrdinal=0,fieldIssueCount=0,fieldInvalidPickCount=0;
   for(const line of lines){
     if(matchupFromLine(line))continue;
     const row=trailingParticipantRow(line,gameCount+2);
-    if(!row)continue;
+    if(!row||trackedTargetForName(row.sourceName))continue;
     const pickNumbers=row.nums.slice(0,gameCount),tiebreak=row.nums[gameCount];
-    const rowErrors=validatePickNumbers('Competition entry',pickNumbers,tiebreak,numberToGame,gameCount);
-    if(rowErrors.length){
-      errors.push(...rowErrors.map(e=>`${row.sourceName}: ${e.replace(/^Competition entry:\s*/,'')}`));
-      continue;
-    }
-    if(trackedTargetForName(row.sourceName))continue;
+    let invalidPicks=0;
+    pickNumbers.forEach((n,i)=>{const g=matchups[i];if(n!==g.awayNumber&&n!==g.homeNumber)invalidPicks++});
+    if(invalidPicks){fieldIssueCount++;fieldInvalidPickCount+=invalidPicks}
     fieldOrdinal++;
     fieldEntries.push({id:`field-${String(fieldOrdinal).padStart(3,'0')}`,pickNumbers,tiebreak});
   }
 
   const games=matchups.map((g,index)=>({index,awayNumber:g.awayNumber,homeNumber:g.homeNumber,away:g.away,home:g.home,awayName:g.awayName,homeName:g.homeName}));
   const competitionSize=participants.length+fieldEntries.length;
-  return{week,gameCount,errors,competitionSize,config:{schemaVersion:1,season,week,label:`Week ${week}`,tiePoints:0,tiebreakGameIndex:Math.max(0,games.length-1),games,participants,fieldEntries,competitionSize,source:{kind:'weekly-upload',filename}}};
+  return{week,gameCount,errors,competitionSize,config:{schemaVersion:1,season,week,label:`Week ${week}`,tiePoints:0,tiebreakGameIndex:Math.max(0,games.length-1),games,participants,fieldEntries,competitionSize,fieldIssueCount,fieldInvalidPickCount,source:{kind:'weekly-upload',filename}}};
 }
 
 export function parseDocumentGroups(groups,{filename='weekly-picks',season=2026}={}){
@@ -166,17 +163,23 @@ export function validateConfig(config){
   if(fieldEntries!==undefined){
     if(!Array.isArray(fieldEntries))errors.push('Field entries must be an array');
     else{
-      const ids=new Set();
+      const ids=new Set();let issueRows=0,invalidPicks=0;
       fieldEntries.forEach((p,i)=>{
         const label=`Field entry ${i+1}`;
         if(!p||typeof p.id!=='string'||!p.id)errors.push(`${label}: missing id`);
         else if(ids.has(p.id))errors.push(`Duplicate field entry id ${p.id}`);
         else ids.add(p.id);
         if(p&&('displayName' in p||'sourceName' in p||'name' in p))errors.push(`${label}: names must not be stored`);
-        validateEntry(p,label);
+        if(!Array.isArray(p?.pickNumbers)||p.pickNumbers.length!==games.length)errors.push(`${label}: wrong pick count`);
+        if(!Number.isInteger(p?.tiebreak))errors.push(`${label}: invalid tiebreak`);
+        let rowIssues=0;
+        (p?.pickNumbers||[]).forEach((n,gi)=>{const g=games[gi];if(!Number.isInteger(n)||!g||n!==g.awayNumber&&n!==g.homeNumber){rowIssues++;invalidPicks++}});
+        if(rowIssues)issueRows++;
       });
       const expected=participants.length+fieldEntries.length;
       if(config.competitionSize!==undefined&&config.competitionSize!==expected)errors.push(`Competition size mismatch: expected ${expected}`);
+      if(config.fieldIssueCount!==undefined&&config.fieldIssueCount!==issueRows)errors.push(`Field issue count mismatch: expected ${issueRows}`);
+      if(config.fieldInvalidPickCount!==undefined&&config.fieldInvalidPickCount!==invalidPicks)errors.push(`Field invalid-pick count mismatch: expected ${invalidPicks}`);
     }
   }
   return [...new Set(errors)];
