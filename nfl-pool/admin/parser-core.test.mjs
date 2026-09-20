@@ -121,6 +121,24 @@ function parse(lines){
 }
 
 {
+  const candidate=parse([
+    ...matchups,
+    ...tracked,
+    'Blank Cell Entry 1 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0',
+  ]);
+  assert(candidate.errors.some(e=>e.includes('anonymous competition row has a missing or nonnumeric pick cell')));
+}
+
+{
+  const candidate=parse([
+    ...matchups,
+    ...tracked,
+    'Nonnumeric Cell Entry 1 - 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0',
+  ]);
+  assert(candidate.errors.some(e=>e.includes('anonymous competition row has a missing or nonnumeric pick cell')));
+}
+
+{
   const candidate=parse([...matchups,...tracked,'Anonymous 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0']);
   const config=structuredClone(candidate.config);
   config.fieldEntries[0].displayName='Do not persist me';
