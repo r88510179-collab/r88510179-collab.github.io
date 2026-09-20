@@ -74,7 +74,7 @@ function topIndices(wins,t=tiebreak()){const best=Math.max(...wins);let leaders=
 function tiedWith(a,b,t=tiebreak()){return a.w===b.w&&a.l===b.l&&(!t.final||a.diff===b.diff)}
 function state(g){return g.completed?(g.winner?'FINAL':'FINAL TIE'):g.state==='in'?(g.detail||'LIVE'):(g.detail||'SCHEDULED')}
 function teamLogoUrl(t){const team=norm(String(t||'').toUpperCase()),code=ESPN_LOGO_CODE[team]||team.toLowerCase();return`https://a.espncdn.com/i/teamlogos/nfl/500/${encodeURIComponent(code)}.png`}
-function badge(t,size=''){const team=norm(String(t||'').toUpperCase());return`<span class="badge${size?` ${size}`:''}" style="--tc:${TEAM_COLORS[team]||'#33465f'}"><span class="badge-fallback">${esc(team)}</span><img class="team-logo" src="${teamLogoUrl(team)}" alt="${esc(team)} logo" loading="lazy" decoding="async" onerror="this.hidden=true"></span>`}
+function badge(t,size=''){const team=norm(String(t||'').toUpperCase());return`<span class="badge${size?` ${size}`:''}" style="--tc:${TEAM_COLORS[team]||'#33465f'}" aria-hidden="true"><span class="badge-fallback">${esc(team)}</span><img class="team-logo" src="${teamLogoUrl(team)}" alt="" loading="lazy" decoding="async" onerror="this.hidden=true"></span>`}
 function pickTeam(t){const team=norm(String(t||'').toUpperCase());return`<span class="pick-team">${badge(team,'mini')}<span>${esc(team)}</span></span>`}
 function swingIndexes(unfinishedOnly=false,games=G){return M.map((_,i)=>i).filter(i=>new Set(P.map(p=>p.picks[i])).size>1&&(!unfinishedOnly||!games[i].completed))}
 function addState(map,wins,count){const key=wins.join(',');map.set(key,(map.get(key)||0)+count)}
