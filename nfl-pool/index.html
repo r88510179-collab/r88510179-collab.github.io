@@ -3,86 +3,136 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#070b12">
-<title>NFL Pool Live Tracker</title>
-<link rel="stylesheet" href="style.css?v=race-v1">
+<meta name="theme-color" content="#0b0e13">
+<meta name="application-name" content="Pool Center">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Pool Center">
+<title>Pool Center</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="assets/pool-center-icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css?v=premium-v1">
 <link rel="stylesheet" href="slate.css?v=slate-v1">
-<link rel="stylesheet" href="weekly.css?v=weekly-v1">
+<link rel="stylesheet" href="weekly.css?v=premium-v1">
 </head>
 <body>
-<main class="wrap">
-<header class="top">
-  <div class="brand">
-    <div class="mark" aria-hidden="true">FP</div>
-    <div class="brandcopy">
-      <div class="eyebrow">Pool Center</div>
-      <h1 class="title">NFL Pick'em Live</h1>
+<div class="stadium-glow" aria-hidden="true"></div>
+<main class="app-shell">
+  <header class="app-header">
+    <a class="brand-lockup" href="./?view=home" aria-label="Pool Center home">
+      <img class="brand-icon" src="assets/pool-center-icon.svg" alt="">
+      <span class="brand-copy"><b>POOL CENTER</b><small>NFL PICK'EM LIVE</small></span>
+    </a>
+    <div class="header-actions">
+      <div class="feed" aria-live="polite"><span class="dot" id="dot"></span><span id="sync">Connecting…</span></div>
+      <details class="app-menu">
+        <summary aria-label="Open settings">•••</summary>
+        <div class="menu-popover">
+          <button type="button" data-install-app hidden>Install Pool Center</button>
+          <a href="admin/">Admin</a>
+          <span>Live scores refresh every 20 sec</span>
+        </div>
+      </details>
+    </div>
+  </header>
+
+  <section class="week-strip" aria-label="Week selector">
+    <div class="week-copy">
+      <span class="eyebrow">NFL Pool</span>
       <div class="week" id="weekLine">Loading weekly pool…</div>
-      <div class="week-tools">
-        <select id="weekSelect" class="week-select" aria-label="Choose pool week"><option>Loading…</option></select>
-        <a class="admin-mini" href="admin/">Admin</a>
+    </div>
+    <select id="weekSelect" class="week-select" aria-label="Choose pool week"><option>Loading…</option></select>
+  </section>
+
+  <div class="view-stack">
+    <section class="view-panel" data-view-panel="home">
+      <section class="card hero hero-stadium" aria-label="Pool leader and game summary">
+        <div class="hero-main">
+          <div class="kicker" id="leaderKicker">Current leader</div>
+          <div class="leader"><div class="leader-name" id="leaderName">—</div><div class="record" id="leaderRecord">0–0</div></div>
+          <div class="note" id="leaderNote">Standings update automatically as games go final.</div>
+        </div>
+        <div class="metrics">
+          <div class="metric"><span>Final</span><b id="finals">0/—</b></div>
+          <div class="metric"><span>Live</span><b id="liveCount">0</b></div>
+          <div class="metric"><span>Remaining</span><b id="left">—</b></div>
+          <div class="metric"><span>TB Total</span><b id="mnf">—</b></div>
+        </div>
+      </section>
+
+      <div class="home-grid">
+        <section class="card home-standings-card">
+          <div class="head"><div><span class="section-kicker">Leaderboard</span><h2>Live Standings</h2></div><button class="text-action" type="button" data-view-target="standings">View all</button></div>
+          <div class="home-standings" id="homeStandings"></div>
+        </section>
+
+        <aside class="card pulse" aria-labelledby="pulse-title">
+          <div class="head compact"><div><span class="section-kicker">Week pulse</span><h2 id="pulse-title">Pool Status</h2></div><div class="meta" id="pulseWeek">Week —</div></div>
+          <div class="pulse-grid">
+            <div class="pulse-box"><span>Entries</span><b id="entryCount">—</b></div>
+            <div class="pulse-box"><span>Games</span><b id="gameCount">—</b></div>
+            <div class="pulse-box"><span>Best W</span><b id="bestWins">0</b></div>
+            <div class="pulse-box"><span>Swing Left</span><b id="swingLeft">—</b></div>
+          </div>
+          <div class="progressline"><span>Slate progress</span><span id="progressText">0%</span></div>
+          <div class="progress"><i id="progressBar"></i></div>
+          <div class="tb" id="tbNote">Tiebreak guesses load with the selected week.</div>
+        </aside>
       </div>
-    </div>
+
+      <div class="home-grid race-grid">
+        <section class="card race" aria-labelledby="race-title">
+          <div class="head"><div><span class="section-kicker">Scenario engine</span><h2 id="race-title">Race Status</h2><div class="meta">Exact remaining-outcome math · ties included</div></div><div class="meta" id="scenarioCount">—</div></div>
+          <div class="race-list" id="raceList"></div>
+        </section>
+        <section class="card home-games-card">
+          <div class="head"><div><span class="section-kicker">Now & next</span><h2>Game Watch</h2></div><button class="text-action" type="button" data-view-target="games">All games</button></div>
+          <div class="home-game-preview" id="homeGamePreview"></div>
+        </section>
+      </div>
+    </section>
+
+    <section class="view-panel" data-view-panel="standings" hidden>
+      <section class="page-title"><span class="section-kicker">Pool leaderboard</span><h1>Standings</h1><p>Wins, losses, remaining games and tiebreak position for every tracked entry.</p></section>
+      <section class="card standings" aria-labelledby="stand-title">
+        <div class="head"><h2 id="stand-title">Live Standings</h2><div class="meta">W · L · left · tiebreak</div></div>
+        <div class="table-wrap"><table><thead><tr><th>RK</th><th>Entry</th><th class="c">W</th><th class="c">L</th><th class="c">Left</th><th class="c">TB</th><th class="c">Diff</th></tr></thead><tbody id="standings"></tbody></table></div>
+      </section>
+    </section>
+
+    <section class="view-panel" data-view-panel="games" hidden>
+      <section class="page-title"><span class="section-kicker">Scoreboard</span><h1>Games</h1><p>Live and upcoming pool games first, followed by finals.</p></section>
+      <section class="card games" aria-labelledby="games-title">
+        <div class="head"><div><h2 id="games-title">Game Center</h2><div class="meta">Live scores · final results · 20 sec refresh</div></div><button id="refresh" class="btn" type="button">Refresh</button></div>
+        <div class="gamegrid" id="gamegrid"></div><div id="error" aria-live="polite"></div>
+      </section>
+      <section class="card swings" aria-labelledby="swing-title">
+        <div class="head"><div><span class="section-kicker">Rooting guide</span><h2 id="swing-title">Swing Games</h2><div class="meta">Games where the four entries disagree</div></div><div class="meta" id="swingMeta">—</div></div>
+        <div class="swing-list" id="swingList"></div>
+      </section>
+    </section>
+
+    <section class="view-panel" data-view-panel="picks" hidden>
+      <section class="page-title"><span class="section-kicker">Weekly selections</span><h1>Picks</h1><p>Side-by-side picks for D.C., JC, DJS and Thaddeus.</p></section>
+      <section class="card picks" aria-labelledby="picks-title">
+        <div class="head"><h2 id="picks-title">Pick Board</h2><div class="meta">✓ correct · ✕ incorrect · tie = 0</div></div>
+        <div class="scroll"><table><thead id="pickHead"></thead><tbody id="pickBody"></tbody></table></div>
+      </section>
+    </section>
   </div>
-  <div class="feed" aria-live="polite"><span class="dot" id="dot"></span><span id="sync">Connecting…</span></div>
-</header>
 
-<div class="grid">
-  <section class="card hero" aria-label="Pool leader and game summary">
-    <div class="hero-main">
-      <div class="kicker" id="leaderKicker">Current leader</div>
-      <div class="leader"><div class="leader-name" id="leaderName">—</div><div class="record" id="leaderRecord">0–0</div></div>
-      <div class="note" id="leaderNote">Standings update automatically as games go final.</div>
-    </div>
-    <div class="metrics">
-      <div class="metric"><span>Final</span><b id="finals">0/—</b></div>
-      <div class="metric"><span>Live</span><b id="liveCount">0</b></div>
-      <div class="metric"><span>Remaining</span><b id="left">—</b></div>
-      <div class="metric"><span>TB Total</span><b id="mnf">—</b></div>
-    </div>
-  </section>
-
-  <section class="card standings" aria-labelledby="stand-title">
-    <div class="head"><h2 id="stand-title">Standings</h2><div class="meta">Wins · losses · left</div></div>
-    <table><thead><tr><th>RK</th><th>Entry</th><th class="c">W</th><th class="c">L</th><th class="c">Left</th><th class="c hide">TB</th><th class="c">Diff</th></tr></thead><tbody id="standings"></tbody></table>
-  </section>
-
-  <aside class="card pulse" aria-labelledby="pulse-title">
-    <div class="head" style="padding:0 0 9px"><h2 id="pulse-title">Pool Pulse</h2><div class="meta" id="pulseWeek">Week —</div></div>
-    <div class="pulse-grid">
-      <div class="pulse-box"><span>Entries</span><b id="entryCount">—</b></div>
-      <div class="pulse-box"><span>Games</span><b id="gameCount">—</b></div>
-      <div class="pulse-box"><span>Best W</span><b id="bestWins">0</b></div>
-      <div class="pulse-box"><span>Swing Left</span><b id="swingLeft">—</b></div>
-    </div>
-    <div class="progressline"><span>Slate progress</span><span id="progressText">0%</span></div>
-    <div class="progress"><i id="progressBar"></i></div>
-    <div class="tb" id="tbNote">Tiebreak guesses load with the selected week.</div>
-  </aside>
-
-  <section class="card race" aria-labelledby="race-title">
-    <div class="head"><div><h2 id="race-title">Race Status</h2><div class="meta">Exact remaining-outcome math · ties included</div></div><div class="meta" id="scenarioCount">—</div></div>
-    <div class="race-list" id="raceList"></div>
-  </section>
-
-  <section class="card swings" aria-labelledby="swing-title">
-    <div class="head"><div><h2 id="swing-title">Swing Games</h2><div class="meta">Rooting guide · live race impact</div></div><div class="meta" id="swingMeta">—</div></div>
-    <div class="swing-list" id="swingList"></div>
-  </section>
-
-  <section class="card games" aria-labelledby="games-title">
-    <div class="head"><div><h2 id="games-title">Game Center</h2><div class="meta">Live & upcoming first · finals follow</div></div><button id="refresh" class="btn" type="button">REFRESH</button></div>
-    <div class="gamegrid" id="gamegrid"></div><div id="error" aria-live="polite"></div>
-  </section>
-
-  <section class="card picks" aria-labelledby="picks-title">
-    <div class="head"><h2 id="picks-title">Pick Board</h2><div class="meta">✓ correct · ✕ incorrect · tie = 0</div></div>
-    <div class="scroll"><table><thead id="pickHead"></thead><tbody id="pickBody"></tbody></table></div>
-  </section>
-</div>
-<footer class="foot"><span id="footerRule">Final NFL outcomes only · NFL ties = 0 points.</span><span>ESPN live scoreboard · 20 sec refresh</span></footer>
+  <footer class="foot"><span id="footerRule">Final NFL outcomes only · NFL ties = 0 points.</span><span>Pool Center · ESPN live scoreboard</span></footer>
 </main>
+
+<nav class="bottom-nav" aria-label="Primary">
+  <button type="button" data-view-target="home" aria-current="page"><span class="nav-icon">⌂</span><span>Home</span></button>
+  <button type="button" data-view-target="standings"><span class="nav-icon">▥</span><span>Standings</span></button>
+  <button type="button" data-view-target="games"><span class="nav-icon">◫</span><span>Games</span></button>
+  <button type="button" data-view-target="picks"><span class="nav-icon">✓</span><span>Picks</span></button>
+</nav>
+
 <script src="score-feed-proxy.js?v=1"></script>
-<script src="weekly-app.js?v=weekly-v4" defer></script>
+<script src="weekly-app.js?v=weekly-v5" defer></script>
+<script src="pwa.js?v=1" defer></script>
 </body>
 </html>
