@@ -112,7 +112,12 @@ function parse(lines){
     ...tracked,
     'Broken Entry 1 2 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0',
   ]);
-  assert(candidate.errors.some(e=>e.startsWith('Broken Entry:')));
+  assert.deepEqual(candidate.errors,[]);
+  assert.equal(candidate.config.fieldEntries.length,1);
+  assert.equal(candidate.config.competitionSize,5);
+  assert.equal(candidate.config.fieldIssueCount,1);
+  assert.equal(candidate.config.fieldInvalidPickCount,1);
+  assert.deepEqual(candidate.config.fieldEntries[0].pickNumbers,[1,2,5,7,9,11,13,15,17,19,21,23,25,27,29]);
 }
 
 {
@@ -120,9 +125,11 @@ function parse(lines){
   const config=structuredClone(candidate.config);
   config.fieldEntries[0].displayName='Do not persist me';
   config.competitionSize=999;
+  config.fieldIssueCount=1;
   const errors=validateConfig(config);
   assert(errors.some(e=>e.includes('names must not be stored')));
   assert(errors.some(e=>e.includes('Competition size mismatch')));
+  assert(errors.some(e=>e.includes('Field issue count mismatch')));
 }
 
 console.log('parser-core Week 2 hardening + full-field regressions passed');
