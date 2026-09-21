@@ -103,3 +103,22 @@ export function survivorDecisionOptions(entry,nextWeekIndex,resultsByWeek,matchu
   }
   return{eligible:true,reason:null,burned,options};
 }
+
+
+export function survivorMarketMatchups(events){
+  const out=[];
+  for(const event of events||[]){
+    const c=event?.competitions?.[0],away=c?.competitors?.find(x=>x.homeAway==='away'),home=c?.competitors?.find(x=>x.homeAway==='home');
+    if(!away||!home)continue;
+    const a=normalizeSurvivorCode(away.team?.abbreviation),h=normalizeSurvivorCode(home.team?.abbreviation);
+    if(!a||!h)continue;
+    const odds=c?.odds?.[0]||{},details=String(odds?.details||'').trim();
+    let favorite=odds?.awayTeamOdds?.favorite===true?a:odds?.homeTeamOdds?.favorite===true?h:null;
+    if(!favorite&&details){const code=normalizeSurvivorCode(details.split(/\s+/)[0]);if(code===a||code===h)favorite=code}
+    let spread=null;
+    const match=details.match(/([+-]?\d+(?:\.\d+)?)/),numeric=match?Math.abs(Number(match[1])):Math.abs(Number(odds?.spread));
+    if(Number.isFinite(numeric)&&numeric>0)spread=numeric;
+    out.push({away:a,home:h,date:event?.date||c?.date||null,favorite,spread});
+  }
+  return out;
+}

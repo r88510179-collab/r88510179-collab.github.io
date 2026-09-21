@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {survivorEntryState,survivorEligibleEntering,survivorPickDistribution,survivorSummary,survivorWeekProgress,survivorFieldAvailability,survivorDecisionOptions} from './survivor-math.js';
+import {survivorEntryState,survivorEligibleEntering,survivorPickDistribution,survivorSummary,survivorWeekProgress,survivorFieldAvailability,survivorDecisionOptions,survivorMarketMatchups} from './survivor-math.js';
 
 const entries=[
   {picks:['PIT','SF']},
@@ -77,3 +77,24 @@ assert.equal(outOptions.eligible,false);
 assert.equal(outOptions.options.length,0);
 
 console.log('survivor Week-ahead field availability and tracked decision-support regressions passed');
+
+
+const marketEvents=[
+  {date:'2026-09-27T17:00:00Z',competitions:[{competitors:[
+    {homeAway:'away',team:{abbreviation:'DEN'}},{homeAway:'home',team:{abbreviation:'KC'}}
+  ],odds:[{details:'KC -7.5',homeTeamOdds:{favorite:true},awayTeamOdds:{favorite:false}}]}]},
+  {date:'2026-09-27T20:25:00Z',competitions:[{competitors:[
+    {homeAway:'away',team:{abbreviation:'MIA'}},{homeAway:'home',team:{abbreviation:'BUF'}}
+  ],odds:[{details:'BUF -3.5'}]}]},
+  {date:'2026-09-28T00:20:00Z',competitions:[{competitors:[
+    {homeAway:'away',team:{abbreviation:'PHI'}},{homeAway:'home',team:{abbreviation:'DAL'}}
+  ]}]},
+  {competitions:[{competitors:[{homeAway:'away',team:{abbreviation:'NYJ'}}]}]}
+];
+assert.deepEqual(survivorMarketMatchups(marketEvents),[
+  {away:'DEN',home:'KC',date:'2026-09-27T17:00:00Z',favorite:'KC',spread:7.5},
+  {away:'MIA',home:'BUF',date:'2026-09-27T20:25:00Z',favorite:'BUF',spread:3.5},
+  {away:'PHI',home:'DAL',date:'2026-09-28T00:20:00Z',favorite:null,spread:null}
+]);
+
+console.log('survivor ESPN Week-ahead schedule and market parsing regressions passed');

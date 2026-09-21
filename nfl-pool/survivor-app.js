@@ -1,6 +1,6 @@
 'use strict';
 
-import {survivorEntryState,survivorPickDistribution,survivorSummary,survivorWeekProgress,survivorFieldAvailability,survivorDecisionOptions,normalizeSurvivorCode} from './survivor-math.js?v=3';
+import {survivorEntryState,survivorPickDistribution,survivorSummary,survivorWeekProgress,survivorFieldAvailability,survivorDecisionOptions,survivorMarketMatchups,normalizeSurvivorCode} from './survivor-math.js?v=3';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
@@ -46,22 +46,6 @@ function buildResults(events){
     map.set(a,{completed:done,state,winner,tie,opponent:h});map.set(h,{completed:done,state,winner,tie,opponent:a});
   }
   return map;
-}
-
-function buildDecisionMatchups(events){
-  const out=[];
-  for(const event of events||[]){
-    const c=event?.competitions?.[0],away=c?.competitors?.find(x=>x.homeAway==='away'),home=c?.competitors?.find(x=>x.homeAway==='home');
-    if(!away||!home)continue;
-    const a=normalizeSurvivorCode(away.team?.abbreviation),h=normalizeSurvivorCode(home.team?.abbreviation),odds=c?.odds?.[0]||{},details=String(odds?.details||'').trim();
-    let favorite=odds?.awayTeamOdds?.favorite===true?a:odds?.homeTeamOdds?.favorite===true?h:null;
-    if(!favorite&&details){const code=normalizeSurvivorCode(details.split(/\s+/)[0]);if(code===a||code===h)favorite=code}
-    let spread=null;
-    const match=details.match(/([+-]?\d+(?:\.\d+)?)/),numeric=match?Math.abs(Number(match[1])):Math.abs(Number(odds?.spread));
-    if(Number.isFinite(numeric)&&numeric>0)spread=numeric;
-    out.push({away:a,home:h,date:event?.date||c?.date||null,favorite,spread});
-  }
-  return out;
 }
 
 function marketLabel(option){
@@ -114,7 +98,7 @@ async function updateDecisionSchedule(force=false){
   try{
     const week=cfg.week+1,r=await fetch(`${ESPN_SCOREBOARD}?dates=${cfg.season}&week=${week}&seasontype=2`,{cache:'no-store'});
     if(!r.ok)throw new Error(`Week ${week} schedule ${r.status}`);
-    const j=await r.json(),matchups=buildDecisionMatchups(j.events);
+    const j=await r.json(),matchups=survivorMarketMatchups(j.events);
     if(!matchups.length)throw new Error(`Week ${week} schedule is not available yet`);
     nextWeekMatchups=matchups;nextWeekFetchedAt=Date.now();nextWeekError='';render();
   }catch(e){nextWeekError=e.message||String(e);if(!nextWeekMatchups.length)render();console.warn(e)}
