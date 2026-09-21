@@ -42,6 +42,22 @@ assert(validateSurvivorConfig(bad).some(e=>e.includes('only id and picks')));
 const badCount=structuredClone(parsed.config);badCount.currentWeekEntryCount=99;
 assert(validateSurvivorConfig(badCount).some(e=>e.includes('current-week entry count')));
 
+const noPickRow=row('No Pick Entry',null,null,null,null,7);
+const withNoPick=parseSurvivorPages([{pageNumber:1,rows:[header,row('D.C.','PIT','SF',null,null,1),row('DJS','LV','SF',null,null,2),row('Thaddius','LAC',null,null,null,3),noPickRow]}],{season:2026});
+assert.deepEqual(withNoPick.errors,[]);
+assert.equal(withNoPick.config.competitionSize,4);
+assert.deepEqual(withNoPick.config.fieldEntries[0].picks,[null,null]);
+
+// Week-2 scale contract mirrors the uploaded sheet aggregate without persisting source names.
+const bigRows=[header,row('D.C.','PIT','SF',null,null,1),row('DJS','LV','SF',null,null,2),row('Thaddius','LAC',null,null,null,3)];
+for(let i=0;i<244;i++)bigRows.push(row('Anon '+i,'JAC',i<158?'TB':null,null,null,4+i));
+const scaled=parseSurvivorPages([{pageNumber:1,rows:bigRows}],{season:2026});
+assert.deepEqual(scaled.errors,[]);
+assert.equal(scaled.config.competitionSize,247);
+assert.equal(scaled.config.currentWeekEntryCount,160);
+assert.equal(scaled.config.fieldEntries.length,244);
+assert.equal(JSON.stringify(scaled.config).includes('Anon 0'),false);
+
 const unknown=[{pageNumber:1,rows:[header,row('D.C.','PIT','SF',null,null,1),row('DJS','LV','SF',null,null,2),row('Thaddius','LAC',null,null,null,3),row('Mystery','ABC','SF',null,null,4)]}];
 assert(parseSurvivorPages(unknown,{season:2026}).errors.some(e=>e.includes('unknown Week 1 team')));
 
