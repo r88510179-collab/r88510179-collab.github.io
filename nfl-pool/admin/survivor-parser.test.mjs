@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {parseSurvivorPages,validateSurvivorConfig,normalizeSurvivorTeam} from './survivor-parser.js';
+import {groupSurvivorPdfTextItems,parseSurvivorPages,validateSurvivorConfig,normalizeSurvivorTeam} from './survivor-parser.js';
 
 const header={text:'Week 1 2 3 4',y:760,rowIndex:0,parts:[
   {x:116,text:'Week'},{x:159,text:'1'},{x:192,text:'2'},{x:225,text:'3'},{x:258,text:'4'}
@@ -21,6 +21,15 @@ assert.equal(normalizeSurvivorTeam('JAC'),'JAX');
 assert.equal(normalizeSurvivorTeam('LA C'),'LAC');
 assert.equal(normalizeSurvivorTeam('LA R'),'LAR');
 assert.equal(normalizeSurvivorTeam('XXX'),null);
+
+// Real-sheet geometry: participant name and team cells are offset by ~1.8 PDF points.
+const grouped=groupSurvivorPdfTextItems([
+  {str:'D.C.',transform:[1,0,0,1,20,100]},
+  {str:'PIT',transform:[1,0,0,1,154,98.2]},
+  {str:'SF',transform:[1,0,0,1,188,98.2]}
+]);
+assert.equal(grouped.length,1);
+assert.equal(grouped[0].text,'D.C. PIT SF');
 
 const parsed=parseSurvivorPages(pages,{season:2026,filename:'Suicide 26 w2.pdf'});
 assert.deepEqual(parsed.errors,[]);
