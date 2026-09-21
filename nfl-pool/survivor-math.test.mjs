@@ -138,3 +138,78 @@ assert.equal(duplicateOptions.options.filter(x=>x.team==='BUF').length,1);
 assert.equal(duplicateOptions.options.filter(x=>x.team==='MIA').length,1);
 
 console.log('survivor positive-spread and duplicate-schedule corrective regressions passed');
+
+
+// Conflicting explicit favorite flags are authoritative ambiguity: never fall through to details.
+const conflictingFlags=survivorMarketMatchups([{
+  competitions:[{competitors:[
+    {homeAway:'away',team:{abbreviation:'DEN'}},{homeAway:'home',team:{abbreviation:'KC'}}
+  ],odds:[{details:'KC -3.5',awayTeamOdds:{favorite:true},homeTeamOdds:{favorite:true}}]}]
+}]);
+assert.deepEqual(conflictingFlags,[{away:'DEN',home:'KC',date:null,favorite:null,spread:null}]);
+
+// Full details-fallback matrix: only recognized competitor + negative spread can infer a favorite.
+const marketMatrix=[
+  ['KC -7.5','KC',7.5],
+  ['KC -7','KC',7],
+  ['DEN -3.5','DEN',3.5],
+  ['KC +3.5',null,null],
+  ['KC +7',null,null],
+  ['KC 3.5',null,null],
+  ['DEN +3.5',null,null],
+  ['XXX -7',null,null],
+  ['',null,null],
+  [null,null,null]
+];
+for(const [details,expectedFavorite,expectedSpread] of marketMatrix){
+  const odds=details===null?{}:{details};
+  const parsed=survivorMarketMatchups([{
+    competitions:[{competitors:[
+      {homeAway:'away',team:{abbreviation:'DEN'}},{homeAway:'home',team:{abbreviation:'KC'}}
+    ],odds:[odds]}]
+  }])[0];
+  assert.equal(parsed.favorite,expectedFavorite,`details ${String(details)} favorite`);
+  assert.equal(parsed.spread,expectedSpread,`details ${String(details)} spread`);
+}
+
+// Both explicit flags false permit a valid negative-details fallback.
+const bothFalseFallback=survivorMarketMatchups([{
+  competitions:[{competitors:[
+    {homeAway:'away',team:{abbreviation:'DEN'}},{homeAway:'home',team:{abbreviation:'KC'}}
+  ],odds:[{details:'KC -6',awayTeamOdds:{favorite:false},homeTeamOdds:{favorite:false}}]}]
+}]);
+assert.deepEqual(bothFalseFallback,[{away:'DEN',home:'KC',date:null,favorite:'KC',spread:6}]);
+
+// Duplicate-team ambiguity matrix must fail closed only for affected matchups.
+const duplicateMatrices=[
+  [
+    {away:'DEN',home:'KC',favorite:'KC',spread:7,date:'a'},
+    {away:'LV',home:'KC',favorite:'KC',spread:6,date:'b'}
+  ],
+  [
+    {away:'KC',home:'DEN',favorite:'KC',spread:7,date:'a'},
+    {away:'KC',home:'LV',favorite:'KC',spread:6,date:'b'}
+  ],
+  [
+    {away:'DEN',home:'KC',favorite:'KC',spread:7,date:'a'},
+    {away:'KC',home:'LV',favorite:'KC',spread:6,date:'b'}
+  ],
+  [
+    {away:'DEN',home:'KC',favorite:'KC',spread:7,date:'a'},
+    {away:'DEN',home:'KC',favorite:'DEN',spread:1,date:'b'}
+  ],
+  [
+    {away:'DEN',home:'KC',favorite:'KC',spread:7,date:'a'},
+    {away:'LV',home:'KC',favorite:'LV',spread:2,date:'b'},
+    {away:'KC',home:'CHI',favorite:'KC',spread:4,date:'c'}
+  ]
+];
+for(const ambiguous of duplicateMatrices){
+  const rows=[...ambiguous,{away:'MIA',home:'BUF',favorite:'BUF',spread:3.5,date:'unique'}];
+  const opts=survivorDecisionOptions(entries[0],2,results,rows,availability);
+  assert.equal(opts.options.some(x=>ambiguous.some(m=>m.away===x.team||m.home===x.team)),false);
+  assert.equal(opts.options.filter(x=>x.team==='MIA').length,1);
+  assert.equal(opts.options.filter(x=>x.team==='BUF').length,1);
+}
+
+console.log('survivor conflicting-flags and full corrective attack matrix passed');

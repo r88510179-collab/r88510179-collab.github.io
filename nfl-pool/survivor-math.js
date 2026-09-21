@@ -118,9 +118,10 @@ export function survivorMarketMatchups(events){
     if(!a||!h)continue;
     const odds=c?.odds?.[0]||{},details=String(odds?.details||'').trim();
     const awayFavorite=odds?.awayTeamOdds?.favorite===true,homeFavorite=odds?.homeTeamOdds?.favorite===true;
+    const explicitConflict=awayFavorite&&homeFavorite;
     let favorite=awayFavorite!==homeFavorite?(awayFavorite?a:h):null,spread=null;
     const fallback=details.match(/^([A-Za-z]{2,3})\s+(-\d+(?:\.\d+)?)(?:\s|$)/);
-    if(!favorite&&fallback){
+    if(!favorite&&!explicitConflict&&fallback){
       const code=normalizeSurvivorCode(fallback[1]);
       if(code===a||code===h){favorite=code;spread=Math.abs(Number(fallback[2]))}
     }
