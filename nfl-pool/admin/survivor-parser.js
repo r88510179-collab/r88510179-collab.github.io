@@ -69,7 +69,6 @@ function parseParticipantRow(row,contract){
     if(best>=0&&bestDist<=contract.gap*0.62)bins[best].push(part.text);
   }
   const rawPicks=bins.map(xs=>clean(xs.join(' '))||null);
-  if(!rawPicks.some(Boolean))return null;
   const picks=[],issues=[];
   rawPicks.forEach((raw,i)=>{
     if(!raw){picks.push(null);return}
@@ -95,7 +94,6 @@ export function parseSurvivorPages(pages,{season=2026,filename='survivor.pdf'}={
   for(const p of parsed)for(let i=0;i<p.picks.length;i++)if(p.picks[i])week=Math.max(week,i+1);
   if(!week)errors.push('No populated Survivor week found');
   for(const p of parsed){
-    if(!p.picks[0])errors.push(p.sourceName+': Week 1 pick is missing');
     for(let i=week;i<p.picks.length;i++)if(p.picks[i])errors.push(p.sourceName+': pick exists after detected current week');
   }
 
