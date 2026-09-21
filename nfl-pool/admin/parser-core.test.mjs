@@ -147,7 +147,31 @@ function applyRegularHeaderGeometry(rows,headerText='Entry Pts W'){
   const c=parse([...matchups,...tracked,anonA]);
   const cfg=structuredClone(c.config);
   cfg.fieldEntries[0].pickNumbers[1]=2;
-  assert(validateConfig(cfg).some(e=>e.includes('not exactly one pick per game')));
+  assert(validateConfig(cfg).some(e=>e.includes('not exactly one pick/no-pick per game')));
+}
+{
+  // Anonymous no-pick normalization: an invalid/missing matchup cell becomes 0 without guessing a team.
+  const noPick='Skip 1 2 5 7 9 11 13 15 17 19 21 23 25 27 29 47 0';
+  const c=parse([...matchups,...tracked,anonA,noPick]);
+  assert.deepEqual(c.errors,[]);
+  assert.deepEqual(c.fullFieldIssues,[]);
+  assert.equal(c.config.fullFieldReady,true);
+  assert.equal(c.config.competitionSize,6);
+  const normalized=c.config.fieldEntries.find(p=>p.pickNumbers.includes(0));
+  assert(normalized);
+  assert.equal(normalized.pickNumbers[1],0);
+  assert.equal(normalized.pickNumbers[0],1);
+  assert.equal(Object.keys(normalized).sort().join(','),'id,pickNumbers,tiebreak');
+  assert.deepEqual(validateConfig(c.config),[]);
+}
+{
+  // Tracked entries remain strict; no-pick sentinel is never accepted for the tracked four.
+  const c=parse([...matchups,
+    'D.C. 1 0 5 7 9 11 13 15 17 19 21 23 25 27 29 42 0',
+    tracked[1],tracked[2],tracked[3],anonA
+  ]);
+  assert(c.errors.some(e=>e.includes('D.C.')));
+  assert.equal(c.config.fullFieldReady,false);
 }
 
 

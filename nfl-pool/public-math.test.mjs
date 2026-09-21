@@ -56,6 +56,7 @@ import {competitionRanks,ownershipShare,scoreEntry,tiebreakState} from './public
 {
   const source=readFileSync(new URL('./weekly-app.js',import.meta.url),'utf8');
   assert(source.includes("CFG?.fullFieldReady===true"));
+  assert(source.includes("!tracked&&n===0"),'anonymous no-pick sentinel must be accepted without relaxing tracked validation');
   assert(source.includes('WIN CEILING'));
   assert(source.includes('unresolved tiebreak not projected'));
   assert(!source.includes("'best possible'"));

@@ -75,6 +75,11 @@ function regularParticipantRow(line,matchups){
   return parsed;
 }
 
+function anonymousParticipantRow(line,matchups){
+  const parsed=structuralParticipantRow(line,matchups.length);if(!parsed)return null;
+  return{...parsed,pickNumbers:parsed.pickNumbers.map((n,i)=>{const g=matchups[i];return n===g.awayNumber||n===g.homeNumber?n:0})};
+}
+
 function median(values){const a=values.slice().sort((x,y)=>x-y),m=Math.floor(a.length/2);return a.length%2?a[m]:(a[m-1]+a[m])/2}
 
 function pdfRowGap(a,b){
@@ -277,15 +282,16 @@ function looksLikeDamagedParticipantRow(line,gameCount){
   return tokens.length>=gameCount+1&&numericCount>=gameCount&&tokens.some(t=>!/^\d+$/.test(t));
 }
 
-function validatePickNumbers(label,pickNumbers,tiebreak,numberToGame,gameCount){
-  const errors=[],seenGames=new Set();
+function validatePickNumbers(label,pickNumbers,tiebreak,numberToGame,gameCount,{allowNoPick=false}={}){
+  const errors=[],seenGames=new Set();let noPicks=0;
   for(const n of pickNumbers||[]){
+    if(allowNoPick&&n===0){noPicks++;continue}
     const gi=numberToGame.get(n);
     if(gi===undefined)errors.push(label+': pick '+n+' is not in the matchup key');
     else if(seenGames.has(gi))errors.push(label+': two picks in matchup '+(gi+1));
     else seenGames.add(gi);
   }
-  if((pickNumbers||[]).length!==gameCount||seenGames.size!==gameCount)errors.push(label+': expected exactly one pick for each of '+gameCount+' games');
+  if((pickNumbers||[]).length!==gameCount||seenGames.size+noPicks!==gameCount)errors.push(label+': expected exactly one pick or explicit no-pick for each of '+gameCount+' games');
   if(!Number.isInteger(tiebreak))errors.push(label+': missing tiebreak total');
   return errors;
 }
@@ -341,14 +347,14 @@ function parseWeekGroup(week,weekGroups,filename,season){
     participants.push({id:target.id,displayName:target.displayName,sourceName:parsed.sourceName,pickNumbers:parsed.pickNumbers,tiebreak:parsed.tiebreak});
   }
 
-  const temporary=[],seenSourceKeys=new Set();
-  const considerRow=(row,parsed)=>{
+  const temporary=[],seenSourceKeys=new Set(),acceptedAnonymousSourceKeys=new Set();
+  const considerRow=(row,parsed,{allowNoPick=false}={})=>{
     if(!parsed||trackedTargetForName(parsed.sourceName))return;
-    const rowErrors=validatePickNumbers('Anonymous field entry',parsed.pickNumbers,parsed.tiebreak,numberToGame,gameCount);
+    const rowErrors=validatePickNumbers('Anonymous field entry',parsed.pickNumbers,parsed.tiebreak,numberToGame,gameCount,{allowNoPick});
     if(rowErrors.length){fullFieldIssues.push('An anonymous regular-pool entry failed pick validation');return}
     const key=sourceRowKey(row);
     if(seenSourceKeys.has(key)){fullFieldIssues.push('Duplicate source participant row detected');return}
-    seenSourceKeys.add(key);
+    seenSourceKeys.add(key);acceptedAnonymousSourceKeys.add(key);
     temporary.push({sourceName:parsed.sourceName,pickNumbers:parsed.pickNumbers,tiebreak:parsed.tiebreak});
   };
 
@@ -356,7 +362,7 @@ function parseWeekGroup(week,weekGroups,filename,season){
     const accepted=pdfBoundary?.accepted||new Set();
     for(const row of sourceRows){
       if(row?.kind!=='pdf'||!accepted.has(sourceRowKey(row)))continue;
-      considerRow(row,regularParticipantRow(row.text,matchups));
+      considerRow(row,anonymousParticipantRow(row.text,matchups),{allowNoPick:true});
     }
   }else if(hasSpreadsheet){
     for(const row of sourceRows){if(row?.kind!=='spreadsheet')continue;considerRow(row,spreadsheetParticipantRow(row,sheetContract,matchups))}
@@ -367,7 +373,8 @@ function parseWeekGroup(week,weekGroups,filename,season){
   for(const line of lines){
     if(matchupFromLine(line))continue;
     if(TARGETS.some(target=>targetRowIdentity(line,target)))continue;
-    const row=parseLine(line);
+    const row=parseLine(line),matches=sourceByText.get(clean(line))||[];
+    if(!row&&matches.some(source=>acceptedAnonymousSourceKeys.has(sourceRowKey(source))))continue;
     if(!row&&looksLikeDamagedParticipantRow(line,gameCount))fullFieldIssues.push('A supposed regular-pool participant row is structurally invalid');
   }
   if(!temporary.length)fullFieldIssues.push('No validated anonymous regular-pool entries were found');
@@ -409,12 +416,12 @@ export function validateConfig(config){
     if(teamPairs.has(teamKey))errors.push('Duplicate matchup teams '+teamKey);else teamPairs.add(teamKey);
     for(const n of [g.awayNumber,g.homeNumber]){if(!Number.isInteger(n))errors.push('Game '+(i+1)+': invalid number');else if(nums.has(n))errors.push('Duplicate number '+n);else nums.set(n,i)}
   });
-  const validateEntry=(p,label)=>{
+  const validateEntry=(p,label,{allowNoPick=false}={})=>{
     if(!Number.isInteger(p?.tiebreak))errors.push(label+': invalid tiebreak');
     if(!Array.isArray(p?.pickNumbers)||p.pickNumbers.length!==games.length)errors.push(label+': wrong pick count');
-    const seen=new Set();
-    for(const n of p?.pickNumbers||[]){if(!nums.has(n))errors.push(label+': unknown pick '+n);else seen.add(nums.get(n))}
-    if(seen.size!==games.length)errors.push(label+': not exactly one pick per game');
+    const seen=new Set();let noPicks=0;
+    for(const n of p?.pickNumbers||[]){if(allowNoPick&&n===0){noPicks++;continue}if(!nums.has(n))errors.push(label+': unknown pick '+n);else seen.add(nums.get(n))}
+    if(seen.size+noPicks!==games.length)errors.push(label+': not exactly one pick/no-pick per game');
   };
   participants.forEach(p=>validateEntry(p,p.displayName||'Tracked entry'));
 
@@ -429,7 +436,7 @@ export function validateConfig(config){
         if(keys.length!==allowed.length||keys.some((k,ki)=>k!==allowed[ki]))errors.push(label+': only id, pickNumbers, and tiebreak are allowed');
         if(typeof p.id!=='string'||!p.id)errors.push(label+': missing id');
         else if(ids.has(p.id))errors.push('Duplicate field entry id '+p.id);else ids.add(p.id);
-        validateEntry(p,label);
+        validateEntry(p,label,{allowNoPick:true});
       });
       const expected=participants.length+fieldEntries.length;
       if(config.competitionSize!==expected)errors.push('Competition size mismatch: expected '+expected);

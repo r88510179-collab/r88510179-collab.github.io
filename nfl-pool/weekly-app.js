@@ -51,9 +51,9 @@ function validateConfig(c){
   const validateEntry=(p,label,tracked=false)=>{
     if(tracked&&typeof p?.displayName!=='string')throw new Error(`Invalid entry ${label}`);
     if(!Array.isArray(p?.pickNumbers)||p.pickNumbers.length!==c.games.length||!Number.isInteger(p?.tiebreak))throw new Error(`Invalid entry ${label}`);
-    const seen=new Set();
-    p.pickNumbers.forEach(n=>{const x=numbers.get(n);if(!x)throw new Error(`${label}: unknown pick ${n}`);if(seen.has(x.i))throw new Error(`${label}: multiple picks for game ${x.i+1}`);seen.add(x.i)});
-    if(seen.size!==c.games.length)throw new Error(`${label}: incomplete picks`);
+    const seen=new Set();let noPicks=0;
+    p.pickNumbers.forEach(n=>{if(!tracked&&n===0){noPicks++;return}const x=numbers.get(n);if(!x)throw new Error(`${label}: unknown pick ${n}`);if(seen.has(x.i))throw new Error(`${label}: multiple picks for game ${x.i+1}`);seen.add(x.i)});
+    if(seen.size+noPicks!==c.games.length)throw new Error(`${label}: incomplete picks`);
   };
   c.participants.forEach(p=>validateEntry(p,p?.displayName||'tracked',true));
   if(c.fullFieldReady===true){
