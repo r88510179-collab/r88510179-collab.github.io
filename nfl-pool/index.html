@@ -14,7 +14,7 @@
 <link rel="icon" href="assets/pool-center-icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css?v=premium-v3">
 <link rel="stylesheet" href="slate.css?v=slate-v1">
-<link rel="stylesheet" href="weekly.css?v=premium-v2">
+<link rel="stylesheet" href="weekly.css?v=premium-v2">\n<link rel="stylesheet" href="survivor.css?v=1">
 </head>
 <body>
 <div class="stadium-glow" aria-hidden="true"></div>
@@ -114,6 +114,14 @@
       </section>
     </section>
 
+    <section class="view-panel" data-view-panel="survivor" hidden>
+      <section class="page-title survivor-title"><div><span class="section-kicker">Survivor / Suicide</span><h1>Survivor</h1><p>Weekly selections, attrition and live NFL outcome status across the full Survivor field.</p></div><select id="survivorWeekSelect" class="week-select" aria-label="Choose Survivor week"><option>Loading…</option></select></section>
+      <div id="survivorError"></div>
+      <section class="card survivor-hero"><div class="survivor-hero-head"><div><span class="section-kicker">Field status</span><h2>Survivor Pool</h2><div class="meta" id="svMeta">—</div></div><span id="svFeed" class="survivor-feed">LOADING RESULTS</span></div><div class="survivor-metrics"><div class="survivor-metric"><span>Original pool</span><b id="svPoolSize">—</b></div><div class="survivor-metric"><span>Week entries</span><b id="svEntered">—</b></div><div class="survivor-metric"><span>Still in</span><b id="svStillIn">—</b></div><div class="survivor-metric"><span>Pending</span><b id="svPending">—</b></div></div><div class="survivor-note" id="svSummaryNote">Waiting for published Survivor data.</div></section>
+      <div class="survivor-grid"><section class="card"><div class="head"><div><span class="section-kicker">Your entries</span><h2>D.C. · DJS · Thaddeus</h2></div></div><div class="survivor-card-body" id="svTracked"></div></section><section class="card"><div class="head"><div><span class="section-kicker">Current week</span><h2>Pick Distribution</h2></div></div><div class="survivor-card-body" id="svDistribution"></div></section></div>
+      <section class="card" style="margin-top:10px"><div class="head"><div><span class="section-kicker">Attrition</span><h2>Weekly Field Progress</h2></div></div><div class="survivor-progress" id="svProgress"></div></section>
+    </section>
+
     <section class="view-panel" data-view-panel="picks" hidden>
       <section class="page-title"><span class="section-kicker">Weekly selections</span><h1>Picks</h1><p>Side-by-side picks for D.C., JC, DJS and Thaddeus. Matchup headers show full-field ownership when available.</p></section>
       <section class="card picks" aria-labelledby="picks-title">
@@ -130,11 +138,11 @@
   <button type="button" data-view-target="home" aria-current="page"><span class="nav-icon">⌂</span><span>Home</span></button>
   <button type="button" data-view-target="standings"><span class="nav-icon">▥</span><span>Standings</span></button>
   <button type="button" data-view-target="games"><span class="nav-icon">◫</span><span>Games</span></button>
-  <button type="button" data-view-target="picks"><span class="nav-icon">✓</span><span>Picks</span></button>
+  <button type="button" data-view-target="picks"><span class="nav-icon">✓</span><span>Picks</span></button>\n  <button type="button" data-view-target="survivor"><span class="nav-icon">◉</span><span>Survivor</span></button>
 </nav>
 
 <script src="score-feed-proxy.js?v=1"></script>
-<script type="module" src="weekly-app.js?v=weekly-v10"></script>
+<script type="module" src="weekly-app.js?v=weekly-v10"></script>\n<script type="module" src="survivor-app.js?v=1"></script>
 <script src="pwa.js?v=1" defer></script>
 </body>
 </html>

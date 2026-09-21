@@ -14,7 +14,7 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const norm=x=>ALIAS[x]||x;
 const score=x=>{let n;if(typeof x==='string'){const v=x.trim();if(!v||!/^\d+$/.test(v))return null;n=Number(v)}else if(typeof x==='number')n=x;else return null;return Number.isFinite(n)&&Number.isInteger(n)&&n>=0?n:null};
-const VALID_VIEWS=new Set(['home','standings','games','picks']);
+const VALID_VIEWS=new Set(['home','standings','games','picks','survivor']);
 function currentView(){const q=new URLSearchParams(location.search).get('view');return VALID_VIEWS.has(q)?q:'home'}
 function setView(view,{push=false,scroll=true}={}){
   const next=VALID_VIEWS.has(view)?view:'home';
