@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {survivorEntryState,survivorEligibleEntering,survivorPickDistribution,survivorSummary,survivorWeekProgress} from './survivor-math.js';
+import {survivorEntryState,survivorEligibleEntering,survivorPickDistribution,survivorSummary,survivorWeekProgress,survivorFieldAvailability,survivorDecisionOptions} from './survivor-math.js';
 
 const entries=[
   {picks:['PIT','SF']},
@@ -50,3 +50,30 @@ assert.equal(survivorEntryState(entries[0],1,pendingResults).status,'live');
 assert.equal(survivorSummary([entries[0]],1,pendingResults).pending,1);
 
 console.log('survivor cumulative elimination, repeat-team, tie, no-pick, distribution and attrition regressions passed');
+
+
+const nextTeams=['PIT','LV','SF','KC','BUF','MIA'];
+const availability=survivorFieldAvailability(entries,2,results,nextTeams);
+const byTeam=new Map(availability.map(x=>[x.team,x]));
+assert.deepEqual(byTeam.get('SF'),{team:'SF',available:0,denominator:2,pct:0});
+assert.deepEqual(byTeam.get('PIT'),{team:'PIT',available:1,denominator:2,pct:50});
+assert.deepEqual(byTeam.get('LV'),{team:'LV',available:1,denominator:2,pct:50});
+assert.deepEqual(byTeam.get('KC'),{team:'KC',available:2,denominator:2,pct:100});
+
+const week3=[
+  {away:'DEN',home:'KC',favorite:'KC',spread:7.5,date:'2026-09-27T17:00:00Z'},
+  {away:'MIA',home:'BUF',favorite:'BUF',spread:3.5,date:'2026-09-27T17:00:00Z'},
+  {away:'PIT',home:'CIN',favorite:'PIT',spread:2.5,date:'2026-09-27T17:00:00Z'}
+];
+const dcOptions=survivorDecisionOptions(entries[0],2,results,week3,availability);
+assert.equal(dcOptions.eligible,true);
+assert.deepEqual(dcOptions.burned,['PIT','SF']);
+assert.equal(dcOptions.options.some(x=>x.team==='PIT'),false);
+assert.equal(dcOptions.options.some(x=>x.team==='KC'&&x.favorite&&x.spread===7.5),true);
+assert.equal(dcOptions.options.find(x=>x.team==='KC').fieldAvailablePct,100);
+
+const outOptions=survivorDecisionOptions(entries[2],2,results,week3,availability);
+assert.equal(outOptions.eligible,false);
+assert.equal(outOptions.options.length,0);
+
+console.log('survivor Week-ahead field availability and tracked decision-support regressions passed');

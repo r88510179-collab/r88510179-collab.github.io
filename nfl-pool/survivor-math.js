@@ -71,3 +71,35 @@ export function survivorWeekProgress(entries,currentWeekIndex,resultsByWeek){
   }
   return rows;
 }
+
+
+export function survivorFieldAvailability(entries,nextWeekIndex,resultsByWeek,teams){
+  const alive=(entries||[]).filter(e=>survivorEligibleEntering(e,nextWeekIndex,resultsByWeek));
+  const unique=[...new Set((teams||[]).filter(Boolean))];
+  return unique.map(team=>{
+    const available=alive.filter(e=>!(e?.picks||[]).slice(0,nextWeekIndex).includes(team)).length;
+    return{team,available,denominator:alive.length,pct:alive.length?Math.round(available/alive.length*100):0};
+  }).sort((a,b)=>a.team.localeCompare(b.team));
+}
+
+export function survivorDecisionOptions(entry,nextWeekIndex,resultsByWeek,matchups,availabilityRows=[]){
+  const prior=nextWeekIndex<=0?{status:'alive'}:survivorEntryState(entry,nextWeekIndex-1,resultsByWeek);
+  const burned=[...new Set((entry?.picks||[]).slice(0,nextWeekIndex).filter(Boolean))];
+  if(prior.status!=='alive')return{eligible:false,reason:prior.reason||'Entry is not alive',burned,options:[]};
+  const availability=new Map((availabilityRows||[]).map(x=>[x.team,x]));
+  const options=[];
+  for(const matchup of matchups||[]){
+    for(const side of ['away','home']){
+      const team=matchup?.[side],opponent=matchup?.[side==='away'?'home':'away'];
+      if(!team||burned.includes(team))continue;
+      const field=availability.get(team)||{available:0,denominator:0,pct:0};
+      options.push({
+        team,opponent,home:side==='home',date:matchup.date||null,
+        favorite:matchup.favorite===team,
+        spread:matchup.favorite===team&&Number.isFinite(matchup.spread)?Math.abs(matchup.spread):null,
+        fieldAvailable:field.available,fieldDenominator:field.denominator,fieldAvailablePct:field.pct
+      });
+    }
+  }
+  return{eligible:true,reason:null,burned,options};
+}
