@@ -98,3 +98,43 @@ assert.deepEqual(survivorMarketMatchups(marketEvents),[
 ]);
 
 console.log('survivor ESPN Week-ahead schedule and market parsing regressions passed');
+
+
+// Positive details syntax must never invent an underdog as the market favorite.
+const positiveSpread=survivorMarketMatchups([{
+  date:'2026-09-27T17:00:00Z',
+  competitions:[{competitors:[
+    {homeAway:'away',team:{abbreviation:'DEN'}},{homeAway:'home',team:{abbreviation:'KC'}}
+  ],odds:[{details:'KC +3.5'}]}]
+}]);
+assert.deepEqual(positiveSpread,[{away:'DEN',home:'KC',date:'2026-09-27T17:00:00Z',favorite:null,spread:null}]);
+
+// Explicit ESPN favorite flags remain authoritative, but contradictory positive details do not fabricate a spread.
+const explicitFavorite=survivorMarketMatchups([{
+  competitions:[{competitors:[
+    {homeAway:'away',team:{abbreviation:'DEN'}},{homeAway:'home',team:{abbreviation:'KC'}}
+  ],odds:[{details:'KC +3.5',homeTeamOdds:{favorite:true},awayTeamOdds:{favorite:false}}]}]
+}]);
+assert.deepEqual(explicitFavorite,[{away:'DEN',home:'KC',date:null,favorite:'KC',spread:null}]);
+
+const explicitSpreadFavorite=survivorMarketMatchups([{
+  competitions:[{competitors:[
+    {homeAway:'away',team:{abbreviation:'MIA'}},{homeAway:'home',team:{abbreviation:'BUF'}}
+  ],odds:[{spread:-4,homeTeamOdds:{favorite:true},awayTeamOdds:{favorite:false}}]}]
+}]);
+assert.deepEqual(explicitSpreadFavorite,[{away:'MIA',home:'BUF',date:null,favorite:'BUF',spread:4}]);
+
+// Ambiguous duplicate-team schedules fail closed for the affected matchups instead of duplicating options.
+const duplicateSchedule=[
+  {away:'DEN',home:'KC',favorite:'KC',spread:7.5,date:'a'},
+  {away:'LV',home:'KC',favorite:'KC',spread:6.5,date:'b'},
+  {away:'MIA',home:'BUF',favorite:'BUF',spread:3.5,date:'c'}
+];
+const duplicateOptions=survivorDecisionOptions(entries[0],2,results,duplicateSchedule,availability);
+assert.equal(duplicateOptions.options.some(x=>x.team==='KC'),false);
+assert.equal(duplicateOptions.options.some(x=>x.team==='DEN'),false);
+assert.equal(duplicateOptions.options.some(x=>x.team==='LV'),false);
+assert.equal(duplicateOptions.options.filter(x=>x.team==='BUF').length,1);
+assert.equal(duplicateOptions.options.filter(x=>x.team==='MIA').length,1);
+
+console.log('survivor positive-spread and duplicate-schedule corrective regressions passed');

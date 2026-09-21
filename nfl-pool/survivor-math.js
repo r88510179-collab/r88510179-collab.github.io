@@ -87,11 +87,15 @@ export function survivorDecisionOptions(entry,nextWeekIndex,resultsByWeek,matchu
   const burned=[...new Set((entry?.picks||[]).slice(0,nextWeekIndex).filter(Boolean))];
   if(prior.status!=='alive')return{eligible:false,reason:prior.reason||'Entry is not alive',burned,options:[]};
   const availability=new Map((availabilityRows||[]).map(x=>[x.team,x]));
+  const appearances=new Map();
+  for(const matchup of matchups||[])for(const team of [matchup?.away,matchup?.home])if(team)appearances.set(team,(appearances.get(team)||0)+1);
   const options=[];
   for(const matchup of matchups||[]){
+    const away=matchup?.away,home=matchup?.home;
+    if(!away||!home||appearances.get(away)!==1||appearances.get(home)!==1)continue;
     for(const side of ['away','home']){
-      const team=matchup?.[side],opponent=matchup?.[side==='away'?'home':'away'];
-      if(!team||burned.includes(team))continue;
+      const team=matchup[side],opponent=matchup[side==='away'?'home':'away'];
+      if(burned.includes(team))continue;
       const field=availability.get(team)||{available:0,denominator:0,pct:0};
       options.push({
         team,opponent,home:side==='home',date:matchup.date||null,
@@ -113,11 +117,21 @@ export function survivorMarketMatchups(events){
     const a=normalizeSurvivorCode(away.team?.abbreviation),h=normalizeSurvivorCode(home.team?.abbreviation);
     if(!a||!h)continue;
     const odds=c?.odds?.[0]||{},details=String(odds?.details||'').trim();
-    let favorite=odds?.awayTeamOdds?.favorite===true?a:odds?.homeTeamOdds?.favorite===true?h:null;
-    if(!favorite&&details){const code=normalizeSurvivorCode(details.split(/\s+/)[0]);if(code===a||code===h)favorite=code}
-    let spread=null;
-    const match=details.match(/([+-]?\d+(?:\.\d+)?)/),numeric=match?Math.abs(Number(match[1])):Math.abs(Number(odds?.spread));
-    if(Number.isFinite(numeric)&&numeric>0)spread=numeric;
+    const awayFavorite=odds?.awayTeamOdds?.favorite===true,homeFavorite=odds?.homeTeamOdds?.favorite===true;
+    let favorite=awayFavorite!==homeFavorite?(awayFavorite?a:h):null,spread=null;
+    const fallback=details.match(/^([A-Za-z]{2,3})\s+(-\d+(?:\.\d+)?)(?:\s|$)/);
+    if(!favorite&&fallback){
+      const code=normalizeSurvivorCode(fallback[1]);
+      if(code===a||code===h){favorite=code;spread=Math.abs(Number(fallback[2]))}
+    }
+    if(favorite&&spread===null){
+      const explicitSpread=Math.abs(Number(odds?.spread));
+      if(Number.isFinite(explicitSpread)&&explicitSpread>0)spread=explicitSpread;
+      else if(fallback&&normalizeSurvivorCode(fallback[1])===favorite){
+        const detailSpread=Math.abs(Number(fallback[2]));
+        if(Number.isFinite(detailSpread)&&detailSpread>0)spread=detailSpread;
+      }
+    }
     out.push({away:a,home:h,date:event?.date||c?.date||null,favorite,spread});
   }
   return out;
