@@ -18,10 +18,13 @@ function validateConfig(c){
   if(!Number.isInteger(c.season)||!Number.isInteger(c.week)||c.week<1)throw new Error('Invalid Survivor season/week');
   if(!Array.isArray(c.trackedEntries)||c.trackedEntries.length!==3)throw new Error('Invalid tracked Survivor entries');
   if(!Array.isArray(c.fieldEntries))throw new Error('Invalid Survivor field');
+  const expectedTracked=new Map([['dc','D.C.'],['djs','DJS'],['thaddeus','Thaddeus']]);
   const trackedAllowed=['displayName','id','picks'].sort(),fieldAllowed=['id','picks'].sort(),valid=new Set(['ARI','ATL','BAL','BUF','CAR','CHI','CIN','CLE','DAL','DEN','DET','GB','HOU','IND','JAX','KC','LV','LAC','LAR','MIA','MIN','NE','NO','NYG','NYJ','PHI','PIT','SEA','SF','TB','TEN','WAS']);
   const check=(p,label,allowed)=>{const keys=Object.keys(p||{}).sort();if(keys.length!==allowed.length||keys.some((k,i)=>k!==allowed[i]))throw new Error(label+' privacy contract');if(!Array.isArray(p.picks)||p.picks.length!==c.week)throw new Error(label+' pick history');for(const pick of p.picks)if(pick!==null&&!valid.has(pick))throw new Error(label+' invalid team')};
-  c.trackedEntries.forEach((p,i)=>check(p,'tracked '+(i+1),trackedAllowed));
-  c.fieldEntries.forEach((p,i)=>check(p,'field '+(i+1),fieldAllowed));
+  const trackedIds=new Set();
+  c.trackedEntries.forEach((p,i)=>{check(p,'tracked '+(i+1),trackedAllowed);if(expectedTracked.get(p.id)!==p.displayName||trackedIds.has(p.id))throw new Error('Tracked Survivor identity mismatch');trackedIds.add(p.id)});
+  const fieldIds=new Set();
+  c.fieldEntries.forEach((p,i)=>{check(p,'field '+(i+1),fieldAllowed);if(typeof p.id!=='string'||!p.id||fieldIds.has(p.id))throw new Error('Invalid anonymous Survivor id');fieldIds.add(p.id)});
   const all=[...c.trackedEntries,...c.fieldEntries];
   if(c.competitionSize!==all.length)throw new Error('Survivor competition size mismatch');
   const current=all.filter(p=>p.picks[c.week-1]).length;
