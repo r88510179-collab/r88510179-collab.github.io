@@ -266,7 +266,7 @@ function applyRegularHeaderGeometry(rows,headerText='Entry Pts W'){
   const c=parse(lines,{sourceRows:rows,pageFingerprint:'consecutive-sparse-bridge'});
   assert.deepEqual(c.errors,[]);
   assert.equal(c.config.fullFieldReady,false);
-  assert.equal(c.config.competitionSize,4);
+  assert.equal(c.competitionSize,4);
   assert.equal(c.config.fieldEntries,undefined);
   assert(c.fullFieldIssues.some(x=>x.includes('outside the proven regular participant table')));
 }
