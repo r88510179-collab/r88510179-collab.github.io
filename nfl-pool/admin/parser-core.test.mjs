@@ -165,6 +165,9 @@ function applyRegularHeaderGeometry(rows,headerText='Entry Pts W'){
   assert.equal(normalized.pickNumbers[0],1);
   assert.equal(Object.keys(normalized).sort().join(','),'id,pickNumbers,tiebreak');
   assert.deepEqual(validateConfig(c.config),[]);
+  const manyZeroes=structuredClone(c.config);
+  manyZeroes.fieldEntries[0].pickNumbers=Array(matchups.length).fill(0);
+  assert(validateConfig(manyZeroes).some(e=>e.includes('at most one no-pick')));
 }
 {
   // Tracked entries remain strict; no-pick sentinel is never accepted for the tracked four.
@@ -249,6 +252,23 @@ function applyRegularHeaderGeometry(rows,headerText='Entry Pts W'){
   assert.deepEqual(c.fullFieldIssues,[]);
   assert.equal(c.config.fullFieldReady,true);
   assert.equal(c.config.competitionSize,6);
+}
+{
+  // CONSECUTIVE SPARSE ROWS — sparse evidence cannot walk a trusted run into another aligned mini-table.
+  const s1='S1 15',s2='S2 15',s3='S3 15';
+  const falseA='False Leader 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 60 0';
+  const falseB='False Runner 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 61 0';
+  const lines=[...matchups,...tracked,anonA,s1,s2,s3,falseA,falseB],rows=sourceRows(lines,1);
+  for(const text of [s1,s2,s3]){
+    const row=rows.find(r=>r.text===text);
+    row.parts=[{x:10,text:text.split(' ')[0]},{x:538,text:'15'}];
+  }
+  const c=parse(lines,{sourceRows:rows,pageFingerprint:'consecutive-sparse-bridge'});
+  assert.deepEqual(c.errors,[]);
+  assert.equal(c.config.fullFieldReady,false);
+  assert.equal(c.config.competitionSize,4);
+  assert.equal(c.config.fieldEntries,undefined);
+  assert(c.fullFieldIssues.some(x=>x.includes('outside the proven regular participant table')));
 }
 {
   // TEST A — same X geometry after a large same-page whitespace gap must not enlarge the field.

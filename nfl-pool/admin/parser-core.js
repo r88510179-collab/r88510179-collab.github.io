@@ -189,11 +189,11 @@ function pdfTableBoundary(sourceRows,matchups){
       if(record.geometryMatch){
         const prev=current?.lastEvidence||null,gap=prev?pdfRowGap(prev,record):null;
         const yContinuous=!prev||(spacing&&Number.isFinite(gap)&&gap<=spacing.maxGap);
-        if(!current||!yContinuous){current={page,records:[],startPos:pos,endPos:pos,pageSize:pageRecords.length,firstEvidence:record,lastEvidence:record};runs.push(current)}
-        current.records.push(record);current.endPos=pos;current.lastEvidence=record;
-      }else if(current&&record.sparseTableEvidence){
+        if(!current||!yContinuous){current={page,records:[],startPos:pos,endPos:pos,pageSize:pageRecords.length,firstEvidence:record,lastEvidence:record,sparseBridgeCount:0};runs.push(current)}
+        current.records.push(record);current.endPos=pos;current.lastEvidence=record;current.sparseBridgeCount=0;
+      }else if(current&&record.sparseTableEvidence&&current.sparseBridgeCount===0){
         const gap=pdfRowGap(current.lastEvidence,record);
-        if(spacing&&Number.isFinite(gap)&&gap<=spacing.maxGap){current.endPos=pos;current.lastEvidence=record}
+        if(spacing&&Number.isFinite(gap)&&gap<=spacing.maxGap){current.endPos=pos;current.lastEvidence=record;current.sparseBridgeCount=1}
         else current=null;
       }else current=null;
     });
@@ -293,6 +293,7 @@ function validatePickNumbers(label,pickNumbers,tiebreak,numberToGame,gameCount,{
     else if(seenGames.has(gi))errors.push(label+': two picks in matchup '+(gi+1));
     else seenGames.add(gi);
   }
+  if(noPicks>1)errors.push(label+': at most one explicit no-pick is allowed');
   if((pickNumbers||[]).length!==gameCount||seenGames.size+noPicks!==gameCount)errors.push(label+': expected exactly one pick or explicit no-pick for each of '+gameCount+' games');
   if(!Number.isInteger(tiebreak))errors.push(label+': missing tiebreak total');
   return errors;
@@ -423,6 +424,7 @@ export function validateConfig(config){
     if(!Array.isArray(p?.pickNumbers)||p.pickNumbers.length!==games.length)errors.push(label+': wrong pick count');
     const seen=new Set();let noPicks=0;
     for(const n of p?.pickNumbers||[]){if(allowNoPick&&n===0){noPicks++;continue}if(!nums.has(n))errors.push(label+': unknown pick '+n);else seen.add(nums.get(n))}
+    if(noPicks>1)errors.push(label+': at most one no-pick is allowed');
     if(seen.size+noPicks!==games.length)errors.push(label+': not exactly one pick/no-pick per game');
   };
   participants.forEach(p=>validateEntry(p,p.displayName||'Tracked entry'));
