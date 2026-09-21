@@ -55,25 +55,27 @@ function render(){
   if(!cfg)return;
   const entries=allEntries(),wi=cfg.week-1,summary=survivorSummary(entries,wi,resultsByWeek),dist=survivorPickDistribution(entries,wi,resultsByWeek),progress=survivorWeekProgress(entries,wi,resultsByWeek);
   $('svPoolSize').textContent=cfg.competitionSize;$('svEntered').textContent=summary.entered;$('svStillIn').textContent=summary.active;$('svPending').textContent=summary.pending;
-  $('svSummaryNote').textContent=`${summary.eliminatedBefore} eliminated before Week ${cfg.week} · ${summary.eligibleEntering} eligible entering Week ${cfg.week} · ${summary.eliminatedThisWeek} eliminated this week so far.`;
+  $('svSummaryNote').textContent=`${summary.eliminatedBefore} eliminated before Week ${cfg.week} · ${summary.eligibleEntering} eligible entering · ${summary.submitted} submitted · ${summary.entered} legal picks · ${summary.eliminatedThisWeek} eliminated this week so far.`;
   $('svTracked').innerHTML=cfg.trackedEntries.map(entry=>{
     const state=survivorEntryState(entry,wi,resultsByWeek),current=state.eliminatedWeek&&state.eliminatedWeek<cfg.week?entry.picks[state.eliminatedWeek-1]:entry.picks[wi],history=entry.picks.map((pick,i)=>`<span class="survivor-history-chip"><small>W${i+1}</small>${pick?esc(pick):'—'}</span>`).join('');
     return`<div class="survivor-tracked-row"><div><b>${esc(entry.displayName)}</b><div class="survivor-history">${history}</div></div><div class="survivor-current">${teamChip(current)}<span class="status-pill survivor-${state.status}">${statusLabel(state)}</span><small>${esc(state.reason)}</small></div></div>`;
   }).join('');
   $('svDistribution').innerHTML=dist.length?dist.map(item=>`<div class="survivor-pick-row"><div>${teamChip(item.team)}</div><div class="survivor-bar"><i style="width:${item.pct}%"></i></div><b>${item.count}</b><span>${item.pct}%</span></div>`).join(''):'<div class="empty">No eligible entries have a Week pick.</div>';
-  $('svProgress').innerHTML=progress.map(x=>`<div class="survivor-week-step"><span>Week ${x.week}</span><b>${x.remaining}</b><small>${x.eligibleEntering} entered alive · ${x.entered} picks · ${x.eliminated} out</small></div>`).join('');
+  $('svProgress').innerHTML=progress.map(x=>`<div class="survivor-week-step"><span>Week ${x.week}</span><b>${x.remaining}</b><small>${x.eligibleEntering} eligible · ${x.submitted} submitted · ${x.entered} legal · ${x.eliminated} out</small></div>`).join('');
   $('svMeta').textContent=`Week ${cfg.week} · revision ${rows.find(r=>r.config===cfg)?.revision||'—'}`;
 }
 
 async function updateScores(){
   if(!cfg)return;const id=++refreshId;
   try{
-    const payloads=await Promise.all(Array.from({length:cfg.week},async(_,i)=>{
+    const indexes=Array.from({length:cfg.week},(_,i)=>i).filter(i=>i===cfg.week-1||!resultsByWeek[i]);
+    const payloads=await Promise.all(indexes.map(async i=>{
       const week=i+1,r=await fetch(`${ESPN_SCOREBOARD}?dates=${cfg.season}&week=${week}&seasontype=2`,{cache:'no-store'});
-      if(!r.ok)throw new Error(`Week ${week} score feed ${r.status}`);return r.json();
+      if(!r.ok)throw new Error(`Week ${week} score feed ${r.status}`);return{i,json:await r.json()};
     }));
     if(id!==refreshId)return;
-    resultsByWeek=payloads.map(j=>buildResults(j.events));$('svFeed').textContent='LIVE · NFL results';$('svFeed').className='survivor-feed ok';render();
+    for(const {i,json} of payloads)resultsByWeek[i]=buildResults(json.events);
+    $('svFeed').textContent='LIVE · NFL results';$('svFeed').className='survivor-feed ok';render();
   }catch(e){if(id!==refreshId)return;$('svFeed').textContent='RESULT FEED UNAVAILABLE';$('svFeed').className='survivor-feed warn';render();console.warn(e)}
 }
 
