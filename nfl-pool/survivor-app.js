@@ -1,12 +1,12 @@
 'use strict';
 
-import {survivorEntryState,survivorPickDistribution,survivorSummary,survivorWeekProgress,normalizeSurvivorCode} from './survivor-math.js?v=2';
+import {survivorEntryState,survivorPickDistribution,survivorSummary,survivorWeekProgress,survivorFieldAvailability,survivorDecisionOptions,normalizeSurvivorCode} from './survivor-math.js?v=3';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
 const ESPN_SCOREBOARD='https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
 const LOGO_CODE={WAS:'wsh'};
-let rows=[],cfg=null,resultsByWeek=[],anonToken=null,anonExpiresAt=0,anonRequest=null,refreshId=0;
+let rows=[],cfg=null,resultsByWeek=[],nextWeekMatchups=[],nextWeekFetchedAt=0,nextWeekError='',anonToken=null,anonExpiresAt=0,anonRequest=null,refreshId=0;
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 
@@ -48,6 +48,48 @@ function buildResults(events){
   return map;
 }
 
+function buildDecisionMatchups(events){
+  const out=[];
+  for(const event of events||[]){
+    const c=event?.competitions?.[0],away=c?.competitors?.find(x=>x.homeAway==='away'),home=c?.competitors?.find(x=>x.homeAway==='home');
+    if(!away||!home)continue;
+    const a=normalizeSurvivorCode(away.team?.abbreviation),h=normalizeSurvivorCode(home.team?.abbreviation),odds=c?.odds?.[0]||{},details=String(odds?.details||'').trim();
+    let favorite=odds?.awayTeamOdds?.favorite===true?a:odds?.homeTeamOdds?.favorite===true?h:null;
+    if(!favorite&&details){const code=normalizeSurvivorCode(details.split(/\s+/)[0]);if(code===a||code===h)favorite=code}
+    let spread=null;
+    const match=details.match(/([+-]?\d+(?:\.\d+)?)/),numeric=match?Math.abs(Number(match[1])):Math.abs(Number(odds?.spread));
+    if(Number.isFinite(numeric)&&numeric>0)spread=numeric;
+    out.push({away:a,home:h,date:event?.date||c?.date||null,favorite,spread});
+  }
+  return out;
+}
+
+function marketLabel(option){
+  if(!option.favorite)return 'No market favorite';
+  return Number.isFinite(option.spread)?`Favorite -${option.spread}`:'Market favorite';
+}
+function optionRow(option){
+  const where=option.home?'vs':'@',avail=option.fieldDenominator?`${option.fieldAvailable}/${option.fieldDenominator} can use · ${option.fieldAvailablePct}%`:'field availability unavailable';
+  return `<div class="survivor-option-row"><div>${teamChip(option.team)}<span class="survivor-opponent">${where} ${esc(option.opponent)}</span></div><div class="survivor-option-meta"><b>${esc(marketLabel(option))}</b><span>${esc(avail)}</span></div></div>`;
+}
+function renderDecision(summary){
+  const box=$('svDecisionEntries');if(!box||!cfg)return;
+  const nextWeekIndex=cfg.week,nextWeek=cfg.week+1,entries=allEntries();
+  $('svDecisionWeek').textContent=`Week ${nextWeek}`;
+  if(summary.pending>0){$('svDecisionNote').textContent='Decision support is provisional until every current-week Survivor result is final.';box.innerHTML='<div class="empty">Waiting for the current week to settle before calculating the next-week surviving field.</div>';return}
+  if(!nextWeekMatchups.length){$('svDecisionNote').textContent=nextWeekError||`Week ${nextWeek} schedule/market data has not loaded yet.`;box.innerHTML='<div class="empty">Week-ahead schedule unavailable. Burned-team history remains unchanged.</div>';return}
+  const teams=nextWeekMatchups.flatMap(m=>[m.away,m.home]),availability=survivorFieldAvailability(entries,nextWeekIndex,resultsByWeek,teams);
+  $('svDecisionNote').textContent='Field availability = share of surviving entries that have not already burned that team. It is not projected pick ownership.';
+  box.innerHTML=cfg.trackedEntries.map(entry=>{
+    const support=survivorDecisionOptions(entry,nextWeekIndex,resultsByWeek,nextWeekMatchups,availability),burned=support.burned.map(team=>`<span class="survivor-burned-chip">${esc(team)}</span>`).join('')||'<span class="survivor-none">None</span>';
+    if(!support.eligible)return `<article class="survivor-decision-entry survivor-decision-out"><div class="survivor-decision-head"><div><span class="section-kicker">${esc(entry.displayName)}</span><h3>Out of Survivor</h3></div><span class="status-pill survivor-out">OUT</span></div><div class="survivor-burned"><span>Burned</span>${burned}</div><p>${esc(support.reason||'Entry is eliminated.')}</p></article>`;
+    const favorites=support.options.filter(x=>x.favorite).sort((a,b)=>(b.spread||0)-(a.spread||0)||a.fieldAvailablePct-b.fieldAvailablePct||a.team.localeCompare(b.team));
+    const safer=favorites.slice(0,4),leveragePool=favorites.length?favorites:support.options;
+    const leverage=leveragePool.slice().sort((a,b)=>a.fieldAvailablePct-b.fieldAvailablePct||(b.spread||0)-(a.spread||0)||a.team.localeCompare(b.team)).slice(0,4);
+    return `<article class="survivor-decision-entry"><div class="survivor-decision-head"><div><span class="section-kicker">${esc(entry.displayName)}</span><h3>Week ${nextWeek} Board</h3></div><span class="status-pill survivor-alive">ELIGIBLE</span></div><div class="survivor-burned"><span>Burned</span>${burned}</div><div class="survivor-board-grid"><div><h4>Safer favorites</h4><p>Market signal only; strongest available favorite first.</p>${safer.length?safer.map(optionRow).join(''):'<div class="empty">No market-favorite lines are available yet.</div>'}</div><div><h4>Field leverage</h4><p>Lower availability means fewer surviving entries can still use that team.</p>${leverage.length?leverage.map(optionRow).join(''):'<div class="empty">No legal Week-ahead options available.</div>'}</div></div></article>`;
+  }).join('');
+}
+
 function statusLabel(state){
   return state.status==='alive'?'ALIVE':state.status==='live'?'LIVE':state.status==='pending'?'PENDING':'OUT';
 }
@@ -62,7 +104,20 @@ function render(){
   }).join('');
   $('svDistribution').innerHTML=dist.length?dist.map(item=>`<div class="survivor-pick-row"><div>${teamChip(item.team)}</div><div class="survivor-bar"><i style="width:${item.pct}%"></i></div><b>${item.count}</b><span>${item.pct}%</span></div>`).join(''):'<div class="empty">No eligible entries have a Week pick.</div>';
   $('svProgress').innerHTML=progress.map(x=>`<div class="survivor-week-step"><span>Week ${x.week}</span><b>${x.remaining}</b><small>${x.eligibleEntering} eligible · ${x.submitted} submitted · ${x.entered} legal · ${x.eliminated} out</small></div>`).join('');
+  renderDecision(summary);
   $('svMeta').textContent=`Week ${cfg.week} · revision ${rows.find(r=>r.config===cfg)?.revision||'—'}`;
+}
+
+async function updateDecisionSchedule(force=false){
+  if(!cfg)return;
+  if(!force&&nextWeekMatchups.length&&Date.now()-nextWeekFetchedAt<300000){render();return}
+  try{
+    const week=cfg.week+1,r=await fetch(`${ESPN_SCOREBOARD}?dates=${cfg.season}&week=${week}&seasontype=2`,{cache:'no-store'});
+    if(!r.ok)throw new Error(`Week ${week} schedule ${r.status}`);
+    const j=await r.json(),matchups=buildDecisionMatchups(j.events);
+    if(!matchups.length)throw new Error(`Week ${week} schedule is not available yet`);
+    nextWeekMatchups=matchups;nextWeekFetchedAt=Date.now();nextWeekError='';render();
+  }catch(e){nextWeekError=e.message||String(e);if(!nextWeekMatchups.length)render();console.warn(e)}
 }
 
 async function updateScores(){
@@ -75,12 +130,12 @@ async function updateScores(){
     }));
     if(id!==refreshId)return;
     for(const {i,json} of payloads)resultsByWeek[i]=buildResults(json.events);
-    $('svFeed').textContent='LIVE · NFL results';$('svFeed').className='survivor-feed ok';render();
+    $('svFeed').textContent='LIVE · NFL results';$('svFeed').className='survivor-feed ok';render();void updateDecisionSchedule();
   }catch(e){if(id!==refreshId)return;$('svFeed').textContent='RESULT FEED UNAVAILABLE';$('svFeed').className='survivor-feed warn';render();console.warn(e)}
 }
 
 function choose(row,{push=false}={}){
-  cfg=validateConfig(row.config);resultsByWeek=[];$('survivorWeekSelect').value=`${row.season}-${row.week}`;render();updateScores();
+  cfg=validateConfig(row.config);resultsByWeek=[];nextWeekMatchups=[];nextWeekFetchedAt=0;nextWeekError='';$('survivorWeekSelect').value=`${row.season}-${row.week}`;render();updateScores();
   if(push){const u=new URL(location.href);u.searchParams.set('view','survivor');u.searchParams.set('sw',String(row.week));u.searchParams.set('season',String(row.season));history.replaceState(history.state,'',u)}
 }
 
