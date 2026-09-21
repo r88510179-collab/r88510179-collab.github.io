@@ -31,15 +31,15 @@ assert.equal(survivorEntryState(entries[4],1,results).eliminatedWeek,2);
 assert.equal(survivorEligibleEntering(entries[2],1,results),false);
 
 const dist=survivorPickDistribution(entries,1,results);
-assert.deepEqual(dist,[{team:'SF',count:3,denominator:5,pct:60},{team:'TB',count:2,denominator:5,pct:40}]);
+assert.deepEqual(dist,[{team:'SF',count:2,denominator:4,pct:50},{team:'TB',count:2,denominator:4,pct:50}]);
 
 assert.deepEqual(survivorSummary(entries,1,results),{
-  poolSize:6,eligibleEntering:5,entered:5,active:2,eliminatedBefore:1,eliminatedThisWeek:3,pending:0
+  poolSize:6,eligibleEntering:5,submitted:5,entered:4,active:2,eliminatedBefore:1,eliminatedThisWeek:3,pending:0
 });
 
 assert.deepEqual(survivorWeekProgress(entries,1,results),[
-  {week:1,eligibleEntering:6,entered:6,remaining:5,eliminated:1},
-  {week:2,eligibleEntering:5,entered:5,remaining:2,eliminated:3}
+  {week:1,eligibleEntering:6,submitted:6,entered:6,remaining:5,eliminated:1},
+  {week:2,eligibleEntering:5,submitted:5,entered:4,remaining:2,eliminated:3}
 ]);
 
 const noPick={picks:['PIT',null]};
