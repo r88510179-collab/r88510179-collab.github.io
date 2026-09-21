@@ -177,11 +177,27 @@ function pdfTableBoundary(sourceRows,matchups){
   const pageRuns=new Map();for(const run of runs){if(!pageRuns.has(run.page))pageRuns.set(run.page,[]);pageRuns.get(run.page).push(run)}
   const headerBefore=run=>{
     const pageRecords=pageMap.get(run.page)||[];
-    for(let i=run.startPos-1;i>=Math.max(0,run.startPos-4);i--){const fingerprint=pdfHeaderFingerprint(pageRecords[i]?.row,ref);if(fingerprint)return fingerprint}
+    for(let i=run.startPos-1;i>=Math.max(0,run.startPos-4);i--){
+      const record=pageRecords[i],fingerprint=pdfHeaderFingerprint(record?.row,ref);
+      if(fingerprint)return{fingerprint,record};
+    }
     return null;
   };
-  const headerFingerprint=anchorRuns.map(headerBefore).find(Boolean)||null;
-  const hasMatchingHeader=run=>!!headerFingerprint&&headerBefore(run)===headerFingerprint;
+  const headerGapIsProven=(header,run)=>{
+    if(!header||!spacing)return false;
+    const headerY=header.record?.row?.y,firstY=run.records[0]?.row?.y;
+    if(!Number.isFinite(headerY)||!Number.isFinite(firstY))return false;
+    const gap=headerY-firstY;
+    return gap>0&&gap<=spacing.normalGap*2;
+  };
+  const headerFingerprint=anchorRuns.map(run=>{
+    const header=headerBefore(run);
+    return headerGapIsProven(header,run)?header.fingerprint:null;
+  }).find(Boolean)||null;
+  const hasMatchingHeader=run=>{
+    const header=headerBefore(run);
+    return !!headerFingerprint&&headerGapIsProven(header,run)&&header.fingerprint===headerFingerprint;
+  };
   const allYs=records.map(r=>Number(r.row?.y)).filter(Number.isFinite),documentTopY=allYs.length?Math.max(...allYs):null;
   const edgeBand=spacing?spacing.maxGap*2:null;
   const nearPhysicalBottom=run=>{

@@ -239,18 +239,74 @@ function applyRegularHeaderGeometry(rows,headerText='Entry Pts W'){
   assert.equal(c.config.fieldEntries,undefined);
 }
 {
-  // TEST G — repeated regular-table header with compatible Pts/W geometry is sufficient continuation proof.
+  // TEST G — a repeated compatible header physically near its participant run proves continuation.
   const header='Entry Pts W';
   const page1=[...matchups,header,tracked[0],tracked[1],anonA],page2=[header,tracked[2],tracked[3],anonB];
-  const rows1=applyRegularHeaderGeometry(sourceRows(page1,1),header),rows2=applyRegularHeaderGeometry(sourceRows(page2,2),header);
+  const rows1=applyRegularHeaderGeometry(sourceRows(page1,1),header);
+  const rows2=applyRegularHeaderGeometry(rowsAt(page2,2,[760,740,728,716]),header);
   const c=parseDocumentGroups([
-    {week:2,lines:page1,sourceRows:rows1,pageNumber:1,pageFingerprint:'header-page-1'},
-    {week:2,lines:page2,sourceRows:rows2,pageNumber:2,pageFingerprint:'header-page-2'}
+    {week:2,lines:page1,sourceRows:rows1,pageNumber:1,pageFingerprint:'header-near-page-1'},
+    {week:2,lines:page2,sourceRows:rows2,pageNumber:2,pageFingerprint:'header-near-page-2'}
   ],{filename:'header-continuation.pdf',season:2026})[0];
   assert.deepEqual(c.errors,[]);
   assert.deepEqual(c.fullFieldIssues,[]);
   assert.equal(c.config.fullFieldReady,true);
   assert.equal(c.config.competitionSize,6);
+}
+{
+  // REMOTE MATCHING HEADER — identical header geometry cannot authorize a participant mini-table across a large physical gap.
+  const header='Entry Pts W';
+  const falseA='Remote Leader 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 60 0';
+  const falseB='Remote Runner 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 61 0';
+  const page1=[...matchups,header,...tracked,anonA],page2=[header,falseA,falseB];
+  const rows1=applyRegularHeaderGeometry(sourceRows(page1,1),header);
+  const rows2=applyRegularHeaderGeometry(rowsAt(page2,2,[760,300,288]),header);
+  const c=parseDocumentGroups([
+    {week:2,lines:page1,sourceRows:rows1,pageNumber:1,pageFingerprint:'remote-header-page-1'},
+    {week:2,lines:page2,sourceRows:rows2,pageNumber:2,pageFingerprint:'remote-header-page-2'}
+  ],{filename:'remote-header.pdf',season:2026})[0];
+  assert.deepEqual(c.errors,[]);
+  assert.equal(c.config.participants.length,4);
+  assert.equal(c.config.fullFieldReady,false);
+  assert.equal(c.competitionSize,4);
+  assert.equal(c.config.fieldEntries,undefined);
+  assert(c.fullFieldIssues.some(x=>x.includes('outside the proven regular participant table')));
+}
+{
+  // Missing header/run Y evidence must fail closed even when header text and X geometry match.
+  const header='Entry Pts W';
+  const falseA='Missing Y Leader 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 60 0';
+  const falseB='Missing Y Runner 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 61 0';
+  const page1=[...matchups,header,...tracked,anonA],page2=[header,falseA,falseB];
+  const rows1=applyRegularHeaderGeometry(sourceRows(page1,1),header);
+  const rows2=applyRegularHeaderGeometry(rowsAt(page2,2,[760,748,736]),header);
+  rows2[1].y=undefined;
+  const c=parseDocumentGroups([
+    {week:2,lines:page1,sourceRows:rows1,pageNumber:1,pageFingerprint:'missing-y-header-page-1'},
+    {week:2,lines:page2,sourceRows:rows2,pageNumber:2,pageFingerprint:'missing-y-header-page-2'}
+  ],{filename:'missing-y-header.pdf',season:2026})[0];
+  assert.deepEqual(c.errors,[]);
+  assert.equal(c.config.fullFieldReady,false);
+  assert.equal(c.competitionSize,4);
+  assert.equal(c.config.fieldEntries,undefined);
+}
+{
+  // A physically near header with incompatible Pts/W X geometry cannot authorize continuation.
+  const header='Entry Pts W';
+  const falseA='Wrong Header Leader 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 60 0';
+  const falseB='Wrong Header Runner 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 61 0';
+  const page1=[...matchups,header,...tracked,anonA],page2=[header,falseA,falseB];
+  const rows1=applyRegularHeaderGeometry(sourceRows(page1,1),header),rows2=rowsAt(page2,2,[760,748,736]);
+  const headerRow=rows2.find(row=>row.text===header);
+  headerRow.parts=[{x:10,text:'Entry'},{x:100,text:'Pts'},{x:124,text:'W'}];
+  const c=parseDocumentGroups([
+    {week:2,lines:page1,sourceRows:rows1,pageNumber:1,pageFingerprint:'bad-header-page-1'},
+    {week:2,lines:page2,sourceRows:rows2,pageNumber:2,pageFingerprint:'bad-header-page-2'}
+  ],{filename:'bad-header-geometry.pdf',season:2026})[0];
+  assert.deepEqual(c.errors,[]);
+  assert.equal(c.config.fullFieldReady,false);
+  assert.equal(c.competitionSize,4);
+  assert.equal(c.config.fieldEntries,undefined);
 }
 {
   // Explicitly preserve names that contain digits and hyphens.
