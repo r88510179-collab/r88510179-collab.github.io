@@ -31,6 +31,19 @@ const grouped=groupSurvivorPdfTextItems([
 assert.equal(grouped.length,1);
 assert.equal(grouped[0].text,'D.C. PIT SF');
 
+// Adjacent participant rows must remain distinct at the 2.2-point grouping tolerance.
+const adjacent=groupSurvivorPdfTextItems([
+  {str:'Long Participant One',transform:[1,0,0,1,20,100]},
+  {str:'PIT',transform:[1,0,0,1,154,98.2]},
+  {str:'SF',transform:[1,0,0,1,188,98.2]},
+  {str:'Long Participant Two',transform:[1,0,0,1,20,95]},
+  {str:'LV',transform:[1,0,0,1,154,93.2]},
+  {str:'TB',transform:[1,0,0,1,188,93.2]}
+]);
+assert.equal(adjacent.length,2);
+assert.equal(adjacent[0].text,'Long Participant One PIT SF');
+assert.equal(adjacent[1].text,'Long Participant Two LV TB');
+
 const parsed=parseSurvivorPages(pages,{season:2026,filename:'Suicide 26 w2.pdf'});
 assert.deepEqual(parsed.errors,[]);
 assert.equal(parsed.config.week,2);
