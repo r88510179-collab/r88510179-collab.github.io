@@ -33,8 +33,13 @@ export function survivorEligibleEntering(entry,weekIndex,resultsByWeek){
   return prior.status==='alive';
 }
 
+export function survivorCurrentPickIsLegal(entry,weekIndex){
+  const pick=entry?.picks?.[weekIndex]||null;if(!pick)return false;
+  return !(entry.picks||[]).slice(0,weekIndex).includes(pick);
+}
+
 export function survivorPickDistribution(entries,weekIndex,resultsByWeek){
-  const eligible=(entries||[]).filter(e=>survivorEligibleEntering(e,weekIndex,resultsByWeek)&&e?.picks?.[weekIndex]);
+  const eligible=(entries||[]).filter(e=>survivorEligibleEntering(e,weekIndex,resultsByWeek)&&survivorCurrentPickIsLegal(e,weekIndex));
   const counts=new Map();
   for(const entry of eligible){const team=entry.picks[weekIndex];counts.set(team,(counts.get(team)||0)+1)}
   return[...counts].map(([team,count])=>({team,count,denominator:eligible.length,pct:eligible.length?Math.round(count/eligible.length*100):0}))
@@ -44,23 +49,25 @@ export function survivorPickDistribution(entries,weekIndex,resultsByWeek){
 export function survivorSummary(entries,weekIndex,resultsByWeek){
   const all=entries||[],states=all.map(e=>survivorEntryState(e,weekIndex,resultsByWeek));
   const eligibleEntering=all.filter(e=>survivorEligibleEntering(e,weekIndex,resultsByWeek)).length;
-  const entered=all.filter(e=>survivorEligibleEntering(e,weekIndex,resultsByWeek)&&e?.picks?.[weekIndex]).length;
+  const submitted=all.filter(e=>survivorEligibleEntering(e,weekIndex,resultsByWeek)&&e?.picks?.[weekIndex]).length;
+  const entered=all.filter(e=>survivorEligibleEntering(e,weekIndex,resultsByWeek)&&survivorCurrentPickIsLegal(e,weekIndex)).length;
   const active=states.filter(s=>['alive','pending','live'].includes(s.status)).length;
   const eliminatedBefore=states.filter(s=>s.status==='out'&&s.eliminatedWeek<weekIndex+1).length;
   const eliminatedThisWeek=states.filter(s=>s.status==='out'&&s.eliminatedWeek===weekIndex+1).length;
   const pending=states.filter(s=>s.status==='pending'||s.status==='live').length;
-  return{poolSize:all.length,eligibleEntering,entered,active,eliminatedBefore,eliminatedThisWeek,pending};
+  return{poolSize:all.length,eligibleEntering,submitted,entered,active,eliminatedBefore,eliminatedThisWeek,pending};
 }
 
 export function survivorWeekProgress(entries,currentWeekIndex,resultsByWeek){
   const all=entries||[],rows=[];
   for(let i=0;i<=currentWeekIndex;i++){
     const eligibleEntering=all.filter(e=>survivorEligibleEntering(e,i,resultsByWeek)).length;
-    const entered=all.filter(e=>survivorEligibleEntering(e,i,resultsByWeek)&&e?.picks?.[i]).length;
+    const submitted=all.filter(e=>survivorEligibleEntering(e,i,resultsByWeek)&&e?.picks?.[i]).length;
+    const entered=all.filter(e=>survivorEligibleEntering(e,i,resultsByWeek)&&survivorCurrentPickIsLegal(e,i)).length;
     const states=all.map(e=>survivorEntryState(e,i,resultsByWeek));
     const remaining=states.filter(s=>['alive','pending','live'].includes(s.status)).length;
     const eliminated=states.filter(s=>s.status==='out'&&s.eliminatedWeek===i+1).length;
-    rows.push({week:i+1,eligibleEntering,entered,remaining,eliminated});
+    rows.push({week:i+1,eligibleEntering,submitted,entered,remaining,eliminated});
   }
   return rows;
 }
