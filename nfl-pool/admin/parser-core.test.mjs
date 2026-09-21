@@ -183,6 +183,48 @@ function applyRegularHeaderGeometry(rows,headerText='Entry Pts W'){
   assert.equal(c.config.competitionSize,6);
 }
 {
+  // REAL-SHEET MARGIN — a regular table ending around Y=60 is still physically at the page edge.
+  const page1=[...matchups,tracked[0],tracked[1],anonA],page2=[tracked[2],tracked[3],anonB];
+  const y1=page1.map((_,i)=>760-i*12);y1[y1.length-3]=84;y1[y1.length-2]=72;y1[y1.length-1]=60;
+  const y2=[760,748,736];
+  const c=parseDocumentGroups([
+    {week:2,lines:page1,sourceRows:rowsAt(page1,1,y1),pageNumber:1,pageFingerprint:'real-margin-page-1'},
+    {week:2,lines:page2,sourceRows:rowsAt(page2,2,y2),pageNumber:2,pageFingerprint:'real-margin-page-2'}
+  ],{filename:'real-margin.pdf',season:2026})[0];
+  assert.deepEqual(c.errors,[]);
+  assert.deepEqual(c.fullFieldIssues,[]);
+  assert.equal(c.config.fullFieldReady,true);
+  assert.equal(c.config.competitionSize,6);
+}
+{
+  // SPARSE INACTIVE ROW — a name plus a lone right-edge numeric cell may occupy a table row without becoming a Pick'em entry.
+  const sparse='Inactive Entry 15',lines=[...matchups,tracked[0],anonA,sparse,tracked[1],tracked[2],tracked[3],anonB],rows=sourceRows(lines,1);
+  const sparseRow=rows.find(row=>row.text===sparse);
+  sparseRow.parts=[{x:10,text:'Inactive Entry'},{x:538,text:'15'}];
+  const c=parse(lines,{sourceRows:rows,pageFingerprint:'sparse-inactive-row'});
+  assert.deepEqual(c.errors,[]);
+  assert.deepEqual(c.fullFieldIssues,[]);
+  assert.equal(c.config.fullFieldReady,true);
+  assert.equal(c.config.fieldEntries.length,2);
+  assert.equal(c.config.competitionSize,6);
+}
+{
+  // TRAILING SPARSE ROW — sparse inactive table evidence at page end may prove the edge without being published.
+  const sparse='Inactive Tail 15',page1=[...matchups,tracked[0],tracked[1],anonA,sparse],page2=[tracked[2],tracked[3],anonB];
+  const rows1=sourceRows(page1,1),tail=rows1.find(row=>row.text===sparse);
+  tail.parts=[{x:10,text:'Inactive Tail'},{x:538,text:'15'}];
+  const y1=page1.map((_,i)=>760-i*12);y1[y1.length-4]=96;y1[y1.length-3]=84;y1[y1.length-2]=72;y1[y1.length-1]=60;
+  rows1.forEach((row,i)=>row.y=y1[i]);
+  const c=parseDocumentGroups([
+    {week:2,lines:page1,sourceRows:rows1,pageNumber:1,pageFingerprint:'sparse-tail-page-1'},
+    {week:2,lines:page2,sourceRows:rowsAt(page2,2,[760,748,736]),pageNumber:2,pageFingerprint:'sparse-tail-page-2'}
+  ],{filename:'sparse-tail.pdf',season:2026})[0];
+  assert.deepEqual(c.errors,[]);
+  assert.deepEqual(c.fullFieldIssues,[]);
+  assert.equal(c.config.fullFieldReady,true);
+  assert.equal(c.config.competitionSize,6);
+}
+{
   // TEST A — same X geometry after a large same-page whitespace gap must not enlarge the field.
   const mystery='Mystery Leader 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 60 0';
   const lines=[...matchups,...tracked,anonA,mystery],rows=sourceRows(lines,1);

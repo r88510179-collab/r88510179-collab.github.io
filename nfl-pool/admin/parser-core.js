@@ -56,21 +56,23 @@ function trackedTargetForName(name){
   return TARGETS.find(target=>target.aliases.some(alias=>exactName(alias)===n))||null;
 }
 
-function regularParticipantRow(line,matchups){
-  const tokens=clean(line).split(' ').filter(Boolean),gameCount=matchups.length,candidates=[];
+function structuralParticipantRow(line,gameCount){
+  const tokens=clean(line).split(' ').filter(Boolean),candidates=[];
   if(tokens.length<gameCount+3)return null;
   for(let start=1;start<tokens.length;start++){
     if(tokens.length-start!==gameCount+2)continue;
     const nums=tokens.slice(start);
     if(!nums.every(token=>/^\d+$/.test(token)))continue;
-    const values=nums.map(Number);
-    let valid=true;
-    for(let i=0;i<gameCount;i++){const g=matchups[i],n=values[i];if(n!==g.awayNumber&&n!==g.homeNumber){valid=false;break}}
-    if(!valid)continue;
-    const sourceName=clean(tokens.slice(0,start).join(' '));if(!sourceName)continue;
+    const values=nums.map(Number),sourceName=clean(tokens.slice(0,start).join(' '));if(!sourceName)continue;
     candidates.push({sourceName,pickNumbers:values.slice(0,gameCount),tiebreak:values[gameCount],wins:values[gameCount+1]});
   }
   return candidates.length===1?candidates[0]:null;
+}
+
+function regularParticipantRow(line,matchups){
+  const parsed=structuralParticipantRow(line,matchups.length);if(!parsed)return null;
+  for(let i=0;i<matchups.length;i++){const g=matchups[i],n=parsed.pickNumbers[i];if(n!==g.awayNumber&&n!==g.homeNumber)return null}
+  return parsed;
 }
 
 function median(values){const a=values.slice().sort((x,y)=>x-y),m=Math.floor(a.length/2);return a.length%2?a[m]:(a[m-1]+a[m])/2}
@@ -130,12 +132,26 @@ function pdfHeaderFingerprint(row,ref){
   return clean(row.text).toLowerCase();
 }
 
+function pdfSparseTableEvidence(row,ref){
+  if(!row||row.kind!=='pdf'||!Array.isArray(row.parts))return false;
+  const tokens=[];
+  for(const part of row.parts){
+    const x=Number(part?.x);if(!Number.isFinite(x))continue;
+    for(const token of clean(part?.text).split(' ').filter(Boolean))tokens.push({token,x});
+  }
+  const numerics=tokens.filter(t=>/^\d+$/.test(t.token));
+  if(tokens.length<2||numerics.length!==1||/^\d+$/.test(tokens[0]?.token||''))return false;
+  if(Math.abs(tokens[0].x-ref.nameX)>14)return false;
+  const last=ref.numericXs.length-1,x=numerics[0].x;
+  return Math.abs(x-ref.numericXs[last])<=10||Math.abs(x-ref.numericXs[last-1])<=10;
+}
+
 function pdfTableBoundary(sourceRows,matchups){
   const pdfRows=(sourceRows||[]).filter(r=>r?.kind==='pdf').slice().sort((a,b)=>(a.pageNumber??0)-(b.pageNumber??0)||(a.rowIndex??0)-(b.rowIndex??0)||Number(b.y??0)-Number(a.y??0));
   if(!pdfRows.length)return null;
   const gameCount=matchups.length,records=pdfRows.map(row=>{
-    const parsed=matchupFromLine(row.text)?null:regularParticipantRow(row.text,matchups);
-    return{row,parsed,tracked:parsed?trackedTargetForName(parsed.sourceName):null,geometry:parsed?pdfParticipantGeometry(row,parsed,gameCount):null};
+    const isMatchup=!!matchupFromLine(row.text),structural=isMatchup?null:structuralParticipantRow(row.text,gameCount),parsed=structural?regularParticipantRow(row.text,matchups):null;
+    return{row,structural,parsed,tracked:parsed?trackedTargetForName(parsed.sourceName):null,geometry:structural?pdfParticipantGeometry(row,structural,gameCount):null};
   });
   const trackedRecords=records.filter(r=>r.tracked);
   const issues=[];
@@ -153,7 +169,7 @@ function pdfTableBoundary(sourceRows,matchups){
     if(Math.abs(g.nameX-ref.nameX)>14)return false;
     return g.numericXs.every((x,i)=>Math.abs(x-ref.numericXs[i])<=8);
   };
-  records.forEach(r=>{r.geometryMatch=!!(r.parsed&&matchesGeometry(r));});
+  records.forEach(r=>{r.geometryMatch=!!(r.structural&&matchesGeometry(r));r.sparseTableEvidence=!r.structural&&pdfSparseTableEvidence(r.row,ref);});
 
   const pageMap=new Map();
   for(const record of records){const p=record.row.pageNumber??0;if(!pageMap.has(p))pageMap.set(p,[]);pageMap.get(p).push(record)}
@@ -164,10 +180,14 @@ function pdfTableBoundary(sourceRows,matchups){
     let current=null;
     pageRecords.forEach((record,pos)=>{
       if(record.geometryMatch){
-        const prev=current?.records[current.records.length-1]||null,gap=prev?pdfRowGap(prev,record):null;
+        const prev=current?.lastEvidence||null,gap=prev?pdfRowGap(prev,record):null;
         const yContinuous=!prev||(spacing&&Number.isFinite(gap)&&gap<=spacing.maxGap);
-        if(!current||!yContinuous){current={page,records:[],startPos:pos,endPos:pos,pageSize:pageRecords.length};runs.push(current)}
-        current.records.push(record);current.endPos=pos;
+        if(!current||!yContinuous){current={page,records:[],startPos:pos,endPos:pos,pageSize:pageRecords.length,firstEvidence:record,lastEvidence:record};runs.push(current)}
+        current.records.push(record);current.endPos=pos;current.lastEvidence=record;
+      }else if(current&&record.sparseTableEvidence){
+        const gap=pdfRowGap(current.lastEvidence,record);
+        if(spacing&&Number.isFinite(gap)&&gap<=spacing.maxGap){current.endPos=pos;current.lastEvidence=record}
+        else current=null;
       }else current=null;
     });
   }
@@ -199,15 +219,15 @@ function pdfTableBoundary(sourceRows,matchups){
     return !!headerFingerprint&&headerGapIsProven(header,run)&&header.fingerprint===headerFingerprint;
   };
   const allYs=records.map(r=>Number(r.row?.y)).filter(Number.isFinite),documentTopY=allYs.length?Math.max(...allYs):null;
-  const edgeBand=spacing?spacing.maxGap*2:null;
+  const edgeBand=spacing&&Number.isFinite(documentTopY)?Math.max(spacing.maxGap*2,documentTopY*0.08):null;
   const nearPhysicalBottom=run=>{
     if(!edgeBand)return false;
-    const y=Number(run.records[run.records.length-1]?.row?.y);
+    const y=Number((run.lastEvidence||run.records[run.records.length-1])?.row?.y);
     return Number.isFinite(y)&&y>=0&&y<=edgeBand;
   };
   const nearPhysicalTop=run=>{
     if(!edgeBand||!Number.isFinite(documentTopY))return false;
-    const y=Number(run.records[0]?.row?.y);
+    const y=Number((run.firstEvidence||run.records[0])?.row?.y);
     return Number.isFinite(y)&&documentTopY-y<=edgeBand;
   };
   const strictEdgeContinuation=(prev,next)=>prev.endPos===prev.pageSize-1&&next.startPos<=1&&next.records.length>=2&&nearPhysicalBottom(prev)&&nearPhysicalTop(next);
