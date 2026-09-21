@@ -207,9 +207,9 @@ function render(){
   if(f===M.length&&finalWinners.length>1){
     $('leaderName').textContent=finalWinners.map(i=>P[i].name).join(' / ');$('leaderRecord').textContent=`${lead.w}–${lead.l}`;$('leaderKicker').textContent='Group co-winners';$('leaderNote').textContent='Your tracked entries are tied after the configured tiebreak.';
   }else{
-    $('leaderName').textContent=lead?.name||'—';$('leaderRecord').textContent=lead?`${lead.w}–${lead.l}`:'0–0';$('leaderKicker').textContent=f===M.length?'Group winner':'Group leader';
-    const fm=lead&&field?field.metrics.get(lead.id):null,ties=lead?r.filter(x=>tiedWith(x,lead,t)).length:0;
-    $('leaderNote').textContent=fm?`Overall ${fieldRankLabel(fm)} of ${field.size} · Top ${fm.topPercent}% · ${fm.behind?`${fm.behind} back`:'at the field lead'} · win ceiling ${ceilingRankLabel(fm)}${t.final?'.':' · unresolved tiebreak not projected.'}`:ties>1&&!t.final?`${ties} tracked entries are tied. Full-field data is not published for this week.`:`${f} of ${M.length} games are final. Full-field data is not published for this week.`;
+    const tiedLeaders=lead?r.filter(x=>tiedWith(x,lead,t)):[],ties=tiedLeaders.length,fm=lead&&field?field.metrics.get(lead.id):null;
+    $('leaderName').textContent=ties>1?tiedLeaders.map(x=>x.name).join(' / '):(lead?.name||'—');$('leaderRecord').textContent=lead?`${lead.w}–${lead.l}`:'0–0';$('leaderKicker').textContent=f===M.length?'Group winner':ties>1?'Tracked leaders':'Group leader';
+    $('leaderNote').textContent=fm?`${ties>1?`${ties} tracked entries tied · `:''}Overall ${fieldRankLabel(fm)} of ${field.size} · Top ${fm.topPercent}% · ${fm.behind?`${fm.behind} back`:'at the field lead'} · win ceiling ${ceilingRankLabel(fm)}${t.final?'.':' · unresolved tiebreak not projected.'}`:ties>1&&!t.final?`${ties} tracked entries are tied. Full-field data is not published for this week.`:`${f} of ${M.length} games are final. Full-field data is not published for this week.`;
   }
   $('bestWins').textContent=field?.bestWins??lead?.w??0;
   const pc=Math.round(f/M.length*100);$('progressText').textContent=`${pc}%`;$('progressBar').style.width=`${pc}%`;

@@ -58,6 +58,7 @@ import {competitionRanks,ownershipShare,scoreEntry,tiebreakState} from './public
   assert(source.includes("CFG?.fullFieldReady===true"));
   assert(source.includes("!tracked&&n===0"),'anonymous no-pick sentinel must be accepted without relaxing tracked validation');
   assert(source.includes("noPicks>1"),'public validator must reject multiple anonymous no-pick sentinels');
+  assert(source.includes("ties>1?'Tracked leaders':'Group leader'"),'live tracked ties must not render a singular group leader');
   assert(source.includes('WIN CEILING'));
   assert(source.includes('unresolved tiebreak not projected'));
   assert(!source.includes("'best possible'"));
