@@ -86,7 +86,7 @@ function formatWeekDates(){
   if(!dates.length)return `${CFG.season} season`;const lo=new Date(Math.min(...dates)),hi=new Date(Math.max(...dates));const fmt=d=>d.toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'UTC'});return lo.valueOf()===hi.valueOf()?`${fmt(lo)}, ${CFG.season}`:`${fmt(lo)}–${fmt(hi)}, ${CFG.season}`;
 }
 function renderStaticLabels(){
-  $('weekLine').textContent=`Week ${CFG.week} · ${formatWeekDates()} · ${P.map(p=>p.name).join(' · ')}`;$('pulseWeek').textContent=`Week ${CFG.week}`;$('entryCount').textContent=fieldAvailable()?CFG.competitionSize:P.length;$('gameCount').textContent=M.length;$('finals').textContent=`0/${M.length}`;$('left').textContent=M.length;$('tbNote').textContent=`Tiebreak guesses: ${P.map(p=>`${p.name} ${p.mnf}`).join(' · ')}.`;const [a,h]=M[TIEBREAK_INDEX];$('footerRule').textContent=`Final NFL outcomes only · NFL ties = 0 points · ${a}–${h} tiebreak activates when that game is final.${fieldAvailable()?' Full-field entries are stored without competitor names.':''}`;
+  const hasField=fieldAvailable();$('weekLine').textContent=`Week ${CFG.week} · ${formatWeekDates()} · ${P.map(p=>p.name).join(' · ')}`;$('pulseWeek').textContent=`Week ${CFG.week}`;$('entryLabel').textContent=hasField?'Pool Size':'Tracked Entries';$('entryCount').textContent=hasField?CFG.competitionSize:P.length;$('gameCount').textContent=M.length;$('bestWinsLabel').textContent=hasField?'Field Best':'Tracked Best';$('finals').textContent=`0/${M.length}`;$('left').textContent=M.length;$('tbNote').textContent=`Tiebreak guesses: ${P.map(p=>`${p.name} ${p.mnf}`).join(' · ')}.`;const [a,h]=M[TIEBREAK_INDEX];$('footerRule').textContent=`Final NFL outcomes only · NFL ties = 0 points · ${a}–${h} tiebreak activates when that game is final.${hasField?' Full-field entries are stored without competitor names.':''}`;
 }
 function stats(p,games=G){return scoreEntry(p.picks,games)}
 function tiebreak(games=G){return tiebreakState(games[TIEBREAK_INDEX])}
@@ -206,8 +206,8 @@ function render(){
   if(f===M.length&&finalWinners.length>1){
     $('leaderName').textContent=finalWinners.map(i=>P[i].name).join(' / ');$('leaderRecord').textContent=`${lead.w}–${lead.l}`;$('leaderKicker').textContent='Group co-winners';$('leaderNote').textContent='Your tracked entries are tied after the configured tiebreak.';
   }else{
-    $('leaderName').textContent=lead?.name||'—';$('leaderRecord').textContent=lead?`${lead.w}–${lead.l}`:'0–0';$('leaderKicker').textContent=f===M.length?'Group winner':'Group leader';
-    const fm=lead&&field?field.metrics.get(lead.id):null,ties=lead?r.filter(x=>tiedWith(x,lead,t)).length:0;
+    const fm=lead&&field?field.metrics.get(lead.id):null,trackedLeaders=lead?r.filter(x=>tiedWith(x,lead,t)):[],ties=trackedLeaders.length;
+    $('leaderName').textContent=ties>1?trackedLeaders.map(x=>x.name).join(' / '):(lead?.name||'—');$('leaderRecord').textContent=lead?`${lead.w}–${lead.l}`:'0–0';$('leaderKicker').textContent=f===M.length?'Group winner':ties>1?'Tracked leaders':'Group leader';
     $('leaderNote').textContent=fm?`Overall ${fieldRankLabel(fm)} of ${field.size} · Top ${fm.topPercent}% · ${fm.behind?`${fm.behind} back`:'at the field lead'} · win ceiling ${ceilingRankLabel(fm)}${t.final?'.':' · unresolved tiebreak not projected.'}`:ties>1&&!t.final?`${ties} tracked entries are tied. Full-field data is not published for this week.`:`${f} of ${M.length} games are final. Full-field data is not published for this week.`;
   }
   $('bestWins').textContent=field?.bestWins??lead?.w??0;
