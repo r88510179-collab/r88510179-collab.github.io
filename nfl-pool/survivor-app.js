@@ -1,12 +1,12 @@
 'use strict';
 
-import {survivorEntryState,survivorPickDistribution,survivorSummary,normalizeSurvivorCode} from './survivor-math.js?v=1';
+import {survivorEntryState,survivorPickDistribution,survivorSummary,survivorWeekProgress,normalizeSurvivorCode} from './survivor-math.js?v=2';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
 const ESPN_SCOREBOARD='https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
 const LOGO_CODE={WAS:'wsh'};
-let rows=[],cfg=null,resultByTeam=new Map(),anonToken=null,anonExpiresAt=0,anonRequest=null,refreshId=0;
+let rows=[],cfg=null,resultsByWeek=[],anonToken=null,anonExpiresAt=0,anonRequest=null,refreshId=0;
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 
@@ -53,30 +53,32 @@ function statusLabel(state){
 }
 function render(){
   if(!cfg)return;
-  const entries=allEntries(),wi=cfg.week-1,summary=survivorSummary(entries,wi,resultByTeam),dist=survivorPickDistribution(entries,wi);
-  $('svPoolSize').textContent=cfg.competitionSize;$('svEntered').textContent=cfg.currentWeekEntryCount;$('svStillIn').textContent=summary.active;$('svPending').textContent=summary.pending;
-  $('svSummaryNote').textContent=`${summary.eliminatedBefore} entries were already out/no-pick before Week ${cfg.week}; ${summary.eliminatedThisWeek} current-week entries are eliminated by final results so far.`;
+  const entries=allEntries(),wi=cfg.week-1,summary=survivorSummary(entries,wi,resultsByWeek),dist=survivorPickDistribution(entries,wi,resultsByWeek),progress=survivorWeekProgress(entries,wi,resultsByWeek);
+  $('svPoolSize').textContent=cfg.competitionSize;$('svEntered').textContent=summary.entered;$('svStillIn').textContent=summary.active;$('svPending').textContent=summary.pending;
+  $('svSummaryNote').textContent=`${summary.eliminatedBefore} eliminated before Week ${cfg.week} · ${summary.eligibleEntering} eligible entering Week ${cfg.week} · ${summary.eliminatedThisWeek} eliminated this week so far.`;
   $('svTracked').innerHTML=cfg.trackedEntries.map(entry=>{
-    const state=survivorEntryState(entry,wi,resultByTeam),current=entry.picks[wi],history=entry.picks.map((pick,i)=>`<span class="survivor-history-chip"><small>W${i+1}</small>${pick?esc(pick):'—'}</span>`).join('');
+    const state=survivorEntryState(entry,wi,resultsByWeek),current=state.eliminatedWeek&&state.eliminatedWeek<cfg.week?entry.picks[state.eliminatedWeek-1]:entry.picks[wi],history=entry.picks.map((pick,i)=>`<span class="survivor-history-chip"><small>W${i+1}</small>${pick?esc(pick):'—'}</span>`).join('');
     return`<div class="survivor-tracked-row"><div><b>${esc(entry.displayName)}</b><div class="survivor-history">${history}</div></div><div class="survivor-current">${teamChip(current)}<span class="status-pill survivor-${state.status}">${statusLabel(state)}</span><small>${esc(state.reason)}</small></div></div>`;
   }).join('');
-  $('svDistribution').innerHTML=dist.length?dist.map(item=>`<div class="survivor-pick-row"><div>${teamChip(item.team)}</div><div class="survivor-bar"><i style="width:${item.pct}%"></i></div><b>${item.count}</b><span>${item.pct}%</span></div>`).join(''):'<div class="empty">No Week picks published.</div>';
-  const weekCounts=Array.from({length:cfg.week},(_,i)=>({week:i+1,count:entries.filter(e=>e.picks[i]).length}));
-  $('svProgress').innerHTML=weekCounts.map(x=>`<div class="survivor-week-step"><span>Week ${x.week}</span><b>${x.count}</b><small>${Math.round(x.count/cfg.competitionSize*100)}% of original field</small></div>`).join('');
+  $('svDistribution').innerHTML=dist.length?dist.map(item=>`<div class="survivor-pick-row"><div>${teamChip(item.team)}</div><div class="survivor-bar"><i style="width:${item.pct}%"></i></div><b>${item.count}</b><span>${item.pct}%</span></div>`).join(''):'<div class="empty">No eligible entries have a Week pick.</div>';
+  $('svProgress').innerHTML=progress.map(x=>`<div class="survivor-week-step"><span>Week ${x.week}</span><b>${x.remaining}</b><small>${x.eligibleEntering} entered alive · ${x.entered} picks · ${x.eliminated} out</small></div>`).join('');
   $('svMeta').textContent=`Week ${cfg.week} · revision ${rows.find(r=>r.config===cfg)?.revision||'—'}`;
 }
 
 async function updateScores(){
   if(!cfg)return;const id=++refreshId;
   try{
-    const r=await fetch(`${ESPN_SCOREBOARD}?dates=${cfg.season}&week=${cfg.week}&seasontype=2`,{cache:'no-store'});
-    if(!r.ok)throw new Error(`score feed ${r.status}`);const j=await r.json();if(id!==refreshId)return;
-    resultByTeam=buildResults(j.events);$('svFeed').textContent='LIVE · NFL results';$('svFeed').className='survivor-feed ok';render();
+    const payloads=await Promise.all(Array.from({length:cfg.week},async(_,i)=>{
+      const week=i+1,r=await fetch(`${ESPN_SCOREBOARD}?dates=${cfg.season}&week=${week}&seasontype=2`,{cache:'no-store'});
+      if(!r.ok)throw new Error(`Week ${week} score feed ${r.status}`);return r.json();
+    }));
+    if(id!==refreshId)return;
+    resultsByWeek=payloads.map(j=>buildResults(j.events));$('svFeed').textContent='LIVE · NFL results';$('svFeed').className='survivor-feed ok';render();
   }catch(e){if(id!==refreshId)return;$('svFeed').textContent='RESULT FEED UNAVAILABLE';$('svFeed').className='survivor-feed warn';render();console.warn(e)}
 }
 
 function choose(row,{push=false}={}){
-  cfg=validateConfig(row.config);resultByTeam=new Map();$('survivorWeekSelect').value=`${row.season}-${row.week}`;render();updateScores();
+  cfg=validateConfig(row.config);resultsByWeek=[];$('survivorWeekSelect').value=`${row.season}-${row.week}`;render();updateScores();
   if(push){const u=new URL(location.href);u.searchParams.set('view','survivor');u.searchParams.set('sw',String(row.week));u.searchParams.set('season',String(row.season));history.replaceState(history.state,'',u)}
 }
 

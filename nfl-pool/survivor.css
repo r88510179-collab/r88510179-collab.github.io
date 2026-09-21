@@ -12,3 +12,5 @@ body[data-view="survivor"] .week-strip{display:none}
 .survivor-progress{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:7px;padding:0 13px 13px}.survivor-week-step{padding:9px;border:1px solid #ffffff10;border-radius:10px;background:#090c10}.survivor-week-step span,.survivor-week-step small{display:block;color:var(--muted);font-size:7px}.survivor-week-step b{display:block;font-size:18px;margin:2px 0}
 .bottom-nav{grid-template-columns:repeat(5,1fr)}
 @media(max-width:760px){.survivor-grid{grid-template-columns:1fr}.survivor-metrics{grid-template-columns:1fr 1fr}.survivor-title{align-items:flex-start;flex-direction:column}.survivor-title .week-select{width:100%}}
+
+.survivor-current .status-pill.survivor-out+small{color:#e98b90}
