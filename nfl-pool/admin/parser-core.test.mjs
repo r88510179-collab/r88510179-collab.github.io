@@ -112,8 +112,10 @@ function applyRegularHeaderGeometry(rows,headerText='Entry Pts W'){
   assert.equal(c.config.fullFieldReady,false);
 }
 {
+  // A single wrong-side/blank-equivalent anonymous slot is represented as explicit no-pick 0.
   const c=parse([...matchups,...tracked,'DuplicateSide 1 2 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0']);
-  assert.equal(c.config.fullFieldReady,false);
+  assert.equal(c.config.fullFieldReady,true);
+  assert.equal(c.config.fieldEntries[0].pickNumbers[1],0);
 }
 {
   const c=parse([...matchups,...tracked,anonA]);

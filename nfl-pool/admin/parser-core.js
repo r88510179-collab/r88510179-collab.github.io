@@ -77,7 +77,9 @@ function regularParticipantRow(line,matchups){
 
 function anonymousParticipantRow(line,matchups){
   const parsed=structuralParticipantRow(line,matchups.length);if(!parsed)return null;
-  return{...parsed,pickNumbers:parsed.pickNumbers.map((n,i)=>{const g=matchups[i];return n===g.awayNumber||n===g.homeNumber?n:0})};
+  let noPicks=0;
+  const pickNumbers=parsed.pickNumbers.map((n,i)=>{const g=matchups[i];if(n===g.awayNumber||n===g.homeNumber)return n;noPicks++;return 0});
+  return noPicks<=1?{...parsed,pickNumbers}:null;
 }
 
 function median(values){const a=values.slice().sort((x,y)=>x-y),m=Math.floor(a.length/2);return a.length%2?a[m]:(a[m-1]+a[m])/2}
