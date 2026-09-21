@@ -21,7 +21,7 @@ export function groupSurvivorPdfTextItems(items){
   for(const item of items||[]){
     const text=clean(item?.str);if(!text)continue;
     const tr=item?.transform||[],x=Number(tr[4]??0),y=Number(tr[5]??0);
-    let row=rows.find(r=>Math.abs(r.y-y)<=1.5);
+    let row=rows.find(r=>Math.abs(r.y-y)<=2.2);
     if(!row){row={y,parts:[]};rows.push(row)}
     row.parts.push({x,text});
   }
