@@ -330,7 +330,8 @@ function applyRegularHeaderGeometry(rows,headerText='Entry Pts W'){
   // TEST G — a repeated compatible header physically near its participant run proves continuation.
   const header='Entry Pts W';
   const page1=[...matchups,header,tracked[0],tracked[1],anonA],page2=[header,tracked[2],tracked[3],anonB];
-  const rows1=applyRegularHeaderGeometry(sourceRows(page1,1),header);
+  const rows1=applyRegularHeaderGeometry(sourceRows(page1,1),header),headerIndex=page1.indexOf(header);
+  [96,84,72,60].forEach((y,i)=>{rows1[headerIndex+i].y=y});
   const rows2=applyRegularHeaderGeometry(rowsAt(page2,2,[760,740,728,716]),header);
   const c=parseDocumentGroups([
     {week:2,lines:page1,sourceRows:rows1,pageNumber:1,pageFingerprint:'header-near-page-1'},
