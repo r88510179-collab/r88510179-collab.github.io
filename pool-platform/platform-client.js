@@ -1,0 +1,105 @@
+import {extractAccessToken,normalizeEmail,validEmail,validOtp,normalizeInviteToken,authErrorMessage} from './auth-core.js';
+
+export class PlatformClient{
+  constructor(config){
+    this.config=config;
+    this.neon=null;
+  }
+
+  get live(){
+    return this.config?.mode==='live'&&!!this.config?.authUrl&&!!this.config?.dataUrl;
+  }
+
+  async init(){
+    if(!this.live)return this;
+    const {createClient}=await import('https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm');
+    this.neon=createClient({auth:{url:this.config.authUrl},dataApi:{url:this.config.dataUrl}});
+    return this;
+  }
+
+  async getSession(){
+    if(!this.live)return null;
+    const result=await this.neon.auth.getSession();
+    return result?.data?.session&&result?.data?.user?{session:result.data.session,user:result.data.user}:null;
+  }
+
+  async sendOtp(email){
+    const normalized=normalizeEmail(email);
+    if(!validEmail(normalized))throw new Error('Enter a valid email address.');
+    const {error}=await this.neon.auth.emailOtp.sendVerificationOtp({email:normalized,type:'sign-in'});
+    if(error)throw error;
+    return normalized;
+  }
+
+  async verifyOtp(email,otp){
+    const normalized=normalizeEmail(email);
+    if(!validEmail(normalized)||!validOtp(otp))throw new Error('Enter a valid email and numeric sign-in code.');
+    const {error}=await this.neon.auth.signIn.emailOtp({email:normalized,otp:String(otp).trim()});
+    if(error)throw error;
+    const session=await this.getSession();
+    if(!session)throw new Error('Sign-in completed but no session was created.');
+    return session;
+  }
+
+  async signOut(){
+    if(this.neon)await this.neon.auth.signOut();
+  }
+
+  async rpc(name,args={}){
+    if(!this.live)throw new Error('Live backend is not configured.');
+    const sessionResult=await this.neon.auth.getSession();
+    const token=extractAccessToken(sessionResult);
+    if(!token)throw new Error('Authentication required.');
+    const response=await fetch(`${this.config.dataUrl.replace(/\/$/,'')}/rpc/${encodeURIComponent(name)}`,{
+      method:'POST',
+      headers:{
+        'Authorization':`Bearer ${token}`,
+        'Content-Type':'application/json',
+        'Accept':'application/json'
+      },
+      body:JSON.stringify(args)
+    });
+    const text=await response.text();
+    let body=null;
+    try{body=text?JSON.parse(text):null}catch{body=text}
+    if(!response.ok){
+      const message=body?.message||body?.details||body?.hint||text||`HTTP ${response.status}`;
+      throw new Error(authErrorMessage(message));
+    }
+    return body;
+  }
+
+  async claimInvite(token){
+    const normalized=normalizeInviteToken(token);
+    if(!normalized)throw new Error('Invitation link is invalid.');
+    return this.rpc('pool_platform_claim_entry_invite',{p_invite_token:normalized});
+  }
+
+  async participantContext(poolSlug,season=null,week=null){
+    return this.rpc('pool_platform_participant_context',{
+      p_pool_slug:poolSlug,p_season:season,p_week:week
+    });
+  }
+
+  async commissionerContext(poolSlug){
+    return this.rpc('pool_platform_commissioner_context',{p_pool_slug:poolSlug});
+  }
+
+  async submitEntry({weekId,entryId,source,payload}){
+    return this.rpc('pool_platform_submit_entry',{
+      p_week_id:weekId,p_entry_id:entryId,p_source:source,p_payload:payload
+    });
+  }
+
+  async submitBatch({weekId,source,items}){
+    return this.rpc('pool_platform_submit_batch',{
+      p_week_id:weekId,p_source:source,p_items:items
+    });
+  }
+
+  async createInvite({entryId,email=null,expiresHours=168}){
+    return this.rpc('pool_platform_create_entry_invite',{
+      p_entry_id:entryId,p_email:email||null,p_expires_hours:expiresHours
+    });
+  }
+}
