@@ -24,11 +24,11 @@ export function groupSurvivorPdfTextItems(items){
     const tr=item?.transform||[],x=Number(tr[4]??0),y=Number(tr[5]??0);
     let row=rows.find(r=>Math.abs(r.y-y)<=2.2);
     if(!row){row={y,parts:[]};rows.push(row)}
-    row.parts.push({x,text});
+    row.parts.push({x,y,text});
   }
   return rows.sort((a,b)=>b.y-a.y).map((row,rowIndex)=>{
     const parts=row.parts.sort((a,b)=>a.x-b.x);
-    return{text:clean(parts.map(p=>p.text).join(' ')),y:row.y,rowIndex,parts:parts.map(p=>({x:p.x,text:p.text}))};
+    return{text:clean(parts.map(p=>p.text).join(' ')),y:row.y,rowIndex,parts:parts.map(p=>({x:p.x,y:p.y,text:p.text}))};
   }).filter(r=>r.text);
 }
 
@@ -67,24 +67,27 @@ function nearestColumns(x,columnXs){
 // Text split into several PDF items inside one cell (e.g. "LA" + "C") is merged first; a cell is placed by its start x.
 // Continuation is measured from the cell's first item, so a split cell can never chain into the next column's text.
 // A fragment that turns an incomplete lettered code into a team code (LA + C) completes its cell even in tight layouts;
-// a complete team code never continues another cell.
+// a complete team code never continues another cell, and punctuation alone never starts a cell that absorbs one.
 function pickCells(pickParts,gap){
   const cells=[];
   for(const part of pickParts){
-    const prev=cells[cells.length-1],distance=prev?part.x-prev.x:Infinity;
-    const completesCode=!!prev&&distance<=gap*0.9&&MEANINGFUL.test(prev.texts.join(' '))&&!normalizeSurvivorTeam(prev.texts.join(' '))&&!normalizeSurvivorTeam(part.text)&&!!normalizeSurvivorTeam([...prev.texts,part.text].join(' '));
-    if(prev&&(distance<=gap*0.7||completesCode)){prev.texts.push(part.text);continue}
+    const prev=cells[cells.length-1],distance=prev?part.x-prev.x:Infinity,prevMeaningful=!!prev&&MEANINGFUL.test(prev.texts.join(' '));
+    const completesCode=prevMeaningful&&distance<=gap*0.9&&!normalizeSurvivorTeam(prev.texts.join(' '))&&!normalizeSurvivorTeam(part.text)&&!!normalizeSurvivorTeam([...prev.texts,part.text].join(' '));
+    if(prevMeaningful&&(distance<=gap*0.7||completesCode)){prev.texts.push(part.text);continue}
     cells.push({x:part.x,texts:[part.text]});
   }
   return cells.map(c=>{const text=clean(c.texts.join(' '));return{x:c.x,text,meaningful:MEANINGFUL.test(text)}});
 }
 
 function analyzeRow(row,contract){
-  const parts=(row.parts||[]).map(p=>({x:Number(p.x),text:clean(p.text)})).filter(p=>Number.isFinite(p.x)&&p.text).sort((a,b)=>a.x-b.x);
+  const parts=(row.parts||[]).map(p=>({x:Number(p.x),y:Number(p.y),text:clean(p.text)})).filter(p=>Number.isFinite(p.x)&&p.text).sort((a,b)=>a.x-b.x);
   const nameParts=parts.filter(p=>p.x<contract.nameCutoff),cells=pickCells(parts.filter(p=>p.x>=contract.nameCutoff),contract.gap);
   const sourceName=clean(nameParts.map(p=>p.text).join(' ')),meaningful=cells.some(c=>c.meaningful);
   const kind=sourceName?(meaningful?'picks':'name-only'):(meaningful?'nameless':'noise');
-  return{row,nameParts,cells,sourceName,nameX:nameParts[0]?.x??null,kind};
+  // Rows are placed on the table grid by their name baseline: pick text may sit ~1.8pt lower and may come first in the
+  // PDF item order, so the grouped row's y is not a stable grid position.
+  const gridY=Number.isFinite(nameParts[0]?.y)?nameParts[0].y:Number(row.y);
+  return{row,nameParts,cells,sourceName,nameX:nameParts[0]?.x??null,gridY,kind};
 }
 
 // Observed Week-column positions: the header anchors shifted by the median offset of pick cells from their header.
@@ -146,7 +149,7 @@ function participantRegion(rows,contract,review,errors){
     const a=analyzeRow(row,contract);
     if(a.kind==='noise')continue;
     if(/^suicide pool$/i.test(a.sourceName)||/^week$/i.test(a.sourceName)){ignore(row,'sheet title or label');continue}
-    if(a.kind==='name-only'&&!/[A-Za-z]/.test(a.sourceName)){ignore(row,'row without a participant name');continue}
+    if(a.kind==='name-only'&&!/[\p{L}\p{N}]/u.test(a.sourceName)){ignore(row,'row without a participant name');continue}
     region.push(a);
   }
   const model=columnModel(region,contract);
@@ -159,18 +162,18 @@ function participantRegion(rows,contract,review,errors){
   }
   const named=region.filter(a=>a.kind==='picks'||a.kind==='name-only'),byPage=new Map();
   for(const a of named){const p=a.row.pageNumber??0;if(!byPage.has(p))byPage.set(p,[]);byPage.get(p).push(a)}
-  for(const list of byPage.values())list.sort((x,y)=>Number(y.row.y)-Number(x.row.y));
+  for(const list of byPage.values())list.sort((x,y)=>y.gridY-x.gridY);
   const gaps=[];
   for(const list of byPage.values())for(let i=1;i<list.length;i++){
     if(list[i-1].kind!=='picks'||list[i].kind!=='picks')continue;
-    const g=Number(list[i-1].row.y)-Number(list[i].row.y);if(Number.isFinite(g)&&g>0)gaps.push(g);
+    const g=list[i-1].gridY-list[i].gridY;if(Number.isFinite(g)&&g>0)gaps.push(g);
   }
   const pitch=gaps.length?median(gaps):null;
   const minGap=pitch===null?null:pitch-Math.max(2.5,pitch*0.25);
-  const onGrid=(upper,lower)=>{const g=Number(upper.row.y)-Number(lower.row.y);return pitch!==null&&Number.isFinite(g)&&g>=minGap&&g<=pitch*1.75};
-  const tooClose=(upper,lower)=>minGap!==null&&Number(upper.row.y)-Number(lower.row.y)<minGap;
+  const onGrid=(upper,lower)=>{const g=upper.gridY-lower.gridY;return pitch!==null&&Number.isFinite(g)&&g>=minGap&&g<=pitch*1.75};
+  const tooClose=(upper,lower)=>minGap!==null&&upper.gridY-lower.gridY<minGap;
   // Distance from the row grid, measured from the nearest row with picks on the page.
-  const gridDeviation=(list,idx)=>{for(let d=1;d<list.length;d++)for(const k of [idx-d,idx+d]){const r=list[k];if(r&&r.kind==='picks'){const m=Math.abs(Number(r.row.y)-Number(list[idx].row.y))%pitch;return Math.min(m,pitch-m)}}return Infinity};
+  const gridDeviation=(list,idx)=>{for(let d=1;d<list.length;d++)for(const k of [idx-d,idx+d]){const r=list[k];if(r&&r.kind==='picks'){const m=Math.abs(r.gridY-list[idx].gridY)%pitch;return Math.min(m,pitch-m)}}return Infinity};
   const nameXs=named.filter(a=>a.kind==='picks'&&Number.isFinite(a.nameX)).map(a=>a.nameX);
   const nameMin=nameXs.length?Math.min(...nameXs)-NAME_X_TOLERANCE:null,nameMax=nameXs.length?Math.max(...nameXs)+NAME_X_TOLERANCE:null;
   const accepted=new Set();
@@ -219,6 +222,7 @@ export function parseSurvivorPages(pages,{season=2026,filename='survivor.pdf'}={
   let week=0;
   for(const p of parsed)for(let i=0;i<p.picks.length;i++)if(p.picks[i])week=Math.max(week,i+1);
   if(!week)errors.push('No populated Survivor week found');
+  else if(!parsed.some(p=>p.picks[0]))errors.push('No Survivor entry has a Week 1 pick; Week column positions could not be proven');
   for(const p of parsed){
     for(let i=week;i<p.picks.length;i++)if(p.picks[i])errors.push(p.sourceName+': pick exists after detected current week');
   }

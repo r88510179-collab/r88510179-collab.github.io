@@ -273,6 +273,40 @@ const parse=pages=>parseSurvivorPages(pages,{season:2026});
   assert.equal(left.review.geometry.columnOffset,-15.2);assert(-15.2<-40*0.375,'beyond the old symmetric bound');
 }
 {
+  // Round-2 regressions.
+  // P3-1: a centered stray "." in an empty Week cell never absorbs the next week's pick through the continuation window.
+  for(const x of [190,193,194,195,196]){
+    const r=parse(base([at(700,[[20,'Bravo'],[151,'JAX'],[x,'.'],[217,'NYG']])]));
+    assert(r.errors.includes('Bravo: unknown Week 2 team .'),`dot at ${x}: ${r.errors.join(' | ')}`);
+  }
+  // punctuation between two columns cannot encode a team and is not a pick; the real picks keep their columns
+  const between=parse(base([at(700,[[20,'Bravo'],[151,'JAX'],[200,'.'],[217,'NYG']])]));
+  assert.deepEqual(between.errors,[]);assert.deepEqual(between.config.fieldEntries[1].picks,['JAX',null,'NYG']);
+  // P3-2: when no entry has a Week 1 pick the column mapping is shifted, so the sheet fails closed.
+  const shiftedHeader={text:'Week 1 2 3 4',y:760,rowIndex:0,parts:[{x:116,text:'Week'},{x:159,text:'1'},{x:197,text:'2'},{x:235,text:'3'},{x:273,text:'4'}]};
+  const shiftedCells=[['D.C.','PIT','SF'],['DJS','LV','SF'],['Thaddius','LAC',null],['Alpha','JAX','BAL']].map(([n,a,b],i)=>at(748-12*i,[[20,n],[181,a],...(b?[[219,b]]:[])]));
+  const shiftedParse=parse([{pageNumber:1,rows:[shiftedHeader,...shiftedCells]}]);
+  assert(shiftedParse.errors.includes('No Survivor entry has a Week 1 pick; Week column positions could not be proven'),shiftedParse.errors.join(' | '));
+  // P3-3: the row grid is measured on name baselines, so a real blank entrant is kept even when pdf.js lists the lower
+  // pick baseline first (row.y = pick baseline) and a note sits just off the grid next to the blank row.
+  const pickFirst=(name,y,picks)=>[...picks.map(([x,t])=>({str:t,transform:[1,0,0,1,x,y-1.8]})),{str:name,transform:[1,0,0,1,20,y]}];
+  const items=[...header.parts.map(p=>({str:p.text,transform:[1,0,0,1,p.x,760]})),
+    ...pickFirst('D.C.',748,[[151,'PIT'],[184,'SF']]),...pickFirst('DJS',736,[[151,'LV'],[184,'SF']]),...pickFirst('Thaddius',724,[[151,'LAC']]),
+    ...pickFirst('Alpha',712,[[151,'JAX'],[184,'BAL']]),{str:'Late Entry',transform:[1,0,0,1,20,700]},{str:'paid',transform:[1,0,0,1,20,697.5]}];
+  const tie=parse([{pageNumber:1,rows:groupSurvivorPdfTextItems(items)}]);
+  assert.deepEqual(tie.errors,[]);assert.equal(tie.config.competitionSize,5);
+  assert.deepEqual(tie.review.blankEntrants.map(x=>x.label),['Late Entry']);assert.deepEqual(tie.review.detachedRows.map(x=>x.label),['paid']);
+  // P3-4: blank entrants whose names use any script (or digits) are counted; only rows with no letter or digit are not.
+  for(const name of ['Zoë','李明','Αλέξης','007']){
+    const r=parse(base([at(700,[[20,name]])]));
+    assert.deepEqual(r.errors,[],name);assert.equal(r.config.competitionSize,5,name);assert.deepEqual(r.review.blankEntrants.map(x=>x.label),[name]);
+  }
+  for(const name of ['*','—','🏈🏈']){
+    const r=parse(base([at(700,[[20,name]])]));
+    assert.deepEqual(r.errors,[],name);assert.equal(r.config.competitionSize,4,name);
+  }
+}
+{
   // The historical no-pick fixture geometry (three empty grid rows below the table) is physically detached: it is
   // not counted silently; it is surfaced for explicit admin acknowledgement instead.
   const detached=parseSurvivorPages([{pageNumber:1,rows:[header,row('D.C.','PIT','SF',null,null,1),row('DJS','LV','SF',null,null,2),row('Thaddius','LAC',null,null,null,3),row('No Pick Entry',null,null,null,null,7)]}],{season:2026});
@@ -311,12 +345,14 @@ console.log('survivor parser out-of-column, split-cell, participant-region, stra
     y-=pitch;
     for(const e of entries){
       if(onPage>=perPage){pages.push(items);items=[];y=740;onPage=0}
-      const jitter=rnd()<0.5?0:-1.8;items.push({str:e.name,x:nameX,y});
+      const jitter=rnd()<0.5?0:-1.8,rowItems=[{str:e.name,x:nameX,y}];
       e.picks.forEach((team,w)=>{
         if(!team)return;
-        if(team==='LAC'&&rnd()<0.5){const s=centers[w]-width('LA C',fs)/2;items.push({str:'LA',x:s,y:y+jitter},{str:'C',x:s+width('LA ',fs),y:y+jitter})}
-        else items.push({str:team,x:centers[w]-width(team,fs)/2,y:y+jitter});
+        if(team==='LAC'&&rnd()<0.5){const s=centers[w]-width('LA C',fs)/2;rowItems.push({str:'LA',x:s,y:y+jitter},{str:'C',x:s+width('LA ',fs),y:y+jitter})}
+        else rowItems.push({str:team,x:centers[w]-width(team,fs)/2,y:y+jitter});
       });
+      // pdf.js item order is not guaranteed: sometimes the (lower) pick baseline comes before the name.
+      items.push(...(rnd()<0.5?rowItems:[...rowItems.slice(1),rowItems[0]]));
       y-=pitch;onPage++;
     }
     pages.push(items);
@@ -330,7 +366,7 @@ console.log('survivor parser out-of-column, split-cell, participant-region, stra
     for(const tracked of parsed.config.trackedEntries)assert.deepEqual(tracked.picks,truth.get({dc:'D.C.',djs:'DJS',thaddeus:'Thaddius'}[tracked.id]),label);
     const expectedField=entries.filter(e=>!['D.C.','DJS','Thaddius'].includes(e.name)).map(e=>JSON.stringify(e.picks));
     assert.deepEqual(parsed.config.fieldEntries.map(e=>JSON.stringify(e.picks)),expectedField,label);
-    assert.deepEqual(parsed.review.detachedRows,[],label);
+    assert.deepEqual(parsed.review.detachedRows,[],label);assert.deepEqual(parsed.review.unanchoredRows,[],label);
   }
 }
 

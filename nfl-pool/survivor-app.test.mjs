@@ -8,6 +8,8 @@ const from="from './survivor-math.js?v=4';";
 assert(source.includes(from),'harness expects the survivor-math import');
 const patched=source.replace(from,`from '${new URL('./survivor-math.js?v=4',import.meta.url).href}';`);
 let instance=0;
+// Fast timers: the view's 15 s score-feed time limit elapses in 5 ms here; short timers are unchanged.
+const realSetTimeout=globalThis.setTimeout;globalThis.setTimeout=(fn,ms,...a)=>realSetTimeout(fn,ms>=10000?5:ms,...a);
 
 const W1=[['PIT','CLE'],['LV','NE'],['KC','LAC'],['JAX','CAR'],['ARI','ATL'],['BAL','BUF'],['CHI','CIN'],['DAL','DEN'],['DET','GB'],['HOU','IND'],['LAR','MIA'],['MIN','NO'],['NYG','NYJ'],['PHI','SEA'],['SF','TB'],['TEN','WAS']];
 const W2=[['SF','ARI'],['ATL','BAL'],['BUF','CAR'],['CHI','CIN'],['CLE','DAL'],['DEN','DET'],['GB','HOU'],['IND','JAX'],['KC','LV'],['LAC','LAR'],['MIA','MIN'],['NE','NO'],['NYG','NYJ'],['PHI','PIT'],['SEA','TB'],['TEN','WAS']];
@@ -37,7 +39,7 @@ async function view(feeds){
     if(u.pathname.endsWith('/token/anonymous'))return{ok:true,json:async()=>({token})};
     if(u.pathname.endsWith('/nfl_survivor_weeks'))return{ok:true,json:async()=>[{season:2026,week:2,status:'locked',revision:7,config:structuredClone(config)}]};
     const w=Number(u.searchParams.get('week'));seen.push(w);
-    const payload=feeds[w];if(!payload)return{ok:false,status:404,json:async()=>({})};
+    const payload=feeds[w];if(payload==='hang')return new Promise(()=>{});if(!payload)return{ok:false,status:404,json:async()=>({})};
     return{ok:true,status:200,json:async()=>structuredClone(payload)};
   };
   await import(`data:text/javascript;base64,${Buffer.from(patched+`\n//instance ${++instance}`).toString('base64')}`);
@@ -116,6 +118,21 @@ async function view(feeds){
   delete v2.feeds[1];await v2.refresh();
   assert.deepEqual(v2.seen.filter(w=>w<=2).sort(),[1,2]);
   assert.equal(v2.$('svFeed').textContent,'LIVE · 2 TEAM RESULTS UNVERIFIED');assert.match(v2.row('DJS'),/ALIVE/);
+}
+// A hung refresh of an unsettled earlier week times out on its own: its cached results stay, and the current week
+// still updates (a hung current week is reported as unavailable instead of silently stale).
+{
+  const badPick=week(W1,1,{PIT:(a,h,n)=>game(a,h,n,{as:null,hs:null})});
+  const v=await view({1:badPick,2:week(W2,2,{SF:(a,h,n)=>game(a,h,n,{completed:false,state:'in'})}),3:week(W3,3)});
+  assert.match(v.row('DJS'),/LIVE/);
+  v.feeds[1]='hang';v.feeds[2]=week(W2,2);
+  await v.refresh();await new Promise(r=>realSetTimeout(r,40));await flush();
+  assert.match(v.row('DJS'),/ALIVE/,'current week applied despite the hung earlier week');
+  assert.match(v.row('D.C.'),/Week 1 PIT result unavailable/,'cached earlier-week result kept');
+  assert.match(v.$('svFeed').textContent,/^LIVE/);
+  v.feeds[2]='hang';
+  await v.refresh();await new Promise(r=>realSetTimeout(r,40));await flush();
+  assert.equal(v.$('svFeed').textContent,'RESULT FEED UNAVAILABLE');
 }
 // Next-week schedule from the wrong context never feeds decision support.
 {

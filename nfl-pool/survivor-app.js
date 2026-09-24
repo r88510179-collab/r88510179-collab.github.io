@@ -100,17 +100,21 @@ async function updateDecisionSchedule(force=false){
   }catch(e){if(cfg!==scheduleCfg)return;nextWeekError=e.message||String(e);if(!nextWeekMatchups.length)render();console.warn(e)}
 }
 
+// Each score request must settle before the next 20 s refresh, so a hung week can never hold up the others.
+const SCORE_FEED_TIMEOUT_MS=15000;
+function withinTime(promise,label){return new Promise((resolve,reject)=>{const t=setTimeout(()=>reject(new Error(`${label} timed out`)),SCORE_FEED_TIMEOUT_MS);promise.then(v=>{clearTimeout(t);resolve(v)},e=>{clearTimeout(t);reject(e)})})}
+
 async function updateScores(){
   if(!cfg)return;const id=++refreshId,scoreCfg=cfg;
   try{
     const current=scoreCfg.week-1,indexes=Array.from({length:scoreCfg.week},(_,i)=>i).filter(i=>i===current||!weekSettled(i));
-    const outcomes=await Promise.allSettled(indexes.map(async i=>{
+    const outcomes=await Promise.allSettled(indexes.map(i=>withinTime((async()=>{
       const week=i+1,r=await fetch(`${ESPN_SCOREBOARD}?dates=${scoreCfg.season}&week=${week}&seasontype=2`,{cache:'no-store'});
       if(!r.ok)throw new Error(`Week ${week} score feed ${r.status}`);
       const json=await r.json(),contextError=survivorFeedContextError(json,{season:scoreCfg.season,week});
       if(contextError)throw new Error(contextError);
       return survivorBuildResults(json.events,{season:scoreCfg.season,week});
-    }));
+    })(),`Week ${i+1} score feed`)));
     if(id!==refreshId||cfg!==scoreCfg)return;
     // Each week stands alone: a failed refresh of an earlier week keeps its last verified results.
     const failed=[];
