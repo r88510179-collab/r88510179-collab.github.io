@@ -122,7 +122,9 @@ function pdfParticipantGeometry(row,parsed,gameCount){
   if(expected.length!==tail.length||tail.some((t,i)=>t.token!==expected[i]))return null;
   const numericXs=tail.map(t=>t.x),distinct=new Set(numericXs.map(x=>x.toFixed(2))).size;
   if(distinct<Math.min(6,tailCount))return null;
-  return{nameX:tokens[0]?.x,numericXs};
+  const nameTokens=tokens.slice(0,-tailCount),firstNumericX=numericXs[0];
+  if(!nameTokens.length||nameTokens.some(t=>t.x>=firstNumericX-4))return null;
+  return{nameX:nameTokens[0]?.x,numericXs};
 }
 
 function pdfHeaderFingerprint(row,ref){
@@ -238,7 +240,8 @@ function pdfTableBoundary(sourceRows,matchups){
     return Number.isFinite(y)&&documentTopY-y<=edgeBand;
   };
   const strictEdgeContinuation=(prev,next)=>prev.endPos===prev.pageSize-1&&next.startPos<=1&&next.records.length>=2&&nearPhysicalBottom(prev)&&nearPhysicalTop(next);
-  const canContinue=(prev,next)=>next.page===prev.page+1&&(hasMatchingHeader(next)||strictEdgeContinuation(prev,next));
+  const headerContinuation=(prev,next)=>prev.endPos===prev.pageSize-1&&nearPhysicalBottom(prev)&&nearPhysicalTop(next)&&hasMatchingHeader(next);
+  const canContinue=(prev,next)=>next.page===prev.page+1&&(headerContinuation(prev,next)||strictEdgeContinuation(prev,next));
 
   let frontier=seed;
   while(frontier){
@@ -365,7 +368,14 @@ function parseWeekGroup(week,weekGroups,filename,season){
     const accepted=pdfBoundary?.accepted||new Set();
     for(const row of sourceRows){
       if(row?.kind!=='pdf'||!accepted.has(sourceRowKey(row)))continue;
-      considerRow(row,anonymousParticipantRow(row.text,matchups),{allowNoPick:true});
+      const structural=structuralParticipantRow(row.text,gameCount);
+      if(structural&&trackedTargetForName(structural.sourceName))continue;
+      const anonymous=anonymousParticipantRow(row.text,matchups);
+      if(structural&&!anonymous){
+        fullFieldIssues.push('A participant-shaped PDF row inside the proven regular participant table failed anonymous pick validation');
+        continue;
+      }
+      considerRow(row,anonymous,{allowNoPick:true});
     }
   }else if(hasSpreadsheet){
     for(const row of sourceRows){if(row?.kind!=='spreadsheet')continue;considerRow(row,spreadsheetParticipantRow(row,sheetContract,matchups))}
@@ -391,11 +401,15 @@ function parseWeekGroup(week,weekGroups,filename,season){
 }
 
 export function parseDocumentGroups(groups,{filename='weekly-picks',season=2026}={}){
-  const byWeek=new Map();
-  for(const group of carryForwardWeekHints(groups||[])){
-    let current=Number.isInteger(group.week)?group.week:null;
-    for(const line of group.lines||[]){const found=detectWeek(line);if(found)current=found}
+  const byWeek=new Map();let activeWeek=null;
+  for(const group of groups||[]){
+    const explicitWeek=Number.isInteger(group?.week)?group.week:null;
+    let current=explicitWeek??activeWeek;
+    if(!current){
+      for(const line of group.lines||[]){const found=detectWeek(line);if(found){current=found;break}}
+    }
     if(!current)continue;
+    activeWeek=current;
     if(!byWeek.has(current))byWeek.set(current,[]);
     byWeek.get(current).push(group);
   }
