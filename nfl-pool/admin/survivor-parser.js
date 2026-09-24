@@ -162,8 +162,11 @@ function participantRegion(rows,contract,review,errors){
   if(!model.valid)errors.push('Survivor Week column positions could not be proven (pick text starts '+model.offset.toFixed(1)+'pt from its Week header)');
   for(const a of region){
     if(a.kind!=='nameless')continue;
-    const suspect=a.cells.filter(c=>c.meaningful&&TEAM_CODE_SHAPE.test(c.text)&&normalizeSurvivorTeam(c.text)&&assignCell(c.x,model,contract.gap).problem!=='outside');
+    // Beside name-column text with no letter or digit, any spelling read as a team for a named row fails closed too.
+    const suspect=a.cells.filter(c=>c.meaningful&&(a.sourceName||TEAM_CODE_SHAPE.test(c.text))&&normalizeSurvivorTeam(c.text)&&assignCell(c.x,model,contract.gap).problem!=='outside');
     if(suspect.length)errors.push('Page '+(a.row.pageNumber??'?')+': Week-column team text '+suspect.map(c=>c.text).join(' ')+' has no participant name');
+    // Any other row with such name-column text is surfaced for confirmation, never only listed as uncounted text.
+    else if(a.sourceName){ignore(a.row,'name-column text with no letter or digit');review.symbolRows.push({page:a.row.pageNumber??null,label:a.sourceName})}
     else ignore(a.row,'text in the Week columns without a participant name');
   }
   const named=region.filter(a=>a.kind==='picks'||a.kind==='name-only'),byPage=new Map();

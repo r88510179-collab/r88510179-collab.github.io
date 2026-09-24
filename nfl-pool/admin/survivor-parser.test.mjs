@@ -314,6 +314,19 @@ const parse=pages=>parseSurvivorPages(pages,{season:2026});
     const r=parse(base([at(700,[[20,name],[151,'KC'],[184,'NE']])]));
     assert(r.errors.includes('Page 1: Week-column team text KC NE has no participant name'),`${name}: ${r.errors.join(' | ')}`);
   }
+  // Round 2d: beside symbol-only name-column text, every team spelling a named row would accept also fails closed, and
+  // any other Week text still surfaces the row for confirmation instead of only listing it as uncounted text.
+  for(const name of ['.','..','--','*','---','/','///']){
+    for(const [cells,text] of [[[[151,'kc']],'kc'],[[[151,'Kc']],'Kc'],[[[151,'K.C.']],'K.C.'],[[[184,'Jax']],'Jax'],[[[151,'K'],[156,'C']],'K C']]){
+      const r=parse(base([at(700,[[20,name],...cells])]));
+      assert(r.errors.includes(`Page 1: Week-column team text ${text} has no participant name`),`${name} ${text}: ${r.errors.join(' | ')}`);
+    }
+    for(const cells of [[[151,'xx']],[[151,'n/a']],[[184,'tbd'],[217,'?']],[[400,'paid']]]){
+      const r=parse(base([at(700,[[20,name],...cells])])),tag=`${name} ${cells.map(c=>c[1]).join(' ')}`;
+      assert.deepEqual(r.errors,[],tag);assert.equal(r.config.competitionSize,4,tag);assert.deepEqual(r.review.blankEntrants,[],tag);
+      assert.deepEqual(r.review.symbolRows,[{page:1,label:name}],tag);assert.deepEqual(r.review.detachedRows,[],tag);
+    }
+  }
   // P4-PARSER-2: stray text grouped into a participant row through the (first-listed) pick baseline puts the row's name
   // text on two baselines; the row's name baseline is then not trusted, and the real blank entrant below still counts.
   for(const noteX of [18,22]){

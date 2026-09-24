@@ -102,7 +102,7 @@ async function boot({signedIn=true,rows=[],sheets={}}={}){
   const choose=name=>{$('file').files=[new File([name],name,{type:'application/pdf'})];$('file').dispatch('change')};
   return{$,db,net,choose,parse:()=>$('parseBtn').onclick(),publish:()=>$('publishBtn').onclick()};
 }
-const sheets={'week2.pdf':sheetItems(SHEET),'week2-complete.pdf':sheetItems(COMPLETE),'other.pdf':sheetItems(COMPLETE),'blank-page.pdf':[sheetItems(COMPLETE),[item('Zed Blank',20,760),item('Zoe Blank',20,748)]],'symbol.pdf':[...sheetItems(COMPLETE),item('*',20,748-12*6)]};
+const sheets={'week2.pdf':sheetItems(SHEET),'week2-complete.pdf':sheetItems(COMPLETE),'other.pdf':sheetItems(COMPLETE),'blank-page.pdf':[sheetItems(COMPLETE),[item('Zed Blank',20,760),item('Zoe Blank',20,748)]],'symbol.pdf':[...sheetItems(COMPLETE),item('*',20,748-12*6)],'symbol-note.pdf':[...sheetItems(COMPLETE),item('*',20,748-12*6),item('n/a',151,748-12*6-1.8)]};
 
 // ---- 1. Happy path: validate, confirmation gate, publish exactly one locked row with the private-safe config.
 {
@@ -292,6 +292,14 @@ const sheets={'week2.pdf':sheetItems(SHEET),'week2-complete.pdf':sheetItems(COMP
   assert.match(t.$('publishChecks').innerHTML,/1 name-column row has no letter or digit and was NOT counted as an entrant: &quot;\*&quot; \(page 1\)/);
   assert.equal(t.$('confirmWrap').hidden,false);assert.equal(t.$('publishBtn').disabled,true);
   assert.match(t.$('confirmText').textContent,/The 1 row without a letter or digit listed above is not an entrant\.$/);
+}
+// ---- 16. The same row beside Week-column text that is not a team still reaches the guard for confirmation.
+{
+  const t=await boot({rows:[week1Row(COMPLETE)],sheets});
+  t.choose('symbol-note.pdf');await t.parse();
+  assert.match(t.$('reviewTitle').textContent,/6 entries/);
+  assert.match(t.$('publishChecks').innerHTML,/1 name-column row has no letter or digit and was NOT counted as an entrant: &quot;\*&quot; \(page 1\)/);
+  assert.equal(t.$('confirmWrap').hidden,false);assert.equal(t.$('publishBtn').disabled,true);
 }
 
 console.log('survivor publisher stale-context, confirmation, schedule, compare-and-swap, double-submit and write-outcome regressions passed');
