@@ -423,4 +423,64 @@ function applyRegularHeaderGeometry(rows,headerText='Entry Pts W'){
   assert.equal(Object.keys(c.config.fieldEntries[0]).sort().join(','),'id,pickNumbers,tiebreak');
 }
 
+
+// STEP 2 PICK'EM PARSER HARDENING REGRESSIONS
+{
+  // P2-A — an all-digit participant name with >1 bad picks must never be silently dropped.
+  const damaged='12345 1 2 5 6 9 11 13 15 17 19 21 23 25 27 29 50 0';
+  const c=parse([...matchups,...tracked,anonA,damaged],{pageFingerprint:'numeric-name-damaged-row'});
+  assert.deepEqual(c.errors,[]);
+  assert.equal(c.config.fullFieldReady,false);
+  assert.equal(c.config.fieldEntries,undefined);
+}
+{
+  // P2-B — a later unrelated Week label must not override the authoritative group Week hint.
+  const lines=['Week 2',...matchups,...tracked,anonA,'Results from Week 1'];
+  const candidates=parseDocumentGroups([{
+    week:2,
+    lines,
+    sourceRows:sourceRows(lines,1),
+    pageNumber:1,
+    pageFingerprint:'authoritative-week-header'
+  }],{filename:'week-label-footer.pdf',season:2026});
+  assert.equal(candidates.length,1);
+  assert.equal(candidates[0].week,2);
+  assert.equal(candidates[0].config.label,'Week 2');
+}
+{
+  // P2-C — geometry matching alone cannot make a summary cell spanning into the pick columns a competitor.
+  const summary='Winning Picks 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 60 0';
+  const lines=[...matchups,...tracked,anonA,summary],rows=sourceRows(lines,1);
+  const row=rows.find(r=>r.text===summary),tokens=summary.split(/\s+/),tail=tokens.slice(-17);
+  row.parts=[
+    {x:10,text:'Winning'},
+    {x:160,text:'Picks'},
+    ...tail.map((token,i)=>({x:160+i*24,text:token}))
+  ];
+  const c=parse(lines,{sourceRows:rows,pageFingerprint:'summary-row-intrusion'});
+  assert.deepEqual(c.errors,[]);
+  assert.equal(c.config.fullFieldReady,false);
+  assert.equal(c.config.fieldEntries,undefined);
+}
+{
+  // P2-D — a near matching header on the next page cannot bridge a prior participant run that ended mid-page.
+  const header='Entry Pts W';
+  const page1=[...matchups,header,...tracked,anonA],page2=[
+    header,
+    'Later Leader 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 60 0',
+    'Later Runner 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 61 0'
+  ];
+  const rows1=applyRegularHeaderGeometry(sourceRows(page1,1),header);
+  const start=matchups.length+1;
+  [560,548,536,524,512].forEach((y,i)=>{rows1[start+i].y=y});
+  const rows2=applyRegularHeaderGeometry(rowsAt(page2,2,[760,748,736]),header);
+  const c=parseDocumentGroups([
+    {week:2,lines:page1,sourceRows:rows1,pageNumber:1,pageFingerprint:'near-header-break-page-1'},
+    {week:2,lines:page2,sourceRows:rows2,pageNumber:2,pageFingerprint:'near-header-break-page-2'}
+  ],{filename:'near-header-break.pdf',season:2026})[0];
+  assert.deepEqual(c.errors,[]);
+  assert.equal(c.config.fullFieldReady,false);
+  assert.equal(c.config.fieldEntries,undefined);
+}
+
 console.log('parser-core regular-table region, continuation, fail-closed field, duplicate, and privacy regressions passed');
