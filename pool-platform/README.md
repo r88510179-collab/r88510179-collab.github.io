@@ -50,4 +50,24 @@ This rule is enforced in the database, not only in the browser.
 
 ## Current status
 
-Foundation only. The migration is review-only and has not been applied to production.
+Commercial V1 Step 2 candidate is implemented on a feature branch.
+
+Implemented:
+
+- participant OTP/invite flow
+- multi-entry participant support
+- Pick'em direct entry
+- Survivor direct entry with burned-team protection
+- commissioner invite generation
+- commissioner CSV import
+- atomic participant-vs-commissioner source locking
+- tenant/pool/entry authorization model
+- RLS read policies
+- no direct authenticated table writes
+- hashed invitation tokens
+- submission audit trail design
+- responsive PWA participant and commissioner surfaces
+
+The migrations remain REVIEW-ONLY and have not been applied to any database.
+
+The repository configuration remains `mode:'sandbox'`. No live commercial backend is connected yet.

@@ -112,3 +112,24 @@ Interaction requirements:
 3. Private pilot: isolated tenant configured to prospect rules using sanitized/test data first.
 
 No demo credential may access production customer data.
+
+
+## Step 2 security decisions
+
+- No anonymous database access is required for pick submission.
+- Authenticated browser clients receive SELECT-only table grants subject to RLS.
+- All mutation flows use narrow SECURITY DEFINER RPC functions.
+- Submission source is immutable after the first successful claim.
+- The database unique key on (week_id, entry_id) closes participant/import races atomically.
+- Browser validation is duplicated by Postgres payload validation.
+- Invitation tokens are 256-bit random values; only SHA-256 hashes are stored.
+- Optional invitation email binding prevents another signed-in email from claiming the link.
+- Commercial pool slugs are globally unique in V1 to keep links simple.
+- Participant invite pages use a no-referrer policy.
+- Dynamic commissioner-controlled text is escaped before HTML rendering.
+
+## Dedicated commercial environment
+
+Do not connect this project to the personal Pool Center tables or copy personal Pool Center participant data into it.
+
+Use a dedicated commercial/dev Neon environment for migration testing and pilots.
