@@ -13,8 +13,12 @@
   <main class="shell">
     <div class="topbar">
       <a href="./" class="brand link-reset">POOL PLATFORM</a>
-      <span class="pill" id="modePill">Loading…</span>
+      <div class="status">
+        <span class="pill" id="modePill">Loading…</span>
+        <button class="button compact secondary hidden" id="signOut" type="button" style="min-height:44px">Sign out</button>
+      </div>
     </div>
+    <div class="notice error hidden" id="sessionError" role="alert" style="margin-bottom:14px"></div>
 
     <section class="card hidden" id="authCard">
       <div class="eyebrow">Secure sign in</div>
@@ -37,7 +41,6 @@
           <div class="eyebrow" id="poolTypeLabel">Football pool</div>
           <h1 id="poolName">Pool</h1>
         </div>
-        <button class="button compact secondary hidden" id="signOut" type="button">Sign out</button>
       </div>
       <div class="entry-grid">
         <label class="field hidden" id="entrySelectWrap"><span>Entry</span><select id="entrySelect"></select></label>

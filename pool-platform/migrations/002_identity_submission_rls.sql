@@ -446,6 +446,10 @@ BEGIN
   IF p_pool_type='survivor' THEN
     IF EXISTS (SELECT 1 FROM jsonb_object_keys(p_payload) k WHERE k<>'team')
     THEN RETURN false; END IF;
+    -- The team must be a JSON string. ->> renders a number, boolean, array or object as text that can still
+    -- equal a configured key, and pool_platform_submissions_survivor_team_unique only covers string teams,
+    -- so a non-string pick would get past the index; it is rejected before any key, history or index logic.
+    IF COALESCE(jsonb_typeof(p_payload->'team'),'')<>'string' THEN RETURN false; END IF;
     v_team:=NULLIF(p_payload->>'team','');
     IF v_team IS NULL OR COALESCE(jsonb_typeof(p_week_config->'games'),'')<>'array'
     THEN RETURN false; END IF;
@@ -807,25 +811,35 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.pool_platform_current_user_id() FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.pool_platform_current_user_email() FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.pool_platform_current_user_has_verified_email(text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.pool_platform_is_tenant_commissioner(uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.pool_platform_can_read_pool(uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.pool_platform_can_read_season(uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.pool_platform_payload_valid(text,jsonb,uuid,uuid,jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.pool_platform_create_entry_invite(uuid,text,integer) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.pool_platform_claim_entry_invite(text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.pool_platform_submit_entry(uuid,uuid,text,jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.pool_platform_submit_batch(uuid,text,jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.pool_platform_participant_context(text,integer,integer) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.pool_platform_commissioner_context(text) FROM PUBLIC;
+-- Function privileges are set explicitly rather than relying on REVOKE ... FROM PUBLIC alone: default
+-- privileges or an earlier run may already have given anonymous or authenticated EXECUTE (even with grant
+-- option), and CREATE OR REPLACE keeps it. Every function is reset for PUBLIC, anonymous and authenticated
+-- (CASCADE also drops what they passed on), then only the RLS helpers and RPCs below are granted to
+-- authenticated. The internal helpers pool_platform_current_user_email,
+-- pool_platform_current_user_has_verified_email, pool_platform_payload_valid and the 001 trigger function
+-- stay callable only by their owner, which is how the SECURITY DEFINER functions reach them.
+REVOKE ALL ON FUNCTION public.pool_platform_guard_submission_source() FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL ON FUNCTION public.pool_platform_current_user_id() FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL ON FUNCTION public.pool_platform_current_user_email() FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL ON FUNCTION public.pool_platform_current_user_has_verified_email(text) FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL ON FUNCTION public.pool_platform_is_tenant_commissioner(uuid) FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL ON FUNCTION public.pool_platform_can_read_pool(uuid) FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL ON FUNCTION public.pool_platform_can_read_season(uuid) FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL ON FUNCTION public.pool_platform_payload_valid(text,jsonb,uuid,uuid,jsonb) FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL ON FUNCTION public.pool_platform_create_entry_invite(uuid,text,integer) FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL ON FUNCTION public.pool_platform_claim_entry_invite(text) FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL ON FUNCTION public.pool_platform_submit_entry(uuid,uuid,text,jsonb) FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL ON FUNCTION public.pool_platform_submit_batch(uuid,text,jsonb) FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL ON FUNCTION public.pool_platform_participant_context(text,integer,integer) FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL ON FUNCTION public.pool_platform_commissioner_context(text) FROM PUBLIC,anonymous,authenticated CASCADE;
 
+-- RLS helpers: the read policies call these as the authenticated role.
 GRANT EXECUTE ON FUNCTION public.pool_platform_current_user_id() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.pool_platform_is_tenant_commissioner(uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.pool_platform_can_read_pool(uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.pool_platform_can_read_season(uuid) TO authenticated;
 
+-- RPCs: the browser-callable surface.
 GRANT EXECUTE ON FUNCTION public.pool_platform_create_entry_invite(uuid,text,integer) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.pool_platform_claim_entry_invite(text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.pool_platform_submit_entry(uuid,uuid,text,jsonb) TO authenticated;

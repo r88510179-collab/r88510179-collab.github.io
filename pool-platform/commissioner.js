@@ -1,7 +1,7 @@
 import {PLATFORM_CONFIG} from './platform-config.js';
 import {PlatformClient} from './platform-client.js';
 import {SUBMISSION_SOURCES} from './submission-core.js';
-import {prepareCommissionerImport,summarizeBatchResults} from './import-core.js';
+import {prepareCommissionerImport,describeImportError,summarizeBatchResults} from './import-core.js';
 
 const $=id=>document.getElementById(id),params=new URLSearchParams(location.search);
 const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
@@ -62,7 +62,11 @@ $('runImport').addEventListener('click',async()=>{
   try{
     if(!state.week)throw new Error('Choose a week.');
     const prepared=prepareCommissionerImport({text:$('importText').value,poolType:state.context.pool.pool_type,entries:state.season.entries,weekConfig:state.week.config});
-    if(prepared.errors.length)throw new Error(`Import validation found ${prepared.errors.length} row error(s). Fix them before submission.`);
+    if(prepared.errors.length){
+      // Each rejected row is listed with the rule, game, value and candidate teams, so it can be corrected.
+      $('resultBody').innerHTML=prepared.errors.map(e=>`<tr><td>${esc(e.row?`Row ${e.row}${e.entry_code?` · ${e.entry_code}`:''}`:'CSV')}</td><td>${esc(describeImportError(e))}</td></tr>`).join('');show('resultTableWrap',true);
+      throw new Error(`Import validation found ${prepared.errors.length} row error(s). Fix them before submission.`);
+    }
     let results;
     if(client.live)results=await client.submitBatch({weekId:state.week.id,source:SUBMISSION_SOURCES.COMMISSIONER_IMPORT,items:prepared.items});
     else{

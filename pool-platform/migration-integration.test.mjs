@@ -9,7 +9,9 @@ import {after,afterEach,before,describe,test} from 'node:test';
 // The URL must be a superuser on localhost. The run creates the roles authenticated, anonymous and
 // pool_platform_it_owner when missing, creates its own database and drops it afterwards. Neon Auth is stood
 // in for by neon_auth."user" (columns as Neon publishes them) and auth.user_id() reading a session setting.
-// Both migrations are applied as the NOLOGIN owner role, and races use real concurrent psql sessions.
+// Both migrations are applied as the NOLOGIN owner role under hostile default privileges (every function and
+// table the owner creates in public starts out granted to anonymous and authenticated), and races use real
+// concurrent psql sessions.
 const CLUSTER=process.env.POOL_PLATFORM_TEST_PG_CLUSTER||'';
 const SKIP=CLUSTER?false:'set POOL_PLATFORM_TEST_PG_CLUSTER to a disposable local superuser URL';
 const OWNER='pool_platform_it_owner';
@@ -84,17 +86,29 @@ const T1=uuid('10000000',1),T2=uuid('10000000',2);
 const SURV=uuid('20000000',1),PICK=uuid('20000000',2),RIVAL=uuid('20000000',3);
 const S_SURV=uuid('30000000',1),S_PICK=uuid('30000000',2),S_RIVAL=uuid('30000000',3);
 const W3=uuid('40000000',3),W4=uuid('40000000',4),W5_LOCKED=uuid('40000000',5),W6_PAST=uuid('40000000',6);
+const W7_TYPED=uuid('40000000',7),W8_TYPED=uuid('40000000',8);
 const K1=uuid('41000000',1),K2=uuid('41000000',2),R1=uuid('42000000',1);
 const ENTRY_DEFS=[
   ['OOO','p1'],['RACE','p1'],['B1','p1'],['B2','p2'],['C','p1'],['D','p1'],['D2','p1'],['IDX','p1'],['MAP','p1'],
   ['AUTH','p1'],['INACTIVE','p1','inactive'],['ELIMINATED','p1','eliminated'],['ARCHIVED','p1','archived'],
   ['ACTIVE','p1'],['BATCH','p1'],['LOCK','p1'],['INV1',null],['INV2',null],['INV3',null],['INV4',null],
-  ['RINV1',null],['RINV2',null],['RINV3',null]
+  ['RINV1',null],['RINV2',null],['RINV3',null],['TYPED','p1'],['TYPED_BATCH','p1'],['TYPED_RR','p1'],['TYPED_RR2','p1']
 ];
 const E=Object.fromEntries(ENTRY_DEFS.map(([code],i)=>[code,uuid('50000000',i+1)]));
 const K_P2=uuid('51000000',1),K_RIVAL=uuid('51000000',2);
 const SURVIVOR_GAMES=[{id:'g1',away:{key:'austin'},home:{key:'denver'}},{id:'g2',away:{key:'phoenix'},home:{key:'seattle'}}];
 const PICKEM_CONFIG={tiebreakRequired:true,games:[{id:'g1'},{id:'g2'}]};
+// Configured keys equal to what ->> renders for non-string JSON teams (123, true, ["austin"], {"k": "v"}, ...),
+// so a non-string pick can only be rejected by its JSON type, not by a key mismatch.
+const TYPED_GAMES=[{id:'t1',away:{key:'123'},home:{key:'true'}},{id:'t2',away:{key:'["austin"]'},home:{key:'{"k": "v"}'}},{id:'t3',away:{key:'false'},home:{key:'1.5'}}];
+const INTERNAL_FUNCTIONS=['pool_platform_current_user_email','pool_platform_current_user_has_verified_email','pool_platform_payload_valid','pool_platform_guard_submission_source'];
+const AUTHENTICATED_FUNCTIONS=['pool_platform_current_user_id','pool_platform_is_tenant_commissioner','pool_platform_can_read_pool','pool_platform_can_read_season','pool_platform_create_entry_invite','pool_platform_claim_entry_invite','pool_platform_submit_entry','pool_platform_submit_batch','pool_platform_participant_context','pool_platform_commissioner_context'];
+// Exact grantee:privilege list per function: the owner alone for internal helpers, plus a plain (no grant
+// option) authenticated EXECUTE for the RLS helpers and RPCs. Nothing for PUBLIC or anonymous.
+const EXPECTED_FUNCTION_ACLS=Object.fromEntries([
+  ...INTERNAL_FUNCTIONS.map(name=>[name,`${OWNER}:EXECUTE`]),
+  ...AUTHENTICATED_FUNCTIONS.map(name=>[name,`authenticated:EXECUTE,${OWNER}:EXECUTE`])
+]);
 
 const STUB=`
 CREATE SCHEMA neon_auth;
@@ -140,6 +154,8 @@ ${week(W3,S_SURV,3,'open',"now()+interval '2 days'",{games:SURVIVOR_GAMES})},
 ${week(W4,S_SURV,4,'open',"now()+interval '9 days'",{games:SURVIVOR_GAMES})},
 ${week(W5_LOCKED,S_SURV,5,'locked',"now()+interval '16 days'",{games:SURVIVOR_GAMES})},
 ${week(W6_PAST,S_SURV,6,'open',"now()-interval '1 hour'",{games:SURVIVOR_GAMES})},
+${week(W7_TYPED,S_SURV,7,'open',"now()+interval '23 days'",{games:TYPED_GAMES})},
+${week(W8_TYPED,S_SURV,8,'open',"now()+interval '30 days'",{games:TYPED_GAMES})},
 ${week(K1,S_PICK,1,'open',"now()+interval '2 days'",PICKEM_CONFIG)},
 ${week(K2,S_PICK,2,'open',"now()+interval '9 days'",PICKEM_CONFIG)},
 ${week(R1,S_RIVAL,1,'open',"now()+interval '2 days'",{games:SURVIVOR_GAMES})};
@@ -173,6 +189,12 @@ describe('commercial migrations on a throwaway local PostgreSQL (opt-in)',{skip:
   const scalar=async sql=>rowsOf(await admin.run(sql))[0];
   const teams=async entry=>rowsOf(await admin.run(
     `SELECT w.week||':'||s.source||':'||(s.payload->>'team') FROM public.pool_platform_submissions s JOIN public.pool_platform_weeks w ON w.id=s.week_id WHERE s.entry_id='${entry}' ORDER BY w.week`));
+  const functionAcls=async()=>Object.fromEntries(rowsOf(await admin.run(`SELECT p.proname||'='||string_agg(g.entry,',' ORDER BY g.entry)
+    FROM pg_proc p CROSS JOIN LATERAL (
+      SELECT CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END||':'||a.privilege_type||CASE WHEN a.is_grantable THEN '+grant_option' ELSE '' END AS entry
+      FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+    ) g
+    WHERE p.pronamespace='public'::regnamespace AND p.proname LIKE 'pool_platform_%' GROUP BY p.proname`)).map(r=>r.split('=')));
 
   before(()=>{
     const host=new URL(CLUSTER).hostname;
@@ -184,6 +206,10 @@ describe('commercial migrations on a throwaway local PostgreSQL (opt-in)',{skip:
     END$$;`);
     psqlSync(CLUSTER,`CREATE DATABASE ${DB_NAME} OWNER ${OWNER};`);
     psqlSync(dbUrl(),STUB);
+    // Hostile defaults, as a Data API environment might configure them: the migrations must still end with
+    // the intended privilege matrix.
+    psqlSync(dbUrl(),`ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anonymous,authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} IN SCHEMA public GRANT ALL ON TABLES TO anonymous,authenticated;`);
     psqlSync(dbUrl(),`SET ROLE ${OWNER};\n${readMigration('001_foundation.sql')}\n${readMigration('002_identity_submission_rls.sql')}`);
     psqlSync(dbUrl(),seedSql());
     admin=openSession(dbUrl(),'pp_it_admin');
@@ -213,14 +239,50 @@ describe('commercial migrations on a throwaway local PostgreSQL (opt-in)',{skip:
   test('grants: anonymous has nothing; authenticated has SELECT-only tables and EXECUTE on the intended functions only',async()=>{
     const tableRights=rowsOf(await admin.run(`SELECT c.relname||':'||has_table_privilege('anonymous',c.oid,'SELECT')||':'||has_table_privilege('authenticated',c.oid,'SELECT')||':'||has_table_privilege('authenticated',c.oid,'INSERT,UPDATE,DELETE,TRUNCATE') FROM pg_class c WHERE c.relnamespace='public'::regnamespace AND c.relkind='r' AND c.relname LIKE 'pool_platform_%' ORDER BY 1`));
     for(const row of tableRights)assert.match(row,/:false:true:false$/,row);
-    const fnRights=Object.fromEntries(rowsOf(await admin.run(`SELECT p.proname||'='||has_function_privilege('authenticated',p.oid,'EXECUTE')||','||has_function_privilege('anonymous',p.oid,'EXECUTE') FROM pg_proc p WHERE p.pronamespace='public'::regnamespace AND p.proname LIKE 'pool_platform_%' AND p.proname<>'pool_platform_guard_submission_source'`)).map(r=>r.split('=')));
-    for(const internal of ['pool_platform_current_user_email','pool_platform_current_user_has_verified_email','pool_platform_payload_valid']){
-      assert.equal(fnRights[internal],'false,false',internal);
-    }
-    for(const rpc of ['pool_platform_current_user_id','pool_platform_is_tenant_commissioner','pool_platform_can_read_pool','pool_platform_can_read_season','pool_platform_create_entry_invite','pool_platform_claim_entry_invite','pool_platform_submit_entry','pool_platform_submit_batch','pool_platform_participant_context','pool_platform_commissioner_context']){
-      assert.equal(fnRights[rpc],'true,false',rpc);
-    }
+    // Exact non-owner table ACLs: the hostile default granted ALL to anonymous and authenticated, and only
+    // authenticated SELECT (no grant option) may remain.
+    const tableAcls=rowsOf(await admin.run(`SELECT c.relname||'='||COALESCE(string_agg(g.entry,',' ORDER BY g.entry),'')
+      FROM pg_class c LEFT JOIN LATERAL (
+        SELECT CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END||':'||a.privilege_type||CASE WHEN a.is_grantable THEN '+grant_option' ELSE '' END AS entry
+        FROM aclexplode(COALESCE(c.relacl,acldefault('r',c.relowner))) a WHERE a.grantee<>c.relowner
+      ) g ON true
+      WHERE c.relnamespace='public'::regnamespace AND c.relkind='r' AND c.relname LIKE 'pool_platform_%' GROUP BY c.relname ORDER BY 1`));
+    assert.equal(tableAcls.length,9);
+    for(const row of tableAcls)assert.match(row,/^pool_platform_[a-z_]+=authenticated:SELECT$/,row);
+    const fnRights=Object.fromEntries(rowsOf(await admin.run(`SELECT p.proname||'='||has_function_privilege('authenticated',p.oid,'EXECUTE')||','||has_function_privilege('anonymous',p.oid,'EXECUTE')||','||has_function_privilege('public',p.oid,'EXECUTE') FROM pg_proc p WHERE p.pronamespace='public'::regnamespace AND p.proname LIKE 'pool_platform_%'`)).map(r=>r.split('=')));
+    for(const internal of INTERNAL_FUNCTIONS)assert.equal(fnRights[internal],'false,false,false',internal);
+    for(const rpc of AUTHENTICATED_FUNCTIONS)assert.equal(fnRights[rpc],'true,false,false',rpc);
+    assert.deepEqual(await functionAcls(),EXPECTED_FUNCTION_ACLS,'default privileges granted every function to anonymous and authenticated; the migration must leave only this');
     assert.equal(await scalar(`SELECT has_schema_privilege('authenticated','public','CREATE')::text||has_schema_privilege('anonymous','public','CREATE')::text`),'falsefalse');
+  });
+
+  test('grants: re-applying 002 strips hostile pre-existing function grants, grant options and re-grants included',async()=>{
+    const fns=rowsOf(await admin.run(`SELECT p.oid::regprocedure FROM pg_proc p WHERE p.pronamespace='public'::regnamespace AND p.proname LIKE 'pool_platform_%' ORDER BY 1`));
+    assert.equal(fns.length,14);
+    psqlSync(dbUrl(),[
+      ...fns.map(f=>`GRANT EXECUTE ON FUNCTION ${f} TO PUBLIC,anonymous;\nGRANT EXECUTE ON FUNCTION ${f} TO authenticated WITH GRANT OPTION;`),
+      'SET ROLE authenticated;',
+      ...fns.map(f=>`GRANT EXECUTE ON FUNCTION ${f} TO anonymous;`)
+    ].join('\n'));
+    const hostile=await functionAcls();
+    for(const name of INTERNAL_FUNCTIONS){
+      for(const grant of ['PUBLIC:EXECUTE','anonymous:EXECUTE','authenticated:EXECUTE+grant_option'])assert.ok(hostile[name].split(',').includes(grant),`${name} setup: ${hostile[name]}`);
+    }
+    const p1=await actor('hostile_p1','p1');
+    assert.equal(rowsOf(await p1.run(`SELECT public.pool_platform_payload_valid('survivor','{}'::jsonb,NULL,NULL,'{}'::jsonb)`))[0],'f','setup: the hostile grant really makes the helper callable');
+    await p1.close();
+    psqlSync(dbUrl(),`SET ROLE ${OWNER};\n${readMigration('002_identity_submission_rls.sql')}`);
+    assert.deepEqual(await functionAcls(),EXPECTED_FUNCTION_ACLS);
+    const again=await actor('hostile_again','p1'),anon=session('hostile_anon');
+    rowsOf(await anon.run('SET ROLE anonymous'));
+    for(const s of [again,anon]){
+      for(const sql of [
+        `SELECT public.pool_platform_payload_valid('survivor','{}'::jsonb,NULL,NULL,'{}'::jsonb)`,
+        `SELECT public.pool_platform_current_user_email()`,
+        `SELECT public.pool_platform_current_user_has_verified_email('p1@example.test')`
+      ])assert.equal((await s.run(sql)).error?.sqlstate,'42501',`${s.name}: ${sql}`);
+    }
+    assert.equal((await anon.run(`SELECT public.pool_platform_participant_context('it-survivor')`)).error?.sqlstate,'42501');
   });
 
   test('RLS: reads are scoped to the caller; no direct writes; anonymous is denied',async()=>{
@@ -464,6 +526,44 @@ describe('commercial migrations on a throwaway local PostgreSQL (opt-in)',{skip:
     await e.run('ROLLBACK');await f.run('ROLLBACK');
     assert.equal(await owner(E.RINV3),'-');
     assert.equal(await scalar(`SELECT count(*) FROM public.pool_platform_entry_invites WHERE entry_id='${E.RINV3}' AND claimed_at IS NULL`),'1');
+  });
+
+  test('Survivor team must be a JSON string: number, boolean, array, object and null picks are invalid_payload even when their text is a configured key',async()=>{
+    const p1=await actor('typed_p1','p1'),commish=await actor('typed_commish','commish');
+    const nonString=[123,1.5,true,false,['austin'],{k:'v'},null];
+    for(const team of nonString){
+      failsWith(await submit(p1,W7_TYPED,E.TYPED,'participant',{team}),'invalid_payload');
+      failsWith(await submit(commish,W7_TYPED,E.TYPED_BATCH,'commissioner_manual',{team}),'invalid_payload');
+    }
+    const batch=jsonOf(await commish.run(`SELECT public.pool_platform_submit_batch('${W7_TYPED}','commissioner_import',${lit(nonString.map(team=>({entry_id:E.TYPED_BATCH,payload:{team}})))})`));
+    assert.deepEqual(batch.map(r=>r.ok?r.result.code:r.code),nonString.map(()=>'invalid_payload'));
+    assert.equal(jsonOf(await submit(p1,W7_TYPED,E.TYPED,'participant',{team:'123'})).code,'created','the same key as a JSON string is a valid pick');
+    failsWith(await submit(p1,W8_TYPED,E.TYPED,'participant',{team:'123'}),'team_already_used');
+    failsWith(await submit(p1,W8_TYPED,E.TYPED,'participant',{team:123}),'invalid_payload');
+    // A same-row edit cannot switch to a non-string team either.
+    failsWith(await submit(p1,W7_TYPED,E.TYPED,'participant',{team:123}),'invalid_payload');
+    assert.deepEqual(await teams(E.TYPED),['7:participant:123']);
+    assert.deepEqual(await teams(E.TYPED_BATCH),[]);
+    assert.equal(await scalar(`SELECT count(*) FROM public.pool_platform_submissions WHERE payload ? 'team' AND jsonb_typeof(payload->'team')<>'string'`),'0');
+  });
+
+  test('Survivor under REPEATABLE READ: a numeric repeat of a committed pick is rejected outright; a string repeat still hits the index',async()=>{
+    const a=await actor('rr_a','p1'),b=await actor('rr_b','p1');
+    // a's snapshot predates b's commit, so a's history check cannot see b's pick; only the payload type (for
+    // a number) and the unique index (for a string) stand between a and a reused team.
+    rowsOf(await a.run('BEGIN ISOLATION LEVEL REPEATABLE READ'));
+    rowsOf(await a.run('SELECT count(*) FROM public.pool_platform_submissions'));
+    assert.equal(jsonOf(await submit(b,W7_TYPED,E.TYPED_RR,'participant',{team:'123'})).code,'created');
+    failsWith(await submit(a,W8_TYPED,E.TYPED_RR,'participant',{team:123}),'invalid_payload');
+    await a.run('ROLLBACK');
+    assert.deepEqual(await teams(E.TYPED_RR),['7:participant:123']);
+
+    rowsOf(await a.run('BEGIN ISOLATION LEVEL REPEATABLE READ'));
+    rowsOf(await a.run('SELECT count(*) FROM public.pool_platform_submissions'));
+    assert.equal(jsonOf(await submit(b,W7_TYPED,E.TYPED_RR2,'participant',{team:'true'})).code,'created');
+    failsWith(await submit(a,W8_TYPED,E.TYPED_RR2,'participant',{team:'true'}),'team_already_used');
+    await a.run('ROLLBACK');
+    assert.deepEqual(await teams(E.TYPED_RR2),['7:participant:true']);
   });
 
   test('Pickem payloads are untouched by the Survivor index and a blank tiebreak is never zero',async()=>{

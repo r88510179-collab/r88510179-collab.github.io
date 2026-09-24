@@ -44,20 +44,51 @@ function cleanInviteFromUrl(){
   history.replaceState(null,'',params.toString()?`${location.pathname}?${params.toString()}`:location.pathname);
 }
 function setAuthVisible(){show('authCard',client.live&&!state.session);show('signOut',client.live&&!!state.session)}
-async function loadLiveContext(){const selectedId=state.entry?.id||null;state.context=await client.participantContext(poolSlug,null,null);renderContext(selectedId)}
+async function loadLiveContext(){
+  const selectedId=state.entry?.id||null,session=state.session;let context=null;
+  // participant_context hides pools this account cannot read, so an account without an entry here gets
+  // pool_not_found: show the empty state for it instead of a raw error.
+  try{context=await client.participantContext(poolSlug,null,null)}
+  catch(e){if(!String(e?.message).includes('pool_not_found'))throw e}
+  if(state.session!==session)return; // signed out while loading: render nothing for the previous account
+  state.context=context;renderContext(selectedId);
+}
 async function claimInviteIfPresent(){if(!inviteToken||!state.session)return;await client.claimInvite(inviteToken);inviteToken='';cleanInviteFromUrl()}
+// Runs once a session exists. Sign out is already showing in the shell. A failed invite claim (wrong account,
+// used or expired link) is reported beside it and the account's own entries still load, so reopening an invite
+// link that was already claimed never hides the entry. The token survives a failed claim, so the invited
+// account can still claim it after switching.
+async function openSession(){
+  const session=state.session,report=e=>{if(state.session===session)message('sessionError',e.message)};
+  setAuthVisible();message('sessionError','');
+  let claimFailed=false;
+  try{await claimInviteIfPresent()}catch(e){claimFailed=true;report(e)}
+  try{await loadLiveContext()}catch(e){if(!claimFailed)report(e)}
+}
 
 async function initialize(){
   await client.init();$('modePill').textContent=client.live?'LIVE · secure':'SANDBOX · synthetic';
   if(!client.live){state.context=syntheticContext(sandboxType);renderContext();return}
   state.session=await client.getSession();setAuthVisible();
-  if(state.session){try{await claimInviteIfPresent();await loadLiveContext()}catch(e){message('authError',e.message)}}
+  if(state.session)await openSession();
 }
 
 $('sendCode').addEventListener('click',async()=>{message('authError','');try{state.pendingEmail=await client.sendOtp($('email').value);show('otpWrap',true);$('otp').focus()}catch(e){message('authError',e.message)}});
-$('verifyCode').addEventListener('click',async()=>{message('authError','');try{state.session=await client.verifyOtp(state.pendingEmail||$('email').value,$('otp').value);setAuthVisible();await claimInviteIfPresent();await loadLiveContext()}catch(e){message('authError',e.message)}});
+$('verifyCode').addEventListener('click',async()=>{message('authError','');try{state.session=await client.verifyOtp(state.pendingEmail||$('email').value,$('otp').value)}catch(e){message('authError',e.message);return}await openSession()});
 $('otp').addEventListener('keydown',e=>{if(e.key==='Enter')$('verifyCode').click()});
-$('signOut').addEventListener('click',async()=>{await client.signOut();state.session=null;state.context=null;state.entry=null;show('entryCard',false);show('pickForm',false);show('submittedCard',false);setAuthVisible()});
+// Sign out lives in the shell, so it stays reachable with no entry, after a failed invite claim and after any
+// load error. It drops the session and everything loaded for it but keeps an invite that was not claimed
+// (inviteToken and the URL), so the invited account can still claim it after signing in.
+$('signOut').addEventListener('click',async()=>{
+  try{await client.signOut()}catch(e){message('sessionError',e.message);return}
+  Object.assign(state,{session:null,context:null,entry:null,pendingEmail:''});
+  for(const id of ['entryCard','pickForm','submittedCard','emptyCard','otpWrap'])show(id,false);
+  for(const id of ['games','summary','entrySelect'])$(id).replaceChildren();
+  for(const id of ['email','otp','tiebreak'])$(id).value='';
+  // Cleared only now, so an error that arrived while signing out does not stay on the sign-in screen.
+  for(const id of ['sessionError','authError','validation'])message(id,'');
+  setAuthVisible();
+});
 
 function renderContext(preferredEntryId=null){
   const c=state.context;
@@ -66,7 +97,7 @@ function renderContext(preferredEntryId=null){
   $('poolName').textContent=c.pool.display_name;
   $('poolTypeLabel').textContent=c.pool.pool_type==='survivor'?'Survivor football pool':'Weekly Pick’em football pool';
   $('weekLabel').textContent=`Week ${c.week.week}`;$('deadlineLabel').textContent=formatDeadline(c.week.deadline_at);
-  const select=$('entrySelect');select.innerHTML=c.entries.map(e=>`<option value="${e.id}">${esc(e.display_name)}</option>`).join('');
+  const select=$('entrySelect');select.innerHTML=c.entries.map(e=>`<option value="${esc(e.id)}">${esc(e.display_name)}</option>`).join('');
   show('entrySelectWrap',c.entries.length>1);state.entry=c.entries.find(e=>e.id===preferredEntryId)||c.entries[0];select.value=state.entry.id;
   select.onchange=()=>{state.entry=c.entries.find(e=>e.id===select.value)||c.entries[0];renderEntry()};renderEntry();
 }
@@ -93,14 +124,21 @@ function renderSurvivor(access,sub){
 }
 function setFormEditable(editable){$('clearBtn').disabled=!editable;$('submitBtn').disabled=!editable;$('submitBtn').textContent=state.entry.submission?.source==='participant'?'Update picks':'Submit picks'}
 function pickemSelections(){const selections={};normalizeGames(state.context.week.config).forEach((game,i)=>{const checked=document.querySelector(`input[name="game-${i}"]:checked`);if(checked)selections[game.id]=checked.value});return selections}
+// Summary rows are built from text nodes: team labels come from pool configuration and the tiebreak is
+// whatever the participant typed, so neither is ever parsed as HTML.
+function summaryRow(label,value){
+  const row=document.createElement('div'),name=document.createElement('span'),pick=document.createElement('strong');
+  row.className='summary-row';name.textContent=label;pick.textContent=value;row.append(name,pick);
+  return row;
+}
 function updateSummary(){
   const c=state.context;if(!c)return;
   if(c.pool.pool_type==='survivor'){
     const checked=document.querySelector('input[name="survivor-team"]:checked'),team=survivorLegalTeams(c.week.config,state.entry.history).find(x=>x.key===checked?.value);
-    $('summary').innerHTML=`<div class="summary-row"><span>Survivor selection</span><strong>${team?esc(team.label):'—'}</strong></div>`;return;
+    $('summary').replaceChildren(summaryRow('Survivor selection',team?team.label:'—'));return;
   }
   const selections=pickemSelections();
-  $('summary').innerHTML=normalizeGames(c.week.config).map(g=>{const side=selections[g.id];return`<div class="summary-row"><span>${esc(g.away.label)} vs ${esc(g.home.label)}</span><strong>${side?esc(g[side].label):'—'}</strong></div>`}).join('')+`<div class="summary-row"><span>Tiebreak</span><strong>${$('tiebreak').value||'—'}</strong></div>`;
+  $('summary').replaceChildren(...normalizeGames(c.week.config).map(g=>{const side=selections[g.id];return summaryRow(`${g.away.label} vs ${g.home.label}`,side?g[side].label:'—')}),summaryRow('Tiebreak',$('tiebreak').value||'—'));
 }
 $('pickForm').addEventListener('change',updateSummary);$('tiebreak').addEventListener('input',updateSummary);
 $('clearBtn').addEventListener('click',()=>{for(const input of document.querySelectorAll('#pickForm input[type="radio"]'))input.checked=false;$('tiebreak').value='';message('validation','');updateSummary()});
@@ -117,7 +155,8 @@ $('pickForm').addEventListener('submit',async event=>{
     const result=validatePickPayload(payload,{gameIds:games.map(g=>g.id),tiebreakRequired:required});
     if(!result.ok){message('validation','Complete every game and enter a valid tiebreak when required.');$('validation').focus();return}
   }
-  $('submitBtn').disabled=true;
+  // Signing out while this is in flight must leave nothing of it on screen: no saved card, no error.
+  $('submitBtn').disabled=true;const session=state.session;
   try{
     let result;
     if(client.live){result=await client.submitEntry({weekId:state.context.week.id,entryId:state.entry.id,source:SUBMISSION_SOURCES.PARTICIPANT,payload});await loadLiveContext()}
@@ -125,8 +164,10 @@ $('pickForm').addEventListener('submit',async event=>{
       const existing=state.entry.submission;if(existing&&existing.source!=='participant')throw new Error('This entry was already submitted through the commissioner channel.');
       state.entry.submission={source:'participant',status:'submitted',payload,revision:(existing?.revision||0)+1,submitted_at:new Date().toISOString()};renderEntry();result={code:existing?'updated':'created',revision:state.entry.submission.revision};
     }
+    if(state.session!==session)return;
     $('submittedTitle').textContent=result?.code==='updated'?'Picks updated':'Participant channel claimed';$('submittedMessage').textContent='Your picks are saved. A commissioner import cannot overwrite this entry/week.';$('submittedMeta').textContent=`Revision ${result?.revision||state.entry.submission?.revision||1} · same-source edits remain available only while the week is open.`;show('submittedCard',true);
-  }catch(e){message('validation',e.message);$('validation').focus()}finally{$('submitBtn').disabled=!currentAccess().editable}
+  }catch(e){if(state.session===session){message('validation',e.message);$('validation').focus()}}
+  finally{if(state.context&&state.entry)$('submitBtn').disabled=!currentAccess().editable}
 });
-initialize().catch(e=>message('authError',e.message));
+initialize().catch(e=>message('sessionError',e.message));
 if('serviceWorker' in navigator){navigator.serviceWorker.register('./service-worker.js').catch(()=>{})}

@@ -33,7 +33,7 @@ const AUTHENTICATED_EXECUTE=[
   'pool_platform_submit_entry','pool_platform_submit_batch','pool_platform_participant_context',
   'pool_platform_commissioner_context'
 ];
-const INTERNAL_ONLY=['pool_platform_current_user_email','pool_platform_current_user_has_verified_email','pool_platform_payload_valid'];
+const INTERNAL_ONLY=['pool_platform_current_user_email','pool_platform_current_user_has_verified_email','pool_platform_payload_valid','pool_platform_guard_submission_source'];
 
 // Minimal PostgreSQL lexer: comments, '' strings, "" identifiers, $tag$ dollar quotes, parentheses and
 // top-level semicolons. It reports malformed/unterminated quoting instead of guessing.
@@ -161,19 +161,26 @@ test('anonymous has no commercial table or function access',()=>{
   assert.match(m2,/REVOKE CREATE ON SCHEMA public FROM anonymous,authenticated;/);
 });
 
-test('function privileges: helpers and RPCs granted to authenticated only; internal helpers never granted',()=>{
+test('function privileges: every function is reset for PUBLIC, anonymous and authenticated; only the RLS helpers and RPCs are granted back',()=>{
   const lastDefinition=Math.max(...functionStatements(scan2).map(s=>scan2.statements.indexOf(s)));
   const privilegeStatements=scan2.statements.filter(s=>/^(GRANT|REVOKE)\b[^;]*\bON FUNCTION\b/.test(s.text));
   assert.ok(privilegeStatements.length>0);
   for(const stmt of privilegeStatements){
     assert.ok(scan2.statements.indexOf(stmt)>lastDefinition,`function privilege statement before the last definition at line ${stmt.line}`);
   }
-  for(const [name,args] of Object.entries(FUNCTIONS_002)){
+  // REVOKE ... FROM PUBLIC alone leaves grants made directly to anonymous/authenticated (default privileges,
+  // an earlier run) in place, and CREATE OR REPLACE keeps them; CASCADE also drops grants they passed on.
+  for(const [name,args] of Object.entries({...FUNCTIONS_002,pool_platform_guard_submission_source:''})){
     const sig=`public.${name}(${args})`.replace(/[.()]/g,'\\$&');
-    assert.equal(privilegeStatements.filter(s=>new RegExp(`^REVOKE ALL ON FUNCTION ${sig} FROM PUBLIC;$`).test(s.text)).length,1,`${name} must be revoked from PUBLIC once`);
+    assert.equal(privilegeStatements.filter(s=>new RegExp(`^REVOKE ALL ON FUNCTION ${sig} FROM PUBLIC,anonymous,authenticated CASCADE;$`).test(s.text)).length,1,`${name} must be reset for PUBLIC, anonymous and authenticated once`);
     const grants=privilegeStatements.filter(s=>new RegExp(`^GRANT EXECUTE ON FUNCTION ${sig} TO authenticated;$`).test(s.text)).length;
     assert.equal(grants,AUTHENTICATED_EXECUTE.includes(name)?1:0,`${name} EXECUTE grant`);
+    const revoke=privilegeStatements.findIndex(s=>s.text.startsWith(`REVOKE ALL ON FUNCTION public.${name}(`));
+    const grant=privilegeStatements.findIndex(s=>s.text.startsWith(`GRANT EXECUTE ON FUNCTION public.${name}(`));
+    if(grant>=0)assert.ok(grant>revoke,`${name} must be granted only after it is reset`);
   }
+  assert.equal(privilegeStatements.length,Object.keys(FUNCTIONS_002).length+1+AUTHENTICATED_EXECUTE.length,'no other function privilege statements');
+  assert.doesNotMatch(m2,/FROM PUBLIC;/,'the PUBLIC-only revoke form must not return');
   for(const name of INTERNAL_ONLY)assert.doesNotMatch(m2,new RegExp(`GRANT[^;]*${name}`));
   for(const helper of ['pool_platform_current_user_id\\(\\)','pool_platform_is_tenant_commissioner\\(uuid\\)','pool_platform_can_read_pool\\(uuid\\)','pool_platform_can_read_season\\(uuid\\)']){
     assert.match(m2,new RegExp(`GRANT EXECUTE ON FUNCTION public\\.${helper} TO authenticated;`));
@@ -267,6 +274,17 @@ test('audit history records the genuine previous payload',()=>{
   assert.match(body,/VALUES \(v_existing\.id,v_uid,'updated',p_source,v_previous_payload,p_payload\)/);
 });
 
+test('Survivor payload_valid accepts only a JSON-string team, before any key, history or index logic',()=>{
+  const body=functionBody('pool_platform_payload_valid');
+  const branch=body.slice(body.indexOf("IF p_pool_type='survivor' THEN"));
+  const at=text=>{const i=branch.indexOf(text);assert.ok(i>0,`missing ${text}`);return i};
+  const typeCheck=at("IF COALESCE(jsonb_typeof(p_payload->'team'),'')<>'string' THEN RETURN false; END IF;");
+  assert.ok(typeCheck<at("v_team:=NULLIF(p_payload->>'team','');"),'type check before the team text is read');
+  assert.ok(typeCheck<at('WHERE team=v_team'),'type check before the configured-key match');
+  assert.ok(typeCheck<at('FROM public.pool_platform_weeks w WHERE w.id=p_week_id'),'type check before any table read');
+  assert.ok(typeCheck<at("RAISE EXCEPTION 'team_already_used'"),'type check before the history check');
+});
+
 test('payload shape is revalidated in Postgres for Pickem and Survivor',()=>{
   assert.match(m2,/pool_platform_payload_valid/);
   assert.match(m2,/p_pool_type='pickem'/);
@@ -294,6 +312,8 @@ test('Pickem per-game pick check fails closed on missing, null or non-string pic
 const PICKEM=JSON.stringify({tiebreakRequired:true,games:[{id:'g1'},{id:'g2'}]});
 const PICKEM_NO_TB=JSON.stringify({games:[{id:'g1'},{id:'g2'}]});
 const SURVIVOR=JSON.stringify({games:[{id:'g1',away:{key:'austin'},home:{key:'denver'}},{id:'g2',away:{key:'dup'},home:{key:'seattle'}},{id:'g3',away:{key:'dup'},home:{key:'miami'}}]});
+// Configured keys equal to what ->> renders for non-string JSON teams, so only the type check can reject them.
+const SURVIVOR_TYPED=JSON.stringify({games:[{id:'t1',away:{key:'123'},home:{key:'true'}},{id:'t2',away:{key:'["austin"]'},home:{key:'{"k": "v"}'}},{id:'t3',away:{key:'false'},home:{key:'1.5'}}]});
 const PAYLOAD_CASES=[
   ['pickem',PICKEM,'{"picks":{"g1":"away","g2":"home"},"tiebreak":47}',true,'valid complete payload'],
   ['pickem',PICKEM_NO_TB,'{"picks":{"g1":"home","g2":"away"}}',true,'valid payload without optional tiebreak'],
@@ -332,13 +352,20 @@ const PAYLOAD_CASES=[
   ['survivor',SURVIVOR,'{"team":"austin","note":"x"}',false,'survivor extra key'],
   ['survivor',SURVIVOR,'{"team":"houston"}',false,'survivor unknown team'],
   ['survivor',SURVIVOR,'{"team":"dup"}',false,'survivor ambiguous duplicate team'],
-  ['survivor','{"games":{"g1":{}}}','{"team":"austin"}',false,'survivor schedule not an array']
+  ['survivor','{"games":{"g1":{}}}','{"team":"austin"}',false,'survivor schedule not an array'],
+  ['survivor',SURVIVOR_TYPED,'{"team":123}',false,'survivor numeric team'],
+  ['survivor',SURVIVOR_TYPED,'{"team":1.5}',false,'survivor decimal team'],
+  ['survivor',SURVIVOR_TYPED,'{"team":true}',false,'survivor boolean true team'],
+  ['survivor',SURVIVOR_TYPED,'{"team":false}',false,'survivor boolean false team'],
+  ['survivor',SURVIVOR_TYPED,'{"team":["austin"]}',false,'survivor array team'],
+  ['survivor',SURVIVOR_TYPED,'{"team":{"k":"v"}}',false,'survivor object team'],
+  ['survivor',SURVIVOR_TYPED,'{"team":null}',false,'survivor null team with typed schedule']
 ];
 
 test('payload fixtures cover the required Pickem and Survivor cases',()=>{
   const names=PAYLOAD_CASES.map(c=>c[4]);
   assert.equal(new Set(names).size,names.length);
-  for(const required of ['valid complete payload','missing picks object','null picks','one missing configured game','game explicitly null','empty string pick','arbitrary string pick','numeric pick','boolean pick','array pick','object pick','extra game','duplicate configured game id','empty configured games','valid tiebreak 0','missing required tiebreak','negative tiebreak','decimal tiebreak','tiebreak above 200']){
+  for(const required of ['valid complete payload','missing picks object','null picks','one missing configured game','game explicitly null','empty string pick','arbitrary string pick','numeric pick','boolean pick','array pick','object pick','extra game','duplicate configured game id','empty configured games','valid tiebreak 0','missing required tiebreak','negative tiebreak','decimal tiebreak','tiebreak above 200','survivor null team','survivor numeric team','survivor boolean true team','survivor array team','survivor object team']){
     assert.ok(names.includes(required),required);
   }
 });
