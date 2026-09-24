@@ -1,0 +1,10 @@
+{
+  "name":"Pool Platform Commercial V1",
+  "short_name":"Pool Platform",
+  "start_url":"./",
+  "scope":"./",
+  "display":"standalone",
+  "background_color":"#0a0d12",
+  "theme_color":"#0a0d12",
+  "description":"Responsive football pool participant entry sandbox."
+}

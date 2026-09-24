@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0a0d12">
+  <title>Pool Platform Commercial V1</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="shell">
+    <div class="topbar">
+      <div class="brand">POOL PLATFORM</div>
+      <span class="pill">Commercial V1 · sandbox</span>
+    </div>
+
+    <section class="card">
+      <div class="eyebrow">Participant experience</div>
+      <h1>Submit weekly football picks from any device.</h1>
+      <p class="meta">The commercial foundation supports direct participant entry or commissioner entry. The first finalized source claims that entry for the week so the other path cannot overwrite it.</p>
+      <div class="actions" style="margin-top:14px">
+        <a class="button primary" href="./participant.html" style="text-decoration:none;text-align:center">Open participant demo</a>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Source-lock rule</h2>
+      <div class="summary">
+        <div class="summary-row"><span>Participant submits first</span><strong>Commissioner import blocked for that entry/week</strong></div>
+        <div class="summary-row"><span>Commissioner submits first</span><strong>Participant submission blocked for that entry/week</strong></div>
+        <div class="summary-row"><span>Same source before deadline</span><strong>May update</strong></div>
+        <div class="summary-row"><span>Locked/deadline passed</span><strong>No ordinary edits</strong></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Commercial data boundary</h2>
+      <p class="meta">This sandbox contains synthetic fixtures only. No participant names, picks, standings, branding, or customer configuration from the existing personal pool project are part of this commercial foundation.</p>
+    </section>
+
+    <footer class="footer">Testing concept · no production database writes</footer>
+  </main>
+  <script>
+    if('serviceWorker' in navigator){navigator.serviceWorker.register('./service-worker.js').catch(()=>{})}
+  </script>
+</body>
+</html>
