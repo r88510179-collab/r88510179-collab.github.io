@@ -36,6 +36,15 @@ export function survivorBurnedTeams(history=[]){
   return new Set((history||[]).map(row=>row?.payload?.team).filter(Boolean));
 }
 
+// Names compare the way the commissioner import matches team names (trimmed, in any case), with runs of
+// whitespace collapsed as the page renders them.
+const sameName=value=>String(value??'').trim().replace(/\s+/g,' ').toLowerCase();
+const nameCounts=names=>names.reduce((counts,name)=>counts.set(sameName(name),(counts.get(sameName(name))||0)+1),new Map());
+
+// Every choice carries `display`, the text shown for it. A name two or more choices share, used ones included,
+// gets the choice's stable key appended ("New York (NYG)" and "New York (NYJ)"); a unique name is shown as is,
+// and a blank one shows the key. A plain name that then equals an appended one is appended too. Choices that
+// still read alike are `ambiguous` and not offered, so the reader always knows which key a choice submits.
 export function survivorLegalTeams(config={},history=[]){
   const burned=survivorBurnedTeams(history),seen=new Set(),out=[];
   for(const game of normalizeGames(config)){
@@ -46,7 +55,13 @@ export function survivorLegalTeams(config={},history=[]){
       }
     }
   }
-  return out;
+  const plain=out.map(team=>team.label||team.key),display=[...plain];
+  for(let changed=true;changed;){
+    changed=false;const counts=nameCounts(display);
+    display.forEach((name,i)=>{if(name===plain[i]&&counts.get(sameName(name))>1){display[i]=`${plain[i]} (${out[i].key})`;changed=true}});
+  }
+  const counts=nameCounts(display);
+  return out.map((team,i)=>({...team,display:display[i],ambiguous:counts.get(sameName(display[i]))>1}));
 }
 
 export function validateSurvivorSelection(team,config={},history=[]){
@@ -54,6 +69,7 @@ export function validateSurvivorSelection(team,config={},history=[]){
   const row=legal.find(x=>x.key===team);
   if(!row)return{ok:false,code:'unknown_team'};
   if(row.burned)return{ok:false,code:'team_already_used'};
+  if(row.ambiguous)return{ok:false,code:'ambiguous_team'};
   return{ok:true,code:'valid'};
 }
 

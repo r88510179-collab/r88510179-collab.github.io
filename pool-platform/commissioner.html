@@ -11,7 +11,14 @@
 </head>
 <body>
   <main class="shell">
-    <div class="topbar"><a href="./" class="brand link-reset">POOL PLATFORM</a><span class="pill" id="modePill">Loading…</span></div>
+    <div class="topbar">
+      <a href="./" class="brand link-reset">POOL PLATFORM</a>
+      <div class="status">
+        <span class="pill" id="modePill">Loading…</span>
+        <button class="button compact secondary hidden" id="signOut" type="button" style="min-height:44px">Sign out</button>
+      </div>
+    </div>
+    <div class="notice error hidden" id="sessionError" role="alert" style="margin-bottom:14px"></div>
     <section class="card hidden" id="authCard">
       <div class="eyebrow">Commissioner sign in</div><h1>Manage your pool</h1>
       <p class="meta">Membership is checked by the database. Signing in does not grant access to other customers.</p>
@@ -20,7 +27,7 @@
       <div class="notice error hidden" id="authError" role="alert"></div>
     </section>
     <section class="card hidden" id="consoleCard">
-      <div class="card-head"><div><div class="eyebrow">Commissioner console</div><h1 id="poolName">Pool</h1></div><button class="button compact secondary hidden" id="signOut" type="button">Sign out</button></div>
+      <div class="card-head"><div><div class="eyebrow">Commissioner console</div><h1 id="poolName">Pool</h1></div></div>
       <div class="toolbar-grid"><label class="field"><span>Season</span><select id="seasonSelect"></select></label><label class="field"><span>Week</span><select id="weekSelect"></select></label></div>
       <div class="notice info">Participant and commissioner channels can coexist. The first finalized source for each entry/week owns that row; the other channel receives a conflict and cannot overwrite it.</div>
     </section>

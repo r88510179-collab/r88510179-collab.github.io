@@ -203,3 +203,115 @@ test('quoted CSV: quoting never bypasses the ambiguity check; quoted commas and 
   assert.deepEqual(p.items.map(item=>item.payload.picks),[{g1:'home',g2:'away'},{g1:'away',g2:'home'}]);
   assert.deepEqual(p.errors,[]);
 });
+
+// Entry codes are unique per season only as written, so E1 and e1 can be two different entries.
+const caseEntries=[
+  {id:'00000000-0000-4000-8000-0000000000e1',entry_code:'E1'},{id:'00000000-0000-4000-8000-0000000000e2',entry_code:'e1'},
+  {id:'00000000-0000-4000-8000-0000000000e3',entry_code:'E01'},{id:'00000000-0000-4000-8000-0000000000e4',entry_code:'Fox1'},
+  {id:'00000000-0000-4000-8000-0000000000e5',entry_code:'FOX1'},{id:'00000000-0000-4000-8000-0000000000e6',entry_code:'Lynx'},
+  {id:'00000000-0000-4000-8000-0000000000e7',entry_code:'E,2'},{id:'00000000-0000-4000-8000-0000000000e8',entry_code:'Q"3'}
+];
+const idOf=code=>caseEntries.find(e=>e.entry_code===code).id;
+const byCode=(text,poolType,list=caseEntries)=>prepareCommissionerImport({text,poolType,entries:list,weekConfig:{games}});
+const POOLS=[
+  ['pickem',(...codes)=>`entry_code,g1,g2\n${codes.map(c=>`${c},away,home`).join('\n')}`],
+  ['survivor',(...codes)=>`entry_code,team\n${codes.map(c=>`${c},Denver`).join('\n')}`]
+];
+const entryIds=result=>result.items.map(item=>item.entry_id);
+
+test('entry codes: an exact match wins, so E1 and e1 stay two entries',()=>{
+  for(const [poolType,rows] of POOLS){
+    const both=byCode(rows('E1','e1'),poolType);
+    assert.deepEqual(both.errors,[],poolType);
+    assert.deepEqual(entryIds(both),[idOf('E1'),idOf('e1')],poolType);
+    assert.deepEqual(entryIds(byCode(rows('E1'),poolType)),[idOf('E1')],`${poolType}: E1 is E1`);
+    assert.deepEqual(entryIds(byCode(rows('e1'),poolType)),[idOf('e1')],`${poolType}: e1 is e1`);
+  }
+});
+
+test('entry codes: a value no code equals exactly resolves in any case when that names exactly one entry',()=>{
+  for(const [poolType,rows] of POOLS){
+    const result=byCode(rows('e01','LYNX'),poolType);
+    assert.deepEqual(result.errors,[],poolType);
+    assert.deepEqual(entryIds(result),[idOf('E01'),idOf('Lynx')],poolType);
+  }
+});
+
+test('entry codes: several any-case matches are ambiguous_entry_code with every candidate, never the first or last',()=>{
+  for(const [poolType,rows] of POOLS){
+    const result=byCode(rows('fox1','Fox1','FOX1','fOX1'),poolType);
+    assert.deepEqual(entryIds(result),[idOf('Fox1'),idOf('FOX1')],`${poolType}: the exact forms still resolve`);
+    assert.deepEqual(result.errors,[
+      {row:2,code:'ambiguous_entry_code',entry_code:'fox1',candidate_entry_codes:['Fox1','FOX1']},
+      {row:5,code:'ambiguous_entry_code',entry_code:'fOX1',candidate_entry_codes:['Fox1','FOX1']}
+    ],poolType);
+    assert.equal(describeImportError(result.errors[0]),'ambiguous_entry_code · matches entry codes Fox1 and FOX1 · type the entry code exactly as listed');
+  }
+  // e1 with no exact match and two any-case candidates (a context listing E1 twice) fails closed the same way,
+  // and so does the exact value itself.
+  const twice=[{id:'a',entry_code:'E1'},{id:'b',entry_code:'E1'}];
+  for(const code of ['e1','E1']){
+    assert.deepEqual(byCode(POOLS[0][1](code),'pickem',twice),{items:[],errors:[{row:2,code:'ambiguous_entry_code',entry_code:code,candidate_entry_codes:['E1','E1']}]});
+  }
+});
+
+test('entry codes: no match is unknown_entry with the supplied code',()=>{
+  for(const [poolType,rows] of POOLS){
+    const result=byCode(rows('E2','E 1','Lynx'),poolType);
+    assert.deepEqual(result.errors,[{row:2,code:'unknown_entry',entry_code:'E2'},{row:3,code:'unknown_entry',entry_code:'E 1'}],poolType);
+    assert.deepEqual(entryIds(result),[idOf('Lynx')],poolType);
+  }
+});
+
+test('entry codes: quoted and padded cells are trimmed as before, matched exactly first, and never bypass ambiguity',()=>{
+  for(const [poolType,rows] of POOLS){
+    const result=byCode(rows('"E1"','" e1 "','  E01\t','"E,2"','"Q""3"','"fox1"'),poolType);
+    assert.deepEqual(entryIds(result),['E1','e1','E01','E,2','Q"3'].map(idOf),poolType);
+    assert.deepEqual(result.errors,[{row:7,code:'ambiguous_entry_code',entry_code:'fox1',candidate_entry_codes:['Fox1','FOX1']}],poolType);
+    assert.deepEqual(entryIds(byCode(rows('"e,2"','"q""3"'),poolType)),[idOf('E,2'),idOf('Q"3')],`${poolType}: quoted any-case fallback`);
+  }
+});
+
+test('duplicate rows: an entry reached twice (same code, exact and any-case, two any-case forms) is duplicate_entry_row and neither row is submitted',()=>{
+  const cases=[
+    [['E01','Lynx','E01'],'E01','Lynx'],
+    [['E01','Lynx','e01'],'E01','Lynx'],
+    [['e01','Lynx','E01'],'E01','Lynx'],
+    [['lynx','E01','LYNX'],'Lynx','E01']
+  ];
+  for(const [poolType,rows] of POOLS){
+    for(const [codes,repeated,kept] of cases){
+      const result=byCode(rows(...codes),poolType),label=`${poolType} ${codes.join(',')}`;
+      assert.deepEqual(result.errors,[{row:4,code:'duplicate_entry_row',entry_code:repeated,first_row:2,duplicate_row:4}],label);
+      assert.deepEqual(entryIds(result),[idOf(kept)],`${label}: neither version of ${repeated} is submitted`);
+    }
+  }
+  assert.equal(describeImportError({row:4,code:'duplicate_entry_row',entry_code:'E01',first_row:2,duplicate_row:4}),
+    'duplicate_entry_row · entry E01 is already on row 2; keep one row per entry');
+});
+
+test('duplicate rows: two conflicting versions of one entry never become last-row-wins in Pickem or Survivor',()=>{
+  const pick=byCode('entry_code,g1,g2,tiebreak\nE01,away,home,10\nLynx,home,home,20\ne01,home,away,30','pickem');
+  assert.deepEqual(pick.items,[{entry_id:idOf('Lynx'),payload:{picks:{g1:'home',g2:'home'},tiebreak:20}}]);
+  assert.deepEqual(pick.errors,[{row:4,code:'duplicate_entry_row',entry_code:'E01',first_row:2,duplicate_row:4}]);
+  const team=byCode('entry_code,team\nE01,Denver\nLynx,Phoenix\nE01,Austin','survivor');
+  assert.deepEqual(team.items,[{entry_id:idOf('Lynx'),payload:{team:'phoenix'}}]);
+  assert.deepEqual(team.errors,[{row:4,code:'duplicate_entry_row',entry_code:'E01',first_row:2,duplicate_row:4}]);
+});
+
+test('duplicate rows: every repeat names the first row, a repeat is reported even when the first row is invalid, and unresolved rows repeat nothing',()=>{
+  const three=byCode(POOLS[0][1]('Lynx','E01','LYNX','e1','lynx'),'pickem');
+  assert.deepEqual(three.errors,[
+    {row:4,code:'duplicate_entry_row',entry_code:'Lynx',first_row:2,duplicate_row:4},
+    {row:6,code:'duplicate_entry_row',entry_code:'Lynx',first_row:2,duplicate_row:6}
+  ]);
+  assert.deepEqual(entryIds(three),[idOf('E01'),idOf('e1')]);
+  const invalidFirst=byCode('entry_code,team\nE01,Houston\nE01,Denver','survivor');
+  assert.deepEqual(invalidFirst.errors,[
+    {row:2,code:'unknown_team',entry_code:'E01',value:'Houston'},
+    {row:3,code:'duplicate_entry_row',entry_code:'E01',first_row:2,duplicate_row:3}
+  ]);
+  assert.deepEqual(invalidFirst.items,[]);
+  const unresolved=byCode(POOLS[0][1]('fox1','fox1','E2','E2'),'pickem');
+  assert.deepEqual(unresolved.errors.map(e=>[e.row,e.code]),[[2,'ambiguous_entry_code'],[3,'ambiguous_entry_code'],[4,'unknown_entry'],[5,'unknown_entry']]);
+});

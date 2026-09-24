@@ -52,26 +52,62 @@ function resolveSurvivorTeam(value,weekConfig){
   return matches[0]?.key?{team:matches[0].key}:{code:'unknown_team'};
 }
 
+// An entry code (a CSV cell, so already trimmed) resolves to the one entry whose code it equals exactly, so
+// E1 and e1 stay two entries. Only a value that equals no code exactly falls back to any case, and only when
+// that names one entry. Several matches are ambiguous_entry_code with every candidate code and no match is
+// unknown_entry: a value is never mapped to whichever entry happens to be listed first or last.
+function entryResolver(entries){
+  const exact=new Map(),anyCase=new Map(),add=(map,key,entry)=>map.set(key,[...(map.get(key)||[]),entry]);
+  for(const entry of entries||[]){
+    const code=String(entry?.entry_code??'');
+    if(code){add(exact,code,entry);add(anyCase,code.toLowerCase(),entry)}
+  }
+  return value=>{
+    const code=String(value??''),matches=exact.get(code)||anyCase.get(code.toLowerCase())||[];
+    if(matches.length===1)return{entry:matches[0]};
+    return matches.length?{code:'ambiguous_entry_code',candidate_entry_codes:matches.map(e=>e.entry_code)}:{code:'unknown_entry'};
+  };
+}
+
 export function prepareCommissionerImport({text,poolType,entries,weekConfig}){
   const rows=parseCsv(text);
   if(rows.length<2)return{items:[],errors:[{code:'no_data'}]};
   const headers=rows[0].map(x=>x.toLowerCase());
   const entryIndex=headers.indexOf('entry_code');
   if(entryIndex<0)return{items:[],errors:[{code:'missing_entry_code'}]};
-  const entryMap=new Map((entries||[]).map(e=>[String(e.entry_code).toLowerCase(),e]));
-  const items=[],errors=[];
+  const resolveEntry=entryResolver(entries),items=[],errors=[];
+  // One row per entry. A later row that resolves to an entry an earlier row already named (the same code, or
+  // another case form of it) is duplicate_entry_row, and no row for that entry is submitted, so neither
+  // version silently wins.
+  const firstRow=new Map(),repeated=new Set();
+  const rowEntry=i=>{
+    const found=resolveEntry(rows[i][entryIndex]);
+    if(!found.entry){
+      errors.push({row:i+1,code:found.code,entry_code:rows[i][entryIndex],...(found.candidate_entry_codes?{candidate_entry_codes:found.candidate_entry_codes}:{})});
+      return null;
+    }
+    const {entry}=found;
+    if(firstRow.has(entry.id)){
+      repeated.add(entry.id);
+      errors.push({row:i+1,code:'duplicate_entry_row',entry_code:entry.entry_code,first_row:firstRow.get(entry.id),duplicate_row:i+1});
+      return null;
+    }
+    firstRow.set(entry.id,i+1);
+    return entry;
+  };
+  const result=()=>({items:items.filter(item=>!repeated.has(item.entry_id)),errors});
   if(poolType==='survivor'){
     const teamIndex=headers.indexOf('team');
     if(teamIndex<0)return{items:[],errors:[{code:'missing_team'}]};
     for(let i=1;i<rows.length;i++){
-      const code=String(rows[i][entryIndex]||'').toLowerCase(),entry=entryMap.get(code),team=String(rows[i][teamIndex]||'').trim();
-      if(!entry){errors.push({row:i+1,code:'unknown_entry',entry_code:rows[i][entryIndex]});continue}
+      const entry=rowEntry(i),team=String(rows[i][teamIndex]||'').trim();
+      if(!entry)continue;
       if(!team){errors.push({row:i+1,code:'missing_team',entry_code:entry.entry_code});continue}
       const resolved=resolveSurvivorTeam(team,weekConfig);
       if(!resolved.team){errors.push({row:i+1,code:resolved.code,entry_code:entry.entry_code,value:team,...(resolved.candidates?{candidates:resolved.candidates}:{})});continue}
       items.push({entry_id:entry.id,payload:{team:resolved.team}});
     }
-    return{items,errors};
+    return result();
   }
   const gameIds=(weekConfig?.games||[]).map((g,i)=>String(g?.id??`g${i+1}`));
   const gameColumns=gameIds.map(id=>headers.indexOf(id.toLowerCase()));
@@ -80,8 +116,8 @@ export function prepareCommissionerImport({text,poolType,entries,weekConfig}){
   const tbIndex=headers.indexOf('tiebreak');
   if(tbRequired&&tbIndex<0)return{items:[],errors:[{code:'missing_tiebreak'}]};
   for(let i=1;i<rows.length;i++){
-    const code=String(rows[i][entryIndex]||'').toLowerCase(),entry=entryMap.get(code);
-    if(!entry){errors.push({row:i+1,code:'unknown_entry',entry_code:rows[i][entryIndex]});continue}
+    const entry=rowEntry(i);
+    if(!entry)continue;
     // The row is rejected at its first unresolved game, naming that game, the value and any candidates.
     const picks={};let problem=null;
     for(let j=0;j<gameIds.length&&!problem;j++){
@@ -96,16 +132,19 @@ export function prepareCommissionerImport({text,poolType,entries,weekConfig}){
     if(tbRequired&&!tb.present){errors.push({row:i+1,code:'missing_tiebreak',entry_code:entry.entry_code});continue}
     items.push({entry_id:entry.id,payload:{picks,...(tb.present?{tiebreak:tb.value}:{})}});
   }
-  return{items,errors};
+  return result();
 }
 
 // One line of row context for the commissioner: the failed rule, then the game and value it failed on and,
 // for an ambiguous label, every team it could mean. Only values that name exactly one team are suggested;
-// teams that no value can single out need distinct keys and labels in the schedule.
+// teams that no value can single out need distinct keys and labels in the schedule. An ambiguous entry code
+// lists every entry it could mean, and a repeated entry names the row that already has it.
 export function describeImportError(error){
   const e=error||{},parts=[String(e.code||'invalid_row')];
   if(e.game_id!==undefined)parts.push(`game ${e.game_id}`);
   if(e.value!==undefined)parts.push(`"${e.value}"`);
+  if(Array.isArray(e.candidate_entry_codes))parts.push(`matches entry codes ${e.candidate_entry_codes.join(' and ')}`,'type the entry code exactly as listed');
+  if(e.first_row!==undefined)parts.push(`entry ${e.entry_code} is already on row ${e.first_row}; keep one row per entry`);
   if(Array.isArray(e.candidates)&&e.candidates.length){
     const pickem=e.game_id!==undefined,uses=e.candidates.map(c=>c.use).filter(Boolean);
     parts.push(`matches ${e.candidates.map(c=>{

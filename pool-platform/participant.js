@@ -117,9 +117,11 @@ function renderPickem(access,sub){
   const required=state.context.week.config?.tiebreakRequired===true||state.context.week.config?.tiebreak_required===true;
   show('tiebreakCard',required);$('tiebreak').disabled=!access.editable;$('tiebreak').value=sub?.payload?.tiebreak??'';show('pickForm',true);setFormEditable(access.editable);updateSummary();
 }
+// Each choice submits its stable key and shows its display name, which carries that key whenever another
+// choice shares the name; choices that would still read alike are shown but cannot be picked.
 function renderSurvivor(access,sub){
   const teams=survivorLegalTeams(state.context.week.config,state.entry.history);
-  $('games').innerHTML=`<fieldset class="game full"><legend>Choose one team</legend><div class="survivor-choice-grid">${teams.map((team,i)=>`<div class="pick-option"><input type="radio" id="team-${i}" name="survivor-team" value="${esc(team.key)}" ${sub?.payload?.team===team.key?'checked':''} ${access.editable&&!team.burned?'':'disabled'}><label for="team-${i}">${esc(team.label)}${team.burned?' · USED':''}</label></div>`).join('')}</div></fieldset>`;
+  $('games').innerHTML=`<fieldset class="game full"><legend>Choose one team</legend><div class="survivor-choice-grid">${teams.map((team,i)=>`<div class="pick-option"><input type="radio" id="team-${i}" name="survivor-team" value="${esc(team.key)}" ${sub?.payload?.team===team.key?'checked':''} ${access.editable&&!team.burned&&!team.ambiguous?'':'disabled'}><label for="team-${i}">${esc(team.display)}${team.burned?' · USED':team.ambiguous?' · ASK COMMISSIONER':''}</label></div>`).join('')}</div></fieldset>`;
   show('tiebreakCard',false);show('pickForm',true);setFormEditable(access.editable);updateSummary();
 }
 function setFormEditable(editable){$('clearBtn').disabled=!editable;$('submitBtn').disabled=!editable;$('submitBtn').textContent=state.entry.submission?.source==='participant'?'Update picks':'Submit picks'}
@@ -135,7 +137,7 @@ function updateSummary(){
   const c=state.context;if(!c)return;
   if(c.pool.pool_type==='survivor'){
     const checked=document.querySelector('input[name="survivor-team"]:checked'),team=survivorLegalTeams(c.week.config,state.entry.history).find(x=>x.key===checked?.value);
-    $('summary').replaceChildren(summaryRow('Survivor selection',team?team.label:'—'));return;
+    $('summary').replaceChildren(summaryRow('Survivor selection',team?team.display:'—'));return;
   }
   const selections=pickemSelections();
   $('summary').replaceChildren(...normalizeGames(c.week.config).map(g=>{const side=selections[g.id];return summaryRow(`${g.away.label} vs ${g.home.label}`,side?g[side].label:'—')}),summaryRow('Tiebreak',$('tiebreak').value||'—'));

@@ -71,6 +71,48 @@ test('participant Sign out and signed-in errors live in the shell, outside every
   assert.match(js,/catch\(e\)\{if\(!String\(e\?\.message\)\.includes\('pool_not_found'\)\)throw e\}/,'no readable pool means the empty state');
 });
 
+test('participant Survivor choices submit the stable key and show the escaped display name that tells shared labels apart',()=>{
+  const js=read('participant.js');
+  const survivor=/\nfunction renderSurvivor\(access,sub\)\{\n([\s\S]*?)\n\}\n/.exec(js)?.[1];
+  assert.ok(survivor,'renderSurvivor must exist');
+  assert.match(survivor,/<input type="radio" id="team-\$\{i\}" name="survivor-team" value="\$\{esc\(team\.key\)\}"/);
+  assert.match(survivor,/<label for="team-\$\{i\}">\$\{esc\(team\.display\)\}\$\{team\.burned\?' · USED':team\.ambiguous\?' · ASK COMMISSIONER':''\}<\/label>/);
+  assert.match(survivor,/\$\{access\.editable&&!team\.burned&&!team\.ambiguous\?'':'disabled'\}/);
+  assert.doesNotMatch(survivor,/team\.label/,'the bare label can repeat across choices');
+  assert.match(js,/summaryRow\('Survivor selection',team\?team\.display:'—'\)/);
+});
+
+test('commissioner Sign out and signed-in errors live in the shell; async work renders only for the session that started it',()=>{
+  const html=read('commissioner.html'),js=read('commissioner.js');
+  const shell=html.slice(html.indexOf('<main class="shell">'),html.indexOf('<section'));
+  assert.match(shell,/<div class="topbar">[\s\S]*<button class="button compact secondary hidden" id="signOut" type="button" style="min-height:44px">Sign out<\/button>/);
+  assert.match(shell,/<div class="notice error hidden" id="sessionError" role="alert"/);
+  assert.equal(html.match(/id="signOut"/g).length,1);
+  // Only the session decides whether Sign out shows: not the pool context, an import or an error.
+  assert.equal(js.match(/show\('signOut'/g).length,1);
+  assert.match(js,/function setAuth\(\)\{show\('authCard',client\.live&&!state\.session\);show\('signOut',client\.live&&!!state\.session\)\}/);
+  assert.match(js,/async function load\(\)\{\n  const session=state\.session,context=client\.live\?await client\.commissionerContext\(poolSlug\):syntheticContext\(\);\n  if\(state\.session!==session\)return; \/\/ signed out while loading: render nothing for the previous account\n  state\.context=context;renderConsole\(\);\n\}/);
+  assert.match(js,/async function openSession\(\)\{\n  const session=state\.session;\n  setAuth\(\);msg\('sessionError',''\);\n  try\{await load\(\)\}catch\(e\)\{if\(state\.session===session\)msg\('sessionError',e\.message\)\}\n\}/);
+  assert.match(js,/state\.session=await client\.getSession\(\);setAuth\(\);\n  if\(state\.session\)await openSession\(\);/);
+  assert.match(js,/state\.session=await client\.verifyOtp\(state\.pendingEmail\|\|\$\('email'\)\.value,\$\('otp'\)\.value\)\}catch\(e\)\{msg\('authError',e\.message\);return\}await openSession\(\)/);
+  assert.match(js,/initialize\(\)\.catch\(e=>msg\('sessionError',e\.message\)\)/);
+  const signOut=/\$\('signOut'\)\.addEventListener\('click',async\(\)=>\{\n([\s\S]*?)\n\}\);/.exec(js)?.[1];
+  assert.ok(signOut);
+  assert.match(signOut,/^  try\{await client\.signOut\(\)\}catch\(e\)\{msg\('sessionError',e\.message\);return\}/);
+  assert.match(signOut,/Object\.assign\(state,\{session:null,context:null,season:null,week:null,pendingEmail:''\}\)/);
+  for(const id of ['consoleCard','entriesCard','inviteCard','importCard','resultTableWrap','otpWrap','seasonSelect','weekSelect','entriesBody','inviteEntry','resultBody','email','otp','inviteEmail','importText','inviteResult','importError','importResult']){
+    assert.match(signOut,new RegExp(`'${id}'`),id);
+  }
+  assert.match(signOut,/for\(const id of \['sessionError','authError','inviteResult','importError','importResult'\]\)msg\(id,''\);\n  setAuth\(\);$/,'errors are cleared only after the session is gone');
+  for(const action of ['createInvite','runImport']){
+    const body=new RegExp(`\\$\\('${action}'\\)\\.addEventListener\\('click',async\\(\\)=>\\{\\n([\\s\\S]*?)\\n\\}\\);`).exec(js)?.[1];
+    assert.ok(body,action);
+    assert.match(body,/const session=state\.session;/,action);
+    assert.match(body,/\n    if\(state\.session!==session\)return; \/\/ signed out while /,action);
+    assert.match(body,/catch\(e\)\{if\(state\.session===session\)msg\('importError',e\.message\)\}/,action);
+  }
+});
+
 test('commissioner UI exposes invite and conflict-report workflows',()=>{
   assert.match(commissioner,/createInvite/);
   assert.match(commissioner,/submitBatch/);
@@ -262,21 +304,34 @@ function serveDirectory(root){
   return new Promise(resolve=>server.listen(0,'127.0.0.1',()=>resolve(server)));
 }
 
-function liveWorld({owners={},invites={},readable=[],games}={}){
+function liveWorld({owners={},invites={},readable=[],games,poolType='pickem'}={}){
   const deadline=new Date(Date.now()+86400000).toISOString();
   return{
     owners,invites,readable,calls:[],gates:[],
     entries:['E01','E02'].map((code,i)=>({id:`entry-${i+1}`,entry_code:code,display_name:`Entry ${code}`,status:'active',submission:null,history:[]})),
     context:{
-      pool:{id:'pool-1',slug:'it-pool',display_name:'IT Pick’em',pool_type:'pickem',rules:{},branding:{}},
+      pool:{id:'pool-1',slug:'it-pool',display_name:poolType==='survivor'?'IT Survivor':'IT Pick’em',pool_type:poolType,rules:{},branding:{}},
       season:{id:'season-1',season:2027,config:{}},
-      week:{id:'week-1',week:1,status:'open',opens_at:null,deadline_at:deadline,config:{tiebreakRequired:true,games:games||[
+      week:{id:'week-1',week:1,status:'open',opens_at:null,deadline_at:deadline,config:{tiebreakRequired:poolType==='pickem',games:games||[
         {id:'g1',away:{key:'austin',label:'Austin'},home:{key:'denver',label:'Denver'}},
         {id:'g2',away:{key:'phoenix',label:'Phoenix'},home:{key:'seattle',label:'Seattle'}}
       ]}}
     }
   };
 }
+
+// The same pool seen from the commissioner console. commissioner_context answers only a listed commissioner and
+// only for this pool's slug, raising commissioner_required otherwise, as the database does; contextFailure
+// makes it fail with an HTTP error or a dropped connection instead.
+function consoleWorld({commissioners=['commish@example.test'],contextFailure=null}={}){
+  const world=liveWorld(),{pool,season,week}=world.context;
+  return Object.assign(world,{commissioners,contextFailure,console:{
+    pool:{...pool,tenant_id:'tenant-1',display_name:'Private Console Pool'},
+    seasons:[{...season,status:'active',weeks:[week],
+      entries:world.entries.map(({id,entry_code,display_name,status})=>({id,entry_code,display_name,status,claimed:false,submissions:[]}))}]
+  }});
+}
+const INVITE_OUT='cd'.repeat(32);
 
 // Holds the (skip+1)th call of one RPC until release(), so a test can act while that request is in flight.
 // arrived rejects if the page never makes that call, instead of hanging the run.
@@ -323,11 +378,26 @@ function dataApi(world){
       entry.submission={source:'participant',status:'submitted',payload:args.p_payload,revision};
       return reply(200,{ok:true,code:revision>1?'updated':'created',submission_id:`sub-${entry.id}`,source:'participant',status:'submitted',revision});
     }
+    const commissioner=(world.commissioners||[]).includes(email);
+    if(name==='pool_platform_commissioner_context'){
+      if(world.contextFailure==='network')return route.abort('failed');
+      if(world.contextFailure==='http')return reply(500,{code:'XX000',details:null,hint:null,message:'upstream_unavailable'});
+      if(!commissioner||args.p_pool_slug!==world.console.pool.slug)return fail('commissioner_required');
+      return reply(200,world.console);
+    }
+    if(name==='pool_platform_create_entry_invite'){
+      if(!commissioner)return fail('commissioner_required');
+      return reply(200,{invite_token:INVITE_OUT,entry_id:args.p_entry_id,expires_at:new Date(Date.now()+7*86400000).toISOString()});
+    }
+    if(name==='pool_platform_submit_batch'){
+      if(!commissioner)return fail('commissioner_required');
+      return reply(200,args.p_items.map(item=>({entry_id:item.entry_id,ok:true,result:{ok:true,code:'created',revision:1}})));
+    }
     return fail(`unexpected_rpc:${name}`);
   };
 }
 
-describe('participant page in headless Chromium (opt-in)',{skip:BROWSER?false:'set POOL_PLATFORM_TEST_BROWSER=1 (with playwright on NODE_PATH) to drive the real page'},()=>{
+describe('participant and commissioner pages in headless Chromium (opt-in)',{skip:BROWSER?false:'set POOL_PLATFORM_TEST_BROWSER=1 (with playwright on NODE_PATH) to drive the real page'},()=>{
   let server,browser,base;
   const contexts=[];
   before(async()=>{
@@ -344,7 +414,7 @@ describe('participant page in headless Chromium (opt-in)',{skip:BROWSER?false:'s
     await new Promise(resolve=>server?server.close(resolve):resolve());
   });
 
-  async function openPage({world=null,signedInAs=null,query='',width=390,height=844}={}){
+  async function openPage({world=null,signedInAs=null,query='',width=390,height=844,path='participant.html',poolSlug='it-pool'}={}){
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width,height}});
     contexts.push(context);
     const page=await context.newPage(),seen={dialogs:[],errors:[]};
@@ -353,11 +423,11 @@ describe('participant page in headless Chromium (opt-in)',{skip:BROWSER?false:'s
     if(world){
       await page.addInitScript(email=>{window.__fakeAuth={email}},signedInAs);
       await page.route(`${base}/platform-config.js`,route=>route.fulfill({contentType:'text/javascript',
-        body:`export const PLATFORM_CONFIG=Object.freeze({mode:'live',authUrl:'https://auth.pool.test/auth',dataUrl:'${base}/data-api',defaultPoolSlug:'it-pool'});`}));
+        body:`export const PLATFORM_CONFIG=Object.freeze({mode:'live',authUrl:'https://auth.pool.test/auth',dataUrl:'${base}/data-api',defaultPoolSlug:${JSON.stringify(poolSlug)}});`}));
       await page.route(SDK_URL,route=>route.fulfill({contentType:'text/javascript',headers:{'access-control-allow-origin':'*'},body:FAKE_SDK}));
       await page.route(`${base}/data-api/rpc/*`,dataApi(world));
     }
-    await page.goto(`${base}/participant.html${query}`);
+    await page.goto(`${base}/${path}${query}`);
     return{page,seen};
   }
   const visible=async(page,expected)=>{
@@ -528,9 +598,11 @@ describe('participant page in headless Chromium (opt-in)',{skip:BROWSER?false:'s
     assert.equal(world.calls.filter(c=>c.name==='pool_platform_submit_entry').length,0,'nothing invalid is sent');
 
     await page.click('label[for="game-1-home"]');
-    for(const [typed,expected] of [['47',47],['0',0]]){
+    for(const [i,[typed,expected]] of [['47',47],['0',0]].entries()){
       await page.fill('#tiebreak',typed);await page.click('#submitBtn');
-      await page.locator('#submittedCard').waitFor({state:'visible'});
+      // The saved card is still up from the previous submit, so wait for this submit's own revision, which
+      // is written only after its reload has re-rendered the form and re-enabled Submit.
+      await page.locator('#submittedMeta',{hasText:`Revision ${i+1} `}).waitFor();
       assert.deepEqual(world.calls.filter(c=>c.name==='pool_platform_submit_entry').at(-1).args,
         {p_week_id:'week-1',p_entry_id:'entry-1',p_source:'participant',p_payload:{picks:{g1:'away',g2:'home'},tiebreak:expected}});
       assert.equal(await page.inputValue('#tiebreak'),typed);
@@ -542,26 +614,269 @@ describe('participant page in headless Chromium (opt-in)',{skip:BROWSER?false:'s
     await clean(page,seen);
   });
 
+  // Survivor schedule with two "New York" teams, two teams whose labels differ only in case (one key is markup),
+  // a markup label, and two "Los Angeles" teams, one with a long key that has no break opportunity. Entry E02
+  // already used NYG in another week.
+  const HOSTILE_KEY='<img src=x onerror="window.__xss=(window.__xss||0)+2">',LONG_KEY='LONGUNBROKENSTABLETEAMKEY00001';
+  const SURVIVOR_GAMES=[
+    {id:'g1',away:{key:'NYG',label:'New York'},home:{key:'DAL',label:'Dallas'}},
+    {id:'g2',away:{key:'MIA',label:'Miami'},home:{key:'NYJ',label:'New York'}},
+    {id:'g3',away:{key:HOSTILE_KEY,label:'Twin City'},home:{key:'TWC',label:'twin city'}},
+    {id:'g4',away:{key:'ATX',label:'Austin'},home:{key:'ARL',label:HOSTILE_LABEL}},
+    {id:'g5',away:{key:LONG_KEY,label:'Los Angeles'},home:{key:'LAX',label:'Los Angeles'}}
+  ];
+  const SURVIVOR_LABELS=['New York (NYG)','Dallas','Miami','New York (NYJ)',`Twin City (${HOSTILE_KEY})`,'twin city (TWC)','Austin',HOSTILE_LABEL,`Los Angeles (${LONG_KEY})`,'Los Angeles (LAX)'];
+  const survivorWorld=()=>{
+    const world=liveWorld({owners:{'entry-1':'player@example.test','entry-2':'player@example.test'},games:SURVIVOR_GAMES,poolType:'survivor'});
+    world.entries[1].history=[{week:2,source:'participant',status:'submitted',payload:{team:'NYG'},revision:1}];
+    return world;
+  };
+  const survivorLabels=page=>page.locator('#games label').allTextContents();
+  const survivorInputs=page=>page.locator('#games input[name="survivor-team"]').evaluateAll(inputs=>inputs.map(input=>[input.value,input.disabled]));
+
+  test('live Survivor: teams that share a label show their keys as text, a used one stays locked, and the chosen key is submitted',async()=>{
+    const world=survivorWorld(),submitted=()=>world.calls.filter(c=>c.name==='pool_platform_submit_entry').at(-1).args;
+    const {page,seen}=await openPage({world,signedInAs:'player@example.test'});
+    await page.locator('#pickForm').waitFor({state:'visible'});
+    const labels=await survivorLabels(page);
+    assert.deepEqual(labels,SURVIVOR_LABELS);
+    assert.equal(new Set(labels).size,labels.length,'no two choices read alike');
+    assert.deepEqual(await survivorInputs(page),SURVIVOR_GAMES.flatMap(g=>[[g.away.key,false],[g.home.key,false]]),'each choice submits its stable key');
+    assert.equal(await page.locator('label[for="team-4"]').innerHTML(),textAsHtml(`Twin City (${HOSTILE_KEY})`),'a markup key is text');
+    assert.equal(await page.locator('label[for="team-7"]').innerHTML(),textAsHtml(HOSTILE_LABEL),'a markup label is text');
+
+    await page.click('label[for="team-3"]');
+    assert.equal(await page.locator('#summary .summary-row strong').textContent(),'New York (NYJ)');
+    await page.click('#submitBtn');await page.locator('#submittedMeta',{hasText:'Revision 1 '}).waitFor();
+    assert.deepEqual(submitted(),{p_week_id:'week-1',p_entry_id:'entry-1',p_source:'participant',p_payload:{team:'NYJ'}});
+    await page.click('label[for="team-4"]');
+    assert.equal(await page.locator('#summary .summary-row strong').textContent(),`Twin City (${HOSTILE_KEY})`);
+    await page.click('#submitBtn');await page.locator('#submittedMeta',{hasText:'Revision 2 '}).waitFor();
+    assert.deepEqual(submitted().p_payload,{team:HOSTILE_KEY},'the markup key round-trips exactly');
+
+    await page.selectOption('#entrySelect','entry-2');
+    assert.deepEqual(await survivorLabels(page),['New York (NYG) · USED',...SURVIVOR_LABELS.slice(1)]);
+    assert.deepEqual((await survivorInputs(page)).slice(0,4),[['NYG',true],['DAL',false],['MIA',false],['NYJ',false]]);
+    await page.click('label[for="team-3"]');await page.click('#submitBtn');
+    await page.locator('#submittedMeta',{hasText:'Revision 1 '}).waitFor();
+    assert.deepEqual(submitted(),{p_week_id:'week-1',p_entry_id:'entry-2',p_source:'participant',p_payload:{team:'NYJ'}});
+    await clean(page,seen);
+  });
+
   test('mobile widths: no horizontal overflow and Sign out stays on screen in every signed-in state',async()=>{
-    for(const width of [320,360,375,390,412]){
+    for(const width of [320,360,375,384,390,412]){
       const states=[
         {world:liveWorld({invites:{[INVITE]:{email:'invited@example.test',entryId:'entry-1'}}}),signedInAs:'wrong@example.test',query:`?invite=${INVITE}`,ready:'#sessionError'},
         {world:liveWorld(),signedInAs:'loner@example.test',ready:'#emptyCard'},
-        {world:liveWorld({owners:{'entry-1':'player@example.test'}}),signedInAs:'player@example.test',ready:'#pickForm'}
+        {world:liveWorld({owners:{'entry-1':'player@example.test'}}),signedInAs:'player@example.test',ready:'#pickForm'},
+        {world:survivorWorld(),signedInAs:'player@example.test',ready:'#pickForm',survivor:true}
       ];
-      for(const {ready,...options} of states){
+      for(const {ready,survivor,...options} of states){
         const {page,seen}=await openPage({...options,width,height:740});
         await page.locator(ready).waitFor({state:'visible'});
         const overflow=await page.evaluate(()=>document.documentElement.scrollWidth-document.documentElement.clientWidth);
-        assert.ok(overflow<=0,`${width}px ${ready}: horizontal overflow ${overflow}px`);
+        assert.ok(overflow<=0,`${width}px ${ready}${survivor?' Survivor':''}: horizontal overflow ${overflow}px`);
         const box=await page.locator('#signOut').boundingBox();
         assert.ok(box&&box.x>=0&&box.x+box.width<=width&&box.height>=44,`${width}px ${ready}: Sign out box ${JSON.stringify(box)}`);
+        if(survivor){
+          assert.deepEqual(await survivorLabels(page),SURVIVOR_LABELS,`${width}px`);
+          // Each choice's text, not only its box, stays inside the choice and on screen; so does the review
+          // summary once the long-key team is picked.
+          await page.click('label[for="team-8"]');
+          const boxes=await page.evaluate(()=>[...document.querySelectorAll('#games label'),document.querySelector('#summary .summary-row strong')].map(el=>{
+            const range=document.createRange();range.selectNodeContents(el);
+            const box=el.getBoundingClientRect(),text=range.getBoundingClientRect();
+            return{text:el.textContent.slice(0,24),left:box.left,right:box.right,height:box.height,textLeft:text.left,textRight:text.right};
+          }));
+          assert.equal(boxes.at(-1).text,`Los Angeles (${LONG_KEY})`.slice(0,24));
+          for(const b of boxes){
+            assert.ok(b.left>=0&&b.right<=width&&b.textLeft>=b.left&&b.textRight<=b.right,`${width}px Survivor text off screen or outside its box ${JSON.stringify(b)}`);
+          }
+          for(const b of boxes.slice(0,-1))assert.ok(b.height>=44,`${width}px Survivor choice under 44px ${JSON.stringify(b)}`);
+          const after=await page.evaluate(()=>document.documentElement.scrollWidth-document.documentElement.clientWidth);
+          assert.ok(after<=0,`${width}px Survivor with the long-key team picked: horizontal overflow ${after}px`);
+        }
         await clean(page,seen);
       }
       const {page,seen}=await openPage({width,height:740});
       await page.locator('#pickForm').waitFor({state:'visible'});
       assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),`${width}px sandbox pick form overflows`);
       await clean(page,seen);
+    }
+  });
+
+  const openConsole=options=>openPage({path:'commissioner.html',...options});
+  const IMPORT_CSV='entry_code,g1,g2,tiebreak\nE01,away,home,47\nE02,home,away,41';
+  const signedOutConsole={authCard:true,signOut:false,sessionError:false,otpWrap:false,consoleCard:false,entriesCard:false,inviteCard:false,importCard:false,resultTableWrap:false};
+  // Nothing a commissioner session loaded or typed may stay in the page, shown or hidden, once it signs out.
+  // The sign-in fields are checked only while signed out: afterwards they hold the next account's own input.
+  const noConsoleLeft=async(page,label,{signedOut=true}={})=>{
+    const html=await page.content();
+    for(const marker of ['Private Console Pool','Entry E01','Entry E02','entry-1','entry-2',INVITE_OUT,'Week 1 ·']){
+      assert.equal(html.includes(marker),false,`${label}: "${marker}" is still in the page`);
+    }
+    for(const id of ['inviteEmail','importText',...(signedOut?['email','otp']:[])]){
+      assert.equal(await page.inputValue(`#${id}`),'',`${label}: #${id} still has a value`);
+    }
+    assert.equal(await page.textContent('#poolName'),'Pool',label);
+    assert.equal(await page.getAttribute('#importText','placeholder'),'',label);
+  };
+
+  test('commissioner live: an account that manages no pool gets commissioner_required beside Sign out, then switches to the commissioner',async()=>{
+    const world=consoleWorld();
+    const {page,seen}=await openConsole({world,signedInAs:'player@example.test'});
+    await page.locator('#sessionError').waitFor({state:'visible'});
+    assert.equal(await page.textContent('#sessionError'),'Commissioner access is required.');
+    await visible(page,{signOut:true,authCard:false,consoleCard:false,entriesCard:false,inviteCard:false,importCard:false});
+    assert.equal(await page.locator('section #signOut').count(),0,'Sign out is not inside any card');
+    await page.click('#signOut');
+    await page.locator('#authCard').waitFor({state:'visible'});
+    await visible(page,signedOutConsole);
+    assert.equal(await page.evaluate(()=>window.__fakeAuth.email),null,'the session ended');
+    await signIn(page,'commish@example.test');
+    await page.locator('#importCard').waitFor({state:'visible'});
+    await visible(page,{signOut:true,authCard:false,sessionError:false,consoleCard:true,entriesCard:true,inviteCard:true});
+    assert.equal(await page.textContent('#poolName'),'Private Console Pool');
+    assert.deepEqual(world.calls.filter(c=>c.name==='pool_platform_commissioner_context').map(c=>[c.email,c.args.p_pool_slug]),
+      [['player@example.test','it-pool'],['commish@example.test','it-pool']]);
+    await clean(page,seen);
+  });
+
+  test('commissioner live: a missing pool slug, an unknown pool and a failed context load each leave a working Sign out',async()=>{
+    const cases=[
+      ['no pool slug',{poolSlug:''},{},'',/^Commissioner access is required\.$/],
+      ['unknown pool',{query:'?pool=no-such-pool'},{},'no-such-pool',/^Commissioner access is required\.$/],
+      ['server error',{},{contextFailure:'http'},'it-pool',/^upstream_unavailable$/],
+      ['dropped connection',{},{contextFailure:'network'},'it-pool',/fetch/i]
+    ];
+    for(const [label,options,worldOptions,slug,message] of cases){
+      const world=consoleWorld(worldOptions);
+      const {page,seen}=await openConsole({world,signedInAs:'commish@example.test',...options});
+      await page.locator('#sessionError').waitFor({state:'visible'});
+      assert.match(await page.textContent('#sessionError'),message,label);
+      await visible(page,{signOut:true,authCard:false,consoleCard:false,importCard:false});
+      assert.deepEqual(world.calls.map(c=>[c.name,c.args.p_pool_slug]),[['pool_platform_commissioner_context',slug]],label);
+      await page.click('#signOut');
+      await page.locator('#authCard').waitFor({state:'visible'});
+      await visible(page,signedOutConsole);
+      await clean(page,seen);
+    }
+  });
+
+  test('commissioner live: a failed sign out is reported beside Sign out and can be retried',async()=>{
+    const {page,seen}=await openConsole({world:consoleWorld(),signedInAs:'player@example.test'});
+    await page.locator('#sessionError').waitFor({state:'visible'});
+    await page.evaluate(()=>{window.__signOutGate=Promise.reject(new Error('Sign-out service unavailable.'));window.__signOutGate.catch(()=>{})});
+    await page.click('#signOut');
+    await page.locator('#sessionError',{hasText:'Sign-out service unavailable.'}).waitFor();
+    await visible(page,{signOut:true,authCard:false});
+    await page.evaluate(()=>{window.__signOutGate=null});
+    await page.click('#signOut');
+    await page.locator('#authCard').waitFor({state:'visible'});
+    await visible(page,signedOutConsole);
+    await clean(page,seen);
+  });
+
+  test('commissioner live: signing out while the context load, an invite, an import or the post-import reload is in flight leaves nothing of that account on screen',async()=>{
+    const createInvite=async page=>{await page.fill('#inviteEmail','invitee@example.test');await page.click('#createInvite')};
+    const runImport=async page=>{await page.fill('#importText',IMPORT_CSV);await page.click('#runImport')};
+    for(const [name,skip,act] of [
+      ['pool_platform_commissioner_context',0,null],
+      ['pool_platform_create_entry_invite',0,createInvite],
+      ['pool_platform_submit_batch',0,runImport],
+      ['pool_platform_commissioner_context',1,runImport]
+    ]){
+      const world=consoleWorld(),held=gate(world,name,skip),label=`${name} #${skip+1}`;
+      const {page,seen}=await openConsole({world,signedInAs:'commish@example.test'});
+      if(act){await page.locator('#importCard').waitFor({state:'visible'});await act(page)}
+      await held.arrived;
+      await page.click('#signOut');await page.locator('#authCard').waitFor({state:'visible'});
+      const reply=page.waitForResponse(response=>response.url().endsWith(`/rpc/${name}`));
+      held.release();await reply;await settle(page);
+      await visible(page,signedOutConsole);
+      await visible(page,{inviteResult:false,importError:false,importResult:false});
+      await noConsoleLeft(page,`${label}, signed out`);
+      // The next account sees only its own state: here it manages no pool.
+      await signIn(page,'player@example.test');
+      await page.locator('#sessionError').waitFor({state:'visible'});
+      assert.equal(await page.textContent('#sessionError'),'Commissioner access is required.',label);
+      await visible(page,{signOut:true,consoleCard:false,importCard:false,resultTableWrap:false,inviteResult:false,importResult:false});
+      await noConsoleLeft(page,`${label}, next account`,{signedOut:false});
+      await clean(page,seen);
+    }
+  });
+
+  test('commissioner live: Sign out clears the loaded console, invite link, typed CSV and import results before the next account signs in',async()=>{
+    const world=consoleWorld();
+    const {page,seen}=await openConsole({world,signedInAs:'commish@example.test'});
+    await page.locator('#importCard').waitFor({state:'visible'});
+    assert.equal(await page.textContent('#poolName'),'Private Console Pool');
+    await page.fill('#inviteEmail','invitee@example.test');await page.click('#createInvite');
+    await page.locator('#inviteResult').waitFor({state:'visible'});
+    assert.ok((await page.textContent('#inviteResult')).includes(`invite=${INVITE_OUT}`));
+    const reloaded=page.waitForResponse(response=>response.url().endsWith('/rpc/pool_platform_commissioner_context'));
+    await page.fill('#importText',IMPORT_CSV);await page.click('#runImport');
+    await page.locator('#importResult').waitFor({state:'visible'});
+    assert.match(await page.textContent('#importResult'),/^2 submitted · 0 source conflict\(s\) · 0 other error\(s\)\./);
+    await reloaded;await settle(page);
+    assert.deepEqual(world.calls.find(c=>c.name==='pool_platform_submit_batch').args.p_items.map(item=>item.entry_id),['entry-1','entry-2']);
+    await page.fill('#importText','entry_code,g1,g2,tiebreak\nE01,home,home,30');
+    await page.click('#signOut');await page.locator('#authCard').waitFor({state:'visible'});
+    await visible(page,signedOutConsole);
+    await visible(page,{inviteResult:false,importError:false,importResult:false});
+    await noConsoleLeft(page,'signed out');
+    await signIn(page,'player@example.test');
+    await page.locator('#sessionError').waitFor({state:'visible'});
+    await noConsoleLeft(page,'next account',{signedOut:false});
+    await clean(page,seen);
+  });
+
+  test('commissioner live: an ambiguous entry code and a repeated entry are listed row by row and nothing is submitted',async()=>{
+    const world=consoleWorld();
+    world.console.seasons[0].entries.push(...['Fox1','FOX1'].map((entry_code,i)=>({id:`entry-f${i+1}`,entry_code,display_name:`Entry ${entry_code}`,status:'active',claimed:false,submissions:[]})));
+    const {page,seen}=await openConsole({world,signedInAs:'commish@example.test'});
+    await page.locator('#importCard').waitFor({state:'visible'});
+    await page.fill('#importText','entry_code,g1,g2,tiebreak\nE01,away,home,47\nfox1,home,away,41\ne01,home,home,30\nFOX1,away,away,20');
+    await page.click('#runImport');
+    await page.locator('#resultTableWrap').waitFor({state:'visible'});
+    assert.equal(await page.textContent('#importError'),'Import validation found 2 row error(s). Fix them before submission.');
+    assert.deepEqual(await page.locator('#resultBody tr').evaluateAll(rows=>rows.map(row=>[...row.cells].map(cell=>cell.textContent))),[
+      ['Row 3 · fox1','ambiguous_entry_code · matches entry codes Fox1 and FOX1 · type the entry code exactly as listed'],
+      ['Row 4 · E01','duplicate_entry_row · entry E01 is already on row 2; keep one row per entry']
+    ]);
+    assert.equal(world.calls.filter(c=>c.name==='pool_platform_submit_batch').length,0,'no row is submitted while any row is rejected');
+    await clean(page,seen);
+  });
+
+  test('commissioner sandbox: the synthetic console loads without Sign out and a sample import still reports its conflict',async()=>{
+    const {page,seen}=await openConsole();
+    await page.locator('#importCard').waitFor({state:'visible'});
+    assert.equal(await page.textContent('#modePill'),'SANDBOX · synthetic');
+    await visible(page,{signOut:false,authCard:false,sessionError:false,consoleCard:true});
+    await page.click('#sampleImport');await page.click('#runImport');
+    await page.locator('#importResult').waitFor({state:'visible'});
+    assert.match(await page.textContent('#importResult'),/^1 submitted · 1 source conflict\(s\) · 0 other error\(s\)\./);
+    await clean(page,seen);
+  });
+
+  test('commissioner mobile widths: no horizontal overflow, and Sign out stays on screen and works in the error and console states',async()=>{
+    for(const width of [320,360,384,412]){
+      for(const [signedInAs,ready] of [[null,'#authCard'],['player@example.test','#sessionError'],['commish@example.test','#importCard']]){
+        const {page,seen}=await openConsole({world:consoleWorld(),signedInAs,width,height:740}),state=`${width}px ${ready}`;
+        await page.locator(ready).waitFor({state:'visible'});
+        const overflow=()=>page.evaluate(()=>document.documentElement.scrollWidth-document.documentElement.clientWidth);
+        const before=await overflow();
+        assert.ok(before<=0,`${state}: horizontal overflow ${before}px`);
+        if(signedInAs){
+          const box=await page.locator('#signOut').boundingBox();
+          assert.ok(box&&box.x>=0&&box.x+box.width<=width&&box.height>=44,`${state}: Sign out box ${JSON.stringify(box)}`);
+          await page.click('#signOut');await page.locator('#authCard').waitFor({state:'visible'});
+          await visible(page,signedOutConsole);
+          const after=await overflow();
+          assert.ok(after<=0,`${state} after sign out: horizontal overflow ${after}px`);
+        }else assert.equal(await page.isVisible('#signOut'),false,state);
+        await clean(page,seen);
+      }
     }
   });
 });

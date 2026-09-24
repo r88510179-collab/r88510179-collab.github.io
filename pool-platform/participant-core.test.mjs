@@ -63,3 +63,59 @@ test('participant may update own submission only before deadline',()=>{
   assert.equal(entrySubmissionAccess(entry,'open','2027-09-10T12:00:00Z','2027-09-10T23:00:00Z').editable,true);
   assert.equal(entrySubmissionAccess(entry,'open','2027-09-10T23:00:00Z','2027-09-10T23:00:00Z').editable,false);
 });
+
+// Survivor choices as displayed: [key, display, burned, ambiguous].
+const shown=(games,history=[])=>survivorLegalTeams({games},history).map(t=>[t.key,t.display,t.burned,t.ambiguous]);
+const NY=[
+  {id:'g1',away:{key:'NYG',label:'New York'},home:{key:'DAL',label:'Dallas'}},
+  {id:'g2',away:{key:'MIA',label:'Miami'},home:{key:'NYJ',label:'New York'}}
+];
+
+test('Survivor display: unique labels are shown as configured',()=>{
+  assert.deepEqual(shown(config.games),[['a','Austin',false,false],['d','Denver',false,false],['p','Phoenix',false,false],['s','Seattle',false,false]]);
+});
+
+test('Survivor display: two teams sharing a label each show their stable key; the value stays the key',()=>{
+  assert.deepEqual(shown(NY),[['NYG','New York (NYG)',false,false],['DAL','Dallas',false,false],['MIA','Miami',false,false],['NYJ','New York (NYJ)',false,false]]);
+  assert.equal(validateSurvivorSelection('NYJ',{games:NY}).ok,true);
+  assert.equal(validateSurvivorSelection('NYG',{games:NY}).ok,true);
+  assert.equal(validateSurvivorSelection('New York (NYJ)',{games:NY}).code,'unknown_team','the display text is never a submittable value');
+  assert.equal(validateSurvivorSelection('New York',{games:NY}).code,'unknown_team');
+});
+
+test('Survivor display: three teams sharing a label are all told apart by key',()=>{
+  const games=[{id:'g1',away:{key:'M1',label:'Metro'},home:{key:'M2',label:'Metro'}},{id:'g2',away:{key:'M3',label:'Metro'},home:{key:'x',label:'Xville'}}];
+  assert.deepEqual(shown(games),[['M1','Metro (M1)',false,false],['M2','Metro (M2)',false,false],['M3','Metro (M3)',false,false],['x','Xville',false,false]]);
+});
+
+test('Survivor display: a used team still counts, so the remaining same-label team shows its key',()=>{
+  const history=[{week:1,payload:{team:'NYG'}}];
+  assert.deepEqual(shown(NY,history),[['NYG','New York (NYG)',true,false],['DAL','Dallas',false,false],['MIA','Miami',false,false],['NYJ','New York (NYJ)',false,false]]);
+  assert.equal(validateSurvivorSelection('NYG',{games:NY},history).code,'team_already_used');
+  assert.equal(validateSurvivorSelection('NYJ',{games:NY},history).ok,true);
+});
+
+test('Survivor display: labels that differ only in case or spacing match as the import matches them, so they show keys',()=>{
+  const games=[{id:'g1',away:{key:'NYG',label:'New York'},home:{key:'NYJ',label:'NEW YORK'}},{id:'g2',away:{key:'NYC',label:'new  york'},home:{key:'b',label:'Boston'}}];
+  assert.deepEqual(shown(games),[['NYG','New York (NYG)',false,false],['NYJ','NEW YORK (NYJ)',false,false],['NYC','new  york (NYC)',false,false],['b','Boston',false,false]]);
+});
+
+test('Survivor display: markup in a label or key is kept verbatim as text for the page to escape',()=>{
+  const tag='<img src=x onerror="window.__xss=1">',games=[{id:'g1',away:{key:tag,label:'Twin'},home:{key:'<b>k</b>',label:'Twin'}},{id:'g2',away:{key:'s',label:tag},home:{key:'t',label:'Tee'}}];
+  assert.deepEqual(shown(games),[[tag,`Twin (${tag})`,false,false],['<b>k</b>','Twin (<b>k</b>)',false,false],['s',tag,false,false],['t','Tee',false,false]]);
+  assert.equal(validateSurvivorSelection(tag,{games}).ok,true);
+});
+
+test('Survivor display: a plain label equal to an appended one is appended too; a blank label shows its key',()=>{
+  const games=[{id:'g1',away:{key:'NYG',label:'New York'},home:{key:'NYJ',label:'New York'}},{id:'g2',away:{key:'X',label:'New York (NYG)'},home:{key:'Q',label:''}}];
+  assert.deepEqual(shown(games),[['NYG','New York (NYG)',false,false],['NYJ','New York (NYJ)',false,false],['X','New York (NYG) (X)',false,false],['Q','Q',false,false]]);
+});
+
+test('Survivor display: choices that still read alike after keys are added cannot be picked (fail closed)',()=>{
+  const games=[{id:'g1',away:{key:'NYG',label:'New York'},home:{key:'nyg',label:'New York'}},{id:'g2',away:{key:'a',label:'Austin'},home:{key:'d',label:'Denver'}}];
+  assert.deepEqual(shown(games).slice(0,2),[['NYG','New York (NYG)',false,true],['nyg','New York (nyg)',false,true]]);
+  assert.equal(validateSurvivorSelection('NYG',{games}).code,'ambiguous_team');
+  assert.equal(validateSurvivorSelection('a',{games}).ok,true);
+  const crafted=[{id:'g1',away:{key:'C',label:'A (B)'},home:{key:'Z',label:'A (B)'}},{id:'g2',away:{key:'B) (C',label:'A'},home:{key:'Y',label:'A'}}];
+  assert.deepEqual(shown(crafted),[['C','A (B) (C)',false,true],['Z','A (B) (Z)',false,false],['B) (C','A (B) (C)',false,true],['Y','A (Y)',false,false]]);
+});

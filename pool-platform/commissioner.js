@@ -18,10 +18,35 @@ function syntheticContext(){
   ],weeks:[{id:'demo-week',week:3,status:'open',deadline_at:new Date(Date.now()+86400000).toISOString(),config:{games,tiebreakRequired:true}}]}]};
 }
 function setAuth(){show('authCard',client.live&&!state.session);show('signOut',client.live&&!!state.session)}
-async function load(){state.context=client.live?await client.commissionerContext(poolSlug):syntheticContext();renderConsole()}
+async function load(){
+  const session=state.session,context=client.live?await client.commissionerContext(poolSlug):syntheticContext();
+  if(state.session!==session)return; // signed out while loading: render nothing for the previous account
+  state.context=context;renderConsole();
+}
+// Runs once a session exists. Sign out is already showing in the shell, so an account that manages no pool
+// here (commissioner_required), a missing or unreadable pool and any load error are reported beside it
+// instead of leaving the user with neither a console nor a way to switch accounts.
+async function openSession(){
+  const session=state.session;
+  setAuth();msg('sessionError','');
+  try{await load()}catch(e){if(state.session===session)msg('sessionError',e.message)}
+}
 $('sendCode').addEventListener('click',async()=>{msg('authError','');try{state.pendingEmail=await client.sendOtp($('email').value);show('otpWrap',true);$('otp').focus()}catch(e){msg('authError',e.message)}});
-$('verifyCode').addEventListener('click',async()=>{msg('authError','');try{state.session=await client.verifyOtp(state.pendingEmail||$('email').value,$('otp').value);setAuth();await load()}catch(e){msg('authError',e.message)}});
-$('signOut').addEventListener('click',async()=>{await client.signOut();state.session=null;state.context=null;['consoleCard','entriesCard','inviteCard','importCard'].forEach(id=>show(id,false));setAuth()});
+$('verifyCode').addEventListener('click',async()=>{msg('authError','');try{state.session=await client.verifyOtp(state.pendingEmail||$('email').value,$('otp').value)}catch(e){msg('authError',e.message);return}await openSession()});
+// Sign out lives in the shell, so it stays reachable whether or not the console loaded. It drops the session
+// and everything loaded or typed for that account (pool, entries, invite link, CSV, import results) and
+// returns to the sign-in form. Errors are cleared only once the session is gone, so one that arrived while
+// signing out does not stay on the sign-in screen.
+$('signOut').addEventListener('click',async()=>{
+  try{await client.signOut()}catch(e){msg('sessionError',e.message);return}
+  Object.assign(state,{session:null,context:null,season:null,week:null,pendingEmail:''});
+  for(const id of ['consoleCard','entriesCard','inviteCard','importCard','resultTableWrap','otpWrap'])show(id,false);
+  for(const id of ['seasonSelect','weekSelect','entriesBody','inviteEntry','resultBody'])$(id).replaceChildren();
+  for(const id of ['email','otp','inviteEmail','importText'])$(id).value='';
+  $('poolName').textContent='Pool';$('importHelp').textContent='';$('importText').placeholder='';
+  for(const id of ['sessionError','authError','inviteResult','importError','importResult'])msg(id,'');
+  setAuth();
+});
 function currentSubmission(entry){return(entry.submissions||[]).find(x=>x.week===state.week?.week)||null}
 function renderConsole(){
   const c=state.context;if(!c)return;$('poolName').textContent=c.pool.display_name;['consoleCard','entriesCard','inviteCard','importCard'].forEach(id=>show(id,true));
@@ -41,13 +66,14 @@ function renderEntries(){
   $('importText').placeholder=state.context.pool.pool_type==='survivor'?'entry_code,team\nE02,Miami':`entry_code,${gameIds.join(',')},tiebreak\nE02,${gameIds.map((_,i)=>i%2?'home':'away').join(',')},47`;
 }
 $('createInvite').addEventListener('click',async()=>{
-  msg('inviteResult','');msg('importError','');
+  msg('inviteResult','');msg('importError','');const session=state.session;
   try{
     const entryId=$('inviteEntry').value,email=$('inviteEmail').value.trim()||null;
     const result=client.live?await client.createInvite({entryId,email,expiresHours:168}):{invite_token:'a'.repeat(64),entry_id:entryId,expires_at:new Date(Date.now()+7*86400000).toISOString()};
+    if(state.session!==session)return; // signed out while creating: show no link for the previous account
     const url=new URL('./participant.html',location.href);url.searchParams.set('pool',state.context.pool.slug);url.searchParams.set('invite',result.invite_token);
     msg('inviteResult',`Invite ready: ${url.href} · expires ${new Date(result.expires_at).toLocaleString()}`);
-  }catch(e){msg('importError',e.message)}
+  }catch(e){if(state.session===session)msg('importError',e.message)}
 });
 $('sampleImport').addEventListener('click',()=>{
   const entries=state.season?.entries||[],codes=entries.slice(0,3).map(e=>e.entry_code);
@@ -58,7 +84,7 @@ $('sampleImport').addEventListener('click',()=>{
   }
 });
 $('runImport').addEventListener('click',async()=>{
-  msg('importError','');msg('importResult','');show('resultTableWrap',false);
+  msg('importError','');msg('importResult','');show('resultTableWrap',false);const session=state.session;
   try{
     if(!state.week)throw new Error('Choose a week.');
     const prepared=prepareCommissionerImport({text:$('importText').value,poolType:state.context.pool.pool_type,entries:state.season.entries,weekConfig:state.week.config});
@@ -73,10 +99,16 @@ $('runImport').addEventListener('click',async()=>{
       const byId=new Map(state.season.entries.map(e=>[e.id,e]));
       results=prepared.items.map(item=>{const e=byId.get(item.entry_id),sub=currentSubmission(e);if(sub&&sub.source==='participant')return{entry_id:e.id,ok:false,code:'source_conflict:participant'};if(sub&&sub.source!=='commissioner_import')return{entry_id:e.id,ok:false,code:`source_conflict:${sub.source}`};e.submissions=(e.submissions||[]).filter(x=>x.week!==state.week.week);e.submissions.push({week:state.week.week,source:'commissioner_import',status:'submitted',revision:(sub?.revision||0)+1});return{entry_id:e.id,ok:true,result:{code:sub?'updated':'created'}}});
     }
+    if(state.session!==session)return; // signed out while importing: show no results for the previous account
     const summary=summarizeBatchResults(results);msg('importResult',`${summary.submitted} submitted · ${summary.conflicts} source conflict(s) · ${summary.errors} other error(s). Participant submissions were not overwritten.`);
     $('resultBody').innerHTML=results.map(r=>{const entry=state.season.entries.find(e=>e.id===r.entry_id),label=entry?.entry_code||r.entry_id,value=r.ok?(r.result?.code||'submitted'):r.code;return`<tr><td>${esc(label)}</td><td>${esc(value)}</td></tr>`}).join('');show('resultTableWrap',true);renderEntries();if(client.live)await load();
-  }catch(e){msg('importError',e.message)}
+  }catch(e){if(state.session===session)msg('importError',e.message)}
 });
-async function initialize(){await client.init();$('modePill').textContent=client.live?'LIVE · secure':'SANDBOX · synthetic';if(client.live){state.session=await client.getSession();setAuth();if(state.session)await load()}else{setAuth();await load()}}
-initialize().catch(e=>msg('authError',e.message));
+async function initialize(){
+  await client.init();$('modePill').textContent=client.live?'LIVE · secure':'SANDBOX · synthetic';
+  if(!client.live){setAuth();await load();return}
+  state.session=await client.getSession();setAuth();
+  if(state.session)await openSession();
+}
+initialize().catch(e=>msg('sessionError',e.message));
 if('serviceWorker' in navigator){navigator.serviceWorker.register('./service-worker.js').catch(()=>{})}
