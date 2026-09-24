@@ -266,7 +266,8 @@ const parse=pages=>parseSurvivorPages(pages,{season:2026});
   assert.deepEqual(besideBlank.review.blankEntrants.map(x=>x.label),['Blank One']);assert.deepEqual(besideBlank.review.detachedRows.map(x=>x.label),['note']);
   const symbol=parse(base([at(700,[[20,'*']]),at(688,[[20,'—']])]));
   assert.deepEqual(symbol.errors,[]);assert.equal(symbol.config.competitionSize,4);
-  assert(symbol.review.ignoredRows.some(x=>x.text==='*'&&x.reason==='row without a participant name'));
+  assert(symbol.review.ignoredRows.some(x=>x.text==='*'&&x.reason==='name-column text with no letter or digit'));
+  assert.deepEqual(symbol.review.symbolRows.map(x=>x.label),['*','—']);assert.deepEqual(symbol.review.detachedRows,[]);
   const wide={text:'Week 1 2 3 4',y:760,rowIndex:0,parts:[{x:116,text:'Week'},{x:167.2,text:'1'},{x:207.2,text:'2'},{x:247.2,text:'3'},{x:287.2,text:'4'}]};
   const left=parse([{pageNumber:1,rows:[wide,...[['D.C.','PIT','SF'],['DJS','LV','SF'],['Thaddius','LAC',null],['Alpha','JAX','BAL']].map(([n,a,b],i)=>at(748-12*i,[[20,n],[152,a],...(b?[[192,b]]:[])]))]}]);
   assert.deepEqual(left.errors,[]);assert.deepEqual(left.config.trackedEntries.find(x=>x.id==='dc').picks,['PIT','SF']);
@@ -305,7 +306,13 @@ const parse=pages=>parseSurvivorPages(pages,{season:2026});
   for(const name of ['*','—','🏈🏈']){
     const r=parse(base([at(700,[[20,name]])]));
     assert.deepEqual(r.errors,[],name);assert.equal(r.config.competitionSize,4,name);
-    assert.deepEqual(r.review.detachedRows,[{page:1,label:name}],name);
+    assert.deepEqual(r.review.symbolRows,[{page:1,label:name}],name);assert.deepEqual(r.review.detachedRows,[],name);
+  }
+  // R5-TR-3: a symbol-only "name" next to Week picks is not a participant name: the row fails closed like an unnamed
+  // pick row instead of being counted as an entrant.
+  for(const name of ['*','🏈','—']){
+    const r=parse(base([at(700,[[20,name],[151,'KC'],[184,'NE']])]));
+    assert(r.errors.includes('Page 1: Week-column team text KC NE has no participant name'),`${name}: ${r.errors.join(' | ')}`);
   }
   // P4-PARSER-2: stray text grouped into a participant row through the (first-listed) pick baseline puts the row's name
   // text on two baselines; the row's name baseline is then not trusted, and the real blank entrant below still counts.

@@ -73,7 +73,7 @@ const sameInstant=(a,b)=>Number.isFinite(Date.parse(a))&&Date.parse(a)===Date.pa
 const attemptLanded=(row,attempt)=>!!row&&row.revision===attempt.revision&&row.source_sha256===attempt.digest&&sameInstant(row.updated_at,attempt.ts);
 
 function refreshGuard(c){
-  c.guard=survivorPublishGuard(c.config,{resultsByWeek:c.verification.resultsByWeek,currentGames:c.verification.weeks.find(w=>w.week===c.config.week)?.games||null,published:c.db?{checked:true,rows:c.db.rows}:{checked:false},detachedRows:c.review.detachedRows,unanchoredRows:c.review.unanchoredRows,contextUnexposed:c.verification.contextUnexposed});
+  c.guard=survivorPublishGuard(c.config,{resultsByWeek:c.verification.resultsByWeek,currentGames:c.verification.weeks.find(w=>w.week===c.config.week)?.games||null,published:c.db?{checked:true,rows:c.db.rows}:{checked:false},detachedRows:c.review.detachedRows,unanchoredRows:c.review.unanchoredRows,symbolRows:c.review.symbolRows,contextUnexposed:c.verification.contextUnexposed});
   if(c===candidate)renderCandidate();
 }
 async function checkPublished(target){

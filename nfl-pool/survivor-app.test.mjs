@@ -9,7 +9,9 @@ assert(source.includes(from),'harness expects the survivor-math import');
 const patched=source.replace(from,`from '${new URL('./survivor-math.js?v=4',import.meta.url).href}';`);
 let instance=0;
 // Fast timers: the view's 15 s score-feed time limit elapses in 5 ms here; short timers are unchanged.
-const realSetTimeout=globalThis.setTimeout;globalThis.setTimeout=(fn,ms,...a)=>realSetTimeout(fn,ms>=10000?5:ms,...a);
+// The long delays requested are recorded so the real time limit can be checked against the real refresh interval.
+const realSetTimeout=globalThis.setTimeout,longTimeouts=[];globalThis.setTimeout=(fn,ms,...a)=>{if(ms>=10000)longTimeouts.push(ms);return realSetTimeout(fn,ms>=10000?5:ms,...a)};
+let refreshIntervalMs=null;
 
 const W1=[['PIT','CLE'],['LV','NE'],['KC','LAC'],['JAX','CAR'],['ARI','ATL'],['BAL','BUF'],['CHI','CIN'],['DAL','DEN'],['DET','GB'],['HOU','IND'],['LAR','MIA'],['MIN','NO'],['NYG','NYJ'],['PHI','SEA'],['SF','TB'],['TEN','WAS']];
 const W2=[['SF','ARI'],['ATL','BAL'],['BUF','CAR'],['CHI','CIN'],['CLE','DAL'],['DEN','DET'],['GB','HOU'],['IND','JAX'],['KC','LV'],['LAC','LAR'],['MIA','MIN'],['NE','NO'],['NYG','NYJ'],['PHI','PIT'],['SEA','TB'],['TEN','WAS']];
@@ -32,7 +34,7 @@ async function view(feeds){
   globalThis.document={getElementById:$,body:{dataset:{view:'survivor'}}};
   globalThis.location={href:'https://example.test/nfl-pool/?view=survivor',search:'?view=survivor'};
   globalThis.history={state:null,replaceState(){}};
-  let tick=null;globalThis.setInterval=fn=>{tick=fn;return 0};
+  let tick=null;globalThis.setInterval=(fn,ms)=>{tick=fn;refreshIntervalMs=ms;return 0};
   const token='x.'+Buffer.from(JSON.stringify({exp:Math.floor(Date.now()/1000)+3600})).toString('base64url')+'.y';
   globalThis.fetch=async url=>{
     const u=new URL(url);
@@ -119,11 +121,14 @@ async function view(feeds){
   assert.deepEqual(v2.seen.filter(w=>w<=2).sort(),[1,2]);
   assert.equal(v2.$('svFeed').textContent,'LIVE · 2 TEAM RESULTS UNVERIFIED');assert.match(v2.row('DJS'),/ALIVE/);
 }
-// The score-feed time limit must stay below the refresh interval (the fast timers above cannot check this).
+// The score-feed time limit actually used must stay below the refresh interval actually scheduled.
 {
-  const limit=Number(source.match(/SCORE_FEED_TIMEOUT_MS=(\d+)/)?.[1]),interval=Number(source.match(/setInterval\([^\n]*?,(\d+)\);\s*$/m)?.[1]);
-  assert(Number.isFinite(limit)&&Number.isFinite(interval),'time limit and refresh interval found');
-  assert(limit>0&&limit<interval,`score-feed time limit ${limit} ms must be below the ${interval} ms refresh interval`);
+  longTimeouts.length=0;
+  const v=await view({1:week(W1,1),2:week(W2,2),3:week(W3,3)});
+  assert.equal(refreshIntervalMs,20000,'refresh interval');
+  assert(longTimeouts.length>0,'score requests are time-limited');
+  assert(Math.max(...longTimeouts)<refreshIntervalMs,`score-feed time limit ${Math.max(...longTimeouts)} ms must be below the ${refreshIntervalMs} ms refresh interval`);
+  assert.match(v.row('D.C.'),/ALIVE/);
 }
 // A hung refresh of an unsettled earlier week times out on its own: its cached results stay, and the current week
 // still updates (a hung current week is reported as unavailable instead of silently stale).

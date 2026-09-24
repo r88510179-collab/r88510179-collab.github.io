@@ -323,4 +323,14 @@ const guardFor=(cfg,opts={})=>survivorPublishGuard(cfg,{resultsByWeek:verified.r
   assert.equal(guardFor(sheet,{published:published(lockedRow(already))}).reasons.some(r=>r.startsWith('D.C. is newly OUT')),false);
 }
 
+// ---- Round-2c: symbol-only name-column rows are described accurately and always need confirmation.
+{
+  const complete=structuredClone(config);complete.fieldEntries[243].picks[1]='SF';complete.currentWeekEntryCount=161;
+  const g=guardFor(complete,{symbolRows:[{page:1,label:'*'},{page:2,label:'🏈🏈'}]});
+  assert.equal(g.requiresConfirmation,true);
+  assert(g.reasons.includes('2 name-column rows have no letter or digit and were NOT counted as entrants: "*" (page 1), "🏈🏈" (page 2). If any is a real entrant, do not publish.'),g.reasons.join(' | '));
+  assert.equal(g.reasons.some(r=>r.includes('physically separated')),false);
+  assert.match(g.confirmText,/The 2 rows without a letter or digit listed above are not entrants\.$/);
+}
+
 console.log('survivor schedule verification, bye/absent-team publication, and partial-week guard regressions passed');

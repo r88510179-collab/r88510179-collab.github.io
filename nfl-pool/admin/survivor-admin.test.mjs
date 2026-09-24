@@ -102,7 +102,7 @@ async function boot({signedIn=true,rows=[],sheets={}}={}){
   const choose=name=>{$('file').files=[new File([name],name,{type:'application/pdf'})];$('file').dispatch('change')};
   return{$,db,net,choose,parse:()=>$('parseBtn').onclick(),publish:()=>$('publishBtn').onclick()};
 }
-const sheets={'week2.pdf':sheetItems(SHEET),'week2-complete.pdf':sheetItems(COMPLETE),'other.pdf':sheetItems(COMPLETE),'blank-page.pdf':[sheetItems(COMPLETE),[item('Zed Blank',20,760),item('Zoe Blank',20,748)]]};
+const sheets={'week2.pdf':sheetItems(SHEET),'week2-complete.pdf':sheetItems(COMPLETE),'other.pdf':sheetItems(COMPLETE),'blank-page.pdf':[sheetItems(COMPLETE),[item('Zed Blank',20,760),item('Zoe Blank',20,748)]],'symbol.pdf':[...sheetItems(COMPLETE),item('*',20,748-12*6)]};
 
 // ---- 1. Happy path: validate, confirmation gate, publish exactly one locked row with the private-safe config.
 {
@@ -282,6 +282,16 @@ const sheets={'week2.pdf':sheetItems(SHEET),'week2-complete.pdf':sheetItems(COMP
   assert.match(t.$('publishChecks').innerHTML,/2 rows without picks on a page with no participant picks were counted as entrants \(OUT for no pick\): &quot;Zed Blank&quot; \(page 2\), &quot;Zoe Blank&quot; \(page 2\)/);
   assert.equal(t.$('confirmWrap').hidden,false);assert.equal(t.$('publishBtn').disabled,true);
   assert.match(t.$('confirmText').textContent,/The 2 rows counted from a page without picks are real entrants\.$/);
+}
+
+// ---- 15. A name-column row with no letter or digit is not counted and reaches the guard for explicit confirmation.
+{
+  const t=await boot({rows:[week1Row(COMPLETE)],sheets});
+  t.choose('symbol.pdf');await t.parse();
+  assert.match(t.$('reviewTitle').textContent,/6 entries/);
+  assert.match(t.$('publishChecks').innerHTML,/1 name-column row has no letter or digit and was NOT counted as an entrant: &quot;\*&quot; \(page 1\)/);
+  assert.equal(t.$('confirmWrap').hidden,false);assert.equal(t.$('publishBtn').disabled,true);
+  assert.match(t.$('confirmText').textContent,/The 1 row without a letter or digit listed above is not an entrant\.$/);
 }
 
 console.log('survivor publisher stale-context, confirmation, schedule, compare-and-swap, double-submit and write-outcome regressions passed');

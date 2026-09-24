@@ -83,7 +83,10 @@ function analyzeRow(row,contract){
   const parts=(row.parts||[]).map(p=>({x:Number(p.x),y:Number(p.y),text:clean(p.text)})).filter(p=>Number.isFinite(p.x)&&p.text).sort((a,b)=>a.x-b.x);
   const nameParts=parts.filter(p=>p.x<contract.nameCutoff),cells=pickCells(parts.filter(p=>p.x>=contract.nameCutoff),contract.gap);
   const sourceName=clean(nameParts.map(p=>p.text).join(' ')),meaningful=cells.some(c=>c.meaningful);
-  const kind=sourceName?(meaningful?'picks':'name-only'):(meaningful?'nameless':'noise');
+  // Text in the name column with no letter or digit is not a participant name: next to picks the row is treated as
+  // unnamed (fails closed on team codes), and on its own it is a 'symbol' row that is surfaced, never counted.
+  const named=/[\p{L}\p{N}]/u.test(sourceName);
+  const kind=named?(meaningful?'picks':'name-only'):(meaningful?'nameless':sourceName?'symbol':'noise');
   // Rows are placed on the table grid by their name baseline: pick text may sit ~1.8pt lower and may come first in the
   // PDF item order, so the grouped row's y is not a stable grid position.
   // Name text on different baselines means stray text was grouped into the row: its name baseline is then untrusted.
@@ -152,7 +155,7 @@ function participantRegion(rows,contract,review,errors){
     if(a.kind==='noise')continue;
     if(/^suicide pool$/i.test(a.sourceName)||/^week$/i.test(a.sourceName)){ignore(row,'sheet title or label');continue}
     // A row with no letter or digit is never an entrant, but it is surfaced for confirmation rather than dropped silently.
-    if(a.kind==='name-only'&&!/[\p{L}\p{N}]/u.test(a.sourceName)){ignore(row,'row without a participant name');review.detachedRows.push({page:row.pageNumber??null,label:a.sourceName});continue}
+    if(a.kind==='symbol'){ignore(row,'name-column text with no letter or digit');review.symbolRows.push({page:row.pageNumber??null,label:a.sourceName});continue}
     region.push(a);
   }
   const model=columnModel(region,contract);
@@ -211,7 +214,7 @@ function participantRegion(rows,contract,review,errors){
 }
 
 export function parseSurvivorPages(pages,{season=2026,filename='survivor.pdf'}={}){
-  const errors=[],rows=[],review={blankEntrants:[],ignoredRows:[],detachedRows:[],unanchoredRows:[]};
+  const errors=[],rows=[],review={blankEntrants:[],ignoredRows:[],detachedRows:[],unanchoredRows:[],symbolRows:[]};
   for(const page of pages||[])for(const row of page.rows||[])rows.push({...row,kind:'pdf',pageNumber:page.pageNumber});
   const contract=headerContract(rows);
   if(!contract)return{errors:['Survivor Week header/columns could not be proven'],config:null,competitionSize:0,currentWeekEntryCount:0,review};
