@@ -300,21 +300,30 @@ function pdfTableBoundary(sourceRows,matchups){
   }
   if(anchorRuns.some(run=>!acceptedRuns.has(run)))issues.push('Tracked entries do not form one continuous PDF participant-table chain');
   const accepted=new Set();for(const run of acceptedRuns)for(const record of run.records)accepted.add(sourceRowKey(record.row));
-  let edgeDamage=false;
-  for(const run of acceptedRuns){
-    const pageRecords=pageMap.get(run.page)||[];
-    for(const [start,step,edge] of [[run.startPos-1,-1,run.firstEvidence],[run.endPos+1,1,run.lastEvidence]]){
-      let evidence=edge;
-      for(let pos=start;pos>=0&&pos<pageRecords.length;pos+=step){
-        const record=pageRecords[pos],gap=pdfRowGap(evidence,record);
-        if(!spacing||!Number.isFinite(gap)||gap<=0||gap>spacing.maxGap)break;
-        if(record.sparseTableEvidence){evidence=record;continue}
-        if(pdfParticipantShapedRow(record.row,ref,gameCount))edgeDamage=true;
-        break;
+  const acceptedPages=new Set([...acceptedRuns].map(run=>run.page));
+  const rowNearTop=record=>{const y=Number(record?.row?.y);return !!edgeBand&&Number.isFinite(y)&&documentTopY-y<=edgeBand};
+  const rowNearBottom=record=>{const y=Number(record?.row?.y);return !!edgeBand&&Number.isFinite(y)&&y>=0&&y<=edgeBand};
+  // Walk outward from a proven run edge through physically continuous table rows (sparse continuity rows, a repeated
+  // header in the page's top band, and at most one page break when the table meets the physical page edge next to a
+  // page without a proven run); the first other row reached must not be participant-shaped.
+  const edgeRowIsDamaged=(page,pos,step,evidence)=>{
+    let crossed=false,crossing=false;
+    for(;;){
+      const pageRecords=pageMap.get(page)||[];
+      if(pos<0||pos>=pageRecords.length){
+        if(crossed||acceptedPages.has(page+step)||!pageMap.has(page+step)||!(step>0?rowNearBottom(evidence):rowNearTop(evidence)))return false;
+        page+=step;pos=step>0?0:pageMap.get(page).length-1;crossed=crossing=true;continue;
       }
+      const record=pageRecords[pos],gap=pdfRowGap(evidence,record);
+      if(crossing?!(step>0?rowNearTop(record):rowNearBottom(record)):!(spacing&&Number.isFinite(gap)&&gap>0&&gap<=spacing.maxGap))return false;
+      crossing=false;
+      if(record.sparseTableEvidence||(rowNearTop(record)&&pdfHeaderFingerprint(record.row,ref))){evidence=record;pos+=step;continue}
+      return pdfParticipantShapedRow(record.row,ref,gameCount);
     }
+  };
+  if([...acceptedRuns].some(run=>edgeRowIsDamaged(run.page,run.startPos-1,-1,run.firstEvidence)||edgeRowIsDamaged(run.page,run.endPos+1,1,run.lastEvidence))){
+    issues.push('Participant-shaped PDF row adjoining the proven regular participant table could not be validated');
   }
-  if(edgeDamage)issues.push('Participant-shaped PDF row adjoining the proven regular participant table could not be validated');
   const outside=records.filter(r=>{const entry=r.structural&&anonymousParticipantRow(r.row.text,matchups);return entry&&!trackedTargetForName(entry.sourceName)&&!accepted.has(sourceRowKey(r.row))});
   if(outside.length)issues.push('Participant-shaped PDF row exists outside the proven regular participant table');
   return{accepted,records,issues};
