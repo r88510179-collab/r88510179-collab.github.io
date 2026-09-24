@@ -41,4 +41,6 @@ test('payload shape is revalidated in Postgres for Pickem and Survivor',()=>{
   assert.match(m2,/p_pool_type='survivor'/);
   assert.match(m2,/team_already_used|s\.payload->>'team'=v_team/);
   assert.match(m2,/invalid_payload/);
+  assert.match(m2,/COALESCE\(jsonb_typeof\(p_payload\),'\'\'\)/);
+  assert.match(m2,/count\(DISTINCT g->>'id'\)/);
 });

@@ -358,11 +358,16 @@ DECLARE
   v_week integer;
   v_season_id uuid;
 BEGIN
-  IF jsonb_typeof(p_payload)<>'object' THEN RETURN false; END IF;
+  IF p_payload IS NULL OR COALESCE(jsonb_typeof(p_payload),'')<>'object' THEN RETURN false; END IF;
 
   IF p_pool_type='pickem' THEN
-    IF jsonb_typeof(p_week_config->'games')<>'array'
-       OR jsonb_typeof(p_payload->'picks')<>'object'
+    IF COALESCE(jsonb_typeof(p_week_config->'games'),'')<>'array'
+       OR COALESCE(jsonb_typeof(p_payload->'picks'),'')<>'object'
+    THEN RETURN false; END IF;
+
+    IF (SELECT count(*) FROM jsonb_array_elements(p_week_config->'games'))=0
+       OR (SELECT count(*) FROM jsonb_array_elements(p_week_config->'games'))
+          <> (SELECT count(DISTINCT g->>'id') FROM jsonb_array_elements(p_week_config->'games') g)
     THEN RETURN false; END IF;
 
     IF EXISTS (
@@ -416,7 +421,7 @@ BEGIN
   IF v_uid IS NULL THEN RAISE EXCEPTION 'auth_required'; END IF;
   IF p_source NOT IN ('participant','commissioner_import','commissioner_manual')
   THEN RAISE EXCEPTION 'invalid_source'; END IF;
-  IF jsonb_typeof(p_payload)<>'object' OR octet_length(p_payload::text)>20000
+  IF p_payload IS NULL OR COALESCE(jsonb_typeof(p_payload),'')<>'object' OR octet_length(p_payload::text)>20000
   THEN RAISE EXCEPTION 'invalid_payload'; END IF;
 
   SELECT p.tenant_id,e.owner_auth_user_id,w.status,w.opens_at,w.deadline_at,p.pool_type,w.config
@@ -728,14 +733,20 @@ GRANT EXECUTE ON FUNCTION public.pool_platform_commissioner_context(text) TO aut
     IF EXISTS (SELECT 1 FROM jsonb_object_keys(p_payload) k WHERE k<>'team')
     THEN RETURN false; END IF;
     v_team:=NULLIF(p_payload->>'team','');
-    IF v_team IS NULL OR jsonb_typeof(p_week_config->'games')<>'array'
+    IF v_team IS NULL OR COALESCE(jsonb_typeof(p_week_config->'games'),'')<>'array'
     THEN RETURN false; END IF;
 
-    IF NOT EXISTS (
-      SELECT 1 FROM jsonb_array_elements(p_week_config->'games') g
-      WHERE COALESCE(NULLIF(g->'away'->>'key',''),NULLIF(g->>'away',''))=v_team
-         OR COALESCE(NULLIF(g->'home'->>'key',''),NULLIF(g->>'home',''))=v_team
-    ) THEN RETURN false; END IF;
+    IF (
+      SELECT count(*)
+      FROM (
+        SELECT COALESCE(NULLIF(g->'away'->>'key',''),NULLIF(g->>'away','')) AS team
+        FROM jsonb_array_elements(p_week_config->'games') g
+        UNION ALL
+        SELECT COALESCE(NULLIF(g->'home'->>'key',''),NULLIF(g->>'home','')) AS team
+        FROM jsonb_array_elements(p_week_config->'games') g
+      ) teams
+      WHERE team=v_team
+    )<>1 THEN RETURN false; END IF;
 
     SELECT w.week,w.season_id INTO v_week,v_season_id
     FROM public.pool_platform_weeks w WHERE w.id=p_week_id;

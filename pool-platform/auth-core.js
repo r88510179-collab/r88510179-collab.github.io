@@ -35,5 +35,7 @@ export function authErrorMessage(code){
   if(raw.includes('week_not_open'))return'This week is not open for submissions.';
   if(raw.includes('entry_not_owned'))return'You do not own this pool entry.';
   if(raw.includes('commissioner_required'))return'Commissioner access is required.';
+  if(raw.includes('invalid_payload'))return'These picks do not match the configured games or Survivor rules.';
+  if(raw.includes('invalid_entry_week'))return'This entry does not belong to the selected week.';
   return raw||'The request could not be completed.';
 }

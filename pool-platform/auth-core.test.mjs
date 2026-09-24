@@ -27,3 +27,9 @@ test('backend conflicts become clear user copy',()=>{
   assert.match(authErrorMessage('source_conflict:commissioner_import'),/commissioner/i);
   assert.match(authErrorMessage('invite_email_mismatch'),/different email/i);
 });
+
+
+test('backend validation errors remain actionable',()=>{
+  assert.match(authErrorMessage('invalid_payload'),/configured games|Survivor rules/i);
+  assert.match(authErrorMessage('invalid_entry_week'),/selected week/i);
+});
