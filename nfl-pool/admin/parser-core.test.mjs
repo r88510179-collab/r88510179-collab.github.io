@@ -1160,6 +1160,19 @@ async function bootAdmin(){
   assert.match(t.$('message').textContent,/changed before publishing completed/);
 }
 {
+  // ADMIN 4j — no path changes the frozen count while a publish is in flight, not even a read of the sheet started then
+  // (its button is disabled): the held write commits the validated count 6, and the field and the review show 6.
+  const t=await bootAdmin();
+  await t.count('6');await t.choose('six.pdf');await t.parse();
+  const gate=adminDeferred();t.db.writeGate=gate;
+  const pending=t.publish();await adminUntil(()=>t.db.writeGate===null,'the publish dispatches its write');
+  t.$('totalEntries').value='7';const read=t.parse();
+  gate.resolve();await pending;await read;await adminFlush();
+  assert.equal(t.db.rows.length,1);assert.equal(t.db.rows[0].config.competitionSize,6);
+  assert.equal(t.$('totalEntries').value,'6','the field shows the frozen count');
+  assert.match(t.$('validation').innerHTML,/Full-field regular Pick'em data validated · 6 entries/);
+}
+{
   // ADMIN 5/6 — changing the file or the season still invalidates the candidate.
   const t=await bootAdmin();
   await t.count('6');await t.choose('six.pdf');await t.parse();
