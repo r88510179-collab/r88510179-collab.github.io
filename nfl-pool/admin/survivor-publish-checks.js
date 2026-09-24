@@ -96,10 +96,10 @@ function eliminationLabel(state){
   if(state.type==='repeat')return `repeating ${state.pick} in Week ${state.eliminatedWeek}`;
   return `no Week ${state.eliminatedWeek} pick`;
 }
-// No-pick eliminations per week (through `weeks`) that a configuration's histories produce under verified results.
-function noPickOutsByWeek(config,weeks,resultsByWeek){
+// No-pick eliminations per week (through `weeks`) that a list of entries produces under verified results.
+function noPickOutsByWeek(entries,weeks,resultsByWeek){
   const out=new Map();
-  for(const entry of entriesOf(config)){
+  for(const entry of entries||[]){
     const state=survivorEntryState(entry,weeks-1,resultsByWeek);
     if(state.type==='no-pick'&&state.eliminatedWeek<=weeks)out.set(state.eliminatedWeek,(out.get(state.eliminatedWeek)||0)+1);
   }
@@ -116,10 +116,10 @@ export function survivorPublishGuard(config,{resultsByWeek=[],currentGames=null,
   const locked=rows.filter(r=>r.status==='locked').sort((a,b)=>a.week-b.week);
   const prior=locked.filter(r=>r.week<W).pop()||null,P=prior?prior.week:0,existing=rows.find(r=>r.week===W)||null;
   const validFor=(row,week)=>!!row?.config&&!validateSurvivorConfig(row.config).length&&row.config.season===config.season&&row.config.week===week;
-  const existingValid=validFor(existing,W),priorValid=validFor(prior,P);
+  const existingValid=validFor(existing,W),priorValid=validFor(prior,P),existingKind=existing?.status==='locked'?'published':'draft';
   // Weeks already on the published record: through the latest published week before W, or through W-1 when this
-  // replaces a published Week W whose histories cover them.
-  const covered=existingValid?Math.max(P,W-1):P;
+  // replaces a published (locked) Week W whose histories cover them. Draft rows are never public, so they cover nothing.
+  const existingCovers=existingValid&&existing.status==='locked',covered=existingCovers?Math.max(P,W-1):P;
   if(published?.checked===true)facts.push(locked.length?`Published Survivor weeks visible for ${config.season}: ${locked.map(r=>r.week).join(', ')}.`:`No published Survivor weeks are visible for ${config.season}.`);
   if(contextUnexposed.length)facts.push(`The NFL feed did not identify its season/week for ${listWeeks(contextUnexposed)}; those games were matched by team structure only.`);
 
@@ -166,10 +166,21 @@ export function survivorPublishGuard(config,{resultsByWeek=[],currentGames=null,
   // Blanks that this sheet introduces into weeks already on the published record are new no-pick eliminations too.
   const newlyBlank=(cfg,weeks,label)=>{
     if(weeks<1)return;
-    const sheet=noPickOutsByWeek(config,weeks,resultsByWeek),before=noPickOutsByWeek(cfg,weeks,resultsByWeek);
+    // Tracked entries have stable ids, so each one is compared exactly.
+    const trackedNew=new Map();
+    for(const tracked of config.trackedEntries||[]){
+      const now=survivorEntryState(tracked,weeks-1,resultsByWeek);
+      if(now.type!=='no-pick'||now.eliminatedWeek>weeks)continue;
+      const was=(cfg.trackedEntries||[]).find(x=>x.id===tracked.id),before=was?survivorEntryState(was,weeks-1,resultsByWeek):null;
+      if(before?.type==='no-pick'&&before.eliminatedWeek===now.eliminatedWeek)continue;
+      if(!trackedNew.has(now.eliminatedWeek))trackedNew.set(now.eliminatedWeek,[]);trackedNew.get(now.eliminatedWeek).push(tracked.displayName);
+    }
+    for(const [w,names] of [...trackedNew].sort((a,b)=>a[0]-b[0])){outsByWeek.set(w,(outsByWeek.get(w)||0)+names.length);reasons.push(`${names.join(', ')} ${names.length===1?'is':'are'} newly OUT (no pick) in Week ${w} compared with ${label}.`)}
+    // Anonymous entries have no stable identity: compare per-week no-pick totals.
+    const sheet=noPickOutsByWeek(config.fieldEntries,weeks,resultsByWeek),before=noPickOutsByWeek(cfg.fieldEntries,weeks,resultsByWeek);
     for(const [w,n] of sheet){const extra=n-(before.get(w)||0);if(extra>0){outsByWeek.set(w,(outsByWeek.get(w)||0)+extra);reasons.push(`${plural(extra,'more entry is','more entries are')} OUT (no pick) in Week ${w} than in ${label}.`)}}
   };
-  if(published?.checked===true&&W>1&&!existingValid){
+  if(published?.checked===true&&W>1&&!existingCovers){
     if(!prior)reasons.push(`No published Survivor week before Week ${W} exists to compare this sheet against.`);
     else{
       if(P<W-1)reasons.push(`Survivor ${weekSpan(P+1,W-1)} ${P+1===W-1?'has':'have'} never been published; this sheet becomes the first published record of ${P+1===W-1?'that week':'those weeks'}.`);
@@ -178,14 +189,14 @@ export function survivorPublishGuard(config,{resultsByWeek=[],currentGames=null,
     }
   }
   if(existing){
-    const label=`published Week ${W} revision ${existing.revision}`;
-    if(!existingValid)reasons.push(`Published Week ${W} revision ${existing.revision} could not be validated for comparison.`);
+    const label=`${existingKind} Week ${W} revision ${existing.revision}`;
+    if(!existingValid)reasons.push(`${label[0].toUpperCase()+label.slice(1)} could not be validated for comparison.`);
     else{
       const cfg=existing.config,issues=compareToPublished(config,cfg,W,label),removed=removedCurrentPicks(config,cfg,W);
       if(removed)issues.push(`${plural(removed,`Week ${W} pick`,`Week ${W} picks`)} in ${label} ${removed===1?'is':'are'} blank in this sheet.`);
       if(cfg.currentWeekEntryCount>config.currentWeekEntryCount)issues.push(`${label[0].toUpperCase()+label.slice(1)} has ${cfg.currentWeekEntryCount} Week ${W} picks; this sheet has only ${config.currentWeekEntryCount}.`);
       if(issues.length)reasons.push(`This replaces ${label}:`,...issues);else facts.push(`This sheet is identical to ${label} (entries and ${weekSpan(1,W)} pick histories).`);
-      newlyBlank(cfg,W-1,label);
+      if(existingCovers)newlyBlank(cfg,W-1,label);
     }
   }
   const later=locked.filter(r=>r.week>W).map(r=>r.week);
@@ -199,7 +210,7 @@ export function survivorPublishGuard(config,{resultsByWeek=[],currentGames=null,
     reasons.push(`${plural(unanchoredRows.length,'row without picks','rows without picks')} on a page with no participant picks ${unanchoredRows.length===1?'was':'were'} counted as ${unanchoredRows.length===1?'an entrant':'entrants'} (OUT for no pick): ${shown}. If any is not a real entrant, do not publish.`);
   }
   const noPickOuts=[...outsByWeek.values()].reduce((a,b)=>a+b,0),maybeNoPickOuts=[...maybeByWeek.values()].reduce((a,b)=>a+b,0);
-  const replacing=existing?`, replacing published Week ${W} revision ${existing.revision}`:'';
+  const replacing=existing?`, replacing ${existingKind} Week ${W} revision ${existing.revision}`:'';
   const separated=detachedRows?.length?` The ${plural(detachedRows.length,'separated row','separated rows')} listed above ${detachedRows.length===1?'is not an entrant':'are not entrants'}.`:'';
   const unanchored=unanchoredRows?.length?` The ${plural(unanchoredRows.length,'row','rows')} counted from a page without picks ${unanchoredRows.length===1?'is a real entrant':'are real entrants'}.`:'';
   const outs=noPickOuts||maybeNoPickOuts?` Publishing shows ${plural(noPickOuts,'entry','entries')} OUT for no pick${noPickOuts?` (${perWeekText(outsByWeek)})`:''}${maybeNoPickOuts?`, and up to ${maybeNoPickOuts} more once earlier results are final (${perWeekText(maybeByWeek)})`:''}.`:'';

@@ -289,4 +289,38 @@ const guardFor=(cfg,opts={})=>survivorPublishGuard(cfg,{resultsByWeek:verified.r
   assert.match(g.confirmText,/The 1 row counted from a page without picks is a real entrant\.$/);
 }
 
+// ---- Round-2 regressions.
+{
+  // G2-1: a draft Week-W row is never published history; only a locked Week W covers earlier weeks.
+  const blanked=structuredClone(config);blanked.fieldEntries[100].picks=[null,null];blanked.currentWeekEntryCount--;
+  const draft={...lockedRow(blanked,4),status:'draft'};
+  const withDraft=guardFor(blanked,{published:published(lockedRow(week1Of(config)),draft)});
+  assert.equal(withDraft.coveredThrough,1);assert.equal(withDraft.requiresConfirmation,true);
+  assert(withDraft.reasons.includes('1 more entry is OUT (no pick) in Week 1 than in published Week 1 (revision 1).'),withDraft.reasons.join(' | '));
+  assert(withDraft.facts.includes('This sheet is identical to draft Week 2 revision 4 (entries and Weeks 1–2 pick histories).'));
+  assert.match(withDraft.confirmText,/replacing draft Week 2 revision 4\./);
+  const draftOnly=guardFor(blanked,{published:published(draft)});
+  assert.equal(draftOnly.coveredThrough,0);assert(draftOnly.reasons.includes('No published Survivor week before Week 2 exists to compare this sheet against.'));
+  assert(draftOnly.facts.includes('No published Survivor weeks are visible for 2026.'));
+  // an identical republish of a LOCKED Week 2 still needs no extra confirmation for its already-published blanks
+  const locked=guardFor(blanked,{published:published(lockedRow(blanked,4))});
+  assert.equal(locked.coveredThrough,1);assert.equal(locked.reasons.some(r=>/OUT \(no pick\) in Week 1/.test(r)),false,locked.reasons.join(' | '));
+}
+{
+  // G2-2: a tracked entry newly OUT for no pick in a published week is counted and named even when another blank is
+  // filled in the same week (offsetting totals).
+  const w1=week1Of(config);w1.fieldEntries[100].picks=[null];w1.currentWeekEntryCount--;
+  const sheet=structuredClone(config);sheet.trackedEntries[0].picks=[null,null];sheet.currentWeekEntryCount--;
+  const g=guardFor(sheet,{published:published(lockedRow(w1))});
+  assert(g.reasons.includes('D.C. is newly OUT (no pick) in Week 1 compared with published Week 1 (revision 1).'),g.reasons.join(' | '));
+  assert.equal(g.noPickOuts,2);assert.match(g.confirmText,/Publishing shows 2 entries OUT for no pick \(Week 1: 1, Week 2: 1\)\.$/);
+  // without an offsetting change the tracked entry is counted exactly once (never also as an anonymous total)
+  const once=guardFor(sheet);
+  assert.equal(once.noPickOuts,2);assert(once.reasons.includes('D.C. is newly OUT (no pick) in Week 1 compared with published Week 1 (revision 1).'));
+  assert.equal(once.reasons.some(r=>/more entr(y is|ies are) OUT \(no pick\) in Week 1/.test(r)),false,once.reasons.join(' | '));
+  // a tracked entry that was already OUT for no pick in the published week is not reported again
+  const already=structuredClone(week1Of(config));already.trackedEntries[0].picks=[null];already.currentWeekEntryCount--;
+  assert.equal(guardFor(sheet,{published:published(lockedRow(already))}).reasons.some(r=>r.startsWith('D.C. is newly OUT')),false);
+}
+
 console.log('survivor schedule verification, bye/absent-team publication, and partial-week guard regressions passed');
