@@ -883,7 +883,9 @@ class AdminEl{
   focus(){}
 }
 const adminFlush=async(n=8)=>{for(let i=0;i<n;i++)await new Promise(r=>setTimeout(r,0))};
+const adminUntil=async(ready,what)=>{for(let i=0;i<200&&!ready();i++)await new Promise(r=>setTimeout(r,0));assert(ready(),what)};
 const adminDeferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r});return{promise,resolve}};
+const PUBLISH_FROZEN='Publishing is in progress. Total pool entries cannot be changed until it finishes.';
 const FEED_TEAMS=[['CAR','ATL'],['NO','BAL'],['MIN','CHI'],['CIN','HOU'],['PIT','NE'],['GB','NYJ'],['CLE','TB'],['PHI','TEN'],['JAX','DEN'],['LV','LAC'],['SEA','ARI'],['WAS','DAL'],['MIA','SF'],['IND','KC'],['NYG','LAR']];
 const scheduleFeed={events:FEED_TEAMS.map(([away,home],i)=>({id:String(401+i),date:'2026-09-13T17:00:00Z',competitions:[{competitors:[{homeAway:'away',team:{abbreviation:away}},{homeAway:'home',team:{abbreviation:home}}]}]}))};
 function sheetPage(week,participantLines){
@@ -901,7 +903,7 @@ const ADMIN_SHEETS={
 let adminInstance=0;
 async function bootAdmin(){
   const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new AdminEl(id));return els.get(id)};
-  const db={session:{id:'admin-1',email:'djsmokke@gmail.com'},rows:[],log:[],readGate:null},net={gate:null};
+  const db={session:{id:'admin-1',email:'djsmokke@gmail.com'},rows:[],log:[],readGate:null,writeGate:null},net={gate:null};
   class Query{
     constructor(table){Object.assign(this,{table,op:'select',filters:[],row:null})}
     select(){return this}
@@ -912,6 +914,8 @@ async function bootAdmin(){
     then(ok,fail){return this.run().then(ok,fail)}
     async run(){
       if(this.op==='select'&&db.readGate){const gate=db.readGate;db.readGate=null;await gate.promise}
+      // A held write has been dispatched by the publisher; it commits only when the test releases it.
+      if(this.op!=='select'&&db.writeGate){const gate=db.writeGate;db.writeGate=null;await gate.promise}
       db.log.push(this.op);
       const match=r=>this.filters.every(([k,v])=>r[k]===v);
       if(this.op==='select')return{data:db.rows.filter(match).map(r=>structuredClone(r)),error:null};
@@ -958,6 +962,16 @@ async function bootAdmin(){
   await t.publish();
   const row=t.db.rows.find(r=>r.week===2);
   assert.equal(row.config.fullFieldReady,false);assert.equal(row.config.fieldEntries,undefined);assert.equal(row.config.participants.length,4);
+}
+{
+  // ADMIN 1b — reading the sheet reads and validates the field itself: a count the field shows without any input event
+  // (restored by the browser, say) is the count the read validates and a publish uses.
+  const t=await bootAdmin();
+  t.$('totalEntries').value='6';await t.choose('six.pdf');await t.parse();
+  assert.match(t.$('validation').innerHTML,/Full-field regular Pick'em data validated · 6 entries/);
+  assert.equal(t.$('publishBtn').disabled,false);
+  await t.publish();
+  assert.equal(t.db.rows.find(r=>r.week===2).config.competitionSize,6);
 }
 {
   // ADMIN 2 — the correct count validates the full field, and the published config carries only the anonymous allowlist.
@@ -1017,16 +1031,25 @@ async function bootAdmin(){
   assert.equal(t.$('message').textContent,'The selected file changed or is no longer validated. Read and validate it again before publishing.');
 }
 {
-  // ADMIN 4c — a count change while the publish is reading the database aborts it before any write.
+  // ADMIN 4c — publication inputs are frozen when the publish starts. A count edit while the publish is reading the
+  // database is rejected, not accepted: the field shows the validated count again at once, the publish snapshot stays
+  // valid, and the frozen count-6 snapshot publishes.
   const t=await bootAdmin();
   await t.count('6');await t.choose('six.pdf');await t.parse();
   const gate=adminDeferred();t.db.readGate=gate;
   const pending=t.publish();await adminFlush();
   assert.equal(t.db.readGate,null,'the publish is waiting on its database read');
-  t.$('totalEntries').value='7';await t.$('totalEntries').dispatch('input');
+  for(const type of ['input','change']){
+    t.$('totalEntries').value='7';await t.$('totalEntries').dispatch(type);
+    assert.equal(t.$('totalEntries').value,'6',`${type}: the rejected edit does not stay on screen`);
+    assert.equal(t.$('message').textContent,PUBLISH_FROZEN,type);
+    assert.equal(t.$('review').hidden,false,`${type}: the publish snapshot is not invalidated`);
+  }
   gate.resolve();await pending;await adminFlush();
-  assert.equal(t.writes(),0,'in-flight publish aborted');
-  assert.match(t.$('message').textContent,/changed before publishing completed/);
+  assert.equal(t.writes(),1,'the frozen snapshot publishes');
+  const row=t.db.rows.find(r=>r.week===2);
+  assert.equal(row.config.fullFieldReady,true);assert.equal(row.config.competitionSize,6);
+  assert.match(t.$('message').textContent,/Week 2 published and locked successfully/);
 }
 {
   // ADMIN 4d — a count change while a read is still verifying the schedule discards that read.
@@ -1039,6 +1062,102 @@ async function bootAdmin(){
   assert.equal(t.$('message').className,'notice info','the stale read ends quietly, not in an error');
   assert.match(t.$('message').textContent,/Total pool entries changed/);
   await t.publish();assert.equal(t.writes(),0);
+}
+{
+  // ADMIN 4e — the independent review's race. The insert is dispatched and held, then the count is edited to 7 by an
+  // input event and by a change event. A browser cannot cancel a dispatched write, so it is the edit that is refused: the
+  // field shows the frozen count again at once while the publish is still running, and the held write commits exactly
+  // the validated count-6 configuration. Once the publish has finished, the same edit is accepted and needs a new read.
+  const t=await bootAdmin();
+  await t.count('6');await t.choose('six.pdf');await t.parse();
+  const gate=adminDeferred();t.db.writeGate=gate;
+  const pending=t.publish();await adminUntil(()=>t.db.writeGate===null,'the publish dispatches its write');
+  assert.equal(t.db.rows.length,0,'the dispatched write is held');
+  for(const type of ['input','change']){
+    t.$('totalEntries').value='7';await t.$('totalEntries').dispatch(type);
+    assert.equal(t.$('totalEntries').value,'6',`${type}: the field is restored to the frozen count`);
+    assert.equal(t.$('message').textContent,PUBLISH_FROZEN,type);
+    assert.equal(t.$('busy').hidden,false,`${type}: the publish is still running`);assert.equal(t.$('totalEntries').disabled,true,type);
+    assert.equal(t.$('review').hidden,false,`${type}: the publish snapshot is not invalidated`);
+    assert.equal(t.db.rows.length,0,type);
+  }
+  gate.resolve();await pending;await adminFlush();
+  assert.equal(t.writes(),1);assert.equal(t.db.rows.length,1,'exactly one row');
+  const [row]=t.db.rows;
+  assert.equal(row.config.fullFieldReady,true);assert.equal(row.config.competitionSize,6);assert.equal(row.config.fieldEntries.length,2);
+  assert.match(t.$('message').textContent,/Week 2 published and locked successfully/);
+  assert.equal(t.$('totalEntries').value,'6');assert.equal(t.$('totalEntries').disabled,false,'editable again');
+  assert.equal(t.$('publishBtn').disabled,false,'the candidate is still the one validated at 6');
+  await t.count('7');
+  assert.equal(t.$('review').hidden,true);assert.equal(t.$('publishBtn').disabled,true);
+  assert.match(t.$('message').textContent,/Total pool entries changed/);
+  await t.publish();assert.equal(t.writes(),1,'no publish without revalidation');
+  await t.parse();
+  assert.match(t.$('validation').innerHTML,new RegExp(countMismatch(6,7)));
+}
+{
+  // ADMIN 4f — a raw value change with no event while the write is held is not an edit the publisher accepted: the frozen
+  // count-6 snapshot publishes, and the field is synchronized back to the authoritative count when the publish ends. A
+  // real edit afterwards is accepted normally.
+  const t=await bootAdmin();
+  await t.count('6');await t.choose('six.pdf');await t.parse();
+  const gate=adminDeferred();t.db.writeGate=gate;
+  const pending=t.publish();await adminUntil(()=>t.db.writeGate===null,'the publish dispatches its write');
+  t.$('totalEntries').value='7';
+  gate.resolve();await pending;await adminFlush();
+  assert.equal(t.db.rows.length,1);assert.equal(t.db.rows[0].config.competitionSize,6);
+  assert.match(t.$('message').textContent,/Week 2 published and locked successfully/);
+  assert.equal(t.$('totalEntries').value,'6','the field shows the authoritative count again');
+  assert.equal(t.$('publishBtn').disabled,false);
+  await t.count('7');
+  assert.equal(t.$('review').hidden,true);assert.equal(t.$('publishBtn').disabled,true);
+}
+{
+  // ADMIN 4g — the publish's own checks compare its snapshot with application state, never with the field: a raw value
+  // change while the publish reads the database does not redefine the publish, which completes at the frozen count.
+  const t=await bootAdmin();
+  await t.count('6');await t.choose('six.pdf');await t.parse();
+  const gate=adminDeferred();t.db.readGate=gate;
+  const pending=t.publish();await adminFlush();
+  assert.equal(t.db.readGate,null,'the publish is waiting on its database read');
+  t.$('totalEntries').value='7';
+  gate.resolve();await pending;await adminFlush();
+  assert.equal(t.writes(),1,'the frozen snapshot publishes');assert.equal(t.db.rows[0].config.competitionSize,6);
+  assert.equal(t.$('totalEntries').value,'6');
+}
+{
+  // ADMIN 4h — the same freeze for a tracked-only publish validated with a blank count. An edit to 282 while the write is
+  // held is rejected and the field is blank again; the frozen count stays blank and the tracked-only snapshot publishes.
+  // Afterwards 282 is accepted normally and needs a new read.
+  const t=await bootAdmin();
+  await t.choose('six.pdf');await t.parse();
+  const gate=adminDeferred();t.db.writeGate=gate;
+  const pending=t.publish();await adminUntil(()=>t.db.writeGate===null,'the publish dispatches its write');
+  t.$('totalEntries').value='282';await t.$('totalEntries').dispatch('input');
+  assert.equal(t.$('totalEntries').value,'','the field is blank again');
+  assert.equal(t.$('message').textContent,PUBLISH_FROZEN);
+  gate.resolve();await pending;await adminFlush();
+  assert.equal(t.db.rows.length,1);
+  const [row]=t.db.rows;
+  assert.equal(row.config.fullFieldReady,false);assert.equal(row.config.fieldEntries,undefined);assert.equal(row.config.participants.length,4);
+  assert.equal(t.$('totalEntries').value,'');assert.equal(t.$('publishBtn').disabled,false,'the candidate is still the one validated blank');
+  await t.count('282');
+  assert.equal(t.$('review').hidden,true);assert.equal(t.$('publishBtn').disabled,true);
+  await t.parse();
+  assert.match(t.$('validation').innerHTML,new RegExp(countMismatch(6,282)));
+}
+{
+  // ADMIN 4i — the pre-write checks still refuse a publish whose validated context is invalidated before its write is
+  // dispatched: a season change event while the publish reads the database leaves nothing written.
+  const t=await bootAdmin();
+  await t.count('6');await t.choose('six.pdf');await t.parse();
+  const gate=adminDeferred();t.db.readGate=gate;
+  const pending=t.publish();await adminFlush();
+  assert.equal(t.db.readGate,null,'the publish is waiting on its database read');
+  t.$('season').value='2025';await t.$('season').dispatch('change');
+  gate.resolve();await pending;await adminFlush();
+  assert.equal(t.writes(),0,'in-flight publish aborted before any write');
+  assert.match(t.$('message').textContent,/changed before publishing completed/);
 }
 {
   // ADMIN 5/6 — changing the file or the season still invalidates the candidate.
