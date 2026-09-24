@@ -65,12 +65,15 @@ function nearestColumns(x,columnXs){
 }
 
 // Text split into several PDF items inside one cell (e.g. "LA" + "C") is merged first; a cell is placed by its start x.
+// Continuation is measured from the cell's first item, so a split cell can never chain into the next column's text.
+// A fragment that turns an incomplete code into a team code (LA + C) completes its cell even in tight layouts.
 function pickCells(pickParts,gap){
   const cells=[];
   for(const part of pickParts){
-    const prev=cells[cells.length-1];
-    if(prev&&part.x-prev.lastX<=gap*0.7){prev.texts.push(part.text);prev.lastX=part.x;continue}
-    cells.push({x:part.x,lastX:part.x,texts:[part.text]});
+    const prev=cells[cells.length-1],distance=prev?part.x-prev.x:Infinity;
+    const completesCode=!!prev&&distance<=gap*0.9&&!normalizeSurvivorTeam(prev.texts.join(' '))&&!!normalizeSurvivorTeam([...prev.texts,part.text].join(' '));
+    if(prev&&(distance<=gap*0.7||completesCode)){prev.texts.push(part.text);continue}
+    cells.push({x:part.x,texts:[part.text]});
   }
   return cells.map(c=>{const text=clean(c.texts.join(' '));return{x:c.x,text,meaningful:MEANINGFUL.test(text)}});
 }

@@ -165,6 +165,16 @@ const parse=pages=>parseSurvivorPages(pages,{season:2026});
   }
 }
 
+{
+  // Split "LA" + "C" in a tight layout (11.9pt text in 24.5pt columns): the fragment completes its own cell and never
+  // chains into, or is binned as, the next Week column.
+  const tight={text:'Week 1 2 3 4',y:760,rowIndex:0,parts:[{x:116,text:'Week'},{x:159,text:'1'},{x:183.5,text:'2'},{x:208,text:'3'},{x:232.5,text:'4'}]};
+  const r=parse([{pageNumber:1,rows:[tight,
+    at(748,[[20,'D.C.'],[149,'PIT'],[176,'SF']]),at(736,[[20,'DJS'],[150,'LV'],[176,'SF']]),
+    at(724,[[20,'Thaddius'],[148.4,'LA'],[166.3,'C'],[176,'SF']]),at(712,[[20,'Alpha'],[150,'JAX'],[173,'BAL']])]}]);
+  assert.deepEqual(r.errors,[]);assert.deepEqual(r.config.trackedEntries.find(x=>x.id==='thaddeus').picks,['LAC','SF']);
+}
+
 // ================= Participant region / stray rows (requirement 6) =================
 {
   // Titles/legends above the Week header are outside the table; footers separated from the grid are not entrants.
@@ -240,3 +250,56 @@ const parse=pages=>parseSurvivorPages(pages,{season:2026});
 }
 
 console.log('survivor parser out-of-column, split-cell, participant-region, stray-row and no-pick-entrant regressions passed');
+
+
+// ================= Seeded property test: realistic generated sheets parse to their exact ground truth =================
+// Centered team codes (Helvetica-like widths), 8-12pt fonts, 24-40pt Week columns (text always fits its column),
+// 4-18 sheet weeks, 20-250 entries across pages with the header only on page 1, +-1.8pt baselines, split "LA"+"C"
+// items, blank-pick entrants anywhere, and a sheet title above the header.
+{
+  const TEAMS=['ARI','ATL','BAL','BUF','CAR','CHI','CIN','CLE','DAL','DEN','DET','GB','HOU','IND','JAX','KC','LV','LAC','LAR','MIA','MIN','NE','NO','NYG','NYJ','PHI','PIT','SEA','SF','TB','TEN','WAS'];
+  const EM={A:.667,B:.667,C:.722,D:.722,E:.667,F:.611,G:.778,H:.722,I:.278,J:.5,K:.667,L:.556,M:.833,N:.722,O:.778,P:.667,Q:.778,R:.722,S:.667,T:.611,U:.722,V:.667,W:.944,X:.667,Y:.667,Z:.611,' ':.278};
+  const width=(s,fs)=>[...s].reduce((a,c)=>a+(EM[c]??.556),0)*fs;
+  let seed=20260924;const rnd=()=>(seed=(seed*1103515245+12345)%2147483648)/2147483648;const pick=a=>a[Math.floor(rnd()*a.length)];
+  for(let t=0;t<150;t++){
+    const fs=8+rnd()*4,gap=Math.max(24+rnd()*16,fs*2.6),weeks=4+Math.floor(rnd()*15),cur=1+Math.floor(rnd()*Math.min(weeks,6)),n=20+Math.floor(rnd()*230);
+    const firstCenter=130+rnd()*40,centers=Array.from({length:weeks},(_,i)=>firstCenter+i*gap),nameX=15+rnd()*10,pitch=Math.max(fs*1.25,9+rnd()*6),perPage=40+Math.floor(rnd()*40);
+    const entries=Array.from({length:n},(_,i)=>({name:i<3?['D.C.','DJS','Thaddius'][i]:`Person ${i}`,picks:[]})).sort(()=>rnd()-0.5);
+    for(const e of entries){
+      const blank=rnd()<0.04,used=new Set();
+      for(let w=0;w<cur;w++){
+        if(blank||(w>0&&e.picks[w-1]===null)||(w===cur-1&&rnd()<0.15)){e.picks.push(null);continue}
+        let team=pick(TEAMS);while(used.has(team))team=pick(TEAMS);used.add(team);e.picks.push(team);
+      }
+    }
+    entries[0].picks[cur-1]=entries[0].picks[cur-1]||'KC';
+    const pages=[];let items=[],y=760,onPage=0;
+    items.push({str:'Suicide Pool',x:nameX,y:y+20},{str:'Week',x:nameX+60,y});
+    centers.forEach((c,i)=>items.push({str:String(i+1),x:c-width(String(i+1),fs)/2,y}));
+    y-=pitch;
+    for(const e of entries){
+      if(onPage>=perPage){pages.push(items);items=[];y=740;onPage=0}
+      const jitter=rnd()<0.5?0:-1.8;items.push({str:e.name,x:nameX,y});
+      e.picks.forEach((team,w)=>{
+        if(!team)return;
+        if(team==='LAC'&&rnd()<0.5){const s=centers[w]-width('LA C',fs)/2;items.push({str:'LA',x:s,y:y+jitter},{str:'C',x:s+width('LA ',fs),y:y+jitter})}
+        else items.push({str:team,x:centers[w]-width(team,fs)/2,y:y+jitter});
+      });
+      y-=pitch;onPage++;
+    }
+    pages.push(items);
+    const parsed=parseSurvivorPages(pages.map((its,i)=>({pageNumber:i+1,rows:groupSurvivorPdfTextItems(its.map(it=>({str:it.str,transform:[1,0,0,1,it.x,it.y]})))})),{season:2026,filename:'generated.pdf'});
+    const label=`generated sheet ${t} (fs ${fs.toFixed(1)}, gap ${gap.toFixed(1)}, ${weeks} weeks, ${n} entries, ${pages.length} pages)`;
+    assert.deepEqual(parsed.errors,[],label);
+    assert.equal(parsed.config.week,cur,label);
+    assert.equal(parsed.config.competitionSize,n,label);
+    assert.equal(parsed.config.currentWeekEntryCount,entries.filter(e=>e.picks[cur-1]).length,label);
+    const truth=new Map(entries.map(e=>[e.name,e.picks]));
+    for(const tracked of parsed.config.trackedEntries)assert.deepEqual(tracked.picks,truth.get({dc:'D.C.',djs:'DJS',thaddeus:'Thaddius'}[tracked.id]),label);
+    const expectedField=entries.filter(e=>!['D.C.','DJS','Thaddius'].includes(e.name)).map(e=>JSON.stringify(e.picks));
+    assert.deepEqual(parsed.config.fieldEntries.map(e=>JSON.stringify(e.picks)),expectedField,label);
+    assert.deepEqual(parsed.review.detachedRows,[],label);
+  }
+}
+
+console.log('survivor parser seeded realistic-sheet property test passed');
