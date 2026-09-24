@@ -581,6 +581,28 @@ function assertFieldReady(c,competitionSize){
   assertFieldFailsClosed(c);
 }
 {
+  // STEP 2 P1 — the table's last row spilling alone onto the next page (bare, or under a repeated header) cannot vanish.
+  const damaged='12345 1 3 5 7 9 11 13 15 17 19 21 23 25 27 44 0',header='Entry Pts W';
+  const page1=[...matchups,...tracked,anonA],y1=page1.map((_,i)=>i<matchups.length?760-i*12:24+(page1.length-1-i)*12);
+  for(const page2 of [[damaged],[header,damaged]]){
+    const c=parseDocumentGroups([
+      {week:2,lines:page1,sourceRows:rowsAt(page1,1,y1),pageNumber:1,pageFingerprint:'p1-spill-page-1'},
+      {week:2,lines:page2,sourceRows:applyRegularHeaderGeometry(rowsAt(page2,2,[760,748]),header),pageNumber:2,pageFingerprint:'p1-spill-page-2-'+page2.length}
+    ],{filename:'p1-spill.pdf',season:2026})[0];
+    assertFieldFailsClosed(c);
+  }
+}
+{
+  // STEP 2 P1 — a damaged first row at the bottom of the prior page, with the proven table starting at the next page top.
+  const page1=[...matchups,'12345 1 3 5 7 9 11 13 15 17 19 21 23 25 27 44 0'],page2=[...tracked,anonA];
+  const y1=page1.map((_,i)=>i<matchups.length?760-i*12:24);
+  const c=parseDocumentGroups([
+    {week:2,lines:page1,sourceRows:rowsAt(page1,1,y1),pageNumber:1,pageFingerprint:'p1-lead-page-1'},
+    {week:2,lines:page2,sourceRows:rowsAt(page2,2,[760,748,736,724,712]),pageNumber:2,pageFingerprint:'p1-lead-page-2'}
+  ],{filename:'p1-lead.pdf',season:2026})[0];
+  assertFieldFailsClosed(c);
+}
+{
   // STEP 2 P1 — sparse continuity evidence cannot hide a damaged numeric row after it (one and two sparse rows).
   const damaged='12345 1 3 5 7 9 11 13 15 17 19 21 23 25 27 44 0',sparse=text=>({text,parts:[{x:10,text:text.split(' ')[0]},{x:538,text:'15'}]});
   assertFieldFailsClosed(parseMixed([...matchups,...tracked,anonA,sparse('S1 15'),damaged],'p1-after-one-sparse'));
