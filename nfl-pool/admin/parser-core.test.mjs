@@ -433,6 +433,16 @@ function applyRegularHeaderGeometry(rows,headerText='Entry Pts W'){
   assert.deepEqual(c.errors,[]);
   assert.equal(c.config.fullFieldReady,false);
   assert.equal(c.config.fieldEntries,undefined);
+  assert(c.fullFieldIssues.some(x=>x.includes('failed anonymous pick validation')));
+}
+{
+  // P2-A positive — a legitimate all-digit participant name remains a competitor.
+  const numericName='12345 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 50 0';
+  const c=parse([...matchups,...tracked,anonA,numericName],{pageFingerprint:'numeric-name-valid-row'});
+  assert.deepEqual(c.errors,[]);
+  assert.deepEqual(c.fullFieldIssues,[]);
+  assert.equal(c.config.fullFieldReady,true);
+  assert.equal(c.config.competitionSize,6);
 }
 {
   // P2-B — a later unrelated Week label must not override the authoritative group Week hint.
@@ -462,6 +472,7 @@ function applyRegularHeaderGeometry(rows,headerText='Entry Pts W'){
   assert.deepEqual(c.errors,[]);
   assert.equal(c.config.fullFieldReady,false);
   assert.equal(c.config.fieldEntries,undefined);
+  assert(c.fullFieldIssues.some(x=>x.includes('outside the proven regular participant table')));
 }
 {
   // P2-D — a near matching header on the next page cannot bridge a prior participant run that ended mid-page.
@@ -482,6 +493,7 @@ function applyRegularHeaderGeometry(rows,headerText='Entry Pts W'){
   assert.deepEqual(c.errors,[]);
   assert.equal(c.config.fullFieldReady,false);
   assert.equal(c.config.fieldEntries,undefined);
+  assert(c.fullFieldIssues.some(x=>x.includes('outside the proven regular participant table')));
 }
 
 console.log('parser-core regular-table region, continuation, fail-closed field, duplicate, and privacy regressions passed');
