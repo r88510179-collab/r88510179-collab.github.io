@@ -40,10 +40,13 @@ export function survivorFeedContextError(payload,{season,week,seasonType=2}={}){
   return mismatch?`Week ${week} feed context mismatch: ${mismatch}`:null;
 }
 
+// A status name, where the feed provides one, must name a final (e.g. STATUS_FINAL, STATUS_FINAL_OVERTIME) and must not
+// name a halted game; unnamed finals are judged by completed/state alone.
+const nonFinalName=name=>name!==undefined&&name!==null&&(typeof name!=='string'||!/FINAL/i.test(name)||HALTED_STATUS.test(name));
 function finalStatusIssue(event,competition){
   const type=event?.status?.type||{},comp=competition?.status?.type;
-  if(type.state!=='post'||HALTED_STATUS.test(String(type.name||'')))return 'status';
-  if(comp&&(comp.completed===false||(typeof comp.state==='string'&&comp.state!=='post')||HALTED_STATUS.test(String(comp.name||''))))return 'status';
+  if(type.state!=='post'||nonFinalName(type.name))return 'status';
+  if(comp&&(comp.completed===false||(typeof comp.state==='string'&&comp.state!=='post')||nonFinalName(comp.name)))return 'status';
   return null;
 }
 

@@ -30,7 +30,7 @@ async function view(feeds){
   globalThis.document={getElementById:$,body:{dataset:{view:'survivor'}}};
   globalThis.location={href:'https://example.test/nfl-pool/?view=survivor',search:'?view=survivor'};
   globalThis.history={state:null,replaceState(){}};
-  globalThis.setInterval=()=>0;
+  let tick=null;globalThis.setInterval=fn=>{tick=fn;return 0};
   const token='x.'+Buffer.from(JSON.stringify({exp:Math.floor(Date.now()/1000)+3600})).toString('base64url')+'.y';
   globalThis.fetch=async url=>{
     const u=new URL(url);
@@ -42,8 +42,8 @@ async function view(feeds){
   };
   await import(`data:text/javascript;base64,${Buffer.from(patched+`\n//instance ${++instance}`).toString('base64')}`);
   await flush();
-  const tracked=$('svTracked').innerHTML,row=name=>tracked.split('survivor-tracked-row').find(s=>s.includes(`<b>${name}</b>`))||'';
-  return{$,row,seen};
+  const row=name=>$('svTracked').innerHTML.split('survivor-tracked-row').find(s=>s.includes(`<b>${name}</b>`))||'';
+  return{$,row,seen,feeds,refresh:async()=>{seen.length=0;tick();await flush()}};
 }
 
 // Well-formed feeds: production semantics are unchanged.
@@ -63,7 +63,7 @@ async function view(feeds){
   const v=await view({1:week(W1,1),2:bad,3:week(W3,3)});
   for(const name of ['D.C.','DJS']){assert.match(v.row(name),/PENDING/);assert.match(v.row(name),/Week 2 SF result unavailable: final score missing or invalid in feed/)}
   assert.match(v.row('Thaddeus'),/LAC lost in Week 1/);
-  assert.equal(v.$('svFeed').textContent,'LIVE · 2 TEAM RESULTS UNVERIFIED');assert.match(v.$('svFeed').className,/warn/);
+  assert.equal(v.$('svFeed').textContent,'LIVE · 1 TEAM RESULT UNVERIFIED');assert.match(v.$('svFeed').className,/warn/);
   assert.match(v.$('svDecisionEntries').innerHTML,/Waiting for the current week to settle/);
 }
 // Duplicate SF events: ambiguous, never first/last occurrence.
@@ -97,6 +97,25 @@ async function view(feeds){
   assert.match(v.row('D.C.'),/Week 1 PIT result unavailable/);
   assert.match(v.$('svDistribution').innerHTML,/Provisional · 2 entries are awaiting a verified earlier-week result/);
   assert.match(v.$('svSummaryNote').textContent,/Provisional/);
+}
+// An unpicked earlier-week game that never settles (canceled) is not a warning and never blocks the current week:
+// a failed refresh of that earlier week keeps its verified results while the current week keeps updating.
+{
+  const canceled=week(W1,1,{BAL:(a,h,n)=>{const g=game(a,h,n);g.status.type.name='STATUS_CANCELED';return g}});
+  const live=week(W2,2,{SF:(a,h,n)=>game(a,h,n,{completed:false,state:'in'})});
+  const v=await view({1:canceled,2:live,3:week(W3,3)});
+  assert.equal(v.$('svFeed').textContent,'LIVE · NFL results');assert.match(v.row('D.C.'),/LIVE/);
+  delete v.feeds[1];v.feeds[2]=week(W2,2);
+  await v.refresh();
+  assert.deepEqual(v.seen.filter(w=>w<=2),[2],'settled earlier week (every picked team final) is not refetched');
+  assert.equal(v.$('svFeed').textContent,'LIVE · NFL results');assert.match(v.row('D.C.'),/ALIVE/);
+  // Earlier week with an unresolved picked team keeps being refreshed; its failure alone does not blank the current week.
+  const badPick=week(W1,1,{PIT:(a,h,n)=>game(a,h,n,{as:null,hs:null})});
+  const v2=await view({1:badPick,2:week(W2,2),3:week(W3,3)});
+  assert.match(v2.row('D.C.'),/Week 1 PIT result unavailable/);
+  delete v2.feeds[1];await v2.refresh();
+  assert.deepEqual(v2.seen.filter(w=>w<=2).sort(),[1,2]);
+  assert.equal(v2.$('svFeed').textContent,'LIVE · 2 TEAM RESULTS UNVERIFIED');assert.match(v2.row('DJS'),/ALIVE/);
 }
 // Next-week schedule from the wrong context never feeds decision support.
 {

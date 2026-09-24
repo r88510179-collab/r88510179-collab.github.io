@@ -346,6 +346,8 @@ for(const [as,hs] of [[null,null],['',''],[' ',' '],['absent','absent'],['17.5',
     ['canceled',final({name:'STATUS_CANCELED'}),/final status is contradictory/],
     ['postponed',final({name:'STATUS_POSTPONED'}),/final status is contradictory/],
     ['suspended',final({name:'STATUS_SUSPENDED'}),/final status is contradictory/],
+    ...['STATUS_ABANDONED','STATUS_NO_CONTEST','STATUS_RESCHEDULED','STATUS_DELAYED','STATUS_UNCONTESTED','STATUS_IN_PROGRESS','STATUS_FINAL_CANCELED'].map(name=>[`unknown non-final name ${name}`,final({name}),/final status is contradictory/]),
+    ['competition-level non-final name',final({name:'STATUS_FINAL'},{status:{type:{completed:true,state:'post',name:'STATUS_ABANDONED'}}}),/final status is contradictory/],
     ['competition status still live',final({},{status:{type:{completed:false,state:'in'}}}),/final status is contradictory/],
     ['winner flag on score loser',(()=>{const e=final();e.competitions[0].competitors[1].winner=true;return e})(),/winner flag contradicts/],
     ['winner flag on a tied score',(()=>{const e=final();e.competitions[0].competitors.forEach(c=>c.score='10');e.competitions[0].competitors[0].winner=true;return e})(),/winner flag contradicts/],
@@ -362,6 +364,8 @@ for(const [as,hs] of [[null,null],['',''],[' ',' '],['absent','absent'],['17.5',
   const ok=final({name:'STATUS_FINAL'},{status:{type:{completed:true,state:'post',name:'STATUS_FINAL'}}});ok.competitions[0].competitors[0].winner=true;ok.competitions[0].competitors[1].winner=false;
   const okMap=survivorBuildResults([ok],ctx);
   assert.equal(stateFor('DEN',okMap).status,'alive');assert.equal(stateFor('KC',okMap).type,'loss');
+  const ot=final({name:'STATUS_FINAL_OVERTIME'},{status:{type:{completed:true,state:'post',name:'STATUS_FINAL_OVERTIME'}}});
+  assert.equal(stateFor('KC',survivorBuildResults([ot],ctx)).type,'loss');
   // The builder refuses to run without an explicit season/week context.
   assert.throws(()=>survivorBuildResults([ok]),/integer season and week/);
   assert.throws(()=>survivorBuildResults([ok],{season:2026}),/integer season and week/);

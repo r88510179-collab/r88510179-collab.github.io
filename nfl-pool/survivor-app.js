@@ -36,8 +36,10 @@ function logo(team){const code=(LOGO_CODE[team]||team.toLowerCase());return`http
 function teamChip(team){return team?`<span class="survivor-team"><img src="${logo(team)}" alt=""><b>${esc(team)}</b></span>`:'<span class="survivor-none">NO PICK</span>'}
 function allEntries(){return cfg?[...cfg.trackedEntries,...cfg.fieldEntries]:[]}
 
-function weekSettled(i){const map=resultsByWeek[i];if(!(map instanceof Map)||!map.size||[...map.values()].some(r=>r.completed!==true||r.unresolved))return false;return allEntries().every(e=>!e.picks[i]||map.has(e.picks[i]))}
-function feedIssueCount(){const teams=new Set();resultsByWeek.forEach((map,i)=>{if(!(map instanceof Map))return;for(const [team,r] of map)if(r.unresolved)teams.add(`${i}:${team}`);for(const e of allEntries()){const pick=e.picks[i];if(pick&&!map.has(pick))teams.add(`${i}:${pick}`)}});return teams.size}
+// Only teams actually picked in a week matter: a week is settled once every picked team has a verified final.
+const pickedTeams=i=>new Set(allEntries().map(e=>e.picks[i]).filter(Boolean));
+function weekSettled(i){const map=resultsByWeek[i];if(!(map instanceof Map))return false;for(const team of pickedTeams(i)){const r=map.get(team);if(!r||r.completed!==true||r.unresolved)return false}return true}
+function feedIssueCount(){let n=0;resultsByWeek.forEach((map,i)=>{if(!(map instanceof Map))return;for(const team of pickedTeams(i)){const r=map.get(team);if(!r||r.unresolved)n++}});return n}
 
 function marketLabel(option){
   if(!option.favorite)return 'No market favorite';
@@ -101,16 +103,20 @@ async function updateDecisionSchedule(force=false){
 async function updateScores(){
   if(!cfg)return;const id=++refreshId,scoreCfg=cfg;
   try{
-    const indexes=Array.from({length:scoreCfg.week},(_,i)=>i).filter(i=>i===scoreCfg.week-1||!weekSettled(i));
-    const payloads=await Promise.all(indexes.map(async i=>{
+    const current=scoreCfg.week-1,indexes=Array.from({length:scoreCfg.week},(_,i)=>i).filter(i=>i===current||!weekSettled(i));
+    const outcomes=await Promise.allSettled(indexes.map(async i=>{
       const week=i+1,r=await fetch(`${ESPN_SCOREBOARD}?dates=${scoreCfg.season}&week=${week}&seasontype=2`,{cache:'no-store'});
       if(!r.ok)throw new Error(`Week ${week} score feed ${r.status}`);
       const json=await r.json(),contextError=survivorFeedContextError(json,{season:scoreCfg.season,week});
       if(contextError)throw new Error(contextError);
-      return{i,results:survivorBuildResults(json.events,{season:scoreCfg.season,week})};
+      return survivorBuildResults(json.events,{season:scoreCfg.season,week});
     }));
     if(id!==refreshId||cfg!==scoreCfg)return;
-    for(const {i,results} of payloads)resultsByWeek[i]=results;
+    // Each week stands alone: a failed refresh of an earlier week keeps its last verified results.
+    const failed=[];
+    outcomes.forEach((o,k)=>{const i=indexes[k];if(o.status==='fulfilled')resultsByWeek[i]=o.value;else failed.push({i,reason:o.reason})});
+    failed.forEach(f=>console.warn(f.reason));
+    if(failed.some(f=>f.i===current||!(resultsByWeek[f.i] instanceof Map)))throw failed.find(f=>f.i===current||!(resultsByWeek[f.i] instanceof Map)).reason;
     const issues=feedIssueCount();
     $('svFeed').textContent=issues?`LIVE · ${issues} TEAM RESULT${issues===1?'':'S'} UNVERIFIED`:'LIVE · NFL results';$('svFeed').className=`survivor-feed ${issues?'warn':'ok'}`;render();void updateDecisionSchedule();
   }catch(e){if(id!==refreshId||cfg!==scoreCfg)return;$('svFeed').textContent='RESULT FEED UNAVAILABLE';$('svFeed').className='survivor-feed warn';render();console.warn(e)}
