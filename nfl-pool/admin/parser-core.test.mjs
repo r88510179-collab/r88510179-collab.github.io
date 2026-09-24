@@ -71,6 +71,9 @@ function sheetParse(participantLines,extraRows=[]){
   const sheetRows=rows.map((cells,i)=>({kind:'spreadsheet',sheetName:'Week 2',rowNumber:i+1,cells,text:cells.filter(Boolean).join(' ')}));
   return parseDocumentGroups([{week:2,lines:sheetRows.map(r=>r.text),sourceRows:sheetRows,sheetName:'Week 2'}],{filename:'fixture.xlsx',season:2026})[0];
 }
+// Spreadsheet cells by column: 0 name, 1-15 picks, 16 Pts, 17 W (null = empty cell).
+function sheetRow(name,values){return[name,...values.map(v=>v===null?'':String(v))]}
+function sheetSparse(name,columns){const cells=Array(18).fill('');cells[0]=name;for(const [i,v] of Object.entries(columns))cells[i]=String(v);return cells}
 function assertFieldFailsClosed(c){
   assert.deepEqual(c.errors,[]);
   assert.equal(c.config.participants.length,4);
@@ -656,6 +659,79 @@ function assertFieldReady(c,competitionSize){
   const c=parseMixed([...matchups,...tracked,anonA,name],'p2-summary-words-in-name');
   assertFieldReady(c,6);
   assert.equal(JSON.stringify(c.config).includes('Wendy'),false);
+}
+{
+  // STEP 2 P2-S — spreadsheet notes, totals, dates and counts below the table lack participant-column evidence.
+  const debris={
+    'blank spacer':[Array(18).fill('')],
+    'text-only note':[['Picks lock at kickoff']],
+    'totals, two numbers on pick columns':[sheetSparse('Totals',{5:12,12:34})],
+    'totals, two numbers on Pts/W':[sheetSparse('Totals',{16:12,17:34})],
+    'totals, one number on a pick column':[sheetSparse('Total entries',{3:282})],
+    'note with a date and two counts':[sheetSparse('Entries paid',{1:282,2:'9/24/2026',3:5})],
+    'date label with two counts':[sheetSparse('9/24/2026',{1:282,16:5})],
+    'two numbers that are valid picks for their columns':[sheetSparse('Notes',{1:1,2:3})],
+    'per-game counts on ten pick columns':[sheetRow('Pick counts',[140,142,138,139,141,137,143,136,144,135,null,null,null,null,null,null,null])],
+    'spacer then an unnamed sparse numeric row':[Array(18).fill(''),sheetSparse('',{4:7,9:3})],
+    'spacer then a named sparse numeric row':[Array(18).fill(''),sheetSparse('Next slate',{2:5,6:13,11:21})]
+  };
+  for(const [label,rows] of Object.entries(debris)){
+    const c=sheetParse([...tracked,anonA],rows);
+    assert.deepEqual(c.fullFieldIssues,[],label);
+    assertFieldReady(c,5);
+  }
+}
+{
+  // STEP 2 P2-S — a damaged spreadsheet participant keeps its evidence in the participant columns and fails closed.
+  const damage={
+    'missing first pick':v=>{v[0]=null},
+    'missing middle pick':v=>{v[7]=null},
+    'missing last pick':v=>{v[14]=null},
+    'missing tiebreak':v=>{v[15]=null},
+    'missing wins':v=>{v[16]=null},
+    'truncated after ten picks':v=>{v.fill(null,10)},
+    'truncated before the tiebreak':v=>{v.fill(null,15)},
+    'invalid pick':v=>{v[3]=99}
+  };
+  for(const name of ['Gamma','12345'])for(const [label,apply] of Object.entries(damage)){
+    const values=[...oddPicks,44,0];apply(values);
+    const c=sheetParse([...tracked,anonA],[sheetRow(name,values)]);
+    assert(c.fullFieldIssues.some(x=>x.includes('structurally invalid')),`${name} ${label}`);
+    assertFieldFailsClosed(c);
+  }
+}
+{
+  // STEP 2 P2-H — a repeated header proven identical to the anchored participant header carries damaged-row checks
+  // across the page edge; a header that merely shares the Pts/W columns starts another region.
+  const header='Entry Pts W',other='Standings Pts W',damaged='12345 1 3 5 7 9 11 13 15 17 19 21 23 25 27 44 0';
+  const page1=[...matchups,header,...tracked,anonA],tableRows=[header,...tracked,anonA];
+  const parsePages=(page2,id)=>{
+    const rows1=applyRegularHeaderGeometry(sourceRows(page1,1),header);
+    for(const row of rows1){const i=tableRows.indexOf(row.text);if(i>=0)row.y=24+(tableRows.length-1-i)*12}
+    const lines2=page2.map(item=>typeof item==='string'?item:item.text),rows2=rowsAt(lines2,2,lines2.map((_,i)=>760-i*12));
+    page2.forEach((item,i)=>{if(typeof item!=='string')rows2[i].parts=item.parts});
+    applyRegularHeaderGeometry(rows2,header);
+    for(const row of rows2)if(row.text===other)row.parts=[{x:10,text:'Standings'},{x:520,text:'Pts'},{x:544,text:'W'}];
+    return parseDocumentGroups([
+      {week:2,lines:page1,sourceRows:rows1,pageNumber:1,pageFingerprint:'p2h-page-1'},
+      {week:2,lines:lines2,sourceRows:rows2,pageNumber:2,pageFingerprint:'p2h-page-2-'+id}
+    ],{filename:'p2h.pdf',season:2026})[0];
+  };
+  const proven=parsePages([header,damaged],'repeated');
+  assertFieldFailsClosed(proven);
+  assert(proven.fullFieldIssues.some(x=>x.includes('adjoining the proven regular participant table')));
+  assertFieldReady(parsePages([other,'3 1 4 1 5 9 2 6 5 3 5 8 9 7 9 3 2','2 7 1 8 2 8 1 8 2 8 4 5 9 0 4 5 2'],'foreign-numeric'),5);
+  assertFieldReady(parsePages([other,geometryLine([[10,'Club A']],[null,7,null,null,null,null,null,null,null,12])],'foreign-aligned'),5);
+}
+{
+  // STEP 2 P2-H — the anchored header above a table that opens at the next page top still carries the check back to a
+  // damaged row at the prior page bottom.
+  const header='Entry Pts W',page1=[...matchups,'12345 1 3 5 7 9 11 13 15 17 19 21 23 25 27 44 0'],page2=[header,...tracked,anonA];
+  const c=parseDocumentGroups([
+    {week:2,lines:page1,sourceRows:rowsAt(page1,1,page1.map((_,i)=>i<matchups.length?760-i*12:24)),pageNumber:1,pageFingerprint:'p2h-lead-page-1'},
+    {week:2,lines:page2,sourceRows:applyRegularHeaderGeometry(rowsAt(page2,2,page2.map((_,i)=>760-i*12)),header),pageNumber:2,pageFingerprint:'p2h-lead-page-2'}
+  ],{filename:'p2h-lead.pdf',season:2026})[0];
+  assertFieldFailsClosed(c);
 }
 
 console.log('parser-core regular-table region, continuation, fail-closed field, duplicate, and privacy regressions passed');
