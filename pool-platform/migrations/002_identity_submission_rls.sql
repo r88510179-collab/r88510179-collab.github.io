@@ -342,6 +342,7 @@ DECLARE
   v_deadline timestamptz;
   v_existing public.pool_platform_submissions%ROWTYPE;
   v_created public.pool_platform_submissions%ROWTYPE;
+  v_previous_payload jsonb;
 BEGIN
   IF v_uid IS NULL THEN RAISE EXCEPTION 'auth_required'; END IF;
   IF p_source NOT IN ('participant','commissioner_import','commissioner_manual')
@@ -397,6 +398,8 @@ BEGIN
   IF v_existing.status='locked'
   THEN RAISE EXCEPTION 'submission_locked'; END IF;
 
+  v_previous_payload:=v_existing.payload;
+
   UPDATE public.pool_platform_submissions
   SET payload=p_payload,revision=revision+1,submitted_by_auth_user_id=v_uid,updated_at=now()
   WHERE id=v_existing.id
@@ -404,7 +407,7 @@ BEGIN
 
   INSERT INTO public.pool_platform_submission_audit(
     submission_id,actor_auth_user_id,action,source,previous_payload,next_payload
-  ) VALUES (v_existing.id,v_uid,'updated',p_source,v_existing.payload,p_payload);
+  ) VALUES (v_existing.id,v_uid,'updated',p_source,v_previous_payload,p_payload);
 
   RETURN jsonb_build_object(
     'ok',true,'code','updated','submission_id',v_existing.id,
@@ -522,7 +525,16 @@ BEGIN
     'submission',CASE WHEN sub.id IS NULL THEN NULL ELSE jsonb_build_object(
       'id',sub.id,'source',sub.source,'status',sub.status,'payload',sub.payload,
       'revision',sub.revision,'submitted_at',sub.submitted_at,'updated_at',sub.updated_at
-    ) END
+    ) END,
+    'history',COALESCE((
+      SELECT jsonb_agg(jsonb_build_object(
+        'week',hw.week,'source',hs.source,'status',hs.status,
+        'payload',hs.payload,'revision',hs.revision
+      ) ORDER BY hw.week)
+      FROM public.pool_platform_submissions hs
+      JOIN public.pool_platform_weeks hw ON hw.id=hs.week_id
+      WHERE hs.entry_id=e.id AND hw.season_id=v_season.id AND hw.week<v_week.week
+    ),'[]'::jsonb)
   ) ORDER BY e.entry_code),'[]'::jsonb)
   INTO v_entries
   FROM public.pool_platform_entries e
@@ -580,7 +592,16 @@ BEGIN
         'entries',COALESCE((
           SELECT jsonb_agg(jsonb_build_object(
             'id',e.id,'entry_code',e.entry_code,'display_name',e.display_name,
-            'status',e.status,'claimed',e.owner_auth_user_id IS NOT NULL
+            'status',e.status,'claimed',e.owner_auth_user_id IS NOT NULL,
+            'submissions',COALESCE((
+              SELECT jsonb_agg(jsonb_build_object(
+                'week',sw.week,'source',ss.source,'status',ss.status,
+                'revision',ss.revision,'submitted_at',ss.submitted_at
+              ) ORDER BY sw.week)
+              FROM public.pool_platform_submissions ss
+              JOIN public.pool_platform_weeks sw ON sw.id=ss.week_id
+              WHERE ss.entry_id=e.id
+            ),'[]'::jsonb)
           ) ORDER BY e.entry_code)
           FROM public.pool_platform_entries e WHERE e.season_id=s.id
         ),'[]'::jsonb),
