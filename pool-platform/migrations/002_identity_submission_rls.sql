@@ -23,6 +23,15 @@ ALTER TABLE public.pool_platform_entry_invites ENABLE ROW LEVEL SECURITY;
 CREATE UNIQUE INDEX IF NOT EXISTS pool_platform_pool_slug_global_unique
   ON public.pool_platform_pools(slug);
 
+-- Survivor: an entry may use each team once. entry_id belongs to exactly one season, so this is one
+-- non-null Survivor team per entry across that entry's season, whatever order weeks are submitted in and
+-- however submissions interleave. Pick'em payloads never carry a top-level "team" (payload_valid only
+-- accepts picks/tiebreak), so the predicate leaves them out. This index is the authoritative guard;
+-- submit_entry reports its violation as team_already_used.
+CREATE UNIQUE INDEX IF NOT EXISTS pool_platform_submissions_survivor_team_unique
+  ON public.pool_platform_submissions(entry_id,(payload->>'team'))
+  WHERE jsonb_typeof(payload->'team')='string';
+
 REVOKE CREATE ON SCHEMA public FROM anonymous,authenticated;
 
 CREATE OR REPLACE FUNCTION public.pool_platform_current_user_id()
@@ -46,11 +55,30 @@ STABLE
 SECURITY DEFINER
 SET search_path=public,neon_auth,pg_temp
 AS $$
-  SELECT lower(u.email)
+  SELECT lower(btrim(u.email))
   FROM neon_auth."user" u
   WHERE u.id::text=auth.user_id()
     AND COALESCE(u.banned,false)=false
   LIMIT 1
+$$;
+
+-- Neon Auth (Better Auth) keeps verification state in neon_auth."user"."emailVerified" (boolean NOT NULL).
+-- Email, ban and verification state are read in one query so an email change cannot slip in between.
+CREATE OR REPLACE FUNCTION public.pool_platform_current_user_has_verified_email(p_email_normalized text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path=public,neon_auth,pg_temp
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM neon_auth."user" u
+    WHERE u.id::text=auth.user_id()
+      AND COALESCE(u.banned,false)=false
+      AND u."emailVerified" IS TRUE
+      AND lower(btrim(u.email))=p_email_normalized
+  )
 $$;
 
 CREATE OR REPLACE FUNCTION public.pool_platform_is_tenant_commissioner(p_tenant_id uuid)
@@ -314,8 +342,14 @@ BEGIN
   FOR UPDATE;
 
   IF v_inv.id IS NULL THEN RAISE EXCEPTION 'invite_unavailable'; END IF;
-  IF v_inv.email_normalized IS NOT NULL AND v_inv.email_normalized<>v_email
-  THEN RAISE EXCEPTION 'invite_email_mismatch'; END IF;
+  -- An email-bound invite needs the signed-in account's normalized email to match AND be verified.
+  -- An unbound invite stays a bearer token. Rejections leave the invite unclaimed.
+  IF v_inv.email_normalized IS NOT NULL THEN
+    IF v_email IS NULL OR v_inv.email_normalized<>v_email
+    THEN RAISE EXCEPTION 'invite_email_mismatch'; END IF;
+    IF NOT public.pool_platform_current_user_has_verified_email(v_inv.email_normalized)
+    THEN RAISE EXCEPTION 'invite_email_unverified'; END IF;
+  END IF;
 
   SELECT owner_auth_user_id INTO v_owner
   FROM public.pool_platform_entries
@@ -432,15 +466,19 @@ BEGIN
     FROM public.pool_platform_weeks w WHERE w.id=p_week_id;
     IF v_week IS NULL THEN RETURN false; END IF;
 
+    -- Defense in depth behind pool_platform_submissions_survivor_team_unique: the team must be unused by
+    -- this entry in every OTHER week of the season, earlier or later, so out-of-order submissions are
+    -- caught too. Only a structurally valid pick gets here; reuse raises team_already_used instead of
+    -- returning false so submit_entry can tell an authorized caller exactly why it was rejected.
     IF EXISTS (
       SELECT 1
       FROM public.pool_platform_submissions s
       JOIN public.pool_platform_weeks w ON w.id=s.week_id
       WHERE s.entry_id=p_entry_id
         AND w.season_id=v_season_id
-        AND w.week<v_week
+        AND s.week_id<>p_week_id
         AND s.payload->>'team'=v_team
-    ) THEN RETURN false; END IF;
+    ) THEN RAISE EXCEPTION 'team_already_used'; END IF;
     RETURN true;
   END IF;
 
@@ -463,6 +501,7 @@ DECLARE
   v_uid text:=public.pool_platform_current_user_id();
   v_tenant_id uuid;
   v_owner text;
+  v_entry_status text;
   v_week_status text;
   v_opens timestamptz;
   v_deadline timestamptz;
@@ -471,35 +510,46 @@ DECLARE
   v_existing public.pool_platform_submissions%ROWTYPE;
   v_created public.pool_platform_submissions%ROWTYPE;
   v_previous_payload jsonb;
+  v_constraint text;
 BEGIN
   IF v_uid IS NULL THEN RAISE EXCEPTION 'auth_required'; END IF;
-  IF p_source NOT IN ('participant','commissioner_import','commissioner_manual')
+  IF p_source IS NULL OR p_source NOT IN ('participant','commissioner_import','commissioner_manual')
   THEN RAISE EXCEPTION 'invalid_source'; END IF;
-  IF p_payload IS NULL OR COALESCE(jsonb_typeof(p_payload),'')<>'object' OR octet_length(p_payload::text)>20000
-  THEN RAISE EXCEPTION 'invalid_payload'; END IF;
 
-  SELECT p.tenant_id,e.owner_auth_user_id,w.status,w.opens_at,w.deadline_at,p.pool_type,w.config
-  INTO v_tenant_id,v_owner,v_week_status,v_opens,v_deadline,v_pool_type,v_week_config
+  -- Resolve the entry/week pair and lock the entry row: every submission for one entry (any week, any
+  -- source) queues here, so the Survivor reuse check reads that entry's committed history. The unique
+  -- index pool_platform_submissions_survivor_team_unique still guarantees the outcome on its own.
+  SELECT p.tenant_id,e.owner_auth_user_id,e.status,w.status,w.opens_at,w.deadline_at,p.pool_type,w.config
+  INTO v_tenant_id,v_owner,v_entry_status,v_week_status,v_opens,v_deadline,v_pool_type,v_week_config
   FROM public.pool_platform_weeks w
   JOIN public.pool_platform_seasons s ON s.id=w.season_id
   JOIN public.pool_platform_pools p ON p.id=s.pool_id
   JOIN public.pool_platform_entries e ON e.season_id=s.id
-  WHERE w.id=p_week_id AND e.id=p_entry_id;
+  WHERE w.id=p_week_id AND e.id=p_entry_id
+  FOR NO KEY UPDATE OF e;
 
   IF v_tenant_id IS NULL THEN RAISE EXCEPTION 'invalid_entry_week'; END IF;
-  IF v_week_status<>'open' THEN RAISE EXCEPTION 'week_not_open'; END IF;
-  IF v_opens IS NOT NULL AND now()<v_opens THEN RAISE EXCEPTION 'week_not_open'; END IF;
-  IF now()>=v_deadline THEN RAISE EXCEPTION 'deadline_passed'; END IF;
 
-  IF NOT public.pool_platform_payload_valid(v_pool_type,v_week_config,p_entry_id,p_week_id,p_payload)
-  THEN RAISE EXCEPTION 'invalid_payload'; END IF;
-
+  -- Authorize before any entry-state, week-state, payload or history check, so a caller who is not the
+  -- entry owner (participant) or a tenant commissioner (commissioner sources) only ever sees that failure.
   IF p_source='participant' THEN
     IF v_owner IS NULL OR v_owner<>v_uid THEN RAISE EXCEPTION 'entry_not_owned'; END IF;
   ELSE
     IF NOT public.pool_platform_is_tenant_commissioner(v_tenant_id)
     THEN RAISE EXCEPTION 'commissioner_required'; END IF;
   END IF;
+
+  -- Ordinary submissions need an active entry; inactive, eliminated and archived entries are closed.
+  IF v_entry_status IS DISTINCT FROM 'active' THEN RAISE EXCEPTION 'entry_not_active'; END IF;
+
+  IF v_week_status<>'open' THEN RAISE EXCEPTION 'week_not_open'; END IF;
+  IF v_opens IS NOT NULL AND now()<v_opens THEN RAISE EXCEPTION 'week_not_open'; END IF;
+  IF now()>=v_deadline THEN RAISE EXCEPTION 'deadline_passed'; END IF;
+
+  IF p_payload IS NULL OR COALESCE(jsonb_typeof(p_payload),'')<>'object' OR octet_length(p_payload::text)>20000
+  THEN RAISE EXCEPTION 'invalid_payload'; END IF;
+  IF NOT public.pool_platform_payload_valid(v_pool_type,v_week_config,p_entry_id,p_week_id,p_payload)
+  THEN RAISE EXCEPTION 'invalid_payload'; END IF;
 
   INSERT INTO public.pool_platform_submissions(
     week_id,entry_id,source,status,submitted_by_auth_user_id,payload,revision,submitted_at,updated_at
@@ -544,6 +594,12 @@ BEGIN
     'ok',true,'code','updated','submission_id',v_existing.id,
     'source',v_existing.source,'status',v_existing.status,'revision',v_existing.revision
   );
+EXCEPTION WHEN unique_violation THEN
+  -- The Survivor team index can only be violated by the INSERT/UPDATE above; report it plainly.
+  GET STACKED DIAGNOSTICS v_constraint=CONSTRAINT_NAME;
+  IF v_constraint='pool_platform_submissions_survivor_team_unique'
+  THEN RAISE EXCEPTION 'team_already_used'; END IF;
+  RAISE;
 END;
 $$;
 
@@ -664,7 +720,8 @@ BEGIN
       ) ORDER BY hw.week)
       FROM public.pool_platform_submissions hs
       JOIN public.pool_platform_weeks hw ON hw.id=hs.week_id
-      WHERE hs.entry_id=e.id AND hw.season_id=v_season.id AND hw.week<v_week.week
+      -- Every other week, earlier or later, so the browser marks the same teams used as the server does.
+      WHERE hs.entry_id=e.id AND hw.season_id=v_season.id AND hw.week<>v_week.week
     ),'[]'::jsonb)
   ) ORDER BY e.entry_code),'[]'::jsonb)
   INTO v_entries
@@ -752,6 +809,7 @@ $$;
 
 REVOKE ALL ON FUNCTION public.pool_platform_current_user_id() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.pool_platform_current_user_email() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.pool_platform_current_user_has_verified_email(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.pool_platform_is_tenant_commissioner(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.pool_platform_can_read_pool(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.pool_platform_can_read_season(uuid) FROM PUBLIC;

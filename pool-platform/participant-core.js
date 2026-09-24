@@ -1,3 +1,5 @@
+import {parseTiebreak} from './submission-core.js';
+
 export function teamObject(value,fallbackKey){
   if(value&&typeof value==='object'){
     const key=String(value.key??value.id??fallbackKey??'').trim();
@@ -24,8 +26,10 @@ export function pickemPayloadFromSelections(selections,tiebreak){
   for(const [gameId,side] of Object.entries(selections||{})){
     if(side==='away'||side==='home')picks[gameId]=side;
   }
-  const n=Number(tiebreak);
-  return{picks,tiebreak:Number.isInteger(n)?n:tiebreak};
+  // A blank or whitespace-only tiebreak is left out (so a required tiebreak fails) instead of becoming 0.
+  const parsed=parseTiebreak(tiebreak);
+  if(!parsed.present)return{picks};
+  return{picks,tiebreak:parsed.valid?parsed.value:tiebreak};
 }
 
 export function survivorBurnedTeams(history=[]){

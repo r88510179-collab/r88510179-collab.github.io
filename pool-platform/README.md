@@ -57,17 +57,17 @@ Implemented:
 - participant OTP/invite flow
 - multi-entry participant support
 - Pick'em direct entry
-- Survivor direct entry with burned-team protection
+- Survivor direct entry with burned-team protection, enforced atomically per entry by a partial unique index
 - commissioner invite generation
 - commissioner CSV import
 - atomic participant-vs-commissioner source locking
 - tenant/pool/entry authorization model
 - RLS read policies
 - no direct authenticated table writes
-- hashed invitation tokens
+- hashed invitation tokens; email-bound invitations require a matching, verified Neon Auth email
 - submission audit trail design
 - responsive PWA participant and commissioner surfaces
 
-The migrations remain REVIEW-ONLY and have not been applied to any database.
+The migrations remain REVIEW-ONLY and have not been applied to any shared or hosted database. They are exercised only against disposable local PostgreSQL databases by the opt-in `migration-integration.test.mjs` (set `POOL_PLATFORM_TEST_PG_CLUSTER` to a local superuser URL).
 
 The repository configuration remains `mode:'sandbox'`. No live commercial backend is connected yet.

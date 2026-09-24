@@ -1,3 +1,5 @@
+import {parseTiebreak} from './submission-core.js';
+
 export function parseCsv(text){
   const rows=[];let row=[],cell='',quoted=false;
   const src=String(text??'');
@@ -79,9 +81,12 @@ export function prepareCommissionerImport({text,poolType,entries,weekConfig}){
       if(!side)invalid=true;
       else picks[id]=side;
     });
-    const tb=tbIndex>=0?Number(rows[i][tbIndex]):null;
-    if(invalid||tbRequired&&!Number.isInteger(tb)){errors.push({row:i+1,code:'invalid_picks',entry_code:entry.entry_code});continue}
-    items.push({entry_id:entry.id,payload:{picks,...(tbIndex>=0?{tiebreak:tb}:{})}});
+    if(invalid){errors.push({row:i+1,code:'invalid_picks',entry_code:entry.entry_code});continue}
+    // A blank tiebreak cell is missing, not 0: it fails when required and is left out when optional.
+    const tb=parseTiebreak(tbIndex>=0?rows[i][tbIndex]:undefined);
+    if(!tb.valid){errors.push({row:i+1,code:'invalid_tiebreak',entry_code:entry.entry_code});continue}
+    if(tbRequired&&!tb.present){errors.push({row:i+1,code:'missing_tiebreak',entry_code:entry.entry_code});continue}
+    items.push({entry_id:entry.id,payload:{picks,...(tb.present?{tiebreak:tb.value}:{})}});
   }
   return{items,errors};
 }

@@ -16,6 +16,11 @@ Low-cost goal:
 
 ## 2. Database
 
+Before touching Neon, run the opt-in integration suite against a disposable local PostgreSQL cluster (never Neon):
+
+    POOL_PLATFORM_TEST_PG_CLUSTER=postgresql://postgres@127.0.0.1:5432/postgres \
+      node --test pool-platform/migration-integration.test.mjs
+
 After review, apply in order:
 
 1. migrations/001_foundation.sql
@@ -32,6 +37,8 @@ Then verify:
 - source-change trigger exists
 - UNIQUE (week_id, entry_id) exists
 - pool slug global unique index exists
+- Survivor partial unique index pool_platform_submissions_survivor_team_unique exists on (entry_id, payload->>'team')
+- neon_auth."user" has the "emailVerified" and banned columns the invite and identity helpers read
 
 Do not seed any data from the personal Pool Center.
 
@@ -78,7 +85,10 @@ Commissioner:
 Participant:
 - can claim an invite once
 - wrong email cannot claim an email-bound invite
+- matching but unverified email cannot claim an email-bound invite (invite_email_unverified) until verified
+- an invite without an email restriction remains a bearer link
 - expired/used invite fails
+- signed-in RPCs succeed: the client sends the JWT the pinned SDK stores in session.token
 - can own multiple entries
 - cannot read another participant's entry
 
@@ -107,6 +117,12 @@ Rejected.
 G. Locked submission.
 Rejected even from same source.
 
+H. Inactive, eliminated or archived entry.
+Rejected (entry_not_active) through participant and commissioner channels.
+
+I. Caller who does not own the entry, or is not a commissioner of its tenant.
+Receives only entry_not_owned / commissioner_required, whatever the payload, pick history, week or entry state.
+
 ## 7. Payload tests
 
 Pick'em:
@@ -117,6 +133,7 @@ Pick'em:
 - unknown game rejected
 - extra game rejected
 - required tiebreak enforced
+- blank tiebreak (form or CSV) is missing, never 0; a typed or imported 0 is kept
 - malformed payload rejected server-side
 
 Survivor:
@@ -124,7 +141,8 @@ Survivor:
 - one configured team required
 - displayed city/team label normalizes to stable team key on import
 - unknown team rejected
-- previously used team rejected server-side
+- team already used by the entry in any other week, earlier or later, rejected server-side (team_already_used)
+- simultaneous picks of one team for two weeks of one entry: exactly one succeeds
 - ambiguous duplicate team in configured schedule rejected for that selection
 
 ## 8. Device matrix
@@ -151,6 +169,7 @@ Verify:
 - focus visibility
 - submit/error/status announcements
 - Pick'em and Survivor forms
+- updating the commercial service worker leaves other caches on the origin (for example the Pool Center cache) intact
 
 ## 9. Commissioner import
 
@@ -180,3 +199,13 @@ Do not use the live commercial backend with a real customer until:
 - synthetic demo works end-to-end
 
 Only then seed the first real customer's tenant/pool.
+
+## Deferred until after the Step 2 security gate
+
+Known P2 items, intentionally not addressed in the Step 2 corrective passes:
+
+- invite revocation/undo UI (revoked_at exists in the schema but has no commissioner workflow)
+- importing the safe CSV rows when other rows fail client-side validation (the console currently blocks the whole import)
+- general signed-in error UX
+- hosting migration away from GitHub Pages (the commercial app currently shares an origin with the Pool Center)
+- broader commercial UX polish

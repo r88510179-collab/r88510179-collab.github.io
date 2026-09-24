@@ -4,6 +4,7 @@ import {
   SUBMISSION_SOURCES,
   SUBMISSION_STATUS,
   canSubmit,
+  parseTiebreak,
   validatePickPayload,
   submissionConflictCopy
 } from './submission-core.js';
@@ -56,4 +57,32 @@ test('pick payload requires exactly one side per configured game',()=>{
   assert.equal(validatePickPayload({picks:{g1:'away',g2:'home'},tiebreak:41},{gameIds,tiebreakRequired:true}).ok,true);
   assert.equal(validatePickPayload({picks:{g1:'away'},tiebreak:41},{gameIds,tiebreakRequired:true}).ok,false);
   assert.equal(validatePickPayload({picks:{g1:'away',g2:'home',g3:'away'},tiebreak:41},{gameIds,tiebreakRequired:true}).ok,false);
+});
+
+test('parseTiebreak: blank and whitespace are absent (never 0); 0, "0" and 47 are values; other text is invalid',()=>{
+  const absent={present:false,valid:true,value:null},invalid={present:true,valid:false,value:null};
+  for(const blank of ['','   ','\t\n',undefined,null])assert.deepEqual(parseTiebreak(blank),absent,JSON.stringify(blank));
+  assert.deepEqual(parseTiebreak(0),{present:true,valid:true,value:0});
+  assert.deepEqual(parseTiebreak('0'),{present:true,valid:true,value:0});
+  assert.deepEqual(parseTiebreak(' 0 '),{present:true,valid:true,value:0});
+  assert.deepEqual(parseTiebreak(47),{present:true,valid:true,value:47});
+  assert.deepEqual(parseTiebreak('47'),{present:true,valid:true,value:47});
+  assert.deepEqual(parseTiebreak('200'),{present:true,valid:true,value:200});
+  for(const bad of ['abc','4.5','-1','+5','1e2','0x1f','4 7','201','1000',201,-1,4.5,Number.NaN,Infinity,true,[47],{}]){
+    assert.deepEqual(parseTiebreak(bad),invalid,String(bad));
+  }
+});
+
+test('tiebreak validation: absent/null fails only when required, 0 is valid, a present value must be an integer 0-200',()=>{
+  const gameIds=['g1','g2'],picks={g1:'away',g2:'home'};
+  const check=(payload,tiebreakRequired)=>validatePickPayload(payload,{gameIds,tiebreakRequired});
+  assert.deepEqual(check({picks},true).errors,[{code:'tiebreak_required'}]);
+  assert.deepEqual(check({picks,tiebreak:null},true).errors,[{code:'tiebreak_required'}]);
+  assert.equal(check({picks,tiebreak:0},true).ok,true);
+  assert.equal(check({picks,tiebreak:47},true).ok,true);
+  assert.deepEqual(check({picks,tiebreak:''},true).errors,[{code:'invalid_tiebreak'}],'a raw blank string would be rejected by Postgres too');
+  assert.equal(check({picks},false).ok,true,'optional tiebreak may be left out');
+  assert.equal(check({picks,tiebreak:0},false).ok,true);
+  assert.deepEqual(check({picks,tiebreak:'abc'},false).errors,[{code:'invalid_tiebreak'}]);
+  assert.deepEqual(check({picks,tiebreak:201},false).errors,[{code:'invalid_tiebreak'}]);
 });

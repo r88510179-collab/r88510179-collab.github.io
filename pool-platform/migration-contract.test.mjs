@@ -15,6 +15,7 @@ const FUNCTIONS_001=['pool_platform_guard_submission_source'];
 const FUNCTIONS_002={
   pool_platform_current_user_id:'',
   pool_platform_current_user_email:'',
+  pool_platform_current_user_has_verified_email:'text',
   pool_platform_is_tenant_commissioner:'uuid',
   pool_platform_can_read_pool:'uuid',
   pool_platform_can_read_season:'uuid',
@@ -32,7 +33,7 @@ const AUTHENTICATED_EXECUTE=[
   'pool_platform_submit_entry','pool_platform_submit_batch','pool_platform_participant_context',
   'pool_platform_commissioner_context'
 ];
-const INTERNAL_ONLY=['pool_platform_current_user_email','pool_platform_payload_valid'];
+const INTERNAL_ONLY=['pool_platform_current_user_email','pool_platform_current_user_has_verified_email','pool_platform_payload_valid'];
 
 // Minimal PostgreSQL lexer: comments, '' strings, "" identifiers, $tag$ dollar quotes, parentheses and
 // top-level semicolons. It reports malformed/unterminated quoting instead of guessing.
@@ -202,6 +203,59 @@ test('invites store only a hash and enforce expiry/email ownership',()=>{
   assert.match(m2,/claimed_at IS NULL/);
   assert.match(m2,/invite_email_mismatch/);
   assert.match(m2,/entry_already_claimed/);
+});
+
+test('email-bound invites require a matching AND verified Neon Auth email; unbound invites stay bearer tokens',()=>{
+  const helper=functionBody('pool_platform_current_user_has_verified_email');
+  assert.match(helper,/FROM neon_auth\."user" u/);
+  assert.match(helper,/u\.id::text=auth\.user_id\(\)/);
+  assert.match(helper,/COALESCE\(u\.banned,false\)=false/);
+  assert.match(helper,/u\."emailVerified" IS TRUE/,'Neon Auth stores verification in the camelCase "emailVerified" column');
+  assert.match(helper,/lower\(btrim\(u\.email\)\)=p_email_normalized/);
+  assert.match(functionBody('pool_platform_current_user_email'),/SELECT lower\(btrim\(u\.email\)\)/);
+
+  const claim=functionBody('pool_platform_claim_entry_invite');
+  const bound=claim.indexOf('IF v_inv.email_normalized IS NOT NULL THEN');
+  const mismatch=claim.indexOf("RAISE EXCEPTION 'invite_email_mismatch'");
+  const unverified=claim.indexOf("RAISE EXCEPTION 'invite_email_unverified'");
+  const claimWrite=claim.indexOf('UPDATE public.pool_platform_entries');
+  assert.ok(bound>0&&mismatch>bound&&unverified>mismatch&&claimWrite>unverified,'both email checks run inside the bound-invite branch before any write');
+  assert.match(claim,/IF v_email IS NULL OR v_inv\.email_normalized<>v_email/,'a missing account email must fail closed');
+  assert.match(claim,/IF NOT public\.pool_platform_current_user_has_verified_email\(v_inv\.email_normalized\)/);
+  assert.doesNotMatch(claim,/v_inv\.email_normalized IS NOT NULL AND v_inv\.email_normalized<>v_email/,'the NULL-unsafe comparison must not return');
+});
+
+test('Survivor team reuse is blocked atomically per entry by a partial unique index',()=>{
+  assert.match(m2,/CREATE UNIQUE INDEX IF NOT EXISTS pool_platform_submissions_survivor_team_unique\n  ON public\.pool_platform_submissions\(entry_id,\(payload->>'team'\)\)\n  WHERE jsonb_typeof\(payload->'team'\)='string';/);
+  const valid=functionBody('pool_platform_payload_valid');
+  assert.match(valid,/AND s\.week_id<>p_week_id\n/,'history check must cover later weeks too (out-of-order submissions)');
+  assert.doesNotMatch(valid,/w\.week<v_week/,'an earlier-weeks-only check misses out-of-order reuse');
+  assert.match(valid,/\) THEN RAISE EXCEPTION 'team_already_used'; END IF;/);
+  assert.match(functionBody('pool_platform_participant_context'),/WHERE hs\.entry_id=e\.id AND hw\.season_id=v_season\.id AND hw\.week<>v_week\.week\n/,
+    'participant history must list every other week so the browser marks the same teams used');
+  const submit=functionBody('pool_platform_submit_entry');
+  assert.match(submit,/WHERE w\.id=p_week_id AND e\.id=p_entry_id\n  FOR NO KEY UPDATE OF e;/,'submissions for one entry must serialize on the entry row');
+  assert.match(submit,/EXCEPTION WHEN unique_violation THEN\n[\s\S]*GET STACKED DIAGNOSTICS v_constraint=CONSTRAINT_NAME;\n  IF v_constraint='pool_platform_submissions_survivor_team_unique'\n  THEN RAISE EXCEPTION 'team_already_used'; END IF;\n  RAISE;\nEND;\n$/);
+});
+
+test('submit_entry authorizes before entry-state, week-state, payload and history checks',()=>{
+  const body=functionBody('pool_platform_submit_entry');
+  const at=text=>{const i=body.indexOf(text);assert.ok(i>0,`missing ${text}`);return i};
+  const resolved=at("RAISE EXCEPTION 'invalid_entry_week'");
+  const owner=at("RAISE EXCEPTION 'entry_not_owned'");
+  const commissioner=at("RAISE EXCEPTION 'commissioner_required'");
+  const entryState=at("RAISE EXCEPTION 'entry_not_active'");
+  const weekState=at("RAISE EXCEPTION 'week_not_open'");
+  const deadline=at("RAISE EXCEPTION 'deadline_passed'");
+  const payloadShape=at("RAISE EXCEPTION 'invalid_payload'");
+  const history=at('public.pool_platform_payload_valid(');
+  assert.ok(resolved<owner&&owner<commissioner,'authorization runs right after the entry/week pair resolves');
+  for(const [name,i] of Object.entries({entryState,weekState,deadline,payloadShape,history})){
+    assert.ok(i>commissioner,`${name} must come after authorization`);
+  }
+  assert.match(body,/IF p_source IS NULL OR p_source NOT IN \('participant','commissioner_import','commissioner_manual'\)/);
+  assert.match(body,/IF v_entry_status IS DISTINCT FROM 'active' THEN RAISE EXCEPTION 'entry_not_active'; END IF;/);
+  assert.match(body,/SELECT p\.tenant_id,e\.owner_auth_user_id,e\.status,w\.status,/);
 });
 
 test('audit history records the genuine previous payload',()=>{
