@@ -4,7 +4,8 @@ export const SURVIVOR_TARGETS=[
   {id:'thaddeus',displayName:'Thaddeus',aliases:['Thaddius','Thaddeus']}
 ];
 
-const NFL_TEAMS=new Set(['ARI','ATL','BAL','BUF','CAR','CHI','CIN','CLE','DAL','DEN','DET','GB','HOU','IND','JAX','KC','LV','LAC','LAR','MIA','MIN','NE','NO','NYG','NYJ','PHI','PIT','SEA','SF','TB','TEN','WAS']);
+export const SURVIVOR_NFL_TEAMS=new Set(['ARI','ATL','BAL','BUF','CAR','CHI','CIN','CLE','DAL','DEN','DET','GB','HOU','IND','JAX','KC','LV','LAC','LAR','MIA','MIN','NE','NO','NYG','NYJ','PHI','PIT','SEA','SF','TB','TEN','WAS']);
+const NFL_TEAMS=SURVIVOR_NFL_TEAMS;
 const clean=s=>String(s??'').replace(/\s+/g,' ').trim();
 const exact=s=>clean(s).toLowerCase();
 const median=a=>{const b=a.slice().sort((x,y)=>x-y),m=Math.floor(b.length/2);return b.length%2?b[m]:(b[m-1]+b[m])/2};
@@ -44,7 +45,7 @@ function headerContract(rows){
   for(let i=1;i<numeric.length;i++)if(numeric[i].week!==numeric[i-1].week+1)return null;
   const gaps=[];for(let i=1;i<numeric.length;i++)gaps.push(numeric[i].x-numeric[i-1].x);
   const gap=median(gaps);if(!Number.isFinite(gap)||gap<12||gap>80)return null;
-  return{headerKey:sourceRowKey(row),weekXs:numeric.map(n=>n.x),sheetWeeks:numeric.length,gap,nameCutoff:numeric[0].x-gap*0.44};
+  return{headerKey:sourceRowKey(row),headerPage:row.pageNumber??0,headerY:Number(row.y),weekXs:numeric.map(n=>n.x),sheetWeeks:numeric.length,gap,nameCutoff:numeric[0].x-gap*0.44};
 }
 
 function sourceRowKey(row){return 'pdf:'+(row.pageNumber??'?')+':'+Number(row.y??0).toFixed(2)+':'+clean(row.text)}
@@ -54,39 +55,144 @@ function targetForName(name){
   return SURVIVOR_TARGETS.find(t=>t.aliases.some(a=>exact(a)===n))||null;
 }
 
-function parseParticipantRow(row,contract){
-  if(!row||sourceRowKey(row)===contract.headerKey)return null;
-  const parts=(row.parts||[]).map(p=>({x:Number(p.x),text:clean(p.text)})).filter(p=>Number.isFinite(p.x)&&p.text);
-  if(!parts.length)return null;
-  const nameParts=parts.filter(p=>p.x<contract.nameCutoff).sort((a,b)=>a.x-b.x);
-  const sourceName=clean(nameParts.map(p=>p.text).join(' '));
-  if(!sourceName||/^suicide pool$/i.test(sourceName)||/^week$/i.test(sourceName))return null;
-  const bins=Array.from({length:contract.sheetWeeks},()=>[]);
-  for(const part of parts){
-    if(part.x<contract.nameCutoff)continue;
-    let best=-1,bestDist=Infinity;
-    contract.weekXs.forEach((x,i)=>{const d=Math.abs(part.x-x);if(d<bestDist){best=i;bestDist=d}});
-    if(best>=0&&bestDist<=contract.gap*0.62)bins[best].push(part.text);
+const MEANINGFUL=/[A-Za-z0-9]/;
+const TEAM_CODE_SHAPE=/^(?:[A-Z]{2,3}|LA [CR])$/;
+const NAME_X_TOLERANCE=3;
+
+function nearestColumns(x,columnXs){
+  const ds=columnXs.map((cx,i)=>({i,d:Math.abs(x-cx)})).sort((a,b)=>a.d-b.d||a.i-b.i);
+  return{best:ds[0]||null,second:ds[1]||null};
+}
+
+// Text split into several PDF items inside one cell (e.g. "LA" + "C") is merged first; a cell is placed by its start x.
+function pickCells(pickParts,gap){
+  const cells=[];
+  for(const part of pickParts){
+    const prev=cells[cells.length-1];
+    if(prev&&part.x-prev.lastX<=gap*0.7){prev.texts.push(part.text);prev.lastX=part.x;continue}
+    cells.push({x:part.x,lastX:part.x,texts:[part.text]});
   }
-  const rawPicks=bins.map(xs=>clean(xs.join(' '))||null);
-  const picks=[],issues=[];
-  rawPicks.forEach((raw,i)=>{
+  return cells.map(c=>{const text=clean(c.texts.join(' '));return{x:c.x,text,meaningful:MEANINGFUL.test(text)}});
+}
+
+function analyzeRow(row,contract){
+  const parts=(row.parts||[]).map(p=>({x:Number(p.x),text:clean(p.text)})).filter(p=>Number.isFinite(p.x)&&p.text).sort((a,b)=>a.x-b.x);
+  const nameParts=parts.filter(p=>p.x<contract.nameCutoff),cells=pickCells(parts.filter(p=>p.x>=contract.nameCutoff),contract.gap);
+  const sourceName=clean(nameParts.map(p=>p.text).join(' ')),meaningful=cells.some(c=>c.meaningful);
+  const kind=sourceName?(meaningful?'picks':'name-only'):(meaningful?'nameless':'noise');
+  return{row,nameParts,cells,sourceName,nameX:nameParts[0]?.x??null,kind};
+}
+
+// Observed Week-column positions: the header anchors shifted by the median offset of pick cells from their header.
+function columnModel(region,contract){
+  const offsets=[];
+  for(const a of region){
+    if(a.kind!=='picks')continue;
+    for(const cell of a.cells){
+      if(!cell.meaningful)continue;
+      const {best}=nearestColumns(cell.x,contract.weekXs);
+      if(best&&best.d<=contract.gap*0.62)offsets.push(cell.x-contract.weekXs[best.i]);
+    }
+  }
+  const offset=offsets.length?median(offsets):0;
+  return{offset,columnXs:contract.weekXs.map(x=>x+offset),valid:Math.abs(offset)<=contract.gap*0.375};
+}
+
+// A cell belongs to a Week column only when it is within tolerance and clearly nearer that column than any other.
+function assignCell(x,model,gap){
+  const {best,second}=nearestColumns(x,model.columnXs);
+  if(!best||best.d>gap*0.62)return{column:-1,problem:'outside'};
+  if(second&&second.d-best.d<gap*0.25)return{column:-1,problem:'between',columns:[Math.min(best.i,second.i)+1,Math.max(best.i,second.i)+1]};
+  return{column:best.i};
+}
+
+function participantPicks(a,contract,model){
+  const bins=Array.from({length:contract.sheetWeeks},()=>[]),issues=[],label=a.sourceName;
+  for(const part of a.nameParts){
+    if(part.x>=contract.nameCutoff-contract.gap*0.5&&TEAM_CODE_SHAPE.test(part.text)&&normalizeSurvivorTeam(part.text))issues.push(label+': text '+part.text+' sits between the name column and the Week 1 column');
+  }
+  for(const cell of a.cells){
+    const hit=assignCell(cell.x,model,contract.gap);
+    if(hit.column>=0){bins[hit.column].push(cell.text);continue}
+    if(!cell.meaningful)continue;
+    if(hit.problem==='between')issues.push(label+': text '+cell.text+' is between the Week '+hit.columns[0]+' and Week '+hit.columns[1]+' columns');
+    else issues.push(label+': text '+cell.text+' is outside every Week column');
+  }
+  const picks=[];
+  bins.map(xs=>clean(xs.join(' '))||null).forEach((raw,i)=>{
     if(!raw){picks.push(null);return}
     const team=normalizeSurvivorTeam(raw);
-    if(!team){issues.push(sourceName+': unknown Week '+(i+1)+' team '+raw);picks.push(null)}
+    if(!team){issues.push(label+': unknown Week '+(i+1)+' team '+raw);picks.push(null)}
     else picks.push(team);
   });
-  return{sourceName,picks,issues,row};
+  return{sourceName:label,picks,issues,row:a.row};
+}
+
+// Participant-table contract: rows below the single Week header (and on later pages). Rows with Week-column text are
+// participants; a row without picks is an entrant only when it sits on the table's row grid, chained to participant
+// rows on its page, with its name inside the participant name column.
+function participantRegion(rows,contract,review,errors){
+  const ignore=(row,reason)=>review.ignoredRows.push({page:row.pageNumber??null,text:clean(row.text),reason});
+  const region=[];
+  for(const row of rows){
+    if(sourceRowKey(row)===contract.headerKey)continue;
+    const page=row.pageNumber??0,headerPage=contract.headerPage??0;
+    if(page<headerPage||(page===headerPage&&Number(row.y)>contract.headerY)){ignore(row,'above the Week header');continue}
+    const a=analyzeRow(row,contract);
+    if(a.kind==='noise')continue;
+    if(/^suicide pool$/i.test(a.sourceName)||/^week$/i.test(a.sourceName)){ignore(row,'sheet title or label');continue}
+    region.push(a);
+  }
+  const model=columnModel(region,contract);
+  if(!model.valid)errors.push('Survivor Week column positions could not be proven (pick text starts '+model.offset.toFixed(1)+'pt from its Week header)');
+  for(const a of region){
+    if(a.kind!=='nameless')continue;
+    const suspect=a.cells.filter(c=>c.meaningful&&TEAM_CODE_SHAPE.test(c.text)&&normalizeSurvivorTeam(c.text)&&assignCell(c.x,model,contract.gap).problem!=='outside');
+    if(suspect.length)errors.push('Page '+(a.row.pageNumber??'?')+': Week-column team text '+suspect.map(c=>c.text).join(' ')+' has no participant name');
+    else ignore(a.row,'text in the Week columns without a participant name');
+  }
+  const named=region.filter(a=>a.kind==='picks'||a.kind==='name-only'),byPage=new Map();
+  for(const a of named){const p=a.row.pageNumber??0;if(!byPage.has(p))byPage.set(p,[]);byPage.get(p).push(a)}
+  for(const list of byPage.values())list.sort((x,y)=>Number(y.row.y)-Number(x.row.y));
+  const gaps=[];
+  for(const list of byPage.values())for(let i=1;i<list.length;i++){
+    if(list[i-1].kind!=='picks'||list[i].kind!=='picks')continue;
+    const g=Number(list[i-1].row.y)-Number(list[i].row.y);if(Number.isFinite(g)&&g>0)gaps.push(g);
+  }
+  const pitch=gaps.length?median(gaps):null;
+  const onGrid=(upper,lower)=>{const g=Number(upper.row.y)-Number(lower.row.y);return pitch!==null&&Number.isFinite(g)&&g>=pitch-Math.max(2.5,pitch*0.25)&&g<=pitch*1.75};
+  const nameXs=named.filter(a=>a.kind==='picks'&&Number.isFinite(a.nameX)).map(a=>a.nameX);
+  const nameMin=nameXs.length?Math.min(...nameXs)-NAME_X_TOLERANCE:null,nameMax=nameXs.length?Math.max(...nameXs)+NAME_X_TOLERANCE:null;
+  const accepted=new Set();
+  for(const list of byPage.values()){
+    const pageHasPicks=list.some(a=>a.kind==='picks');
+    list.forEach((a,idx)=>{
+      if(a.kind==='picks'){accepted.add(a);return}
+      const reaches=dir=>{for(let j=idx;;j+=dir){const k=j+dir;if(k<0||k>=list.length)return false;if(!onGrid(dir<0?list[k]:list[j],dir<0?list[j]:list[k]))return false;if(list[k].kind==='picks')return true}};
+      if(pitch===null){errors.push(a.sourceName+': row has no picks and the Survivor row spacing could not be proven');return}
+      const up=reaches(-1),down=reaches(1);
+      if(!up&&!down){
+        if(pageHasPicks){ignore(a.row,'row without picks separated from the participant table');review.detachedRows.push({page:a.row.pageNumber??null,label:a.sourceName})}
+        else errors.push(a.sourceName+': row has no picks on a page without participant picks; table membership cannot be proven');
+        return;
+      }
+      if(nameMin===null||a.nameX<nameMin||a.nameX>nameMax){errors.push(a.sourceName+': row has no picks and its name is outside the participant name column');return}
+      accepted.add(a);review.blankEntrants.push({page:a.row.pageNumber??null,label:a.sourceName});
+    });
+  }
+  review.geometry={weekGap:+contract.gap.toFixed(2),columnOffset:+model.offset.toFixed(2),rowPitch:pitch===null?null:+pitch.toFixed(2),nameX:nameXs.length?[+Math.min(...nameXs).toFixed(2),+Math.max(...nameXs).toFixed(2)]:null};
+  return{participants:region.filter(a=>accepted.has(a)),model};
 }
 
 export function parseSurvivorPages(pages,{season=2026,filename='survivor.pdf'}={}){
-  const errors=[],rows=[];
+  const errors=[],rows=[],review={blankEntrants:[],ignoredRows:[],detachedRows:[]};
   for(const page of pages||[])for(const row of page.rows||[])rows.push({...row,kind:'pdf',pageNumber:page.pageNumber});
   const contract=headerContract(rows);
-  if(!contract)return{errors:['Survivor Week header/columns could not be proven'],config:null,competitionSize:0,currentWeekEntryCount:0};
+  if(!contract)return{errors:['Survivor Week header/columns could not be proven'],config:null,competitionSize:0,currentWeekEntryCount:0,review};
   const parsed=[];
-  for(const row of rows){
-    const p=parseParticipantRow(row,contract);if(!p)continue;
+  const region=participantRegion(rows,contract,review,errors);
+  for(const a of region.participants){
+    const p=participantPicks(a,contract,region.model);
     errors.push(...p.issues);parsed.push(p);
   }
   if(!parsed.length)errors.push('No Survivor entries found');
@@ -113,7 +219,7 @@ export function parseSurvivorPages(pages,{season=2026,filename='survivor.pdf'}={
     trackedEntries:tracked,fieldEntries,
     source:{kind:'survivor-upload',filename}
   };
-  return{errors:[...new Set(errors)],config,competitionSize,currentWeekEntryCount};
+  return{errors:[...new Set(errors)],config,competitionSize,currentWeekEntryCount,review};
 }
 
 export function validateSurvivorConfig(config){
