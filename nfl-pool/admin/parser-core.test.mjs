@@ -327,10 +327,12 @@ function applyRegularHeaderGeometry(rows,headerText='Entry Pts W'){
   assert.equal(c.config.fieldEntries,undefined);
 }
 {
-  // TEST G — a repeated compatible header physically near its participant run proves continuation.
+  // TEST G — a repeated compatible header plus prior-page edge proof permits continuation.
   const header='Entry Pts W';
   const page1=[...matchups,header,tracked[0],tracked[1],anonA],page2=[header,tracked[2],tracked[3],anonB];
   const rows1=applyRegularHeaderGeometry(sourceRows(page1,1),header);
+  const edgeY=new Map([[header,96],[tracked[0],84],[tracked[1],72],[anonA,60]]);
+  for(const row of rows1)if(edgeY.has(row.text))row.y=edgeY.get(row.text);
   const rows2=applyRegularHeaderGeometry(rowsAt(page2,2,[760,740,728,716]),header);
   const c=parseDocumentGroups([
     {week:2,lines:page1,sourceRows:rows1,pageNumber:1,pageFingerprint:'header-near-page-1'},
