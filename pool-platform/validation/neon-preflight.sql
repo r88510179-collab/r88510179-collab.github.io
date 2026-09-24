@@ -66,8 +66,8 @@ defacl AS (
   FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) x
 ),
 -- Default privileges that will apply to the tables, sequence and functions the migration role creates in
--- public. 002 revokes ALL from PUBLIC, anonymous and authenticated on every one of them (on PostgreSQL 17
--- that includes table MAINTAIN), so only entries for other grantees survive the migrations.
+-- public. 002 revokes ALL from PUBLIC, anonymous and authenticated on every one of them (from PostgreSQL 17
+-- on, that includes table MAINTAIN), so only entries for other grantees survive the migrations.
 applies AS (
   SELECT defacl.*,grantee=0 OR grantee_name IN ('anonymous','authenticated') AS reset_by_002
   FROM defacl
@@ -76,9 +76,9 @@ applies AS (
 ),
 checks AS (
   SELECT 'P01' AS check_id,'PostgreSQL major version' AS check_name,true AS required,
-         '16 or 17: the versions the local integration suite verifies (17 adds the table MAINTAIN privilege)' AS expected,
+         '16, 17 or 18: the versions the local integration suite verifies (17 adds the table MAINTAIN privilege; 18 adds none)' AS expected,
          version()||' (server_version_num '||num||')' AS actual,
-         num/10000 IN (16,17) AS ok
+         num/10000 IN (16,17,18) AS ok
   FROM ver
   UNION ALL
   SELECT 'P02','connection identity',false,'report',

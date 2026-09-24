@@ -11,10 +11,10 @@ import {after,afterEach,before,describe,test} from 'node:test';
 // afterwards. Neon Auth is stood in for by neon_auth."user" (columns as Neon publishes them) and auth.user_id()
 // reading a session setting. Both migrations are applied as the NOLOGIN owner role under hostile default
 // privileges (every function, table and sequence the owner creates in public starts out granted to anonymous
-// and authenticated), and races use real concurrent psql sessions. Run it on PostgreSQL 16 and 17: the
-// privilege checks follow the server version, since 17 adds the table MAINTAIN privilege. A second block runs
-// clean and hostile privilege scenarios in small separate databases, together with the read-only live Neon
-// validation kit in validation/.
+// and authenticated), and races use real concurrent psql sessions. Run it on PostgreSQL 16, 17 and 18: the
+// privilege checks follow the server version, since 17 adds the table MAINTAIN privilege and 18 adds none. A
+// second block runs clean and hostile privilege scenarios in small separate databases, together with the
+// read-only live Neon validation kit in validation/.
 const CLUSTER=process.env.POOL_PLATFORM_TEST_PG_CLUSTER||'';
 const SKIP=CLUSTER?false:'set POOL_PLATFORM_TEST_PG_CLUSTER to a disposable local superuser URL';
 const OWNER='pool_platform_it_owner';
@@ -53,7 +53,10 @@ const assertLocalCluster=()=>{
 };
 
 // Table privileges PostgreSQL 16 knows. 17 adds MAINTAIN (LOCK in any mode, VACUUM, ANALYZE, REINDEX, CLUSTER),
-// and before 17 has_table_privilege rejects that name outright, so every privilege check follows the server.
+// and before 17 has_table_privilege rejects that name outright, so every privilege check follows the server. 18
+// adds none. VERIFIED_MAJORS are the versions this suite has been run on and the only ones the preflight (P01)
+// admits; on any other the first privilege-scenario test fails.
+const VERIFIED_MAJORS=[16,17,18];
 const PG16_TABLE_PRIVILEGES=['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'];
 let serverVersion=0;
 const pgVersion=()=>serverVersion||(serverVersion=Number(psqlSync(CLUSTER,'SHOW server_version_num')));
@@ -101,7 +104,7 @@ function assertPrivilegeContract(state,label){
   assert.deepEqual(state.sequenceRights,[],`${label}: no sequence rights for anonymous or authenticated`);
 }
 
-// has_table_privilege('authenticated', table, 'MAINTAIN') must be false on 17; on 16 the privilege does not exist.
+// has_table_privilege('authenticated', table, 'MAINTAIN') must be false from 17 on; on 16 the privilege does not exist.
 function assertNoMaintain(url,label){
   if(hasMaintain()){
     assert.equal(psqlSync(url,`SELECT string_agg(c.relname,',') FILTER (WHERE has_table_privilege('authenticated',c.oid,'MAINTAIN')) IS NULL AND count(*)=${TABLES.length}
@@ -755,6 +758,16 @@ describe('privilege scenarios and the live Neon validation kit on throwaway loca
   before(()=>{assertLocalCluster();ensureRoles()});
   after(()=>{for(const name of created)psqlSync(CLUSTER,`DROP DATABASE IF EXISTS ${name} WITH (FORCE);`)});
 
+  test('the server is a verified major version and knows exactly the table, sequence and function privileges checked here',()=>{
+    assert.ok(VERIFIED_MAJORS.includes(Math.floor(pgVersion()/10000)),`server_version_num ${pgVersion()} is not one of PostgreSQL ${VERIFIED_MAJORS.join(', ')}`);
+    // acldefault gives the owner every privilege the server supports on an object type, so a privilege a newer
+    // version adds would show up here instead of going unchecked.
+    const known=type=>psqlSync(CLUSTER,`SELECT string_agg(privilege_type,',' ORDER BY privilege_type) FROM aclexplode(acldefault('${type}','${OWNER}'::regrole)) WHERE grantee='${OWNER}'::regrole`);
+    assert.equal(known('r'),tablePrivileges().join(','),'table privileges');
+    assert.equal(known('s'),'SELECT,UPDATE,USAGE','sequence privileges');
+    assert.equal(known('f'),'EXECUTE','function privileges');
+  });
+
   test('A. clean default privileges: anonymous ends with nothing, authenticated with SELECT only, and the kit passes',async()=>{
     const url=scenario('clean');
     assertPreflightPasses(url,'clean preflight');
@@ -894,6 +907,12 @@ GRANT USAGE ON SEQUENCE public.${AUDIT_SEQUENCE} TO anonymous;`);
     // The database-name guard, exercised without creating a database named like the personal one.
     const name=new URL(clean).pathname.slice(1);
     assert.deepEqual(stops(clean,{transform:sql=>sql.replace("current_database()<>'nfl_pool'",`current_database()<>'${name}'`)}),['P03'],'personal database name');
+    // The version gate, exercised for versions other than this server's: only the verified majors pass P01.
+    const version="current_setting('server_version_num')::int AS num";
+    for(const major of [15,...VERIFIED_MAJORS,19]){
+      const faked=stops(clean,{transform:sql=>{assert.ok(sql.includes(version));return sql.replace(version,`${major*10000} AS num`)}});
+      assert.deepEqual(faked,VERIFIED_MAJORS.includes(major)?[]:['P01'],`server_version_num ${major*10000}`);
+    }
     assertPreflightPasses(clean,'clean again');
   });
 });

@@ -29,19 +29,19 @@ Every row has `check_id`, `check_name`, `required`, `expected`, `actual` and `ok
 CASCADE` before granting `SELECT` to `authenticated`, and resets the audit identity sequence the same way. So:
 
 - `anonymous`: no privilege on any commercial table, including through PUBLIC
-- `authenticated`: `SELECT` only, without grant option; on PostgreSQL 17 no `MAINTAIN` (no LOCK, VACUUM, ANALYZE,
-  REINDEX or CLUSTER)
+- `authenticated`: `SELECT` only, without grant option; from PostgreSQL 17 on, no `MAINTAIN` (no LOCK, VACUUM,
+  ANALYZE, REINDEX or CLUSTER)
 - no column privileges, and no sequence privileges for anyone but the owner
 - internal helpers callable by the owner only; `EXECUTE` for `authenticated` on the 4 RLS helpers and 6 RPCs only
 
 This holds with clean default privileges and with hostile ones or earlier unwanted grants (ALL, grant options and
-re-grants, PUBLIC, column and sequence grants), on PostgreSQL 16 and 17.
+re-grants, PUBLIC, column and sequence grants), on PostgreSQL 16, 17 and 18.
 
 ## Preflight rows
 
 | ID | Gate | Checks |
 |---|---|---|
-| P01 | yes | PostgreSQL major version 16 or 17, the versions the local suites verify |
+| P01 | yes | PostgreSQL major version 16, 17 or 18, the versions the local suites verify |
 | P02 | report | database and its oid, current_user, session_user, search_path |
 | P03 | yes | database is not `nfl_pool`, the personal Pool Center database |
 | P04 | yes | no `nfl_pool_weeks` or `nfl_survivor_weeks` relation and no `nfl_survivor_*` policy in any schema |
@@ -59,7 +59,7 @@ re-grants, PUBLIC, column and sequence grants), on PostgreSQL 16 and 17.
 | P16 | yes | the migration role is not a superuser and not a Data API role |
 | P17 | yes | `anonymous`/`authenticated` do not belong, directly or through other roles, to the migration role, a superuser or BYPASSRLS role, or a privileged predefined role such as `pg_read_all_data`, `pg_write_all_data` or `pg_maintain` |
 | P18 | yes | PUBLIC has no CREATE on `public` (002 revokes it only from `anonymous` and `authenticated`) |
-| P19 | report | default privileges 002 resets: PUBLIC/`anonymous`/`authenticated` on the tables, sequence and functions the migration role creates in `public`; on PostgreSQL 17 table defaults can include `MAINTAIN` |
+| P19 | report | default privileges 002 resets: PUBLIC/`anonymous`/`authenticated` on the tables, sequence and functions the migration role creates in `public`; from PostgreSQL 17 on, table defaults can include `MAINTAIN` |
 | P20 | yes | default privileges 002 does not reset: any other grantee on those object types |
 | P21 | report | every default privilege in the database |
 | P99 | verdict | |
@@ -98,17 +98,43 @@ re-grants, PUBLIC, column and sequence grants), on PostgreSQL 16 and 17.
 
 ## Local evidence (disposable local clusters, never Neon)
 
-PostgreSQL 16.13 (Ubuntu 24.04 package) and PostgreSQL 17.10 (`@embedded-postgres/linux-x64` 17.10.0-beta.17
-binaries), both on 127.0.0.1.
+PostgreSQL 16.13 (Ubuntu 24.04 package), PostgreSQL 17.10 (`@embedded-postgres/linux-x64` 17.10.0-beta.17 binaries)
+and PostgreSQL 18.6, the version of the dedicated commercial Neon project
+(`io.zonky.test.postgres:embedded-postgres-binaries-linux-amd64` 18.6.0 binaries from Maven Central), all on 127.0.0.1.
+PostgreSQL 18.4 (`@embedded-postgres/linux-x64` 18.4.0-beta.17) gives the same results as 18.6 throughout.
 
-| Check | PostgreSQL 16.13 | PostgreSQL 17.10 |
-|---|---|---|
-| `migration-integration.test.mjs` | 27/27 pass | 27/27 pass |
-| same suite with the unfixed 002 (`c0c9e24`) | 7 fail: grant-option re-grants abort 002 (`dependent privileges exist`), PUBLIC and sequence grants survive | 8 fail: the same, plus `authenticated` keeps `MAINTAIN` under hostile table defaults |
-| unfixed 002, hostile table defaults: `neon-catalog-verify.sql` | PASS | FINDINGS: C13, C14, C21 |
-| fixed 002, hostile table, sequence and function defaults: `neon-catalog-verify.sql` | PASS | PASS |
-| `neon-preflight.sql`, clean or hostile PUBLIC/`anonymous`/`authenticated` defaults | PASS | PASS |
-| 002 applied before Neon Auth, `psql --single-transaction` | stops at line 49 (`relation "neon_auth.user" does not exist`); nothing of 002 is left | same |
+| Check | PostgreSQL 16.13 | PostgreSQL 17.10 | PostgreSQL 18.6 |
+|---|---|---|---|
+| `migration-integration.test.mjs` | 28/28 pass | 28/28 pass | 28/28 pass |
+| same suite with the unfixed 002 (`c0c9e24`) | 7 fail: grant-option re-grants abort 002 (`dependent privileges exist`), PUBLIC and sequence grants survive | 8 fail: the same, plus `authenticated` keeps `MAINTAIN` under hostile table defaults | 8 fail: the same as 17 |
+| unfixed 002, hostile table defaults: `neon-catalog-verify.sql` | PASS | FINDINGS: C13, C14, C21 | FINDINGS: C13, C14, C21 |
+| fixed 002, hostile table, sequence and function defaults: `neon-catalog-verify.sql` | PASS | PASS | PASS |
+| `neon-preflight.sql`, clean or hostile PUBLIC/`anonymous`/`authenticated` defaults | PASS | PASS | PASS |
+| 002 applied before Neon Auth, `psql --single-transaction` | stops at line 49 (`relation "neon_auth.user" does not exist`); nothing of 002 is left | same | same |
+
+### PostgreSQL 18
+
+Before P01 admitted 18 (`e017366`), the unchanged suites on 18.6 and 18.4 gave `migration-contract.test.mjs` 25/25
+(local payload fixtures included) and `migration-integration.test.mjs` 23/27. All 4 failures (A, B, the hostile
+grant-option defaults test and the preflight test) came from `P01` alone; with only `P01` set aside, 27/27 passed.
+Read from the 18.6 server itself:
+
+- 18 adds no privilege. `acldefault` and `GRANT ALL` give a table `arwdDxtm` (17's set: SELECT, INSERT, UPDATE,
+  DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN), a sequence `rwU` and a function `X`, and the server accepts the
+  same ACL mode characters as 17 (`arwdDxtXUCTcsAm`). The integration suite now asserts the table, sequence and
+  function sets.
+- Clean defaults, hostile defaults (ALL with grant options, PUBLIC, column, sequence and function grants, and grant
+  chains from `authenticated` through `anonymous` to a third role), and 002 re-applied over the same grants all end
+  with every table ACL exactly `{owner=arwdDxtm/owner,authenticated=r/owner}`, no column ACL, no sequence privilege,
+  the reviewed function ACLs and nothing for PUBLIC on any commercial object. Re-applied, the privilege state is
+  identical to a clean application.
+- As `authenticated`, through a NOINHERIT login role after `SET ROLE` and through a login role inheriting it: LOCK
+  in ACCESS SHARE mode is allowed (SELECT allows it); the other seven lock modes, REINDEX, CLUSTER and TRUNCATE fail
+  with 42501; VACUUM, VACUUM FULL and ANALYZE skip each table with a `permission denied ..., skipping it` warning;
+  database-wide VACUUM, VACUUM FULL, ANALYZE and CLUSTER change no commercial table or index. With MAINTAIN granted
+  instead, all of it except TRUNCATE succeeds. 17.10 gives the same results.
+- pgcrypto defaults to 1.4 on 18, which adds `fips_mode()`, so C23 reports 37 callable pgcrypto functions instead
+  of 36.
 
 The integration suite also shows that each single fault (an extra table or column grant, a grant option, EXECUTE
 on an internal helper, an extra trigger, RLS disabled, a changed policy, a sequence grant, an extra public

@@ -5,7 +5,7 @@ This runbook is intentionally blocked until the Step 2 candidate receives an ind
 ## Before touching Neon
 
 Run every commercial suite locally, never against Neon. The opt-in PostgreSQL suites use disposable local
-clusters and must pass on both PostgreSQL 16 and PostgreSQL 17 (17 adds the table MAINTAIN privilege):
+clusters and must pass on PostgreSQL 16, 17 and 18 (17 adds the table MAINTAIN privilege; 18 adds none):
 
     POOL_PLATFORM_TEST_PG_CLUSTER=postgresql://postgres@127.0.0.1:5432/postgres \
       node --test pool-platform/migration-integration.test.mjs
@@ -24,7 +24,7 @@ The earlier order, which applied migration 002 before Neon Auth and the Data API
 002 needs `neon_auth."user"`, `auth.user_id()` and the `anonymous`/`authenticated` roles at the moment it runs.
 
 1. **Create a dedicated commercial/dev Neon environment.** Use a new Neon project for the commercial product,
-   on PostgreSQL 16 or 17 (the versions the local suites verify; the preflight stops on any other). Low-cost goal:
+   on PostgreSQL 16, 17 or 18 (the versions the local suites verify; the preflight stops on any other). Low-cost goal:
    - one commercial dev/production project while customer count is small
    - one synthetic demo tenant inside that project, or a separate demo branch later
    - scale-to-zero/serverless settings where available
@@ -77,8 +77,8 @@ The earlier order, which applied migration 002 before Neon Auth and the Data API
 
     STOP unless the verdict C99 is `PASS`. It confirms the 9 tables with RLS, the 9 reviewed policies, the
     unique indexes, the source trigger (and no other trigger), the 14 functions with their SECURITY DEFINER
-    and search_path settings, that anonymous has no table privileges, that authenticated has SELECT only (on
-    PostgreSQL 17, no MAINTAIN), no column or sequence privileges, internal helpers callable by the owner only,
+    and search_path settings, that anonymous has no table privileges, that authenticated has SELECT only (from
+    PostgreSQL 17 on, no MAINTAIN), no column or sequence privileges, internal helpers callable by the owner only,
     and EXECUTE for authenticated on the RLS helpers and RPCs only.
 
 11. **Authenticated RLS/race tests.** With test Neon Auth accounts and the synthetic pilot seed below, exercise
@@ -251,7 +251,7 @@ Do not use the live commercial backend with a real customer until:
 
 - independent code review: SHIP
 - preflight verdict PASS, then both migrations apply cleanly in dedicated dev
-- catalog verification verdict PASS (RLS/privilege matrix verified, no MAINTAIN on PostgreSQL 17)
+- catalog verification verdict PASS (RLS/privilege matrix verified, no MAINTAIN from PostgreSQL 17 on)
 - pgcrypto Data API surface check recorded and decided
 - race tests pass
 - browser/device matrix passes

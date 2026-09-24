@@ -409,7 +409,7 @@ test('validation kit: preflight gates the personal Pool Center, Neon Auth, auth.
   assert.match(preflight,/unnest\(ARRAY\['id','email','emailVerified','banned'\]\) c\(name\)/);
   assert.match(preflight,/FROM pg_default_acl d CROSS JOIN LATERAL aclexplode\(d\.defaclacl\) x/);
   assert.match(preflight,/SELECT 'P20','default privileges 002 does not reset',true,/);
-  assert.match(preflight,/num\/10000 IN \(16,17\) AS ok/);
+  assert.match(preflight,/num\/10000 IN \(16,17,18\) AS ok/);
 });
 
 // Behaviour fixtures for pool_platform_payload_valid. Survivor cases here all return before the
