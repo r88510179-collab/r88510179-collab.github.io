@@ -704,6 +704,11 @@ REVOKE ALL ON FUNCTION public.pool_platform_submit_batch(uuid,text,jsonb) FROM P
 REVOKE ALL ON FUNCTION public.pool_platform_participant_context(text,integer,integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.pool_platform_commissioner_context(text) FROM PUBLIC;
 
+GRANT EXECUTE ON FUNCTION public.pool_platform_current_user_id() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.pool_platform_is_tenant_commissioner(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.pool_platform_can_read_pool(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.pool_platform_can_read_season(uuid) TO authenticated;
+
 GRANT EXECUTE ON FUNCTION public.pool_platform_create_entry_invite(uuid,text,integer) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.pool_platform_claim_entry_invite(text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.pool_platform_submit_entry(uuid,uuid,text,jsonb) TO authenticated;

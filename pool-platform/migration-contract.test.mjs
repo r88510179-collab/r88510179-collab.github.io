@@ -16,6 +16,8 @@ test('authenticated clients have reads but no direct table writes',()=>{
   assert.doesNotMatch(m2,/GRANT\s+(?:INSERT|UPDATE|DELETE)/i);
   assert.match(m2,/REVOKE INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public\.pool_platform_submissions FROM authenticated/);
   assert.match(m2,/Mutation flows go through reviewed SECURITY DEFINER functions/);
+  assert.match(m2,/GRANT EXECUTE ON FUNCTION public\.pool_platform_current_user_id\(\) TO authenticated/);
+  assert.match(m2,/GRANT EXECUTE ON FUNCTION public\.pool_platform_can_read_pool\(uuid\) TO authenticated/);
 });
 
 test('tenant and participant authorization are checked server-side',()=>{

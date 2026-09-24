@@ -37,7 +37,7 @@ function renderEntries(){
   const entries=state.season?.entries||[];$('entriesBody').innerHTML=entries.map(e=>{const sub=currentSubmission(e),source=sub?.source||'—';return`<tr><td><strong>${esc(e.entry_code)}</strong><small>${esc(e.display_name)}</small></td><td>${e.claimed?'Yes':'No'}</td><td>${esc(source)}</td></tr>`}).join('');
   $('inviteEntry').innerHTML=entries.map(e=>`<option value="${e.id}">${esc(e.entry_code)} · ${esc(e.display_name)}</option>`).join('');
   const gameIds=(state.week?.config?.games||[]).map((g,i)=>g.id||`g${i+1}`);
-  $('importHelp').textContent=state.context.pool.pool_type==='survivor'?'CSV headers: entry_code,team':`CSV headers: entry_code,${gameIds.join(',')}${state.week?.config?.tiebreakRequired?',tiebreak':''}. Pick values use away or home.`;
+  $('importHelp').textContent=state.context.pool.pool_type==='survivor'?'CSV headers: entry_code,team':`CSV headers: entry_code,${gameIds.join(',')}${state.week?.config?.tiebreakRequired?',tiebreak':''}. Pick values may use away/home or the displayed city/team label.`;
   $('importText').placeholder=state.context.pool.pool_type==='survivor'?'entry_code,team\nE02,Miami':`entry_code,${gameIds.join(',')},tiebreak\nE02,${gameIds.map((_,i)=>i%2?'home':'away').join(',')},47`;
 }
 $('createInvite').addEventListener('click',async()=>{

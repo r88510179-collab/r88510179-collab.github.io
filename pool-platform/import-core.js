@@ -19,6 +19,30 @@ export function parseCsv(text){
   return rows;
 }
 
+function teamCandidates(game,side){
+  const raw=game?.[side],key=String(raw&&typeof raw==='object'?(raw.key??raw.id??''):raw??'').trim();
+  const label=String(raw&&typeof raw==='object'?(raw.label??raw.name??raw.city??key):raw??'').trim();
+  return{key,label};
+}
+function resolveSide(value,game){
+  const v=String(value??'').trim().toLowerCase();
+  if(v==='away'||v==='home')return v;
+  const away=teamCandidates(game,'away'),home=teamCandidates(game,'home');
+  if([away.key,away.label].some(x=>x&&x.toLowerCase()===v))return'away';
+  if([home.key,home.label].some(x=>x&&x.toLowerCase()===v))return'home';
+  return null;
+}
+function resolveSurvivorTeam(value,weekConfig){
+  const v=String(value??'').trim().toLowerCase();
+  for(const game of weekConfig?.games||[]){
+    for(const side of ['away','home']){
+      const team=teamCandidates(game,side);
+      if([team.key,team.label].some(x=>x&&x.toLowerCase()===v))return team.key;
+    }
+  }
+  return null;
+}
+
 export function prepareCommissionerImport({text,poolType,entries,weekConfig}){
   const rows=parseCsv(text);
   if(rows.length<2)return{items:[],errors:[{code:'no_data'}]};
@@ -34,7 +58,9 @@ export function prepareCommissionerImport({text,poolType,entries,weekConfig}){
       const code=String(rows[i][entryIndex]||'').toLowerCase(),entry=entryMap.get(code),team=String(rows[i][teamIndex]||'').trim();
       if(!entry){errors.push({row:i+1,code:'unknown_entry',entry_code:rows[i][entryIndex]});continue}
       if(!team){errors.push({row:i+1,code:'missing_team',entry_code:entry.entry_code});continue}
-      items.push({entry_id:entry.id,payload:{team}});
+      const teamKey=resolveSurvivorTeam(team,weekConfig);
+      if(!teamKey){errors.push({row:i+1,code:'unknown_team',entry_code:entry.entry_code});continue}
+      items.push({entry_id:entry.id,payload:{team:teamKey}});
     }
     return{items,errors};
   }
@@ -49,9 +75,9 @@ export function prepareCommissionerImport({text,poolType,entries,weekConfig}){
     if(!entry){errors.push({row:i+1,code:'unknown_entry',entry_code:rows[i][entryIndex]});continue}
     const picks={};let invalid=false;
     gameIds.forEach((id,j)=>{
-      const value=String(rows[i][gameColumns[j]]||'').toLowerCase();
-      if(value!=='away'&&value!=='home')invalid=true;
-      else picks[id]=value;
+      const side=resolveSide(rows[i][gameColumns[j]],weekConfig.games[j]);
+      if(!side)invalid=true;
+      else picks[id]=side;
     });
     const tb=tbIndex>=0?Number(rows[i][tbIndex]):null;
     if(invalid||tbRequired&&!Number.isInteger(tb)){errors.push({row:i+1,code:'invalid_picks',entry_code:entry.entry_code});continue}
