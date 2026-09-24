@@ -13,17 +13,24 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&
 const norm=x=>({JAC:'JAX',WSH:'WAS'}[x]||x);
 let session=null,currentFile=null,candidates=[],candidate=null,scheduleVerified=false;
 let fileGeneration=0,parseGeneration=0,candidateFile=null,candidateFileGeneration=-1,candidateCompetitionSize,publishInFlight=false;
+// The accepted Total pool entries value is the authoritative count; the field only displays it. An edit is accepted only
+// while no publish is in flight: during a publish the value is frozen and the field is put back to it.
+let totalEntriesInput={raw:'',badInput:false};
 
 function selectedSeason(){const n=Number($('season').value);if(!Number.isInteger(n)||n<2020||n>2100)throw new Error('Season must be between 2020 and 2100.');return n}
+function totalEntriesField(){const el=$('totalEntries');return{raw:String(el.value??'').trim(),badInput:!!el.validity?.badInput}}
+function acceptTotalEntries(){if(!publishInFlight)totalEntriesInput=totalEntriesField()}
+function totalEntriesShown(){const f=totalEntriesField();return f.raw===totalEntriesInput.raw&&f.badInput===totalEntriesInput.badInput}
+function showTotalEntries(){$('totalEntries').value=totalEntriesInput.raw}
 // The official total pool entry count. Blank means none was supplied (tracked entries only); anything else must be a whole
 // number of at least the tracked entries. It is only compared with the parsed field, never used to shape it.
-function totalEntriesState(){const el=$('totalEntries'),raw=String(el.value??'').trim();if(el.validity?.badInput)return{ok:false};if(!raw)return{ok:true,value:null};const n=/^\d+$/.test(raw)?Number(raw):NaN;return Number.isSafeInteger(n)&&n>=TARGETS.length?{ok:true,value:n}:{ok:false}}
-function selectedCompetitionSize(){const s=totalEntriesState();if(!s.ok)throw new Error(`Total pool entries must be a whole number of at least ${TARGETS.length}, or left blank.`);return s.value}
+function totalEntriesState(){const {raw,badInput}=totalEntriesInput;if(badInput)return{ok:false};if(!raw)return{ok:true,value:null};const n=/^\d+$/.test(raw)?Number(raw):NaN;return Number.isSafeInteger(n)&&n>=TARGETS.length?{ok:true,value:n}:{ok:false}}
+function selectedCompetitionSize(){acceptTotalEntries();const s=totalEntriesState();if(!s.ok)throw new Error(`Total pool entries must be a whole number of at least ${TARGETS.length}, or left blank.`);return s.value}
 function competitionSizeCurrent(value){const s=totalEntriesState();return s.ok&&s.value===value}
 const fieldUnavailableReason=c=>(c?.fullFieldIssues||[]).join('; ')||'regular competition field could not be validated';
 function message(text,type='info'){$('message').className=`notice ${type}`;$('message').textContent=text;$('message').hidden=!text}
 function fileContextCurrent(file,generation){return !!file&&currentFile===file&&fileGeneration===generation}
-function canPublish(){return !!session&&!!candidate&&scheduleVerified&&candidateFile===currentFile&&candidateFileGeneration===fileGeneration&&competitionSizeCurrent(candidateCompetitionSize)}
+function canPublish(){return !!session&&!!candidate&&scheduleVerified&&candidateFile===currentFile&&candidateFileGeneration===fileGeneration&&competitionSizeCurrent(candidateCompetitionSize)&&totalEntriesShown()}
 function setBusy(on,text='Working…'){$('busy').hidden=!on;$('busyText').textContent=text;$('parseBtn').disabled=on||!currentFile;$('publishBtn').disabled=on||!canPublish();$('sendCode').disabled=on;$('verifyCode').disabled=on;$('season').disabled=on;$('totalEntries').disabled=on;$('detectedWeek').disabled=on;$('tiebreakGame').disabled=on;$('replaceLocked').disabled=on}
 function staleFileError(){const e=new Error('Selected file changed while validation was running.');e.name='StaleFileContext';return e}
 function assertFileContext(file,generation,operation=null){if(!fileContextCurrent(file,generation)||(operation!==null&&operation!==parseGeneration))throw staleFileError()}
@@ -69,7 +76,7 @@ $('signOut').addEventListener('click',async()=>{await neon.auth.signOut();sessio
 
 $('season').value=String(DEFAULT_SEASON);
 $('season').addEventListener('change',()=>{parseGeneration++;invalidateParsedState();message('Season changed. Read the weekly sheet again.','info')});
-function totalEntriesChanged(){if(publishInFlight)return;const had=!!candidate;parseGeneration++;invalidateParsedState();setBusy(false);if(had)message('Total pool entries changed. Read the weekly sheet again.','info')}
+function totalEntriesChanged(){if(publishInFlight){showTotalEntries();message('Publishing is in progress. Total pool entries cannot be changed until it finishes.','info');return}const had=!!candidate;acceptTotalEntries();parseGeneration++;invalidateParsedState();setBusy(false);if(had)message('Total pool entries changed. Read the weekly sheet again.','info')}
 $('totalEntries').addEventListener('input',totalEntriesChanged);
 $('totalEntries').addEventListener('change',totalEntriesChanged);
 $('file').addEventListener('change',()=>setCurrentFile($('file').files?.[0]||null));
@@ -165,7 +172,7 @@ async function sha256(file){const buf=await crypto.subtle.digest('SHA-256',await
 $('publishBtn').addEventListener('click',async()=>{
   if(!session||session.user?.email?.toLowerCase()!==ADMIN_EMAIL){message('Sign in before publishing.','error');return}
   const publishFile=currentFile,publishGeneration=fileGeneration,publishCandidate=candidate,publishCompetitionSize=candidateCompetitionSize;
-  if(!publishCandidate||!scheduleVerified||!fileContextCurrent(publishFile,publishGeneration)||candidateFile!==publishFile||candidateFileGeneration!==publishGeneration||!competitionSizeCurrent(publishCompetitionSize)){invalidateParsedState();message('The selected file changed or is no longer validated. Read and validate it again before publishing.','error');return}
+  if(!publishCandidate||!scheduleVerified||!fileContextCurrent(publishFile,publishGeneration)||candidateFile!==publishFile||candidateFileGeneration!==publishGeneration||!competitionSizeCurrent(publishCompetitionSize)||!totalEntriesShown()){invalidateParsedState();message('The selected file changed or is no longer validated. Read and validate it again before publishing.','error');return}
   publishInFlight=true;$('file').disabled=true;setBusy(true,'Publishing and locking week…');message('');
   const cfg=structuredClone(publishCandidate.config),configSnapshot=JSON.stringify(publishCandidate.config),replaceLocked=$('replaceLocked').checked,errors=validateConfig(cfg);
   const assertPublishContext=()=>{if(!fileContextCurrent(publishFile,publishGeneration)||candidate!==publishCandidate||candidateFile!==publishFile||candidateFileGeneration!==publishGeneration||!scheduleVerified||JSON.stringify(publishCandidate.config)!==configSnapshot||candidateCompetitionSize!==publishCompetitionSize||!competitionSizeCurrent(publishCompetitionSize))throw staleFileError()};
@@ -186,7 +193,7 @@ $('publishBtn').addEventListener('click',async()=>{
   }catch(e){
     if(e?.name==='StaleFileContext'){invalidateParsedState();message('The selected file or publish settings changed before publishing completed. Validate the current file again.','error')}
     else message(e.message||String(e),'error')
-  }finally{publishInFlight=false;$('file').disabled=false;setBusy(false)}
+  }finally{showTotalEntries();publishInFlight=false;$('file').disabled=false;setBusy(false)}
 });
 
 refreshSession();
