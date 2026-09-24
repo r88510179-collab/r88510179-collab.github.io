@@ -110,21 +110,63 @@ function pdfParticipantSpacingModel(pageMap){
 function pdfParticipantGeometry(row,parsed,gameCount){
   if(!row||row.kind!=='pdf'||!Array.isArray(row.parts)||!parsed)return null;
   const tokens=[];
-  for(const part of row.parts){
-    const x=Number(part?.x);if(!Number.isFinite(x))continue;
-    for(const token of clean(part?.text).split(' ').filter(Boolean))tokens.push({token,x});
-  }
+  row.parts.forEach((part,partIndex)=>{
+    const x=Number(part?.x);if(!Number.isFinite(x))return;
+    for(const token of clean(part?.text).split(' ').filter(Boolean))tokens.push({token,x,partIndex});
+  });
   const tailCount=gameCount+2;
   if(tokens.length<=tailCount)return null;
   const prefix=tokens.slice(0,-tailCount),tail=tokens.slice(-tailCount);
   if(!prefix.length||!tail.every(t=>/^\d+$/.test(t.token)))return null;
-  const prefixXs=prefix.map(t=>t.x);
-  if(Math.max(...prefixXs)-Math.min(...prefixXs)>14)return null;
   const expected=[...(parsed.pickNumbers||[]),parsed.tiebreak,parsed.wins].map(String);
   if(expected.length!==tail.length||tail.some((t,i)=>t.token!==expected[i]))return null;
   const numericXs=tail.map(t=>t.x),distinct=new Set(numericXs.map(x=>x.toFixed(2))).size;
   if(distinct<Math.min(6,tailCount))return null;
-  return{nameX:tokens[0]?.x,numericXs};
+  const nameItems=[];
+  for(const t of prefix){const item=nameItems[nameItems.length-1];if(item&&item.partIndex===t.partIndex)item.text+=' '+t.token;else nameItems.push({x:t.x,text:t.token,partIndex:t.partIndex})}
+  return{nameX:tokens[0]?.x,numericXs,nameItems};
+}
+
+// A name split across PDF text items must still read as one left-to-right text run inside the name column:
+// each item starts within the previous item's glyph advance (at most 3/4 em per character, with the em bounded
+// by the table's own row pitch) plus one em of word space, and before the first pick column.
+function pdfNameFlowFits(geometry,ref,spacing){
+  const items=geometry?.nameItems||[];
+  if(items.length<2)return true;
+  if(!spacing)return false;
+  const pitch=spacing.normalGap;
+  for(let i=1;i<items.length;i++){
+    const gap=items[i].x-items[i-1].x;
+    if(!(gap>=0)||gap>items[i-1].text.length*pitch*0.75+pitch||items[i].x>=ref.numericXs[0]-8)return false;
+  }
+  return true;
+}
+
+function participantWidthRow(line,gameCount){
+  const tokens=clean(line).split(' ').filter(Boolean);
+  return tokens.length>=gameCount+1&&tokens.filter(t=>/^\d+$/.test(t)).length>=gameCount;
+}
+
+// Table-edge evidence carries no name semantics: participant width, or a name-column token followed by numeric
+// cells on distinct participant columns beyond the single tiebreak/wins cell of a sparse inactive row.
+function pdfParticipantShapedRow(row,ref,gameCount){
+  if(participantWidthRow(row?.text,gameCount))return true;
+  if(!row||row.kind!=='pdf'||!Array.isArray(row.parts))return false;
+  const tokens=[];
+  for(const part of row.parts){
+    const x=Number(part?.x);if(!Number.isFinite(x))continue;
+    for(const token of clean(part?.text).split(' ').filter(Boolean))tokens.push({token,x});
+  }
+  const firstPickX=ref.numericXs[0];
+  if(!tokens.length||Math.abs(tokens[0].x-ref.nameX)>14||tokens[0].x>=firstPickX-8)return false;
+  const columns=[];
+  for(const t of tokens){
+    if(t.x<firstPickX-8||!/^\d+$/.test(t.token))continue;
+    const column=ref.numericXs.findIndex(x=>Math.abs(t.x-x)<=8);
+    if(column<0||(columns.length&&column<=columns[columns.length-1]))return false;
+    columns.push(column);
+  }
+  return columns.length>1||(columns.length===1&&columns[0]<gameCount);
 }
 
 function pdfHeaderFingerprint(row,ref){
@@ -184,6 +226,7 @@ function pdfTableBoundary(sourceRows,matchups){
   for(const record of records){const p=record.row.pageNumber??0;if(!pageMap.has(p))pageMap.set(p,[]);pageMap.get(p).push(record)}
   for(const pageRecords of pageMap.values())pageRecords.sort((a,b)=>(a.row.rowIndex??0)-(b.row.rowIndex??0)||Number(b.row.y??0)-Number(a.row.y??0));
   const spacing=pdfParticipantSpacingModel(pageMap);
+  records.forEach(r=>{if(r.geometryMatch&&!pdfNameFlowFits(r.geometry,ref,spacing))r.geometryMatch=false});
   const runs=[];
   for(const [page,pageRecords] of [...pageMap.entries()].sort((a,b)=>a[0]-b[0])){
     let current=null;
@@ -257,7 +300,22 @@ function pdfTableBoundary(sourceRows,matchups){
   }
   if(anchorRuns.some(run=>!acceptedRuns.has(run)))issues.push('Tracked entries do not form one continuous PDF participant-table chain');
   const accepted=new Set();for(const run of acceptedRuns)for(const record of run.records)accepted.add(sourceRowKey(record.row));
-  const outside=records.filter(r=>r.parsed&&!r.tracked&&!accepted.has(sourceRowKey(r.row)));
+  let edgeDamage=false;
+  for(const run of acceptedRuns){
+    const pageRecords=pageMap.get(run.page)||[];
+    for(const [start,step,edge] of [[run.startPos-1,-1,run.firstEvidence],[run.endPos+1,1,run.lastEvidence]]){
+      let evidence=edge;
+      for(let pos=start;pos>=0&&pos<pageRecords.length;pos+=step){
+        const record=pageRecords[pos],gap=pdfRowGap(evidence,record);
+        if(!spacing||!Number.isFinite(gap)||gap<=0||gap>spacing.maxGap)break;
+        if(record.sparseTableEvidence){evidence=record;continue}
+        if(pdfParticipantShapedRow(record.row,ref,gameCount))edgeDamage=true;
+        break;
+      }
+    }
+  }
+  if(edgeDamage)issues.push('Participant-shaped PDF row adjoining the proven regular participant table could not be validated');
+  const outside=records.filter(r=>{const entry=r.structural&&anonymousParticipantRow(r.row.text,matchups);return entry&&!trackedTargetForName(entry.sourceName)&&!accepted.has(sourceRowKey(r.row))});
   if(outside.length)issues.push('Participant-shaped PDF row exists outside the proven regular participant table');
   return{accepted,records,issues};
 }
@@ -281,10 +339,17 @@ function spreadsheetParticipantRow(sourceRow,contract,matchups){
   return{sourceName,pickNumbers,tiebreak:Number(tail[0]),wins:Number(tail[1])};
 }
 
+function spreadsheetParticipantShapedRow(sourceRow,contract,gameCount){
+  if(!sourceRow||sourceRow.kind!=='spreadsheet'||!contract||sourceRow.sheetName!==contract.sheetName||!(sourceRow.rowNumber>contract.headerRowNumber))return false;
+  const cells=(sourceRow.cells||[]).map(clean),numeric=v=>/^\d+$/.test(v),name=cells[contract.nameIndex];
+  if(trackedTargetForName(name))return false;
+  const picks=cells.slice(contract.pickStart,contract.ptsIndex).filter(numeric).length,values=cells.slice(contract.pickStart).filter(numeric).length;
+  return values>=gameCount||(!!name&&(picks>0||values>1));
+}
+
+// Page-wide backstop for rows away from any proven table: numeric-only text elsewhere is not treated as a participant.
 function looksLikeDamagedParticipantRow(line,gameCount){
-  const tokens=clean(line).split(' ');
-  const numericCount=tokens.reduce((n,token)=>n+(/^\d+$/.test(token)?1:0),0);
-  return tokens.length>=gameCount+1&&numericCount>=gameCount&&tokens.some(t=>!/^\d+$/.test(t));
+  return participantWidthRow(line,gameCount)&&clean(line).split(' ').some(t=>!/^\d+$/.test(t));
 }
 
 function validatePickNumbers(label,pickNumbers,tiebreak,numberToGame,gameCount,{allowNoPick=false}={}){
@@ -376,7 +441,12 @@ function parseWeekGroup(week,weekGroups,filename,season){
       }
     }
   }else if(hasSpreadsheet){
-    for(const row of sourceRows){if(row?.kind!=='spreadsheet')continue;considerRow(row,spreadsheetParticipantRow(row,sheetContract,matchups))}
+    for(const row of sourceRows){
+      if(row?.kind!=='spreadsheet')continue;
+      const parsed=spreadsheetParticipantRow(row,sheetContract,matchups);
+      considerRow(row,parsed);
+      if(!parsed&&spreadsheetParticipantShapedRow(row,sheetContract,gameCount))fullFieldIssues.push('A supposed regular-pool participant row is structurally invalid');
+    }
   }else{
     fullFieldIssues.push('Regular participant-table source region could not be proven');
   }
