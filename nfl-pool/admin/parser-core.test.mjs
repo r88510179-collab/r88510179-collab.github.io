@@ -997,20 +997,24 @@ async function bootAdmin(){
   assert.match(t.$('message').textContent,/Total pool entries changed/);
   await t.publish();
   assert.equal(t.writes(),0,'no publish without revalidation');
-  // The closed selector of the old read cannot revive its candidate either.
+  // The closed selector of the old read cannot revive its candidate or its review either.
   await t.$('detectedWeek').onchange?.();
+  assert.equal(t.$('review').hidden,true,'the invalidated review stays closed');
   assert.equal(t.$('publishBtn').disabled,true);await t.publish();assert.equal(t.writes(),0);
   await t.parse();
   assert.match(t.$('validation').innerHTML,new RegExp(countMismatch(6,7)));
 }
 {
-  // ADMIN 4b — a count edited without any input event still cannot publish the candidate validated under the old count.
+  // ADMIN 4b — a count edited without any input event still cannot publish the candidate validated under the old count:
+  // the button follows the count on its next render, and a click is refused before any database access.
   const t=await bootAdmin();
   await t.count('6');await t.choose('six.pdf');await t.parse();
   t.$('totalEntries').value='5';
+  await t.$('detectedWeek').onchange();
+  assert.equal(t.$('publishBtn').disabled,true,'the re-rendered button follows the current count');
   await t.publish();
-  assert.equal(t.writes(),0);
-  assert.match(t.$('message').textContent,/no longer validated|changed/);
+  assert.deepEqual(t.db.log,[],'refused before any database access');
+  assert.equal(t.$('message').textContent,'The selected file changed or is no longer validated. Read and validate it again before publishing.');
 }
 {
   // ADMIN 4c — a count change while the publish is reading the database aborts it before any write.
@@ -1032,6 +1036,8 @@ async function bootAdmin(){
   await t.count('7');
   t.net.gate.resolve();await pending;await adminFlush();
   assert.equal(t.$('review').hidden,true,'stale read discarded');assert.equal(t.$('publishBtn').disabled,true);
+  assert.equal(t.$('message').className,'notice info','the stale read ends quietly, not in an error');
+  assert.match(t.$('message').textContent,/Total pool entries changed/);
   await t.publish();assert.equal(t.writes(),0);
 }
 {
