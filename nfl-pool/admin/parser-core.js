@@ -389,7 +389,7 @@ function sourceRowKey(row){
   return 'text:'+clean(row&&row.text!==undefined?row.text:row);
 }
 
-function parseWeekGroup(week,weekGroups,filename,season){
+function parseWeekGroup(week,weekGroups,filename,season,expectedCompetitionSize){
   const errors=[],fullFieldIssues=[],lines=[],sourceRows=[],pageFingerprints=new Set();
   for(const group of weekGroups||[]){
     if(group.pageFingerprint){
@@ -476,6 +476,14 @@ function parseWeekGroup(week,weekGroups,filename,season){
   }
   if(!temporary.length)fullFieldIssues.push('No validated anonymous regular-pool entries were found');
 
+  // A natural-flow summary row can be the same parser input as a legitimate entrant, so the document alone cannot prove
+  // the field's size. The admin's authoritative total pool entry count is the independent check: it gates full-field
+  // validation only, and never selects, drops, adds or sizes a row. The published size stays the parsed one.
+  const parsedCompetitionSize=participants.length+temporary.length;
+  if(expectedCompetitionSize===undefined||expectedCompetitionSize===null)fullFieldIssues.push('Authoritative total pool entry count is required for full-field validation');
+  else if(!Number.isSafeInteger(expectedCompetitionSize)||expectedCompetitionSize<TARGETS.length)fullFieldIssues.push(`Authoritative total pool entry count must be a whole number of at least ${TARGETS.length}`);
+  else if(parsedCompetitionSize!==expectedCompetitionSize)fullFieldIssues.push(`Parsed competition size ${parsedCompetitionSize} does not match authoritative total pool entries ${expectedCompetitionSize}`);
+
   const fullFieldReady=errors.length===0&&fullFieldIssues.length===0;
   const fieldEntries=fullFieldReady?temporary.map((row,i)=>({id:'field-'+String(i+1).padStart(3,'0'),pickNumbers:row.pickNumbers.slice(),tiebreak:row.tiebreak})):[];
   const games=matchups.map((g,index)=>({index,awayNumber:g.awayNumber,homeNumber:g.homeNumber,away:g.away,home:g.home,awayName:g.awayName,homeName:g.homeName}));
@@ -484,7 +492,7 @@ function parseWeekGroup(week,weekGroups,filename,season){
   return{week,gameCount,errors,fullFieldIssues:[...new Set(fullFieldIssues)],competitionSize:fullFieldReady?config.competitionSize:participants.length,config};
 }
 
-export function parseDocumentGroups(groups,{filename='weekly-picks',season=2026}={}){
+export function parseDocumentGroups(groups,{filename='weekly-picks',season=2026,expectedCompetitionSize=null}={}){
   const byWeek=new Map();
   for(const group of carryForwardWeekHints(groups||[])){
     const current=Number.isInteger(group.week)?group.week:null;
@@ -493,7 +501,7 @@ export function parseDocumentGroups(groups,{filename='weekly-picks',season=2026}
     byWeek.get(current).push(group);
   }
   const candidates=[];
-  for(const [week,weekGroups] of byWeek){const parsed=parseWeekGroup(week,weekGroups,filename,season);if(parsed)candidates.push(parsed)}
+  for(const [week,weekGroups] of byWeek){const parsed=parseWeekGroup(week,weekGroups,filename,season,expectedCompetitionSize);if(parsed)candidates.push(parsed)}
   return candidates.sort((a,b)=>a.week-b.week);
 }
 
