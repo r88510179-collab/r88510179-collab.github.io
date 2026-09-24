@@ -4,6 +4,7 @@ import {SUBMISSION_SOURCES} from './submission-core.js';
 import {prepareCommissionerImport,summarizeBatchResults} from './import-core.js';
 
 const $=id=>document.getElementById(id),params=new URLSearchParams(location.search);
+const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const poolSlug=params.get('pool')||PLATFORM_CONFIG.defaultPoolSlug,client=new PlatformClient(PLATFORM_CONFIG);
 const state={session:null,context:null,season:null,week:null,pendingEmail:''};
 function show(id,on=true){$(id).classList.toggle('hidden',!on)}
@@ -33,8 +34,8 @@ function renderWeeks(){
   $('weekSelect').onchange=()=>{state.week=weeks.find(w=>w.id===$('weekSelect').value)||state.week;renderEntries()};renderEntries();
 }
 function renderEntries(){
-  const entries=state.season?.entries||[];$('entriesBody').innerHTML=entries.map(e=>{const sub=currentSubmission(e),source=sub?.source||'—';return`<tr><td><strong>${e.entry_code}</strong><small>${e.display_name}</small></td><td>${e.claimed?'Yes':'No'}</td><td>${source}</td></tr>`}).join('');
-  $('inviteEntry').innerHTML=entries.map(e=>`<option value="${e.id}">${e.entry_code} · ${e.display_name}</option>`).join('');
+  const entries=state.season?.entries||[];$('entriesBody').innerHTML=entries.map(e=>{const sub=currentSubmission(e),source=sub?.source||'—';return`<tr><td><strong>${esc(e.entry_code)}</strong><small>${esc(e.display_name)}</small></td><td>${e.claimed?'Yes':'No'}</td><td>${esc(source)}</td></tr>`}).join('');
+  $('inviteEntry').innerHTML=entries.map(e=>`<option value="${e.id}">${esc(e.entry_code)} · ${esc(e.display_name)}</option>`).join('');
   const gameIds=(state.week?.config?.games||[]).map((g,i)=>g.id||`g${i+1}`);
   $('importHelp').textContent=state.context.pool.pool_type==='survivor'?'CSV headers: entry_code,team':`CSV headers: entry_code,${gameIds.join(',')}${state.week?.config?.tiebreakRequired?',tiebreak':''}. Pick values use away or home.`;
   $('importText').placeholder=state.context.pool.pool_type==='survivor'?'entry_code,team\nE02,Miami':`entry_code,${gameIds.join(',')},tiebreak\nE02,${gameIds.map((_,i)=>i%2?'home':'away').join(',')},47`;
@@ -69,7 +70,7 @@ $('runImport').addEventListener('click',async()=>{
       results=prepared.items.map(item=>{const e=byId.get(item.entry_id),sub=currentSubmission(e);if(sub&&sub.source==='participant')return{entry_id:e.id,ok:false,code:'source_conflict:participant'};if(sub&&sub.source!=='commissioner_import')return{entry_id:e.id,ok:false,code:`source_conflict:${sub.source}`};e.submissions=(e.submissions||[]).filter(x=>x.week!==state.week.week);e.submissions.push({week:state.week.week,source:'commissioner_import',status:'submitted',revision:(sub?.revision||0)+1});return{entry_id:e.id,ok:true,result:{code:sub?'updated':'created'}}});
     }
     const summary=summarizeBatchResults(results);msg('importResult',`${summary.submitted} submitted · ${summary.conflicts} source conflict(s) · ${summary.errors} other error(s). Participant submissions were not overwritten.`);
-    $('resultBody').innerHTML=results.map(r=>{const entry=state.season.entries.find(e=>e.id===r.entry_id),label=entry?.entry_code||r.entry_id,value=r.ok?(r.result?.code||'submitted'):r.code;return`<tr><td>${label}</td><td>${value}</td></tr>`}).join('');show('resultTableWrap',true);renderEntries();if(client.live)await load();
+    $('resultBody').innerHTML=results.map(r=>{const entry=state.season.entries.find(e=>e.id===r.entry_id),label=entry?.entry_code||r.entry_id,value=r.ok?(r.result?.code||'submitted'):r.code;return`<tr><td>${esc(label)}</td><td>${esc(value)}</td></tr>`}).join('');show('resultTableWrap',true);renderEntries();if(client.live)await load();
   }catch(e){msg('importError',e.message)}
 });
 async function initialize(){await client.init();$('modePill').textContent=client.live?'LIVE · secure':'SANDBOX · synthetic';if(client.live){state.session=await client.getSession();setAuth();if(state.session)await load()}else{setAuth();await load()}}

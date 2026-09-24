@@ -98,8 +98,10 @@ export class PlatformClient{
   }
 
   async createInvite({entryId,email=null,expiresHours=168}){
+    const normalized=email?normalizeEmail(email):null;
+    if(normalized&&!validEmail(normalized))throw new Error('Enter a valid invitation email or leave it blank.');
     return this.rpc('pool_platform_create_entry_invite',{
-      p_entry_id:entryId,p_email:email||null,p_expires_hours:expiresHours
+      p_entry_id:entryId,p_email:normalized,p_expires_hours:expiresHours
     });
   }
 }

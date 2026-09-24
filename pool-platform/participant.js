@@ -4,9 +4,10 @@ import {SUBMISSION_SOURCES,validatePickPayload} from './submission-core.js';
 import {normalizeGames,pickemPayloadFromSelections,survivorLegalTeams,validateSurvivorSelection,entrySubmissionAccess} from './participant-core.js';
 
 const $=id=>document.getElementById(id);
+const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const params=new URLSearchParams(location.search);
 const poolSlug=params.get('pool')||PLATFORM_CONFIG.defaultPoolSlug;
-const inviteToken=params.get('invite')||'';
+let inviteToken=params.get('invite')||'';
 const sandboxType=params.get('type')==='survivor'?'survivor':'pickem';
 const client=new PlatformClient(PLATFORM_CONFIG);
 const state={context:null,entry:null,session:null,pendingEmail:'',sandbox:!client.live};
@@ -43,8 +44,8 @@ function cleanInviteFromUrl(){
   history.replaceState(null,'',params.toString()?`${location.pathname}?${params.toString()}`:location.pathname);
 }
 function setAuthVisible(){show('authCard',client.live&&!state.session);show('signOut',client.live&&!!state.session)}
-async function loadLiveContext(){state.context=await client.participantContext(poolSlug,null,null);renderContext()}
-async function claimInviteIfPresent(){if(!inviteToken||!state.session)return;await client.claimInvite(inviteToken);cleanInviteFromUrl()}
+async function loadLiveContext(){const selectedId=state.entry?.id||null;state.context=await client.participantContext(poolSlug,null,null);renderContext(selectedId)}
+async function claimInviteIfPresent(){if(!inviteToken||!state.session)return;await client.claimInvite(inviteToken);inviteToken='';cleanInviteFromUrl()}
 
 async function initialize(){
   await client.init();$('modePill').textContent=client.live?'LIVE · secure':'SANDBOX · synthetic';
@@ -58,15 +59,15 @@ $('verifyCode').addEventListener('click',async()=>{message('authError','');try{s
 $('otp').addEventListener('keydown',e=>{if(e.key==='Enter')$('verifyCode').click()});
 $('signOut').addEventListener('click',async()=>{await client.signOut();state.session=null;state.context=null;state.entry=null;show('entryCard',false);show('pickForm',false);show('submittedCard',false);setAuthVisible()});
 
-function renderContext(){
+function renderContext(preferredEntryId=null){
   const c=state.context;
   if(!c||!Array.isArray(c.entries)||!c.entries.length){show('entryCard',false);show('pickForm',false);show('emptyCard',true);return}
   show('emptyCard',false);show('entryCard',true);
   $('poolName').textContent=c.pool.display_name;
   $('poolTypeLabel').textContent=c.pool.pool_type==='survivor'?'Survivor football pool':'Weekly Pick’em football pool';
   $('weekLabel').textContent=`Week ${c.week.week}`;$('deadlineLabel').textContent=formatDeadline(c.week.deadline_at);
-  const select=$('entrySelect');select.innerHTML=c.entries.map(e=>`<option value="${e.id}">${e.display_name}</option>`).join('');
-  show('entrySelectWrap',c.entries.length>1);state.entry=c.entries.find(e=>e.id===select.value)||c.entries[0];select.value=state.entry.id;
+  const select=$('entrySelect');select.innerHTML=c.entries.map(e=>`<option value="${e.id}">${esc(e.display_name)}</option>`).join('');
+  show('entrySelectWrap',c.entries.length>1);state.entry=c.entries.find(e=>e.id===preferredEntryId)||c.entries[0];select.value=state.entry.id;
   select.onchange=()=>{state.entry=c.entries.find(e=>e.id===select.value)||c.entries[0];renderEntry()};renderEntry();
 }
 function currentAccess(){return entrySubmissionAccess(state.entry,state.context.week.status,new Date().toISOString(),state.context.week.deadline_at)}
@@ -81,25 +82,25 @@ function renderEntry(){
 }
 function renderPickem(access,sub){
   const games=normalizeGames(state.context.week.config),saved=sub?.payload?.picks||{};
-  $('games').innerHTML=games.map((g,i)=>`<fieldset class="game"><legend>Game ${i+1}</legend><div class="matchup-label">${g.away.label} vs ${g.home.label}</div><div class="choices">${['away','home'].map(side=>`<div class="pick-option"><input type="radio" id="${g.id}-${side}" name="${g.id}" value="${side}" ${saved[g.id]===side?'checked':''} ${access.editable?'':'disabled'}><label for="${g.id}-${side}">${g[side].label}</label></div>`).join('')}</div></fieldset>`).join('');
+  $('games').innerHTML=games.map((g,i)=>`<fieldset class="game"><legend>Game ${i+1}</legend><div class="matchup-label">${esc(g.away.label)} vs ${esc(g.home.label)}</div><div class="choices">${['away','home'].map(side=>`<div class="pick-option"><input type="radio" id="game-${i}-${side}" name="game-${i}" value="${side}" ${saved[g.id]===side?'checked':''} ${access.editable?'':'disabled'}><label for="game-${i}-${side}">${esc(g[side].label)}</label></div>`).join('')}</div></fieldset>`).join('');
   const required=state.context.week.config?.tiebreakRequired===true||state.context.week.config?.tiebreak_required===true;
   show('tiebreakCard',required);$('tiebreak').disabled=!access.editable;$('tiebreak').value=sub?.payload?.tiebreak??'';show('pickForm',true);setFormEditable(access.editable);updateSummary();
 }
 function renderSurvivor(access,sub){
   const teams=survivorLegalTeams(state.context.week.config,state.entry.history);
-  $('games').innerHTML=`<fieldset class="game full"><legend>Choose one team</legend><div class="survivor-choice-grid">${teams.map(team=>`<div class="pick-option"><input type="radio" id="team-${team.key}" name="survivor-team" value="${team.key}" ${sub?.payload?.team===team.key?'checked':''} ${access.editable&&!team.burned?'':'disabled'}><label for="team-${team.key}">${team.label}${team.burned?' · USED':''}</label></div>`).join('')}</div></fieldset>`;
+  $('games').innerHTML=`<fieldset class="game full"><legend>Choose one team</legend><div class="survivor-choice-grid">${teams.map((team,i)=>`<div class="pick-option"><input type="radio" id="team-${i}" name="survivor-team" value="${esc(team.key)}" ${sub?.payload?.team===team.key?'checked':''} ${access.editable&&!team.burned?'':'disabled'}><label for="team-${i}">${esc(team.label)}${team.burned?' · USED':''}</label></div>`).join('')}</div></fieldset>`;
   show('tiebreakCard',false);show('pickForm',true);setFormEditable(access.editable);updateSummary();
 }
 function setFormEditable(editable){$('clearBtn').disabled=!editable;$('submitBtn').disabled=!editable;$('submitBtn').textContent=state.entry.submission?.source==='participant'?'Update picks':'Submit picks'}
-function pickemSelections(){const selections={};for(const game of normalizeGames(state.context.week.config)){const checked=document.querySelector(`input[name="${game.id}"]:checked`);if(checked)selections[game.id]=checked.value}return selections}
+function pickemSelections(){const selections={};normalizeGames(state.context.week.config).forEach((game,i)=>{const checked=document.querySelector(`input[name="game-${i}"]:checked`);if(checked)selections[game.id]=checked.value});return selections}
 function updateSummary(){
   const c=state.context;if(!c)return;
   if(c.pool.pool_type==='survivor'){
     const checked=document.querySelector('input[name="survivor-team"]:checked'),team=survivorLegalTeams(c.week.config,state.entry.history).find(x=>x.key===checked?.value);
-    $('summary').innerHTML=`<div class="summary-row"><span>Survivor selection</span><strong>${team?.label||'—'}</strong></div>`;return;
+    $('summary').innerHTML=`<div class="summary-row"><span>Survivor selection</span><strong>${team?esc(team.label):'—'}</strong></div>`;return;
   }
   const selections=pickemSelections();
-  $('summary').innerHTML=normalizeGames(c.week.config).map(g=>{const side=selections[g.id];return`<div class="summary-row"><span>${g.away.label} vs ${g.home.label}</span><strong>${side?g[side].label:'—'}</strong></div>`}).join('')+`<div class="summary-row"><span>Tiebreak</span><strong>${$('tiebreak').value||'—'}</strong></div>`;
+  $('summary').innerHTML=normalizeGames(c.week.config).map(g=>{const side=selections[g.id];return`<div class="summary-row"><span>${esc(g.away.label)} vs ${esc(g.home.label)}</span><strong>${side?esc(g[side].label):'—'}</strong></div>`}).join('')+`<div class="summary-row"><span>Tiebreak</span><strong>${$('tiebreak').value||'—'}</strong></div>`;
 }
 $('pickForm').addEventListener('change',updateSummary);$('tiebreak').addEventListener('input',updateSummary);
 $('clearBtn').addEventListener('click',()=>{for(const input of document.querySelectorAll('#pickForm input[type="radio"]'))input.checked=false;$('tiebreak').value='';message('validation','');updateSummary()});
