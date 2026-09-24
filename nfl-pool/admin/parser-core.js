@@ -303,6 +303,10 @@ function pdfTableBoundary(sourceRows,matchups){
   const acceptedPages=new Set([...acceptedRuns].map(run=>run.page));
   const rowNearTop=record=>{const y=Number(record?.row?.y);return !!edgeBand&&Number.isFinite(y)&&documentTopY-y<=edgeBand};
   const rowNearBottom=record=>{const y=Number(record?.row?.y);return !!edgeBand&&Number.isFinite(y)&&y>=0&&y<=edgeBand};
+  // A top-band header is walked through unless it is proven foreign: once the participant header is anchored, a header
+  // that only shares its Pts/W columns but differs from it starts another region. Without an anchored header nothing
+  // proves a compatible header foreign, so the walk keeps checking beneath it.
+  const repeatedHeader=record=>{const fingerprint=rowNearTop(record)&&pdfHeaderFingerprint(record.row,ref);return !!fingerprint&&(!headerFingerprint||fingerprint===headerFingerprint)};
   // Walk outward from a proven run edge through physically continuous table rows (sparse continuity rows, a repeated
   // header in the page's top band, and at most one page break when the table meets the physical page edge next to a
   // page without a proven run); the first other row reached must not be participant-shaped.
@@ -317,7 +321,7 @@ function pdfTableBoundary(sourceRows,matchups){
       const record=pageRecords[pos],gap=pdfRowGap(evidence,record);
       if(crossing?!(step>0?rowNearTop(record):rowNearBottom(record)):!(spacing&&Number.isFinite(gap)&&gap>0&&gap<=spacing.maxGap))return false;
       crossing=false;
-      if(record.sparseTableEvidence||(rowNearTop(record)&&pdfHeaderFingerprint(record.row,ref))){evidence=record;pos+=step;continue}
+      if(record.sparseTableEvidence||repeatedHeader(record)){evidence=record;pos+=step;continue}
       return pdfParticipantShapedRow(record.row,ref,gameCount);
     }
   };
@@ -348,12 +352,15 @@ function spreadsheetParticipantRow(sourceRow,contract,matchups){
   return{sourceName,pickNumbers,tiebreak:Number(tail[0]),wins:Number(tail[1])};
 }
 
-function spreadsheetParticipantShapedRow(sourceRow,contract,gameCount){
+// Spreadsheet table evidence is positional: participant-width numeric cells from the first pick column on, or a strict
+// majority of pick columns each holding one of its own matchup's numbers. A label with a few totals/notes numbers is not.
+function spreadsheetParticipantShapedRow(sourceRow,contract,matchups){
   if(!sourceRow||sourceRow.kind!=='spreadsheet'||!contract||sourceRow.sheetName!==contract.sheetName||!(sourceRow.rowNumber>contract.headerRowNumber))return false;
-  const cells=(sourceRow.cells||[]).map(clean),numeric=v=>/^\d+$/.test(v),name=cells[contract.nameIndex];
-  if(trackedTargetForName(name))return false;
-  const picks=cells.slice(contract.pickStart,contract.ptsIndex).filter(numeric).length,values=cells.slice(contract.pickStart).filter(numeric).length;
-  return values>=gameCount||(!!name&&(picks>0||values>1));
+  const cells=(sourceRow.cells||[]).map(clean),numeric=v=>/^\d+$/.test(v);
+  if(trackedTargetForName(cells[contract.nameIndex]))return false;
+  const values=cells.slice(contract.pickStart).filter(numeric).length;
+  const columnPicks=matchups.filter((g,i)=>{const v=cells[contract.pickStart+i]||'';return numeric(v)&&(Number(v)===g.awayNumber||Number(v)===g.homeNumber)}).length;
+  return values>=matchups.length||columnPicks*2>matchups.length;
 }
 
 // Page-wide backstop for rows away from any proven table: numeric-only text elsewhere is not treated as a participant.
@@ -454,7 +461,7 @@ function parseWeekGroup(week,weekGroups,filename,season){
       if(row?.kind!=='spreadsheet')continue;
       const parsed=spreadsheetParticipantRow(row,sheetContract,matchups);
       considerRow(row,parsed);
-      if(!parsed&&spreadsheetParticipantShapedRow(row,sheetContract,gameCount))fullFieldIssues.push('A supposed regular-pool participant row is structurally invalid');
+      if(!parsed&&spreadsheetParticipantShapedRow(row,sheetContract,matchups))fullFieldIssues.push('A supposed regular-pool participant row is structurally invalid');
     }
   }else{
     fullFieldIssues.push('Regular participant-table source region could not be proven');
