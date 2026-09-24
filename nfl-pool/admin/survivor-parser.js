@@ -141,9 +141,9 @@ function participantPicks(a,contract,model){
   return{sourceName:label,picks,issues,row:a.row};
 }
 
-// Participant-table contract: rows below the single Week header (and on later pages). Rows with Week-column text are
-// participants; a row without picks is an entrant only when it sits on the table's row grid, chained to participant
-// rows on its page, with its name inside the participant name column.
+// Participant-table contract: rows below the single Week header (and on later pages). A row with Week-column text is a
+// participant only when it is part of its page's one run on the table's row grid; a row without picks is an entrant only
+// when it sits on the table's row grid, chained to participant rows on its page, with its name inside the name column.
 function participantRegion(rows,contract,review,errors){
   const ignore=(row,reason)=>review.ignoredRows.push({page:row.pageNumber??null,text:clean(row.text),reason});
   const region=[];
@@ -187,6 +187,38 @@ function participantRegion(rows,contract,review,errors){
   const nameMin=nameXs.length?Math.min(...nameXs)-NAME_X_TOLERANCE:null,nameMax=nameXs.length?Math.max(...nameXs)+NAME_X_TOLERANCE:null;
   const accepted=new Set();
   const inNameColumn=a=>nameMin!==null&&a.nameX>=nameMin&&a.nameX<=nameMax;
+  // A valid team code never proves table membership by itself: a row with picks must be physically part of its page's
+  // participant run. A row with picks squeezed against another row, and no nearer the row lattice than that row, cannot
+  // be proven to be the table row and fails closed. Consecutive rows with picks join one run only through on-grid steps
+  // (via rows without picks, stepping over off-grid ones) and on the same row lattice; a row outside its page's largest
+  // run is separated from the table and fails closed. A page's only row with picks has no row grid on its page to be
+  // separated from: it is physically identical to a lone continuation row and is kept.
+  const slack=pitch===null?null:pitch-minGap;
+  const latticeDeviation=(r,s)=>{const m=Math.abs(r.gridY-s.gridY)%pitch;return Math.min(m,pitch-m)};
+  // Unlike gridDeviation, measured from the nearest row with picks that is not squeezed against the row itself.
+  const pickDeviation=(list,idx)=>{for(let d=1;d<list.length;d++)for(const k of [idx-d,idx+d]){const r=list[k];if(r&&r.kind==='picks'&&Math.abs(r.gridY-list[idx].gridY)>=minGap)return latticeDeviation(r,list[idx])}return Infinity};
+  const joins=(list,from,to)=>{
+    if(!(latticeDeviation(list[from],list[to])<slack))return false;
+    const chain=[list[from]];
+    for(let k=from+1;k<=to;k++){const r=list[k];if(k<to&&r.kind==='picks')continue;if(!chain.some(s=>onGrid(s,r)))continue;if(k===to)return true;chain.push(r)}
+    return false;
+  };
+  const unprovenPicks=list=>{
+    const out=new Map(),picks=list.filter(a=>a.kind==='picks');
+    if(picks.length<2)return out;
+    if(pitch===null){for(const a of picks)out.set(a,a.sourceName+': row with picks cannot be placed on the participant row grid because the Survivor row spacing could not be proven');return out}
+    list.forEach((a,idx)=>{
+      if(a.kind!=='picks')return;
+      const collide=k=>{if(!out.has(a)&&pickDeviation(list,k)<=pickDeviation(list,idx))out.set(a,a.sourceName+': row with picks is squeezed off the participant row grid beside '+list[k].sourceName+'; table membership cannot be proven')};
+      for(let k=idx-1;k>=0&&tooClose(list[k],a);k--)collide(k);
+      for(let k=idx+1;k<list.length&&tooClose(a,list[k]);k++)collide(k);
+    });
+    const runs=[];let last=-1;
+    list.forEach((a,idx)=>{if(a.kind!=='picks'||out.has(a))return;if(last>=0&&joins(list,last,idx))runs[runs.length-1].push(a);else runs.push([a]);last=idx});
+    const size=Math.max(0,...runs.map(r=>r.length)),largest=runs.filter(r=>r.length===size);
+    for(const run of runs)if(largest.length>1||run!==largest[0])for(const a of run)out.set(a,a.sourceName+': row with picks is separated from the participant row grid on page '+(a.row.pageNumber??'?')+'; table membership cannot be proven');
+    return out;
+  };
   for(const list of byPage.values()){
     const pageHasPicks=list.some(a=>a.kind==='picks');
     if(!pageHasPicks){
@@ -198,8 +230,9 @@ function participantRegion(rows,contract,review,errors){
       for(const a of list){accepted.add(a);const entry={page:a.row.pageNumber??null,label:a.sourceName};review.blankEntrants.push(entry);review.unanchoredRows.push(entry)}
       continue;
     }
+    const unproven=unprovenPicks(list);
     list.forEach((a,idx)=>{
-      if(a.kind==='picks'){accepted.add(a);return}
+      if(a.kind==='picks'){if(unproven.has(a))errors.push(unproven.get(a));else accepted.add(a);return}
       // Walk the row grid toward a row with picks; stray off-grid rows without picks are stepped over, not trusted.
       const reaches=dir=>{let j=idx;for(let k=idx+dir;k>=0&&k<list.length;k+=dir){if(!onGrid(dir<0?list[k]:list[j],dir<0?list[j]:list[k])){if(list[k].kind==='picks')return false;continue}if(list[k].kind==='picks')return true;j=k}return false};
       if(pitch===null){errors.push(a.sourceName+': row has no picks and the Survivor row spacing could not be proven');return}

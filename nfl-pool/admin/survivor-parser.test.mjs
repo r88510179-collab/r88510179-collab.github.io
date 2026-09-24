@@ -237,9 +237,13 @@ const parse=pages=>parseSurvivorPages(pages,{season:2026});
   assert(brokenPage.errors.some(e=>/Echo: row has no picks on a page without participant picks and is not on the participant row grid/.test(e)),brokenPage.errors.join(' | '));
   const offColumn=parse(base([],[{pageNumber:2,rows:[at(780,[[20,'Echo']]),at(768,[[90,'Printed 9/21']])]}]));
   assert(offColumn.errors.some(e=>/is outside the participant name column/.test(e)),offColumn.errors.join(' | '));
-  // no two rows with picks are adjacent, so the row pitch (and therefore grid membership of blank rows) is unproven
+  // no two rows with picks are adjacent, so the row pitch (and therefore grid membership of every row on the page) is
+  // unproven: rows with picks fail closed exactly like rows without picks
   const noPitch=parse([{pageNumber:1,rows:[header,at(748,[[20,'D.C.'],[151,'PIT'],[184,'SF']]),at(736,[[20,'Golf']]),at(724,[[20,'DJS'],[151,'LV'],[184,'SF']]),at(712,[[20,'Hotel']]),at(700,[[20,'Thaddius'],[151,'LAC']])]}]);
-  assert.deepEqual(noPitch.errors,['Golf: row has no picks and the Survivor row spacing could not be proven','Hotel: row has no picks and the Survivor row spacing could not be proven']);
+  const unplaced=name=>name+': row with picks cannot be placed on the participant row grid because the Survivor row spacing could not be proven';
+  assert.deepEqual(noPitch.errors,[unplaced('D.C.'),'Golf: row has no picks and the Survivor row spacing could not be proven',unplaced('DJS'),'Hotel: row has no picks and the Survivor row spacing could not be proven',unplaced('Thaddius'),
+    'No Survivor entries found','No populated Survivor week found','Missing D.C. Survivor row','Missing DJS Survivor row','Missing Thaddeus Survivor row']);
+  assert.equal(noPitch.competitionSize,0);
   // a blank row far below widely spaced rows is off the grid and surfaced as separated
   const wide=parse([{pageNumber:1,rows:[header,at(748,[[20,'D.C.'],[151,'PIT'],[184,'SF']]),at(700,[[20,'DJS'],[151,'LV'],[184,'SF']]),at(652,[[20,'Thaddius'],[151,'LAC']]),at(640,[[20,'Golf']])]}]);
   assert.deepEqual(wide.errors,[]);assert.deepEqual(wide.review.detachedRows.map(x=>x.label),['Golf']);
@@ -405,3 +409,96 @@ console.log('survivor parser out-of-column, split-cell, participant-region, stra
 }
 
 console.log('survivor parser seeded realistic-sheet property test passed');
+
+
+// ================= Rows with picks must prove participant-table membership =================
+// A valid team code in a Week column never proves on its own that a row is a participant. Production geometry: names at
+// x 20, Week-1 text 8pt left of its header, the pick baseline 1.8pt below the name baseline, a 12pt row grid.
+{
+  const item=(str,x,y)=>({str,transform:[1,0,0,1,x,y]});
+  const heading=(y=760)=>header.parts.map(p=>item(p.text,p.x,y));
+  const entry=(name,y,picks=[])=>[item(name,20,y),...picks.map((t,i)=>item(t,151+33*i,y-1.8))];
+  const table=(top=748)=>[['D.C.','PIT'],['DJS','LV'],['Thaddius','LAC'],['Alpha','JAX']].flatMap(([n,t],i)=>entry(n,top-12*i,[t]));
+  const sheet=(...pages)=>parseSurvivorPages(pages.map((items,i)=>({pageNumber:i+1,rows:groupSurvivorPdfTextItems(items)})),{season:2026});
+  const separated=(name,page=1)=>name+': row with picks is separated from the participant row grid on page '+page+'; table membership cannot be proven';
+  const squeezed=(name,beside)=>name+': row with picks is squeezed off the participant row grid beside '+beside+'; table membership cannot be proven';
+  const noReview=r=>{for(const key of ['blankEntrants','ignoredRows','detachedRows','unanchoredRows','symbolRows'])assert.deepEqual(r.review[key],[],key)};
+
+  // P1 blocker: four real Week-1 rows on a proven 12pt grid, then "Legend" / KC in the name and Week-1 columns 112pt below
+  // the last real row. It never becomes entrant 5 silently: the parser fails closed and names the row.
+  const control=sheet([...heading(),...table()]);
+  assert.deepEqual(control.errors,[]);assert.equal(control.competitionSize,4);assert.equal(control.review.geometry.rowPitch,12);noReview(control);
+  const blocker=sheet([...heading(),...table(),...entry('Legend',712-112,['KC'])]);
+  assert.deepEqual(blocker.errors,[separated('Legend')]);
+  assert.equal(blocker.competitionSize,4);assert.equal(blocker.config.fieldEntries.length,1);
+  // Far below at any distance, on or off the row lattice (9 or 2 row slots on it, 1.5 or 1.75 slots off it).
+  for(const d of [108,24,21,18,60.5])assert.deepEqual(sheet([...heading(),...table(),...entry('Legend',712-d,['KC'])]).errors,[separated('Legend')],`${d}pt below`);
+  // Detached above the table: between the Week header and the first participant, and above a later page's table.
+  assert.deepEqual(sheet([...heading(),...entry('Legend',745,['KC']),...table(700)]).errors,[separated('Legend')]);
+  const aboveP2=sheet([...heading(),...table()],[...entry('Legend',790,['KC']),...entry('Charlie',700,['NE']),...entry('Delta',688,['MIA'])]);
+  assert.deepEqual(aboveP2.errors,[separated('Legend',2)]);assert.equal(aboveP2.competitionSize,6);
+  // Off the lattice between two real rows: only the squeezed row is blamed; the table on both sides stays one run.
+  const between=sheet([...heading(),...table(),...entry('Legend',706,['KC']),...entry('Bravo',700,['NE']),...entry('Charlie',688,['MIA'])]);
+  assert.deepEqual(between.errors,[squeezed('Legend','Alpha')]);assert.equal(between.competitionSize,6);
+  // Squeezed against a real blank entrant, even within the grid tolerance of its slot: never counted in its place.
+  for(const y of [697,697.5]){
+    const beside=sheet([...heading(),...table(),...entry('Blank One',700),...entry('Legend',y,['KC']),...entry('Charlie',688,['MIA'])]);
+    assert.deepEqual(beside.errors,[squeezed('Legend','Blank One')],`${y}`);
+  }
+  // Two strays forming their own run are still separated from the page's participant run.
+  const pair=sheet([...heading(),...table(),...entry('Legend',600,['KC']),...entry('Notes',588,['NE'])]);
+  assert.deepEqual(pair.errors,[separated('Legend'),separated('Notes')]);assert.equal(pair.competitionSize,4);
+
+  // A normal participant on the next grid slot is accepted with no review item: picks alone never ask for confirmation.
+  const normal=sheet([...heading(),...table(),...entry('Bravo',700,['NE'])]);
+  assert.deepEqual(normal.errors,[]);assert.equal(normal.competitionSize,5);noReview(normal);
+  // First and last participants need only one neighbour, including through blank entrants on the grid.
+  const edges=sheet([...heading(),...entry('First',748,['KC']),...entry('Blank Top',736),...table(724),...entry('Blank Bottom',676),...entry('Last',664,['NE'])]);
+  assert.deepEqual(edges.errors,[]);assert.equal(edges.competitionSize,8);assert.deepEqual(edges.review.blankEntrants.map(x=>x.label),['Blank Top','Blank Bottom']);
+  // One entirely empty row slot (no text at all) is a two-pitch step, which the row-grid continuity model (steps of at
+  // most 1.75 pitch) cannot bridge: the continuation is unproven and fails closed rather than being guessed. The same
+  // slot holding a blank entrant is ordinary continuity.
+  assert.deepEqual(sheet([...heading(),...table(),...entry('Bravo',688,['NE'])]).errors,[separated('Bravo')]);
+  const filled=sheet([...heading(),...table(),...entry('Blank Middle',700),...entry('Bravo',688,['NE'])]);
+  assert.deepEqual(filled.errors,[]);assert.equal(filled.competitionSize,6);
+  // A later page is its own grid: no y relationship to page 1 is required.
+  const p2=sheet([...heading(),...table()],[...entry('Charlie',300,['NE']),...entry('Delta',288,['MIA']),...entry('Echo',276)]);
+  assert.deepEqual(p2.errors,[]);assert.equal(p2.competitionSize,7);assert.deepEqual(p2.review.blankEntrants.map(x=>x.label),['Echo']);
+  assert.deepEqual(sheet([...heading(),...table()],[...entry('Charlie',780,['NE']),...entry('Delta',768,['MIA']),...entry('Legend',600,['KC'])]).errors,[separated('Legend',2)]);
+  // Two unconnected rows with picks on one page cannot both be proven, and neither is preferred.
+  assert.deepEqual(sheet([...heading(),...table()],[...entry('Echo',780,['NE']),...entry('Legend',500,['KC'])]).errors,[separated('Echo',2),separated('Legend',2)]);
+
+  // Unavoidable ambiguity (documented, not guessed): a row that is physically identical to a participant - name in the
+  // name column, team in a Week column, on the next row-grid slot within the grid's own tolerance - is counted, and so is
+  // the only row with picks on a page, which is identical to a lone continuation row. Telling such a "Legend" from a real
+  // entrant would need semantic inference, which the parser deliberately does not do.
+  assert.equal(sheet([...heading(),...table(),...entry('Legend',700,['KC'])]).competitionSize,5);
+  assert.equal(sheet([...heading(),...entry('Legend',712,['KC']),...table(700)]).competitionSize,5);
+  const lone=sheet([...heading(),...table()],[...entry('Legend',500,['KC'])]);
+  assert.deepEqual(lone.errors,[]);assert.equal(lone.competitionSize,5);
+
+  // R5-PG-2 sweep: wherever a single stray row with picks lands near the table (below it, below trailing blank entrants,
+  // above it, or in an empty slot), it is either within the grid's own tolerance of a free slot next to the run (the
+  // documented ambiguity above) or the sheet fails closed without counting it. Nothing in between.
+  const slot=d=>d>9&&d<15;
+  for(let d=0.5;d<=150;d+=0.5){
+    const below=sheet([...heading(),...table(),...entry('Legend',712-d,['KC'])]);
+    if(slot(d)){assert.deepEqual(below.errors,[],`below ${d}`);assert.equal(below.competitionSize,5,`below ${d}`)}
+    else{assert(below.errors.length,`below ${d}`);assert.equal(below.competitionSize,4,`below ${d}`)}
+    const trailing=sheet([...heading(),...table(),...entry('Blank A',700),...entry('Blank B',688),...entry('Legend',688-d,['KC'])]);
+    if(slot(d)){assert.deepEqual(trailing.errors,[],`trailing ${d}`);assert.equal(trailing.competitionSize,7,`trailing ${d}`)}
+    else{assert(trailing.errors.length,`trailing ${d}`);assert(trailing.competitionSize<=6,`trailing ${d}`)}
+    if(d<55){
+      const above=sheet([...heading(),...table(700),...entry('Legend',700+d,['KC'])]);
+      if(slot(d)){assert.deepEqual(above.errors,[],`above ${d}`);assert.equal(above.competitionSize,5,`above ${d}`)}
+      else{assert(above.errors.length,`above ${d}`);assert.equal(above.competitionSize,4,`above ${d}`)}
+    }
+    if(d<24){
+      const gap=sheet([...heading(),...table(),...entry('Legend',712-d,['KC']),...entry('Bravo',688,['NE'])]);
+      if(slot(d)){assert.deepEqual(gap.errors,[],`gap ${d}`);assert.equal(gap.competitionSize,6,`gap ${d}`)}
+      else assert(gap.errors.length,`gap ${d}`);
+    }
+  }
+}
+
+console.log('survivor parser picked-row participant-table membership regressions passed');
