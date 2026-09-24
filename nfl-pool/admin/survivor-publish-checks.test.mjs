@@ -114,7 +114,7 @@ const guardFor=(cfg,opts={})=>survivorPublishGuard(cfg,{resultsByWeek:verified.r
   assert(g.facts.includes('16 of 16 NFL Week 2 games have kicked off.'));
   assert(g.facts.includes('Published Survivor weeks visible for 2026: 1.'));
   assert(g.facts.includes('Entry count and Week 1 pick histories match published Week 1 (revision 1).'));
-  assert.equal(g.confirmText,'I confirm this sheet is the final Week 2 pick list — no more Week 2 picks will be added. Publishing shows 1 entry OUT for no pick.');
+  assert.equal(g.confirmText,'I reviewed every item listed above and confirm this sheet is the final Survivor Week 2 submission set — no more Week 2 picks will be added. Publishing shows 1 entry OUT for no pick (Week 2).');
 }
 {
   // Complete sheet consistent with published Week 1: no confirmation.
@@ -136,7 +136,7 @@ const guardFor=(cfg,opts={})=>survivorPublishGuard(cfg,{resultsByWeek:verified.r
   const g=guardFor(early,{currentGames:pre});
   assert.equal(g.requiresConfirmation,true);assert.equal(g.notStarted,15);
   assert.match(g.reasons[0],/^159 of 161 entries alive entering Week 2 have no Week 2 pick\. Publishing shows them OUT \(no pick\) in Week 2\. 15 of 16 Week 2 games have not kicked off yet, so this export may be premature\.$/);
-  assert.match(g.confirmText,/Publishing shows 159 entries OUT for no pick\./);
+  assert.match(g.confirmText,/Publishing shows 159 entries OUT for no pick \(Week 2\)\./);
   assert.match(guardFor(early,{currentGames:null}).reasons[0],/Kickoff status for Week 2 could not be confirmed\./);
 }
 {
@@ -177,7 +177,7 @@ const guardFor=(cfg,opts={})=>survivorPublishGuard(cfg,{resultsByWeek:verified.r
   const g=survivorPublishGuard(config,{resultsByWeek:v.resultsByWeek,currentGames:games2,published:w1Published});
   assert.equal(g.unresolvedEntering,159);assert.equal(g.missingUnresolved,1);assert.equal(g.requiresConfirmation,true);
   assert(g.reasons.includes('1 entry with no Week 2 pick cannot yet be proven alive or out (an earlier result is not verifiable in the feed); it will show OUT (no pick) in Week 2 if it survives.'),g.reasons.join(' | '));
-  assert.match(g.confirmText,/Publishing shows 0 entries OUT for no pick \(up to 1 once earlier results are final\)\./);
+  assert.match(g.confirmText,/Publishing shows 0 entries OUT for no pick, and up to 1 more once earlier results are final \(Week 2\)\./);
   // Unresolved entries that all have a current pick are information, not a confirmation trigger.
   const complete=structuredClone(config);complete.fieldEntries[243].picks[1]='SF';complete.currentWeekEntryCount=161;
   const g2=survivorPublishGuard(complete,{resultsByWeek:v.resultsByWeek,currentGames:games2,published:w1Published});
@@ -220,7 +220,7 @@ const guardFor=(cfg,opts={})=>survivorPublishGuard(cfg,{resultsByWeek:verified.r
   assert(stale.reasons.includes('1 pick history for Weeks 1–2 differs from published Week 2 revision 3.'));
   assert(stale.reasons.includes('1 Week 2 pick in published Week 2 revision 3 is blank in this sheet.'));
   assert(stale.reasons.includes('Published Week 2 revision 3 has 161 Week 2 picks; this sheet has only 160.'));
-  assert.match(stale.confirmText,/and replaces published Week 2 revision 3\.$/);
+  assert.match(stale.confirmText,/no more Week 2 picks will be added, replacing published Week 2 revision 3\. Publishing shows 1 entry OUT for no pick \(Week 2\)\.$/);
   // Same count, different picks: still a regression.
   const sw=structuredClone(newer);sw.fieldEntries[100].picks[1]='ARI';
   const swG=guardFor(sw,{published:withExisting(newer)});
@@ -235,7 +235,7 @@ const guardFor=(cfg,opts={})=>survivorPublishGuard(cfg,{resultsByWeek:verified.r
   const g=guardFor(complete,{detachedRows:[{page:1,label:'Page 1 of 3'},{page:3,label:'Notes'}]});
   assert.equal(g.requiresConfirmation,true);
   assert(g.reasons.includes('2 rows without picks were physically separated from the participant table and were NOT counted as entrants: "Page 1 of 3" (page 1), "Notes" (page 3). If any is a real entrant, do not publish.'));
-  assert.equal(g.confirmText,'I reviewed every item listed above and confirm this sheet should be published as Survivor Week 2. The 2 separated rows listed above are not entrants.');
+  assert.equal(g.confirmText,'I reviewed every item listed above and confirm this sheet is the final Survivor Week 2 submission set — no more Week 2 picks will be added. The 2 separated rows listed above are not entrants.');
 }
 {
   // Feed context exposure is disclosed as a fact; the regular season is capped.
@@ -245,6 +245,48 @@ const guardFor=(cfg,opts={})=>survivorPublishGuard(cfg,{resultsByWeek:verified.r
   assert(guardFor(config,{contextUnexposed:v.contextUnexposed}).facts.includes('The NFL feed did not identify its season/week for Weeks 1, 2; those games were matched by team structure only.'));
   assert.deepEqual(verifySurvivorSchedule(config,payloads).contextUnexposed,[]);
   assert.match(verifySurvivorSchedule({...config,week:19},{}).errors[0],/outside the NFL regular season \(Weeks 1–18\)/);
+}
+
+// ---- Review regressions.
+{
+  // PC-1: an entry pending on an unresolved earlier result is counted once, at its first blank week.
+  const small=(picksList,week)=>{const tracked=[{id:'dc',displayName:'D.C.',picks:['PIT','SF','KC','BUF'].slice(0,week)},{id:'djs',displayName:'DJS',picks:['LV','SF','DEN','MIA'].slice(0,week)},{id:'thaddeus',displayName:'Thaddeus',picks:['LAC',null,null,null].slice(0,week)}];const fieldEntries=picksList.map((picks,i)=>({id:'survivor-'+String(i+1).padStart(3,'0'),picks:picks.slice(0,week)}));const all=[...tracked,...fieldEntries];return{schemaVersion:1,season:2026,week,label:'Survivor Week '+week,competitionSize:all.length,currentWeekEntryCount:all.filter(e=>e.picks[week-1]).length,sheetWeeks:18,trackedEntries:tracked,fieldEntries,source:{kind:'survivor-upload',filename:'x.pdf'}}};
+  const cfg4=small([['JAX','NE',null,null],['JAX','BUF','KC','ATL']],4);
+  const w2bad={...payload(W2,2),events:payload(W2,2).events.map(e=>e.competitions[0].competitors[0].team.abbreviation==='NE'?event('NE','NO',{as:null,hs:null}):e)};
+  const v=verifySurvivorSchedule(cfg4,{1:payload(W1,1),2:w2bad,3:{events:W2.map(([a,h])=>event(a,h,{state:'post'}))},4:{events:W2.map(([a,h])=>event(a,h,{state:'pre'}))}});
+  assert.equal(v.ok,true,v.errors.join(' | '));
+  const g=survivorPublishGuard(cfg4,{resultsByWeek:v.resultsByWeek,currentGames:[],published:published(lockedRow(small([['JAX','NE',null,null],['JAX','BUF','KC','ATL']],1)))});
+  assert.equal(g.maybeNoPickOuts,1);
+  assert(g.reasons.some(r=>r.startsWith('1 entry with no Week 3 pick cannot yet be proven alive or out')));
+  assert.equal(g.reasons.some(r=>r.includes('no Week 4 pick cannot yet be proven')),false);
+}
+{
+  // PC-3: republishing the identical sheet when Week W is the only published week never claims earlier weeks are unpublished.
+  const only=published(lockedRow(config,1));
+  const g=guardFor(config,{published:only});
+  assert.equal(g.coveredThrough,1);
+  assert.equal(g.reasons.some(r=>/never been published|No published Survivor week before/.test(r)),false,g.reasons.join(' | '));
+  assert(g.facts.includes('This sheet is identical to published Week 2 revision 1 (entries and Weeks 1–2 pick histories).'));
+  assert.deepEqual(g.reasons,['1 of 161 entries alive entering Week 2 has no Week 2 pick. Publishing shows it OUT (no pick) in Week 2.']);
+}
+{
+  // PC-4: a blank introduced into an already-published week is a new no-pick elimination, named by week.
+  const blanked=structuredClone(config);blanked.fieldEntries[100].picks=[null,null];blanked.currentWeekEntryCount--;
+  const g=guardFor(blanked);
+  assert(g.reasons.includes('1 more entry is OUT (no pick) in Week 1 than in published Week 1 (revision 1).'),g.reasons.join(' | '));
+  assert.equal(g.noPickOuts,2);
+  assert.match(g.confirmText,/Publishing shows 2 entries OUT for no pick \(Week 1: 1, Week 2: 1\)\.$/);
+  // Wording follows the elimination type: a no-pick OUT with a later pick is not blamed on NFL results.
+  const odd=structuredClone(config);odd.fieldEntries[243].picks=[null,'SF'];
+  assert(guardFor(odd).reasons.some(r=>r.includes('(1 OUT by no Week 1 pick). The sheet may disagree with the NFL results or its own earlier picks;')));
+}
+{
+  // Rows counted from a page without picks always need explicit confirmation.
+  const complete=structuredClone(config);complete.fieldEntries[243].picks[1]='SF';complete.currentWeekEntryCount=161;
+  const g=guardFor(complete,{unanchoredRows:[{page:6,label:'Zed Blank'}]});
+  assert.equal(g.requiresConfirmation,true);
+  assert(g.reasons.includes('1 row without picks on a page with no participant picks was counted as an entrant (OUT for no pick): "Zed Blank" (page 6). If any is not a real entrant, do not publish.'));
+  assert.match(g.confirmText,/The 1 row counted from a page without picks is a real entrant\.$/);
 }
 
 console.log('survivor schedule verification, bye/absent-team publication, and partial-week guard regressions passed');

@@ -73,7 +73,7 @@ const sameInstant=(a,b)=>Number.isFinite(Date.parse(a))&&Date.parse(a)===Date.pa
 const attemptLanded=(row,attempt)=>!!row&&row.revision===attempt.revision&&row.source_sha256===attempt.digest&&sameInstant(row.updated_at,attempt.ts);
 
 function refreshGuard(c){
-  c.guard=survivorPublishGuard(c.config,{resultsByWeek:c.verification.resultsByWeek,currentGames:c.verification.weeks.find(w=>w.week===c.config.week)?.games||null,published:c.db?{checked:true,rows:c.db.rows}:{checked:false},detachedRows:c.review.detachedRows,contextUnexposed:c.verification.contextUnexposed});
+  c.guard=survivorPublishGuard(c.config,{resultsByWeek:c.verification.resultsByWeek,currentGames:c.verification.weeks.find(w=>w.week===c.config.week)?.games||null,published:c.db?{checked:true,rows:c.db.rows}:{checked:false},detachedRows:c.review.detachedRows,unanchoredRows:c.review.unanchoredRows,contextUnexposed:c.verification.contextUnexposed});
   if(c===candidate)renderCandidate();
 }
 async function checkPublished(target){
@@ -154,7 +154,7 @@ $('publishBtn').onclick=async()=>{
     assertPublishContext();
     const rows=await readPublished(cfg.season,{withConfig:false});assertPublishContext();
     const existing=rows.find(r=>r.week===cfg.week)||null;
-    if(lastAttempt&&lastAttempt.season===cfg.season&&lastAttempt.week===cfg.week&&attemptLanded(existing,lastAttempt)){const revision=lastAttempt.revision;lastAttempt=null;markPublished(publishCandidate,revision,' (the previous attempt had already been written)');return}
+    if(lastAttempt&&lastAttempt.season===cfg.season&&lastAttempt.week===cfg.week&&lastAttempt.digest===publishCandidate.digest&&attemptLanded(existing,lastAttempt)){const revision=lastAttempt.revision;lastAttempt=null;markPublished(publishCandidate,revision,' (the previous attempt had already been written)');return}
     if(publishedKey(rows)!==publishCandidate.db.key){publishCandidate.verified=false;throw new Error(`Published Survivor weeks for ${cfg.season} changed since this sheet was validated. Nothing was written. Read & validate again.`)}
     if(existing?.status==='locked'&&!replaceLocked)throw new Error(`Survivor Week ${cfg.week} is already locked. Check replace only for an intentional correction. Nothing was written.`);
     if(existing&&!(Number.isSafeInteger(existing.revision)&&existing.revision>0))throw new Error(`Survivor Week ${cfg.week} has an unexpected revision value. Nothing was written.`);

@@ -88,7 +88,7 @@ async function boot({signedIn=true,rows=[],sheets={}}={}){
   globalThis.document={getElementById:$};
   globalThis.__survivorTest={
     neonModule:neonModule(db),
-    pdfjs:{GlobalWorkerOptions:{},getDocument:({data})=>{const name=new TextDecoder().decode(data);return{promise:Promise.resolve({numPages:1,getPage:async()=>({getTextContent:async()=>({items:sheets[name]})})})}}}
+    pdfjs:{GlobalWorkerOptions:{},getDocument:({data})=>{const name=new TextDecoder().decode(data),pages=Array.isArray(sheets[name][0])?sheets[name]:[sheets[name]];return{promise:Promise.resolve({numPages:pages.length,getPage:async n=>({getTextContent:async()=>({items:pages[n-1]})})})}}}
   };
   globalThis.fetch=async url=>{
     net.fetches++;const week=Number(new URL(url).searchParams.get('week'));
@@ -102,7 +102,7 @@ async function boot({signedIn=true,rows=[],sheets={}}={}){
   const choose=name=>{$('file').files=[new File([name],name,{type:'application/pdf'})];$('file').dispatch('change')};
   return{$,db,net,choose,parse:()=>$('parseBtn').onclick(),publish:()=>$('publishBtn').onclick()};
 }
-const sheets={'week2.pdf':sheetItems(SHEET),'week2-complete.pdf':sheetItems(COMPLETE),'other.pdf':sheetItems(COMPLETE)};
+const sheets={'week2.pdf':sheetItems(SHEET),'week2-complete.pdf':sheetItems(COMPLETE),'other.pdf':sheetItems(COMPLETE),'blank-page.pdf':[sheetItems(COMPLETE),[item('Zed Blank',20,760),item('Zoe Blank',20,748)]]};
 
 // ---- 1. Happy path: validate, confirmation gate, publish exactly one locked row with the private-safe config.
 {
@@ -112,7 +112,7 @@ const sheets={'week2.pdf':sheetItems(SHEET),'week2-complete.pdf':sheetItems(COMP
   assert.match(t.$('reviewTitle').textContent,/2026 · Week 2 · 6 entries · 3 with Week 2 pick/);
   assert.match(t.$('publishChecks').innerHTML,/1 of 4 entries alive entering Week 2 has no Week 2 pick\. Publishing shows it OUT \(no pick\) in Week 2\./);
   assert.equal(t.$('confirmWrap').hidden,false);assert.equal(t.$('publishBtn').disabled,true,'confirmation required first');
-  assert.equal(t.$('confirmText').textContent,'I confirm this sheet is the final Week 2 pick list — no more Week 2 picks will be added. Publishing shows 1 entry OUT for no pick.');
+  assert.equal(t.$('confirmText').textContent,'I reviewed every item listed above and confirm this sheet is the final Survivor Week 2 submission set — no more Week 2 picks will be added. Publishing shows 1 entry OUT for no pick (Week 2).');
   t.$('confirmPartial').checked=true;t.$('confirmPartial').dispatch('change');
   assert.equal(t.$('publishBtn').disabled,false);
   const first=t.publish(),second=t.publish();await Promise.all([first,second]);
@@ -256,6 +256,32 @@ const sheets={'week2.pdf':sheetItems(SHEET),'week2-complete.pdf':sheetItems(COMP
   await t.publish();
   assert.match(t.$('message').textContent,/another publish created Survivor Week 2 first/);assert.equal(t.$('publishBtn').disabled,true);
   assert.equal(t.db.rows.find(r=>r.week===2).source_sha256,'theirs');
+}
+
+// ---- 13. Unknown outcome for file A, then a corrected file B: B is really written (never a false "already written").
+{
+  const t=await boot({rows:[week1Row(COMPLETE)],sheets});
+  t.choose('week2.pdf');await t.parse();t.$('confirmPartial').checked=true;t.$('confirmPartial').dispatch('change');
+  t.db.afterWrite=async()=>{t.db.readFail=new TypeError('offline');throw new TypeError('Failed to fetch')};
+  await t.publish();assert.match(t.$('message').textContent,/Publish outcome unknown/);
+  t.choose('week2-complete.pdf');await t.parse();
+  assert.match(t.$('publishChecks').innerHTML,/This replaces published Week 2 revision 1:/);
+  t.$('confirmPartial').checked=true;t.$('confirmPartial').dispatch('change');t.$('replaceLocked').checked=true;
+  await t.publish();
+  assert.equal(t.$('message').textContent.includes('already been written'),false,t.$('message').textContent);
+  assert.deepEqual(t.db.log.filter(l=>l[0]==='insert'||l[0]==='update'),[['insert'],['update','season=2026','week=2','revision=1']]);
+  const row=t.db.rows.find(r=>r.week===2);
+  assert.equal(row.revision,2);assert.equal(row.config.currentWeekEntryCount,4,'corrected sheet (Charlie BUF) is live');
+}
+
+// ---- 14. Blank entrants on a page without picks are counted only behind an explicit, named confirmation.
+{
+  const t=await boot({rows:[week1Row(COMPLETE)],sheets});
+  t.choose('blank-page.pdf');await t.parse();
+  assert.match(t.$('reviewTitle').textContent,/8 entries/);
+  assert.match(t.$('publishChecks').innerHTML,/2 rows without picks on a page with no participant picks were counted as entrants \(OUT for no pick\): &quot;Zed Blank&quot; \(page 2\), &quot;Zoe Blank&quot; \(page 2\)/);
+  assert.equal(t.$('confirmWrap').hidden,false);assert.equal(t.$('publishBtn').disabled,true);
+  assert.match(t.$('confirmText').textContent,/The 2 rows counted from a page without picks are real entrants\.$/);
 }
 
 console.log('survivor publisher stale-context, confirmation, schedule, compare-and-swap, double-submit and write-outcome regressions passed');
