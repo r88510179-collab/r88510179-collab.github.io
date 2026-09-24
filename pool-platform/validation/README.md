@@ -20,8 +20,9 @@ Claude cloud container cannot use psql against Neon: its egress proxy carries HT
 
 ## Order on a fresh commercial/dev branch
 
-1. Enable Neon Auth. It provides `neon_auth."user"`.
-2. Enable the Data API. It provides the `anonymous`/`authenticated` roles and `auth.user_id()`.
+1. Enable Neon Auth. The reviewed migrations assume it provides `neon_auth."user"` (checked by P09/P10).
+2. Enable the Data API. The reviewed migrations assume it provides the `anonymous`/`authenticated` roles and
+   `auth.user_id()` (checked by P06/P07). None of this has been observed on live Neon yet.
 3. `neon-preflight.sql`: no `ok = false`.
 4. `001_foundation.sql`, then `002_identity_submission_rls.sql`. Apply each as one transaction that stops on the
    first error, for example `psql -v ON_ERROR_STOP=1 --single-transaction -f <file>`.
