@@ -51,6 +51,43 @@ function applyRegularHeaderGeometry(rows,headerText='Entry Pts W'){
   }
   return rows;
 }
+const oddPicks=[1,3,5,7,9,11,13,15,17,19,21,23,25,27,29];
+// Explicit PDF cell geometry: name text items at their own X, one item per filled column (null = empty cell).
+function geometryLine(nameParts,values){
+  const parts=[...nameParts.map(([x,text])=>({x,text})),...values.flatMap((value,i)=>value===null?[]:[{x:160+i*24,text:String(value)}])];
+  return{text:parts.map(p=>p.text).join(' '),parts};
+}
+function parseMixed(items,pageFingerprint){
+  const lines=items.map(item=>typeof item==='string'?item:item.text),rows=sourceRows(lines,1);
+  items.forEach((item,i)=>{if(typeof item!=='string')rows[i].parts=item.parts});
+  return parse(lines,{sourceRows:rows,pageFingerprint});
+}
+function sheetParse(participantLines,extraRows=[]){
+  const header=['Entry',...Array.from({length:15},(_,i)=>`Pick${i+1}`),'Pts','W'];
+  const rows=[['Week 2'],...matchups.map(line=>[line]),header,...participantLines.map(line=>{
+    const tokens=line.split(/\s+/);
+    return[tokens.slice(0,-17).join(' '),...tokens.slice(-17)];
+  }),...extraRows];
+  const sheetRows=rows.map((cells,i)=>({kind:'spreadsheet',sheetName:'Week 2',rowNumber:i+1,cells,text:cells.filter(Boolean).join(' ')}));
+  return parseDocumentGroups([{week:2,lines:sheetRows.map(r=>r.text),sourceRows:sheetRows,sheetName:'Week 2'}],{filename:'fixture.xlsx',season:2026})[0];
+}
+function assertFieldFailsClosed(c){
+  assert.deepEqual(c.errors,[]);
+  assert.equal(c.config.participants.length,4);
+  assert.equal(c.config.fullFieldReady,false);
+  assert.equal(c.config.fieldEntries,undefined);
+  assert.equal(c.competitionSize,4);
+  assert(c.fullFieldIssues.length>0);
+  assert.deepEqual(validateConfig(c.config),[]);
+}
+function assertFieldReady(c,competitionSize){
+  assert.deepEqual(c.errors,[]);
+  assert.deepEqual(c.fullFieldIssues,[]);
+  assert.equal(c.config.fullFieldReady,true);
+  assert.equal(c.competitionSize,competitionSize);
+  assert.equal(c.config.fieldEntries.length,competitionSize-4);
+  assert.deepEqual(validateConfig(c.config),[]);
+}
 
 {
   const c=parse([...matchups,...tracked,anonA]);
@@ -65,9 +102,17 @@ function applyRegularHeaderGeometry(rows,headerText='Entry Pts W'){
   assert.equal(c.errors.length,0);
 }
 {
+  // A participant-width numeric row in the next participant slot, on the participant columns, is not ignorable noise.
   const c=parse([...matchups,...tracked,anonA,'1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17']);
-  assert.equal(c.config.fullFieldReady,true);
-  assert.equal(c.config.fieldEntries.length,1);
+  assert.equal(c.config.fullFieldReady,false);
+  assert.equal(c.config.fieldEntries,undefined);
+}
+{
+  // The same numeric text away from the proven table, and a short numeric footer under it, remain ignorable.
+  const lines=[...matchups,...tracked,anonA,'1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17'],rows=sourceRows(lines,1);
+  rows[rows.length-1].y=rows[rows.length-2].y-96;
+  assertFieldReady(parse(lines,{sourceRows:rows,pageFingerprint:'remote-numeric-noise'}),5);
+  assertFieldReady(parse([...matchups,...tracked,anonA,'2026 9 24'],{pageFingerprint:'short-numeric-footer'}),5);
 }
 {
   const lines=[...matchups,...tracked,anonA];
@@ -475,6 +520,120 @@ function applyRegularHeaderGeometry(rows,headerText='Entry Pts W'){
   assert.equal(c.config.fullFieldReady,false);
   assert.equal(c.config.fieldEntries,undefined);
   assert(c.fullFieldIssues.some(x=>x.includes('continuous PDF participant-table chain')));
+}
+{
+  // STEP 2 P1 — the reviewed all-numeric row that is one tail token short must not vanish at the trailing table edge.
+  assertFieldFailsClosed(parse([...matchups,...tracked,anonA,'12345 1 3 5 7 9 11 13 15 17 19 21 23 25 27 44 0'],{pageFingerprint:'p1-review-row-end'}));
+}
+{
+  // STEP 2 P1 — the same row at the leading table edge.
+  assertFieldFailsClosed(parse([...matchups,'12345 1 3 5 7 9 11 13 15 17 19 21 23 25 27 44 0',...tracked,anonA],{pageFingerprint:'p1-review-row-start'}));
+}
+{
+  // STEP 2 P1 — real cell geometry: numeric name in the name column, one empty matchup column, leading table edge.
+  const damaged=geometryLine([[10,'12345']],[...oddPicks.slice(0,6),null,...oddPicks.slice(7),44,0]);
+  assertFieldFailsClosed(parseMixed([...matchups,damaged,...tracked,anonA],'p1-missing-pick-start'));
+}
+{
+  // STEP 2 P1 — the same damaged row between tracked rows (already fails closed through run breakage; guarded here).
+  const damaged=geometryLine([[10,'12345']],[...oddPicks.slice(0,6),null,...oddPicks.slice(7),44,0]);
+  assertFieldFailsClosed(parseMixed([...matchups,tracked[0],tracked[1],damaged,tracked[2],tracked[3],anonA],'p1-missing-pick-middle'));
+}
+{
+  // STEP 2 P1 — inside the physical table, followed by a numeric-named single no-pick row: neither row may silently vanish.
+  const damaged=geometryLine([[10,'12345']],[...oddPicks.slice(0,6),null,...oddPicks.slice(7),44,0]);
+  assertFieldFailsClosed(parseMixed([...matchups,...tracked,anonA,damaged,'67890 1 2 5 7 9 11 13 15 17 19 21 23 25 27 29 47 0'],'p1-missing-pick-inner'));
+}
+{
+  // STEP 2 P1 — the same damaged row at the trailing table edge.
+  const damaged=geometryLine([[10,'12345']],[...oddPicks.slice(0,6),null,...oddPicks.slice(7),44,0]);
+  assertFieldFailsClosed(parseMixed([...matchups,...tracked,anonA,damaged],'p1-missing-pick-end'));
+}
+{
+  // STEP 2 P1 — truncated numeric tail: every matchup pick but no tiebreak or wins cells.
+  assertFieldFailsClosed(parseMixed([...matchups,...tracked,anonA,geometryLine([[10,'12345']],[...oddPicks])],'p1-truncated-tail'));
+}
+{
+  // STEP 2 P1 — truncated numeric tail: the row stops after ten picks.
+  assertFieldFailsClosed(parseMixed([...matchups,...tracked,anonA,geometryLine([[10,'12345']],oddPicks.slice(0,10))],'p1-truncated-ten'));
+}
+{
+  // STEP 2 P1 — truncated numeric tail in the default single-text-item form.
+  assertFieldFailsClosed(parse([...matchups,...tracked,anonA,'12345 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29'],{pageFingerprint:'p1-truncated-text'}));
+}
+{
+  // STEP 2 P1 — missing tiebreak cell.
+  assertFieldFailsClosed(parseMixed([...matchups,...tracked,anonA,geometryLine([[10,'12345']],[...oddPicks,null,0])],'p1-missing-tiebreak'));
+}
+{
+  // STEP 2 P1 — missing wins cell.
+  assertFieldFailsClosed(parseMixed([...matchups,...tracked,anonA,geometryLine([[10,'12345']],[...oddPicks,44,null])],'p1-missing-wins'));
+}
+{
+  // STEP 2 P1 — a damaged numeric row that opens a proven continuation page is not skipped by the continuation.
+  const damaged='12345 1 3 5 7 9 11 13 15 17 19 21 23 25 27 44 0';
+  const page1=[...matchups,tracked[0],tracked[1],anonA],page2=[damaged,tracked[2],tracked[3],anonB];
+  const y1=page1.map((_,i)=>760-i*12);y1[y1.length-3]=48;y1[y1.length-2]=36;y1[y1.length-1]=24;
+  const c=parseDocumentGroups([
+    {week:2,lines:page1,sourceRows:rowsAt(page1,1,y1),pageNumber:1,pageFingerprint:'p1-edge-page-1'},
+    {week:2,lines:page2,sourceRows:rowsAt(page2,2,[760,748,736,724]),pageNumber:2,pageFingerprint:'p1-edge-page-2'}
+  ],{filename:'p1-edge.pdf',season:2026})[0];
+  assertFieldFailsClosed(c);
+}
+{
+  // STEP 2 P1 — sparse continuity evidence cannot hide a damaged numeric row after it (one and two sparse rows).
+  const damaged='12345 1 3 5 7 9 11 13 15 17 19 21 23 25 27 44 0',sparse=text=>({text,parts:[{x:10,text:text.split(' ')[0]},{x:538,text:'15'}]});
+  assertFieldFailsClosed(parseMixed([...matchups,...tracked,anonA,sparse('S1 15'),damaged],'p1-after-one-sparse'));
+  assertFieldFailsClosed(parseMixed([...matchups,...tracked,anonA,sparse('S1 15'),sparse('S2 15'),damaged],'p1-after-two-sparse'));
+}
+{
+  // STEP 2 P1 — a damaged numeric row between the regular header and the first participant.
+  const header='Entry Pts W',lines=[...matchups,header,'12345 1 3 5 7 9 11 13 15 17 19 21 23 25 27 44 0',...tracked,anonA];
+  assertFieldFailsClosed(parse(lines,{sourceRows:applyRegularHeaderGeometry(sourceRows(lines,1),header),pageFingerprint:'p1-after-header'}));
+}
+{
+  // STEP 2 P1 — a numeric-named single no-pick row outside the proven table is as ambiguous as a text-named one.
+  const lines=[...matchups,...tracked,anonA,'67890 1 2 5 7 9 11 13 15 17 19 21 23 25 27 29 47 0'],rows=sourceRows(lines,1);
+  rows[rows.length-1].y=rows[rows.length-2].y-96;
+  const c=parse(lines,{sourceRows:rows,pageFingerprint:'p1-numeric-skip-remote'});
+  assertFieldFailsClosed(c);
+  assert(c.fullFieldIssues.some(x=>x.includes('outside the proven regular participant table')));
+}
+{
+  // STEP 2 P1 — spreadsheet form: an all-numeric name with an empty pick cell.
+  assertFieldFailsClosed(sheetParse([...tracked,anonA],[['12345','1','','5','7','9','11','13','15','17','19','21','23','25','27','29','44','0']]));
+}
+{
+  // STEP 2 P1 — spreadsheet form: an all-numeric name with an empty wins cell.
+  assertFieldFailsClosed(sheetParse([...tracked,anonA],[['12345','1','3','5','7','9','11','13','15','17','19','21','23','25','27','29','44','']]));
+}
+{
+  // STEP 2 P1 — structurally complete all-numeric names remain ordinary participants, including a single no-pick.
+  assertFieldReady(parse([...matchups,...tracked,anonA,'12345 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0'],{pageFingerprint:'p1-numeric-complete-end'}),6);
+  assertFieldReady(parseMixed([...matchups,geometryLine([[10,'12345']],[...oddPicks,44,0]),...tracked,anonA],'p1-numeric-complete-start'),6);
+  const c=parse([...matchups,...tracked,anonA,'67890 1 2 5 7 9 11 13 15 17 19 21 23 25 27 29 47 0'],{pageFingerprint:'p1-numeric-skip-inside'});
+  assertFieldReady(c,6);
+  assert.deepEqual(c.config.fieldEntries[1].pickNumbers,[1,0,5,7,9,11,13,15,17,19,21,23,25,27,29]);
+  assertFieldReady(sheetParse([...tracked,anonA,'12345 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0']),6);
+  assertFieldReady(sheetParse([...tracked,anonA],[['Ginner',...Array(16).fill(''),'0']]),5);
+}
+{
+  // STEP 2 P2-1 — a legitimate two-part name split into two PDF text items at natural increasing X positions.
+  const name=geometryLine([[10,'Mary'],[48,'Jane']],[...oddPicks,44,0]);
+  assertFieldReady(parseMixed([...matchups,...tracked,anonA,name],'p2-split-two-part-end'),6);
+  assertFieldReady(parseMixed([...matchups,tracked[0],tracked[1],name,tracked[2],tracked[3],anonA],'p2-split-two-part-middle'),6);
+}
+{
+  // STEP 2 P2-1 — a realistic three-part name, one text item per word.
+  const name=geometryLine([[10,'Juan'],[48,'Carlos'],[100,'Rivera']],[2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,51,0]);
+  assertFieldReady(parseMixed([...matchups,...tracked,anonA,name],'p2-split-three-part'),6);
+}
+{
+  // STEP 2 P2-1 — summary-sounding words inside a naturally flowing split name are not blacklisted.
+  const name=geometryLine([[10,'Winning'],[70,'Picks'],[115,'Wendy']],[...oddPicks,39,0]);
+  const c=parseMixed([...matchups,...tracked,anonA,name],'p2-summary-words-in-name');
+  assertFieldReady(c,6);
+  assert.equal(JSON.stringify(c.config).includes('Wendy'),false);
 }
 
 console.log('parser-core regular-table region, continuation, fail-closed field, duplicate, and privacy regressions passed');
