@@ -11,26 +11,48 @@
 <body>
   <main class="shell">
     <div class="topbar">
-      <a href="./" class="brand" style="color:inherit;text-decoration:none">POOL PLATFORM</a>
-      <span class="pill" id="deadlinePill">Week 3</span>
+      <a href="./" class="brand link-reset">POOL PLATFORM</a>
+      <span class="pill" id="modePill">Loading…</span>
     </div>
 
-    <section class="card">
-      <div class="eyebrow">Synthetic demo pool</div>
-      <h1>Week 3 picks</h1>
-      <p class="meta">Entry: <strong>Demo Entry 07</strong><br>Deadline: Thursday · 7:45 PM</p>
-      <div class="notice info" id="sourceNotice" style="margin-top:12px">
-        Direct participant entry is available. Your final submission will claim this entry for the week and prevent a commissioner import from overwriting it.
+    <section class="card hidden" id="authCard">
+      <div class="eyebrow">Secure sign in</div>
+      <h1>Open your pool entry</h1>
+      <p class="meta">Use the email connected to your invitation. No password is required.</p>
+      <div class="form-grid">
+        <label class="field"><span>Email</span><input id="email" type="email" autocomplete="email" inputmode="email"></label>
+        <button class="button primary" id="sendCode" type="button">Send code</button>
       </div>
+      <div class="form-grid hidden" id="otpWrap">
+        <label class="field"><span>Sign-in code</span><input id="otp" inputmode="numeric" autocomplete="one-time-code"></label>
+        <button class="button primary" id="verifyCode" type="button">Verify & continue</button>
+      </div>
+      <div class="notice error hidden" id="authError" role="alert"></div>
     </section>
 
-    <form id="pickForm" novalidate>
+    <section class="card hidden" id="entryCard">
+      <div class="card-head">
+        <div>
+          <div class="eyebrow" id="poolTypeLabel">Football pool</div>
+          <h1 id="poolName">Pool</h1>
+        </div>
+        <button class="button compact secondary hidden" id="signOut" type="button">Sign out</button>
+      </div>
+      <div class="entry-grid">
+        <label class="field hidden" id="entrySelectWrap"><span>Entry</span><select id="entrySelect"></select></label>
+        <div><span class="field-label">Week</span><strong id="weekLabel">—</strong></div>
+        <div><span class="field-label">Deadline</span><strong id="deadlineLabel">—</strong></div>
+      </div>
+      <div class="notice info" id="sourceNotice"></div>
+    </section>
+
+    <form id="pickForm" class="hidden" novalidate>
       <section class="card">
         <div class="eyebrow">Make your picks</div>
         <div class="games" id="games"></div>
       </section>
 
-      <section class="card tiebreak">
+      <section class="card tiebreak hidden" id="tiebreakCard">
         <label for="tiebreak">Tiebreak total points</label>
         <input id="tiebreak" name="tiebreak" inputmode="numeric" pattern="[0-9]*" min="0" max="200" placeholder="Example: 47" autocomplete="off">
         <p class="meta">Enter the combined points for the designated tiebreak game.</p>
@@ -38,9 +60,9 @@
 
       <section class="card">
         <h2>Review</h2>
-        <div id="validation" class="notice error hidden" role="alert"></div>
+        <div id="validation" class="notice error hidden" role="alert" tabindex="-1"></div>
         <div class="summary" id="summary"></div>
-        <div class="actions" style="margin-top:14px">
+        <div class="actions action-bar">
           <button class="button secondary" type="button" id="clearBtn">Clear</button>
           <button class="button primary" type="submit" id="submitBtn">Submit picks</button>
         </div>
@@ -48,17 +70,19 @@
     </form>
 
     <section class="card hidden" id="submittedCard" aria-live="polite">
-      <div class="eyebrow">Submission received</div>
-      <h2>Participant channel claimed</h2>
-      <div class="notice success">
-        This entry/week is now owned by the participant submission channel. A commissioner import would receive a conflict instead of overwriting these picks.
-      </div>
-      <p class="meta" style="margin-bottom:0">This page is currently a sandbox UI. The reviewed database migration will enforce the same rule atomically when the backend is connected.</p>
+      <div class="eyebrow">Submission saved</div>
+      <h2 id="submittedTitle">Participant channel claimed</h2>
+      <div class="notice success" id="submittedMessage"></div>
+      <p class="meta" id="submittedMeta"></p>
     </section>
 
-    <footer class="footer">Synthetic demo data only · responsive PWA foundation</footer>
-  </main>
+    <section class="card hidden" id="emptyCard">
+      <h2>No entry available</h2>
+      <p class="meta" id="emptyMessage">This signed-in account does not currently own an entry in this pool.</p>
+    </section>
 
+    <footer class="footer">Responsive participant entry · synthetic sandbox until the reviewed backend is connected</footer>
+  </main>
   <script type="module" src="./participant.js"></script>
 </body>
 </html>

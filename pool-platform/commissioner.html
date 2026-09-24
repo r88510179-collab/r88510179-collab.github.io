@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0a0d12">
+  <title>Commissioner Console</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="shell">
+    <div class="topbar"><a href="./" class="brand link-reset">POOL PLATFORM</a><span class="pill" id="modePill">Loading…</span></div>
+    <section class="card hidden" id="authCard">
+      <div class="eyebrow">Commissioner sign in</div><h1>Manage your pool</h1>
+      <p class="meta">Membership is checked by the database. Signing in does not grant access to other customers.</p>
+      <div class="form-grid"><label class="field"><span>Email</span><input id="email" type="email" autocomplete="email"></label><button class="button primary" id="sendCode" type="button">Send code</button></div>
+      <div class="form-grid hidden" id="otpWrap"><label class="field"><span>Sign-in code</span><input id="otp" inputmode="numeric" autocomplete="one-time-code"></label><button class="button primary" id="verifyCode" type="button">Verify & continue</button></div>
+      <div class="notice error hidden" id="authError" role="alert"></div>
+    </section>
+    <section class="card hidden" id="consoleCard">
+      <div class="card-head"><div><div class="eyebrow">Commissioner console</div><h1 id="poolName">Pool</h1></div><button class="button compact secondary hidden" id="signOut" type="button">Sign out</button></div>
+      <div class="toolbar-grid"><label class="field"><span>Season</span><select id="seasonSelect"></select></label><label class="field"><span>Week</span><select id="weekSelect"></select></label></div>
+      <div class="notice info">Participant and commissioner channels can coexist. The first finalized source for each entry/week owns that row; the other channel receives a conflict and cannot overwrite it.</div>
+    </section>
+    <section class="card hidden" id="entriesCard">
+      <div class="eyebrow">Entry status</div><h2>Participants</h2>
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>Entry</th><th>Claimed</th><th>This week</th></tr></thead><tbody id="entriesBody"></tbody></table></div>
+    </section>
+    <section class="card hidden" id="inviteCard">
+      <div class="eyebrow">Direct entry</div><h2>Create participant invitation</h2>
+      <div class="toolbar-grid"><label class="field"><span>Entry</span><select id="inviteEntry"></select></label><label class="field"><span>Email restriction (optional)</span><input id="inviteEmail" type="email" placeholder="participant@example.com"></label></div>
+      <button class="button primary" id="createInvite" type="button">Create secure invite</button><div class="notice success hidden" id="inviteResult"></div>
+    </section>
+    <section class="card hidden" id="importCard">
+      <div class="eyebrow">Commissioner channel</div><h2>Import picks</h2><p class="meta" id="importHelp"></p>
+      <label class="field"><span>CSV rows</span><textarea id="importText" rows="9" spellcheck="false"></textarea></label>
+      <div class="actions action-bar"><button class="button secondary" id="sampleImport" type="button">Load sample</button><button class="button primary" id="runImport" type="button">Validate & import</button></div>
+      <div class="notice error hidden" id="importError"></div><div class="notice success hidden" id="importResult"></div>
+      <div class="table-scroll hidden" id="resultTableWrap"><table class="data-table"><thead><tr><th>Entry</th><th>Result</th></tr></thead><tbody id="resultBody"></tbody></table></div>
+    </section>
+    <footer class="footer">Commissioner tools · synthetic sandbox until the reviewed backend is connected</footer>
+  </main>
+  <script type="module" src="./commissioner.js"></script>
+</body>
+</html>
