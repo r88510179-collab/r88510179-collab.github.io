@@ -228,8 +228,15 @@ const parse=pages=>parseSurvivorPages(pages,{season:2026});
   // Rows without picks that cannot be proven to belong to the participant table fail closed.
   const misaligned=parse(base([at(700,[[100,'Legend: yellow = Thursday']]),at(688,[[20,'Bravo'],[151,'DET']])]));
   assert(misaligned.errors.some(e=>/Legend: yellow = Thursday: row has no picks and its name is outside the participant name column/.test(e)),misaligned.errors.join(' | '));
+  // A page of blank entrants (e.g. sorted last) is counted only as one unbroken grid chain in the name column, and is
+  // surfaced for explicit confirmation; anything less fails closed.
   const blankPage=parse(base([],[{pageNumber:2,rows:[at(780,[[20,'Echo']]),at(768,[[20,'Foxtrot']])]}]));
-  assert(blankPage.errors.some(e=>/Echo: row has no picks on a page without participant picks/.test(e)));
+  assert.deepEqual(blankPage.errors,[]);assert.equal(blankPage.config.competitionSize,6);
+  assert.deepEqual(blankPage.review.unanchoredRows,[{page:2,label:'Echo'},{page:2,label:'Foxtrot'}]);
+  const brokenPage=parse(base([],[{pageNumber:2,rows:[at(780,[[20,'Echo']]),at(700,[[20,'Page 2 of 2']])]}]));
+  assert(brokenPage.errors.some(e=>/Echo: row has no picks on a page without participant picks and is not on the participant row grid/.test(e)),brokenPage.errors.join(' | '));
+  const offColumn=parse(base([],[{pageNumber:2,rows:[at(780,[[20,'Echo']]),at(768,[[90,'Printed 9/21']])]}]));
+  assert(offColumn.errors.some(e=>/is outside the participant name column/.test(e)),offColumn.errors.join(' | '));
   // no two rows with picks are adjacent, so the row pitch (and therefore grid membership of blank rows) is unproven
   const noPitch=parse([{pageNumber:1,rows:[header,at(748,[[20,'D.C.'],[151,'PIT'],[184,'SF']]),at(736,[[20,'Golf']]),at(724,[[20,'DJS'],[151,'LV'],[184,'SF']]),at(712,[[20,'Hotel']]),at(700,[[20,'Thaddius'],[151,'LAC']])]}]);
   assert.deepEqual(noPitch.errors,['Golf: row has no picks and the Survivor row spacing could not be proven','Hotel: row has no picks and the Survivor row spacing could not be proven']);
@@ -239,6 +246,31 @@ const parse=pages=>parseSurvivorPages(pages,{season:2026});
   // a label squeezed off-grid between the header and the first entry is not an entrant
   const squeezed=parse([{pageNumber:1,rows:[header,at(755,[[20,'Name']]),at(748,[[20,'D.C.'],[151,'PIT'],[184,'SF']]),at(736,[[20,'DJS'],[151,'LV'],[184,'SF']]),at(724,[[20,'Thaddius'],[151,'LAC']])]}]);
   assert.deepEqual(squeezed.errors,[]);assert.equal(squeezed.config.competitionSize,3);assert.deepEqual(squeezed.review.detachedRows.map(x=>x.label),['Name']);
+}
+{
+  // Review regressions: a stray "." in an empty Week cell never absorbs the next week's pick (fails closed as before);
+  // a stray off-grid mark between rows never detaches a real blank entrant; symbol-only rows are not entrants;
+  // left-aligned codes under centered Week numbers in wide columns are still read.
+  const dot=parse(base([at(700,[[20,'Bravo'],[151,'JAX'],[190,'.'],[217,'SF']])]));
+  assert(dot.errors.includes('Bravo: unknown Week 2 team .'),dot.errors.join(' | '));
+  const dot1=parse(base([at(700,[[20,'Bravo'],[157,'.'],[184,'PIT']])]));
+  assert(dot1.errors.includes('Bravo: unknown Week 1 team .'),dot1.errors.join(' | '));
+  const intruder=parse(base([at(705,[[20,'b']]),at(700,[[20,'Bravo Blank']])]));
+  assert.deepEqual(intruder.errors,[]);assert.equal(intruder.config.competitionSize,5);
+  assert.deepEqual(intruder.review.blankEntrants.map(x=>x.label),['Bravo Blank']);assert.deepEqual(intruder.review.detachedRows.map(x=>x.label),['b']);
+  // off-grid text squeezed against a participant row, or beside a genuine blank row, is surfaced rather than counted
+  const squeezedCode=parse(base([at(700,[[20,'Bravo'],[151,'DET']]),at(691,[[20,'PIT']]),at(688,[[20,'Charlie'],[151,'NE']])]));
+  assert.deepEqual(squeezedCode.errors,[]);assert.equal(squeezedCode.config.competitionSize,6);assert.deepEqual(squeezedCode.review.detachedRows.map(x=>x.label),['PIT']);
+  const besideBlank=parse(base([at(700,[[20,'Blank One']]),at(697,[[20,'note']]),at(688,[[20,'Charlie'],[151,'NE']])]));
+  assert.deepEqual(besideBlank.errors,[]);assert.equal(besideBlank.config.competitionSize,6);
+  assert.deepEqual(besideBlank.review.blankEntrants.map(x=>x.label),['Blank One']);assert.deepEqual(besideBlank.review.detachedRows.map(x=>x.label),['note']);
+  const symbol=parse(base([at(700,[[20,'*']]),at(688,[[20,'—']])]));
+  assert.deepEqual(symbol.errors,[]);assert.equal(symbol.config.competitionSize,4);
+  assert(symbol.review.ignoredRows.some(x=>x.text==='*'&&x.reason==='row without a participant name'));
+  const wide={text:'Week 1 2 3 4',y:760,rowIndex:0,parts:[{x:116,text:'Week'},{x:167.2,text:'1'},{x:207.2,text:'2'},{x:247.2,text:'3'},{x:287.2,text:'4'}]};
+  const left=parse([{pageNumber:1,rows:[wide,...[['D.C.','PIT','SF'],['DJS','LV','SF'],['Thaddius','LAC',null],['Alpha','JAX','BAL']].map(([n,a,b],i)=>at(748-12*i,[[20,n],[152,a],...(b?[[192,b]]:[])]))]}]);
+  assert.deepEqual(left.errors,[]);assert.deepEqual(left.config.trackedEntries.find(x=>x.id==='dc').picks,['PIT','SF']);
+  assert.equal(left.review.geometry.columnOffset,-15.2);assert(-15.2<-40*0.375,'beyond the old symmetric bound');
 }
 {
   // The historical no-pick fixture geometry (three empty grid rows below the table) is physically detached: it is

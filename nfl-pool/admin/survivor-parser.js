@@ -66,12 +66,13 @@ function nearestColumns(x,columnXs){
 
 // Text split into several PDF items inside one cell (e.g. "LA" + "C") is merged first; a cell is placed by its start x.
 // Continuation is measured from the cell's first item, so a split cell can never chain into the next column's text.
-// A fragment that turns an incomplete code into a team code (LA + C) completes its cell even in tight layouts.
+// A fragment that turns an incomplete lettered code into a team code (LA + C) completes its cell even in tight layouts;
+// a complete team code never continues another cell.
 function pickCells(pickParts,gap){
   const cells=[];
   for(const part of pickParts){
     const prev=cells[cells.length-1],distance=prev?part.x-prev.x:Infinity;
-    const completesCode=!!prev&&distance<=gap*0.9&&!normalizeSurvivorTeam(prev.texts.join(' '))&&!!normalizeSurvivorTeam([...prev.texts,part.text].join(' '));
+    const completesCode=!!prev&&distance<=gap*0.9&&MEANINGFUL.test(prev.texts.join(' '))&&!normalizeSurvivorTeam(prev.texts.join(' '))&&!normalizeSurvivorTeam(part.text)&&!!normalizeSurvivorTeam([...prev.texts,part.text].join(' '));
     if(prev&&(distance<=gap*0.7||completesCode)){prev.texts.push(part.text);continue}
     cells.push({x:part.x,texts:[part.text]});
   }
@@ -98,7 +99,8 @@ function columnModel(region,contract){
     }
   }
   const offset=offsets.length?median(offsets):0;
-  return{offset,columnXs:contract.weekXs.map(x=>x+offset),valid:Math.abs(offset)<=contract.gap*0.375};
+  // Text may start well left of its header (left-aligned codes under centered numbers) but not past the name cutoff.
+  return{offset,columnXs:contract.weekXs.map(x=>x+offset),valid:offset<0?-offset<contract.gap*0.44:offset<=contract.gap*0.375};
 }
 
 // A cell belongs to a Week column only when it is within tolerance and clearly nearer that column than any other.
@@ -144,6 +146,7 @@ function participantRegion(rows,contract,review,errors){
     const a=analyzeRow(row,contract);
     if(a.kind==='noise')continue;
     if(/^suicide pool$/i.test(a.sourceName)||/^week$/i.test(a.sourceName)){ignore(row,'sheet title or label');continue}
+    if(a.kind==='name-only'&&!/[A-Za-z]/.test(a.sourceName)){ignore(row,'row without a participant name');continue}
     region.push(a);
   }
   const model=columnModel(region,contract);
@@ -163,23 +166,37 @@ function participantRegion(rows,contract,review,errors){
     const g=Number(list[i-1].row.y)-Number(list[i].row.y);if(Number.isFinite(g)&&g>0)gaps.push(g);
   }
   const pitch=gaps.length?median(gaps):null;
-  const onGrid=(upper,lower)=>{const g=Number(upper.row.y)-Number(lower.row.y);return pitch!==null&&Number.isFinite(g)&&g>=pitch-Math.max(2.5,pitch*0.25)&&g<=pitch*1.75};
+  const minGap=pitch===null?null:pitch-Math.max(2.5,pitch*0.25);
+  const onGrid=(upper,lower)=>{const g=Number(upper.row.y)-Number(lower.row.y);return pitch!==null&&Number.isFinite(g)&&g>=minGap&&g<=pitch*1.75};
+  const tooClose=(upper,lower)=>minGap!==null&&Number(upper.row.y)-Number(lower.row.y)<minGap;
+  // Distance from the row grid, measured from the nearest row with picks on the page.
+  const gridDeviation=(list,idx)=>{for(let d=1;d<list.length;d++)for(const k of [idx-d,idx+d]){const r=list[k];if(r&&r.kind==='picks'){const m=Math.abs(Number(r.row.y)-Number(list[idx].row.y))%pitch;return Math.min(m,pitch-m)}}return Infinity};
   const nameXs=named.filter(a=>a.kind==='picks'&&Number.isFinite(a.nameX)).map(a=>a.nameX);
   const nameMin=nameXs.length?Math.min(...nameXs)-NAME_X_TOLERANCE:null,nameMax=nameXs.length?Math.max(...nameXs)+NAME_X_TOLERANCE:null;
   const accepted=new Set();
+  const inNameColumn=a=>nameMin!==null&&a.nameX>=nameMin&&a.nameX<=nameMax;
   for(const list of byPage.values()){
     const pageHasPicks=list.some(a=>a.kind==='picks');
+    if(!pageHasPicks){
+      // A page holding only rows without picks (e.g. blank entrants sorted last) cannot be anchored by picks. It is
+      // counted only as one unbroken grid chain inside the name column, and needs explicit admin confirmation.
+      if(pitch===null){for(const a of list)errors.push(a.sourceName+': row has no picks and the Survivor row spacing could not be proven');continue}
+      const chained=list.every((a,i)=>i===0||onGrid(list[i-1],a)),aligned=list.every(inNameColumn);
+      if(!chained||!aligned){for(const a of list)errors.push(a.sourceName+': row has no picks on a page without participant picks and '+(aligned?'is not on the participant row grid':'is outside the participant name column')+'; table membership cannot be proven');continue}
+      for(const a of list){accepted.add(a);const entry={page:a.row.pageNumber??null,label:a.sourceName};review.blankEntrants.push(entry);review.unanchoredRows.push(entry)}
+      continue;
+    }
     list.forEach((a,idx)=>{
       if(a.kind==='picks'){accepted.add(a);return}
-      const reaches=dir=>{for(let j=idx;;j+=dir){const k=j+dir;if(k<0||k>=list.length)return false;if(!onGrid(dir<0?list[k]:list[j],dir<0?list[j]:list[k]))return false;if(list[k].kind==='picks')return true}};
+      // Walk the row grid toward a row with picks; stray off-grid rows without picks are stepped over, not trusted.
+      const reaches=dir=>{let j=idx;for(let k=idx+dir;k>=0&&k<list.length;k+=dir){if(!onGrid(dir<0?list[k]:list[j],dir<0?list[j]:list[k])){if(list[k].kind==='picks')return false;continue}if(list[k].kind==='picks')return true;j=k}return false};
       if(pitch===null){errors.push(a.sourceName+': row has no picks and the Survivor row spacing could not be proven');return}
-      const up=reaches(-1),down=reaches(1);
-      if(!up&&!down){
-        if(pageHasPicks){ignore(a.row,'row without picks separated from the participant table');review.detachedRows.push({page:a.row.pageNumber??null,label:a.sourceName})}
-        else errors.push(a.sourceName+': row has no picks on a page without participant picks; table membership cannot be proven');
-        return;
-      }
-      if(nameMin===null||a.nameX<nameMin||a.nameX>nameMax){errors.push(a.sourceName+': row has no picks and its name is outside the participant name column');return}
+      // Two rows closer than the grid allows cannot both be table rows: a row without picks squeezed against a
+      // participant row, or further from the grid than the row it collides with, is stray text.
+      const collisions=[idx>0&&tooClose(list[idx-1],a)?idx-1:-1,idx<list.length-1&&tooClose(a,list[idx+1])?idx+1:-1].filter(k=>k>=0);
+      if(collisions.some(k=>list[k].kind==='picks'||gridDeviation(list,k)<=gridDeviation(list,idx))){ignore(a.row,'row without picks squeezed off the participant row grid');review.detachedRows.push({page:a.row.pageNumber??null,label:a.sourceName});return}
+      if(!reaches(-1)&&!reaches(1)){ignore(a.row,'row without picks separated from the participant table');review.detachedRows.push({page:a.row.pageNumber??null,label:a.sourceName});return}
+      if(!inNameColumn(a)){errors.push(a.sourceName+': row has no picks and its name is outside the participant name column');return}
       accepted.add(a);review.blankEntrants.push({page:a.row.pageNumber??null,label:a.sourceName});
     });
   }
@@ -188,7 +205,7 @@ function participantRegion(rows,contract,review,errors){
 }
 
 export function parseSurvivorPages(pages,{season=2026,filename='survivor.pdf'}={}){
-  const errors=[],rows=[],review={blankEntrants:[],ignoredRows:[],detachedRows:[]};
+  const errors=[],rows=[],review={blankEntrants:[],ignoredRows:[],detachedRows:[],unanchoredRows:[]};
   for(const page of pages||[])for(const row of page.rows||[])rows.push({...row,kind:'pdf',pageNumber:page.pageNumber});
   const contract=headerContract(rows);
   if(!contract)return{errors:['Survivor Week header/columns could not be proven'],config:null,competitionSize:0,currentWeekEntryCount:0,review};
