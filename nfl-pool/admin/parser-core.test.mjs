@@ -423,4 +423,56 @@ function applyRegularHeaderGeometry(rows,headerText='Entry Pts W'){
   assert.equal(Object.keys(c.config.fieldEntries[0]).sort().join(','),'id,pickNumbers,tiebreak');
 }
 
+
+{
+  // STEP 2 P2-A — an all-digit participant name must not bypass damaged-row detection.
+  const damagedNumericName='12345 1 2 5 6 9 11 13 15 17 19 21 23 25 27 29 44 0';
+  const c=parse([...matchups,...tracked,anonA,damagedNumericName],{pageFingerprint:'step2-p2-a-numeric-damaged'});
+  assert.deepEqual(c.errors,[]);
+  assert.equal(c.config.fullFieldReady,false);
+  assert.equal(c.config.fieldEntries,undefined);
+  assert(c.fullFieldIssues.some(x=>x.includes('structurally invalid')));
+}
+{
+  // STEP 2 P2-B — a later unrelated Week label must not override the page's authoritative week hint.
+  const lines=['Week 2',...matchups,...tracked,anonA,'Results from Week 1'];
+  const rows=sourceRows(lines,1);
+  const candidates=parseDocumentGroups([
+    {week:2,lines,sourceRows:rows,pageNumber:1,pageFingerprint:'step2-p2-b-week-binding'}
+  ],{filename:'week-binding.pdf',season:2026});
+  assert.deepEqual(candidates.map(c=>c.week),[2]);
+  assert.equal(candidates[0].config.label,'Week 2');
+}
+{
+  // STEP 2 P2-C — a summary-like row with split label geometry is not proven to be a participant.
+  const summary='Winning Picks 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0';
+  const lines=[...matchups,...tracked,anonA,summary],rows=sourceRows(lines,1);
+  const summaryRow=rows.find(r=>r.text===summary);
+  const numericParts=summaryRow.parts.slice(1);
+  summaryRow.parts=[{x:10,text:'Winning'},{x:90,text:'Picks'},...numericParts];
+  const c=parse(lines,{sourceRows:rows,pageFingerprint:'step2-p2-c-summary-intrusion'});
+  assert.deepEqual(c.errors,[]);
+  assert.equal(c.config.fullFieldReady,false);
+  assert.equal(c.config.fieldEntries,undefined);
+  assert(c.fullFieldIssues.some(x=>x.includes('outside the proven regular participant table')));
+}
+{
+  // STEP 2 P2-D — a matching next-page header cannot bridge a prior run that ended mid-page.
+  const header='Entry Pts W';
+  const page1=[...matchups,header,tracked[0],tracked[1],anonA],page2=[header,tracked[2],tracked[3],anonB];
+  const rows1=applyRegularHeaderGeometry(sourceRows(page1,1),header);
+  const rows2=applyRegularHeaderGeometry(sourceRows(page2,2),header);
+  const setY=(rows,text,y)=>{const row=rows.find(r=>r.text===text);row.y=y;};
+  setY(rows1,header,548);setY(rows1,tracked[0],536);setY(rows1,tracked[1],524);setY(rows1,anonA,512);
+  setY(rows2,header,760);setY(rows2,tracked[2],748);setY(rows2,tracked[3],736);setY(rows2,anonB,724);
+  const c=parseDocumentGroups([
+    {week:2,lines:page1,sourceRows:rows1,pageNumber:1,pageFingerprint:'step2-p2-d-page-1'},
+    {week:2,lines:page2,sourceRows:rows2,pageNumber:2,pageFingerprint:'step2-p2-d-page-2'}
+  ],{filename:'near-header-break.pdf',season:2026})[0];
+  assert.deepEqual(c.errors,[]);
+  assert.equal(c.config.fullFieldReady,false);
+  assert.equal(c.config.fieldEntries,undefined);
+  assert(c.fullFieldIssues.some(x=>x.includes('continuous PDF participant-table chain')));
+}
+
 console.log('parser-core regular-table region, continuation, fail-closed field, duplicate, and privacy regressions passed');
