@@ -2,62 +2,103 @@
 
 This runbook is intentionally blocked until the Step 2 candidate receives an independent read-only review.
 
-## 1. Environment
+## Before touching Neon
 
-Provision a dedicated commercial/dev Neon project or database environment.
-
-Do not use the personal Pool Center production database as the commercial product backend.
-
-Low-cost goal:
-
-- one commercial dev/production project while customer count is small
-- one synthetic demo tenant inside that project, or a separate demo branch later
-- scale-to-zero/serverless settings where available
-
-## 2. Database
-
-Before touching Neon, run the opt-in integration suite against a disposable local PostgreSQL cluster (never Neon):
+Run every commercial suite locally, never against Neon. The opt-in PostgreSQL suites use disposable local
+clusters and must pass on both PostgreSQL 16 and PostgreSQL 17 (17 adds the table MAINTAIN privilege):
 
     POOL_PLATFORM_TEST_PG_CLUSTER=postgresql://postgres@127.0.0.1:5432/postgres \
       node --test pool-platform/migration-integration.test.mjs
 
-After review, apply in order:
+    POOL_PLATFORM_TEST_PG=postgresql://postgres@127.0.0.1:5432/<throwaway database> \
+      node --test pool-platform/migration-contract.test.mjs
 
-1. migrations/001_foundation.sql
-2. migrations/002_identity_submission_rls.sql
+The integration suite also runs the read-only live validation kit in `validation/` against clean and hostile
+local privilege scenarios.
 
-Then verify:
+## Dedicated Neon activation order
 
-- every pool_platform_* table exists
-- RLS is enabled on every table
-- anonymous has no table privileges
-- authenticated has SELECT only on tables
-- authenticated has EXECUTE only on the intended RPC functions
-- no DELETE grant exists
-- source-change trigger exists
-- UNIQUE (week_id, entry_id) exists
-- pool slug global unique index exists
-- Survivor partial unique index pool_platform_submissions_survivor_team_unique exists on (entry_id, payload->>'team')
-- neon_auth."user" has the "emailVerified" and banned columns the invite and identity helpers read
+Do these steps in this order. STOP means: record the output, do not continue, and get the cause reviewed.
 
-Do not seed any data from the personal Pool Center.
+The earlier order, which applied migration 002 before Neon Auth and the Data API were provisioned, was wrong:
+002 needs `neon_auth."user"`, `auth.user_id()` and the `anonymous`/`authenticated` roles at the moment it runs.
 
-## 3. Auth + Data API
+1. **Create a dedicated commercial/dev Neon environment.** Use a new Neon project for the commercial product,
+   on PostgreSQL 16 or 17 (the versions the local suites verify; the preflight stops on any other). Low-cost goal:
+   - one commercial dev/production project while customer count is small
+   - one synthetic demo tenant inside that project, or a separate demo branch later
+   - scale-to-zero/serverless settings where available
 
-Provision Neon Auth and enable the Data API for the commercial branch.
+2. **Confirm it is NOT the personal Pool Center project/database.** The personal Pool Center (`nfl-pool/`)
+   talks to the Neon endpoint `ep-muddy-forest-au7eygkw` and the database `nfl_pool` (tables `nfl_pool_weeks`
+   and `nfl_survivor_weeks`). The commercial connection string must name neither. Do not use the personal Pool
+   Center database as the commercial backend, and do not seed any data from it. The preflight (P03, P04) and
+   the catalog check (C26) repeat this guard from inside the database.
 
-Set the production client config in platform-config.js:
+3. **Enable/provision Neon Auth** for the commercial environment.
 
-- mode: live
-- authUrl: commercial Neon Auth URL
-- dataUrl: commercial Data API URL
-- defaultPoolSlug: the pilot pool slug
+4. **Enable/provision the Neon Data API** for the same database.
 
-These URLs are endpoint configuration, not database passwords.
+5. **Verify what migration 002 needs exists**, before anything is applied:
+   - roles `anonymous` and `authenticated`
+   - function `auth.user_id()` returning text
+   - table `neon_auth."user"` with `id`, `email`, `"emailVerified"` and `banned`
 
-Keep all privileged database credentials out of browser code.
+   The reviewed migrations assume Neon Auth and the Data API provide exactly these; that has not been observed
+   on live Neon yet. If anything is missing or different, STOP; do not create stand-ins by hand. The preflight
+   checks all of it (P06 to P12).
 
-## 4. Synthetic pilot seed
+6. **Run `validation/neon-preflight.sql`** as the role that will run and own the migrations (use the same role
+   for steps 6, 8, 9 and 10). It is one read-only SELECT over the catalogs:
+
+       psql "$COMMERCIAL_DEV_URL" -X -v ON_ERROR_STOP=1 -f pool-platform/validation/neon-preflight.sql
+
+   It identifies the server version and the database, guards against the personal Pool Center, verifies Neon
+   Auth and `auth.user_id()` (including that the migration role can use them), and reports default privileges,
+   separating those 002 resets from those it would leave in place.
+
+7. **STOP unless the preflight verdict P99 is `PASS`.** A required row with `ok = false`, a P99 of `STOP: …`, or
+   an error while running the file is a stop.
+
+8. **Apply `001_foundation.sql`** as one transaction that stops at the first error:
+
+       psql "$COMMERCIAL_DEV_URL" -X -v ON_ERROR_STOP=1 --single-transaction -f pool-platform/migrations/001_foundation.sql
+
+9. **Apply `002_identity_submission_rls.sql`** the same way, straight after 001:
+
+       psql "$COMMERCIAL_DEV_URL" -X -v ON_ERROR_STOP=1 --single-transaction -f pool-platform/migrations/002_identity_submission_rls.sql
+
+   If either file fails, STOP. A failed file leaves nothing of itself behind, but 001 stays committed when only
+   002 fails. Do not patch the database by hand: recreate the dedicated database and restart at step 6.
+
+10. **Run `validation/neon-catalog-verify.sql`** (read-only, same role):
+
+        psql "$COMMERCIAL_DEV_URL" -X -v ON_ERROR_STOP=1 -f pool-platform/validation/neon-catalog-verify.sql
+
+    STOP unless the verdict C99 is `PASS`. It confirms the 9 tables with RLS, the 9 reviewed policies, the
+    unique indexes, the source trigger (and no other trigger), the 14 functions with their SECURITY DEFINER
+    and search_path settings, that anonymous has no table privileges, that authenticated has SELECT only (on
+    PostgreSQL 17, no MAINTAIN), no column or sequence privileges, internal helpers callable by the owner only,
+    and EXECUTE for authenticated on the RLS helpers and RPCs only.
+
+11. **Authenticated RLS/race tests.** With test Neon Auth accounts and the synthetic pilot seed below, exercise
+    the database contract through the live Data API: the Data API surface check, the identity tests, the
+    source-lock race tests and the payload tests below. The local integration suite covers the same
+    expectations; this step shows the live stack behaves the same way.
+
+12. **Connect the dev frontend.** Set the client config in `platform-config.js`:
+    - mode: live
+    - authUrl: commercial Neon Auth URL
+    - dataUrl: commercial Data API URL
+    - defaultPoolSlug: the pilot pool slug
+
+    These URLs are endpoint configuration, not database passwords. Keep all privileged database credentials
+    out of browser code. Then repeat the identity tests through the participant and commissioner pages and run
+    the commissioner import tests.
+
+13. **Browser/device matrix.** Run the device matrix below.
+
+## Synthetic pilot seed
 
 Create a synthetic tenant and pool first.
 
@@ -73,7 +114,24 @@ Recommended first fixture:
 
 Create one commissioner membership tied to a test Neon Auth account.
 
-## 5. Identity tests
+## Data API surface check (pgcrypto)
+
+A deferred live check: do not relocate pgcrypto or change 001 for it in this pass.
+
+001 creates pgcrypto in `public`, so its functions keep PostgreSQL's default PUBLIC EXECUTE and `anonymous` and
+`authenticated` can call them in SQL (catalog check C23 reports how many; C17 separately fails on any other
+callable public function). What reaches the outside depends on what the Data API exposes, so in step 11:
+
+- inspect which functions the Data API actually exposes to anonymous and to signed-in callers
+- as an anonymous caller (no JWT) and as a signed-in caller, try to invoke a pgcrypto function such as
+  `gen_random_bytes` through the Data API, and record the responses
+- decide whether this is a meaningful data or security exposure, and record the decision
+
+pgcrypto's functions are stateless utilities: they read no commercial table and bypass no RLS, so being callable
+is not an authentication bypass by itself. What remains to weigh is surface area, for example compute-heavy calls
+such as `crypt` with a high-cost `gen_salt`, when deciding whether a later pass moves pgcrypto out of `public`.
+
+## Identity tests
 
 Test on separate accounts:
 
@@ -92,7 +150,7 @@ Participant:
 - can own multiple entries
 - cannot read another participant's entry
 
-## 6. Source-lock race tests
+## Source-lock race tests
 
 Required:
 
@@ -123,7 +181,7 @@ Rejected (entry_not_active) through participant and commissioner channels.
 I. Caller who does not own the entry, or is not a commissioner of its tenant.
 Receives only entry_not_owned / commissioner_required, whatever the payload, pick history, week or entry state.
 
-## 7. Payload tests
+## Payload tests
 
 Pick'em:
 
@@ -145,7 +203,7 @@ Survivor:
 - simultaneous picks of one team for two weeks of one entry: exactly one succeeds
 - ambiguous duplicate team in configured schedule rejected for that selection
 
-## 8. Device matrix
+## Device matrix
 
 Participant pick entry must be manually checked at minimum on:
 
@@ -171,7 +229,7 @@ Verify:
 - Pick'em and Survivor forms
 - updating the commercial service worker leaves other caches on the origin (for example the Pool Center cache) intact
 
-## 9. Commissioner import
+## Commissioner import
 
 Test a batch containing:
 
@@ -187,13 +245,14 @@ The import must continue for safe rows and return a conflict/error report.
 
 It must never overwrite a participant-owned row.
 
-## 10. Go-live gate
+## Go-live gate
 
 Do not use the live commercial backend with a real customer until:
 
 - independent code review: SHIP
-- migration applies cleanly in dedicated dev
-- RLS/privilege matrix verified
+- preflight verdict PASS, then both migrations apply cleanly in dedicated dev
+- catalog verification verdict PASS (RLS/privilege matrix verified, no MAINTAIN on PostgreSQL 17)
+- pgcrypto Data API surface check recorded and decided
 - race tests pass
 - browser/device matrix passes
 - synthetic demo works end-to-end

@@ -147,16 +147,41 @@ test('submit_entry revalidates payloads server-side before writing; no stale dup
 });
 
 test('authenticated clients have reads but no direct table writes',()=>{
-  assert.doesNotMatch(m2,/GRANT\s+(?:INSERT|UPDATE|DELETE|TRUNCATE|ALL)\b/i);
+  assert.doesNotMatch(m2,/GRANT\s+(?:INSERT|UPDATE|DELETE|TRUNCATE|REFERENCES|TRIGGER|MAINTAIN|ALL)\b/i);
   for(const table of TABLES){
     assert.match(m2,new RegExp(`GRANT SELECT ON public\\.${table} TO authenticated;`));
-    assert.match(m2,new RegExp(`REVOKE INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public\\.${table} FROM authenticated;`));
   }
   assert.match(m2,/Mutation flows go through reviewed SECURITY DEFINER functions/);
 });
 
+// A named REVOKE list removes only what it names: a default or earlier GRANT ALL on PostgreSQL 17 also carries
+// MAINTAIN (LOCK, VACUUM, REINDEX, CLUSTER), and grant options, column privileges and PUBLIC grants outlive a
+// list too. Every table is reset with REVOKE ALL for PUBLIC, anonymous and authenticated, then SELECT returns.
+test('table privileges: every table is reset for PUBLIC, anonymous and authenticated before SELECT is granted back',()=>{
+  const tableStatements=scan2.statements.filter(s=>/^(GRANT|REVOKE)\b[^;]*\bON (?:TABLE )?public\.pool_platform_/.test(s.text));
+  for(const table of TABLES){
+    const reset=tableStatements.findIndex(s=>s.text===`REVOKE ALL PRIVILEGES ON TABLE public.${table} FROM PUBLIC,anonymous,authenticated CASCADE;`);
+    const grant=tableStatements.findIndex(s=>s.text===`GRANT SELECT ON public.${table} TO authenticated;`);
+    assert.ok(reset>=0,`${table} must be reset with REVOKE ALL PRIVILEGES ... FROM PUBLIC,anonymous,authenticated CASCADE`);
+    assert.ok(grant>reset,`${table} SELECT must be granted only after the reset`);
+  }
+  assert.equal(tableStatements.length,TABLES.length*2,'no other table privilege statements');
+  assert.doesNotMatch(m2,/^REVOKE\s+(?!ALL PRIVILEGES\b|ALL ON FUNCTION\b|CREATE ON SCHEMA\b)/m,'a named privilege list must not return');
+  assert.deepEqual(scan2.statements.filter(s=>/^(GRANT|REVOKE)\b/.test(s.text)&&/neon_auth/.test(s.text)),[],'002 must not change privileges on neon_auth objects');
+});
+
+test('the audit identity sequence is reset for PUBLIC, anonymous and authenticated and never granted',()=>{
+  const sequenceSource=/GENERATED (?:ALWAYS|BY DEFAULT) AS IDENTITY|\b(?:SMALL|BIG)?SERIAL\b|CREATE SEQUENCE/gi;
+  assert.match(m1,/CREATE TABLE IF NOT EXISTS public\.pool_platform_submission_audit \(\n  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,/,
+    'pool_platform_submission_audit_id_seq is the identity sequence of pool_platform_submission_audit.id');
+  assert.equal(m1.match(sequenceSource).length,1,'it is the only sequence 001 creates');
+  assert.equal(m2.match(sequenceSource),null,'002 creates no sequence');
+  assert.deepEqual(scan2.statements.filter(s=>/\bSEQUENCES?\b/.test(s.text)).map(s=>s.text),
+    ['REVOKE ALL PRIVILEGES ON SEQUENCE public.pool_platform_submission_audit_id_seq FROM PUBLIC,anonymous,authenticated CASCADE;']);
+});
+
 test('anonymous has no commercial table or function access',()=>{
-  for(const table of TABLES)assert.match(m2,new RegExp(`REVOKE ALL ON public\\.${table} FROM anonymous;`));
+  for(const table of TABLES)assert.match(m2,new RegExp(`REVOKE ALL PRIVILEGES ON TABLE public\\.${table} FROM PUBLIC,anonymous,authenticated CASCADE;`));
   assert.doesNotMatch(m2,/GRANT[^;]*\bTO\s+(?:anonymous|PUBLIC)\b/i);
   assert.match(m2,/REVOKE CREATE ON SCHEMA public FROM anonymous,authenticated;/);
 });
@@ -305,6 +330,86 @@ test('Pickem per-game pick check fails closed on missing, null or non-string pic
   assert.match(branch,/\(p_payload->'picks'->>\(g->>'id'\)\) IN \('away','home'\),\s*false\s*\)/);
   assert.match(branch,/IF v_tb_text IS NULL OR v_tb_text!~'\^\[0-9\]\{1,3\}\$' THEN RETURN false; END IF;/);
   assert.match(branch,/IF v_tb_text::integer>200 THEN RETURN false; END IF;/);
+});
+
+// Live Neon validation kit: both files must stay read-only and describe the same contract as the migrations.
+const preflight=fs.readFileSync(new URL('./validation/neon-preflight.sql',import.meta.url),'utf8');
+const verify=fs.readFileSync(new URL('./validation/neon-catalog-verify.sql',import.meta.url),'utf8');
+
+// The SQL with comments, string literals, quoted identifiers and dollar quotes blanked, lexed as scanSql does.
+function codeOnly(sql){
+  let out='',i=0;
+  const dollar=/\$([A-Za-z_][A-Za-z0-9_]*)?\$/y;
+  while(i<sql.length){
+    const c=sql[i],d=sql[i+1];
+    if(c==='-'&&d==='-'){const j=sql.indexOf('\n',i);i=j<0?sql.length:j;out+=' ';continue}
+    if(c==='/'&&d==='*'){const j=sql.indexOf('*/',i+2);i=j<0?sql.length:j+2;out+=' ';continue}
+    if(c==="'"){
+      let j=i+1;
+      for(;;){const k=sql.indexOf("'",j);if(k<0){j=sql.length;break}if(sql[k+1]==="'"){j=k+2;continue}j=k+1;break}
+      i=j;out+="''";continue;
+    }
+    if(c==='"'){const k=sql.indexOf('"',i+1);i=k<0?sql.length:k+1;out+='""';continue}
+    if(c==='$'){dollar.lastIndex=i;const m=dollar.exec(sql);if(m){const k=sql.indexOf(m[0],i+m[0].length);i=k<0?sql.length:k+m[0].length;out+="''";continue}}
+    out+=c;i++;
+  }
+  return out;
+}
+
+test('validation kit: each file is one read-only SELECT over the catalogs',()=>{
+  for(const [name,sql] of Object.entries({preflight,verify})){
+    const scan=scanSql(sql);
+    assert.deepEqual(scan.errors,[],name);
+    assert.equal(scan.statements.length,1,`${name} must be exactly one statement`);
+    assert.match(scan.statements[0].text,/^WITH\n/,`${name} must be a single WITH ... SELECT`);
+    const code=codeOnly(sql);
+    assert.doesNotMatch(code,/\b(?:INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|DROP|GRANT|REVOKE|TRUNCATE|COPY|CALL|DO|SET|RESET|LOCK|VACUUM|ANALYZE|CLUSTER|REINDEX|REFRESH|COMMENT|SECURITY|NOTIFY|LISTEN|PREPARE|EXECUTE|DISCARD|IMPORT|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RETURNING|INTO)\b/i,`${name} must not change anything`);
+    assert.doesNotMatch(code,/\b(?:nextval|setval|set_config|pg_advisory\w*|pg_try_advisory\w*|pg_terminate_backend|pg_cancel_backend|pg_reload_conf|pg_notify|lo_\w+|dblink\w*|pg_stat_reset\w*)\s*\(/i,`${name} must not call functions with side effects`);
+    assert.doesNotMatch(code,/\bFOR\s+(?:NO\s+KEY\s+)?(?:UPDATE|SHARE|KEY\s+SHARE)\b/i,`${name} must not take row locks`);
+    // Fail closed: the verdict is false unless every required row is exactly true.
+    assert.match(sql,/COALESCE\(bool_and\(COALESCE\(ok,false\)\) FILTER \(WHERE required\),false\)\nFROM checks\nORDER BY check_id/);
+  }
+  assert.match(preflight,/SELECT 'P99','verdict',true,/);
+  assert.match(verify,/SELECT 'C99','verdict',true,/);
+});
+
+test('validation kit: the catalog verifier expects exactly the tables, policies and functions the migrations create',()=>{
+  const policies=[...m2.matchAll(/CREATE POLICY (\w+) ON public\.(\w+)/g)].map(([,policy,table])=>`('${table}','${policy}')`);
+  assert.deepEqual(policies.map(p=>p.split("'")[1]).sort(),[...TABLES].sort(),'one policy per commercial table');
+  for(const row of policies)assert.ok(verify.includes(`  ${row}`),`verifier must expect ${row}`);
+  assert.equal(verify.match(/^  \('pool_platform_\w+','pool_platform_\w+'\)/gm).length,TABLES.length,'no other expected tables');
+  const signature=(name,args)=>`${name}(${args.split(',').filter(Boolean).join(', ')})`;
+  const expectedFunctions={...FUNCTIONS_002,pool_platform_guard_submission_source:''};
+  for(const [name,args] of Object.entries(expectedFunctions)){
+    const kind=AUTHENTICATED_EXECUTE.includes(name)?'rpc':'internal';
+    assert.equal(kind==='internal',INTERNAL_ONLY.includes(name),name);
+    assert.ok(verify.includes(`  ('${signature(name,args)}','${kind}')`),`verifier must expect ${signature(name,args)} as ${kind}`);
+  }
+  assert.equal(verify.match(/^  \('pool_platform_\w+\([^)]*\)','(?:rpc|internal)'\)/gm).length,Object.keys(expectedFunctions).length,'no other expected functions');
+  assert.match(verify,/'pool_platform_submission_source_guard'/);
+  assert.match(verify,/to_regclass\('public\.pool_platform_pool_slug_global_unique'\)/);
+  assert.match(verify,/to_regclass\('public\.pool_platform_submissions_survivor_team_unique'\)/);
+});
+
+test('validation kit: MAINTAIN is only checked where PostgreSQL knows it, and is required from 17 on',()=>{
+  // has_table_privilege rejects MAINTAIN before PostgreSQL 17, so it may only come from the version-gated row.
+  assert.match(verify,/UNION ALL SELECT 'MAINTAIN' FROM ver WHERE num>=170000\n/);
+  assert.doesNotMatch(verify+preflight,/has_table_privilege\([^)]*'MAINTAIN'/);
+  assert.match(verify,/SELECT 'C21','authenticated MAINTAIN \(PostgreSQL 17\+\)',\(SELECT num>=170000 FROM ver\),/);
+  assert.match(verify,/WHERE has<>\(role='authenticated' AND priv='SELECT'\)\),'as expected'\)/,'C13: anonymous nothing, authenticated SELECT only');
+});
+
+test('validation kit: preflight gates the personal Pool Center, Neon Auth, auth.user_id() and default privileges',()=>{
+  assert.match(preflight,/current_database\(\)<>'nfl_pool'/);
+  assert.match(preflight,/WHERE c\.relname IN \('nfl_pool_weeks','nfl_survivor_weeks'\)/);
+  assert.match(preflight,/WHERE polname LIKE 'nfl\\_survivor\\_%'/);
+  assert.match(preflight,/to_regprocedure\('auth\.user_id\(\)'\)/);
+  // The columns 002's identity helpers read from neon_auth."user".
+  for(const column of ['u.id::text','u.email','COALESCE(u.banned,false)','u."emailVerified"'])assert.ok(m2.includes(column),column);
+  assert.match(preflight,/unnest\(ARRAY\['id','email','emailVerified','banned'\]\) c\(name\)/);
+  assert.match(preflight,/FROM pg_default_acl d CROSS JOIN LATERAL aclexplode\(d\.defaclacl\) x/);
+  assert.match(preflight,/SELECT 'P20','default privileges 002 does not reset',true,/);
+  assert.match(preflight,/num\/10000 IN \(16,17\) AS ok/);
 });
 
 // Behaviour fixtures for pool_platform_payload_valid. Survivor cases here all return before the

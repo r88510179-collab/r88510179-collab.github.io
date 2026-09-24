@@ -6,18 +6,26 @@ import {after,afterEach,before,describe,test} from 'node:test';
 // Opt-in, end-to-end check of migrations 001 + 002 on a disposable LOCAL PostgreSQL cluster (never Neon):
 //   POOL_PLATFORM_TEST_PG_CLUSTER=postgresql://postgres@127.0.0.1:5432/postgres \
 //     node --test pool-platform/migration-integration.test.mjs
-// The URL must be a superuser on localhost. The run creates the roles authenticated, anonymous and
-// pool_platform_it_owner when missing, creates its own database and drops it afterwards. Neon Auth is stood
-// in for by neon_auth."user" (columns as Neon publishes them) and auth.user_id() reading a session setting.
-// Both migrations are applied as the NOLOGIN owner role under hostile default privileges (every function and
-// table the owner creates in public starts out granted to anonymous and authenticated), and races use real
-// concurrent psql sessions.
+// The URL must be a superuser on localhost. The run creates the roles authenticated, anonymous,
+// pool_platform_it_owner and pool_platform_it_other when missing, creates its own databases and drops them
+// afterwards. Neon Auth is stood in for by neon_auth."user" (columns as Neon publishes them) and auth.user_id()
+// reading a session setting. Both migrations are applied as the NOLOGIN owner role under hostile default
+// privileges (every function, table and sequence the owner creates in public starts out granted to anonymous
+// and authenticated), and races use real concurrent psql sessions. Run it on PostgreSQL 16 and 17: the
+// privilege checks follow the server version, since 17 adds the table MAINTAIN privilege. A second block runs
+// clean and hostile privilege scenarios in small separate databases, together with the read-only live Neon
+// validation kit in validation/.
 const CLUSTER=process.env.POOL_PLATFORM_TEST_PG_CLUSTER||'';
 const SKIP=CLUSTER?false:'set POOL_PLATFORM_TEST_PG_CLUSTER to a disposable local superuser URL';
 const OWNER='pool_platform_it_owner';
+const OTHER_ROLE='pool_platform_it_other';
 const DB_NAME=`pool_platform_it_${process.pid}_${Date.now().toString(36)}`;
-const dbUrl=()=>{const u=new URL(CLUSTER);u.pathname=`/${DB_NAME}`;return u.toString()};
+const urlFor=name=>{const u=new URL(CLUSTER);u.pathname=`/${name}`;return u.toString()};
+const dbUrl=()=>urlFor(DB_NAME);
 const readMigration=name=>fs.readFileSync(new URL(`./migrations/${name}`,import.meta.url),'utf8');
+const readValidation=name=>fs.readFileSync(new URL(`./validation/${name}`,import.meta.url),'utf8');
+const TABLES=['pool_platform_tenants','pool_platform_memberships','pool_platform_pools','pool_platform_seasons','pool_platform_entries','pool_platform_weeks','pool_platform_submissions','pool_platform_submission_audit','pool_platform_entry_invites'];
+const AUDIT_SEQUENCE='pool_platform_submission_audit_id_seq';
 
 function psqlSync(url,sql){
   const run=spawnSync('psql',[url,'-X','-q','-A','-t','-v','ON_ERROR_STOP=1'],{input:sql,encoding:'utf8'});
@@ -25,6 +33,126 @@ function psqlSync(url,sql){
   assert.equal(run.status,0,run.stderr);
   return run.stdout.trim();
 }
+
+// Like psqlSync, but carries on past errors and hands back stderr, where psql prints warnings.
+function psqlRun(url,sql){
+  const run=spawnSync('psql',[url,'-X','-q','-A','-t','-v','ON_ERROR_STOP=0'],{input:sql,encoding:'utf8'});
+  if(run.error)throw run.error;
+  return run;
+}
+
+const ensureRoles=()=>psqlSync(CLUSTER,`DO $$BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anonymous') THEN CREATE ROLE anonymous NOLOGIN; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='${OWNER}') THEN CREATE ROLE ${OWNER} NOLOGIN; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='${OTHER_ROLE}') THEN CREATE ROLE ${OTHER_ROLE} NOLOGIN; END IF;
+END$$;`);
+const assertLocalCluster=()=>{
+  const host=new URL(CLUSTER).hostname;
+  assert.ok(['localhost','127.0.0.1','[::1]'].includes(host),`refusing non-local database host ${host}`);
+};
+
+// Table privileges PostgreSQL 16 knows. 17 adds MAINTAIN (LOCK in any mode, VACUUM, ANALYZE, REINDEX, CLUSTER),
+// and before 17 has_table_privilege rejects that name outright, so every privilege check follows the server.
+const PG16_TABLE_PRIVILEGES=['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'];
+let serverVersion=0;
+const pgVersion=()=>serverVersion||(serverVersion=Number(psqlSync(CLUSTER,'SHOW server_version_num')));
+const hasMaintain=()=>pgVersion()>=170000;
+const tablePrivileges=()=>[...PG16_TABLE_PRIVILEGES,...(hasMaintain()?['MAINTAIN']:[])].sort();
+
+// The privilege state 002 must leave, read straight from the catalogs (independently of the validation kit):
+// effective table rights per role and privilege, exact non-owner ACL entries on the tables and the audit
+// sequence, column privileges, sequence rights, and the neon_auth."user" ACL that 002 must not touch.
+function privilegeState(url){
+  const privs=tablePrivileges().map(p=>`'${p}'`).join(',');
+  return JSON.parse(psqlSync(url,`WITH t AS (
+  SELECT c.oid,c.relname,c.relowner,COALESCE(c.relacl,acldefault('r',c.relowner)) AS acl FROM pg_class c
+  WHERE c.relnamespace='public'::regnamespace AND c.relkind='r' AND c.relname LIKE 'pool_platform_%'
+), s AS (
+  SELECT c.oid,c.relname,c.relowner,COALESCE(c.relacl,acldefault('s',c.relowner)) AS acl FROM pg_class c
+  WHERE c.relnamespace='public'::regnamespace AND c.relkind='S' AND c.relname LIKE 'pool_platform_%'
+), roles(role) AS (VALUES ('anonymous'),('authenticated'))
+SELECT json_build_object(
+  'tables',(SELECT count(*) FROM t),
+  'rights',(SELECT json_object_agg(r.role||' '||t.relname,ARRAY(SELECT p FROM unnest(ARRAY[${privs}]) p WHERE has_table_privilege(r.role,t.oid,p) ORDER BY p)) FROM t CROSS JOIN roles r),
+  'acl',(SELECT json_object_agg(x.relname,ARRAY(
+      SELECT CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END||':'||a.privilege_type||CASE WHEN a.is_grantable THEN '+grant_option' ELSE '' END||' by '||pg_get_userbyid(a.grantor)
+      FROM aclexplode(x.acl) a WHERE a.grantee<>x.relowner ORDER BY 1))
+    FROM (SELECT relname,relowner,acl FROM t UNION ALL SELECT relname,relowner,acl FROM s) x),
+  'columnAcl',ARRAY(SELECT t.relname||'.'||a.attname||'='||a.attacl::text FROM t JOIN pg_attribute a ON a.attrelid=t.oid WHERE a.attacl IS NOT NULL ORDER BY 1),
+  'columnRights',ARRAY(SELECT r.role||':'||p||' on '||t.relname FROM t CROSS JOIN roles r CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','REFERENCES']) p
+    WHERE has_any_column_privilege(r.role,t.oid,p) AND NOT (r.role='authenticated' AND p='SELECT') ORDER BY 1),
+  'sequenceRights',ARRAY(SELECT r.role||':'||p||' on '||s.relname FROM s CROSS JOIN roles r CROSS JOIN unnest(ARRAY['USAGE','SELECT','UPDATE']) p
+    WHERE has_sequence_privilege(r.role,s.oid,p) ORDER BY 1),
+  'neonAuthAcl',(SELECT COALESCE(relacl::text,'default') FROM pg_class WHERE oid='neon_auth."user"'::regclass)
+)`));
+}
+
+function assertPrivilegeContract(state,label){
+  assert.equal(state.tables,TABLES.length,label);
+  for(const table of TABLES){
+    assert.deepEqual(state.rights[`anonymous ${table}`],[],`${label}: anonymous must hold no privilege on ${table}`);
+    assert.deepEqual(state.rights[`authenticated ${table}`],['SELECT'],`${label}: authenticated must hold SELECT only on ${table}`);
+    assert.deepEqual(state.acl[table],[`authenticated:SELECT by ${OWNER}`],`${label}: exact non-owner ACL of ${table}`);
+  }
+  assert.deepEqual(state.acl[AUDIT_SEQUENCE],[],`${label}: no non-owner ACL entry on ${AUDIT_SEQUENCE}`);
+  assert.deepEqual(state.columnAcl,[],`${label}: no column privileges`);
+  assert.deepEqual(state.columnRights,[],`${label}: no column rights for anonymous or authenticated`);
+  assert.deepEqual(state.sequenceRights,[],`${label}: no sequence rights for anonymous or authenticated`);
+}
+
+// has_table_privilege('authenticated', table, 'MAINTAIN') must be false on 17; on 16 the privilege does not exist.
+function assertNoMaintain(url,label){
+  if(hasMaintain()){
+    assert.equal(psqlSync(url,`SELECT string_agg(c.relname,',') FILTER (WHERE has_table_privilege('authenticated',c.oid,'MAINTAIN')) IS NULL AND count(*)=${TABLES.length}
+      FROM pg_class c WHERE c.relnamespace='public'::regnamespace AND c.relkind='r' AND c.relname LIKE 'pool_platform_%'`),'t',`${label}: authenticated must not hold MAINTAIN`);
+  }else{
+    const run=psqlRun(url,`SELECT has_table_privilege('authenticated','public.pool_platform_pools','MAINTAIN');`);
+    assert.match(run.stderr,/unrecognized privilege type: "MAINTAIN"/,`${label}: PostgreSQL ${pgVersion()} has no MAINTAIN privilege`);
+  }
+}
+
+// What MAINTAIN (or any write privilege) would allow. authenticated must be refused all of it on every table.
+const MAINTENANCE=table=>[
+  `LOCK TABLE public.${table} IN ACCESS EXCLUSIVE MODE`,`LOCK TABLE public.${table} IN SHARE MODE`,
+  `REINDEX TABLE public.${table}`,`CLUSTER public.${table} USING ${table}_pkey`,`TRUNCATE public.${table}`
+];
+async function assertMaintenanceDenied(url,label){
+  const s=openSession(url,`pp_it_maintenance_${process.pid}`);
+  try{
+    rowsOf(await s.run('SET ROLE authenticated'));
+    for(const table of TABLES){
+      for(const sql of MAINTENANCE(table)){
+        rowsOf(await s.run('BEGIN'));
+        const result=await s.run(sql);
+        await s.run('ROLLBACK');
+        assert.equal(result.error?.sqlstate,'42501',`${label}: authenticated must not run ${sql}`);
+      }
+    }
+  }finally{await s.close()}
+  // VACUUM and ANALYZE skip, with a warning, the tables the caller may not maintain.
+  const run=psqlRun(url,`SET ROLE authenticated;\n${TABLES.map(t=>`VACUUM public.${t};\nANALYZE public.${t};`).join('\n')}`);
+  for(const table of TABLES){
+    assert.ok(run.stderr.includes(`permission denied to vacuum "${table}", skipping it`),`${label}: VACUUM ${table}\n${run.stderr}`);
+    assert.ok(run.stderr.includes(`permission denied to analyze "${table}", skipping it`),`${label}: ANALYZE ${table}\n${run.stderr}`);
+  }
+}
+
+// Runs a validation kit file exactly as shipped (one SELECT) inside a READ ONLY transaction, as the migration
+// owner unless role is '' (the superuser from the cluster URL). Returns the rows as objects.
+function runKit(url,file,{role=OWNER,before='',transform=sql=>sql}={}){
+  const sql=transform(readValidation(file)).trim().replace(/;$/,'');
+  return JSON.parse(psqlSync(url,`${role?`SET ROLE ${role};`:''}\n${before}\nBEGIN READ ONLY;\nSELECT json_agg(r) FROM (\n${sql}\n) r;\nROLLBACK;`));
+}
+const verdictOf=rows=>rows.find(r=>/^[PC]99$/.test(r.check_id));
+const failingChecks=rows=>[...new Set(rows.filter(r=>r.required&&r.ok!==true&&!/^[PC]99$/.test(r.check_id)).map(r=>r.check_id))].sort();
+
+const FUNCTION_ACLS_SQL=`SELECT p.proname||'='||string_agg(g.entry,',' ORDER BY g.entry)
+    FROM pg_proc p CROSS JOIN LATERAL (
+      SELECT CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END||':'||a.privilege_type||CASE WHEN a.is_grantable THEN '+grant_option' ELSE '' END AS entry
+      FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+    ) g
+    WHERE p.pronamespace='public'::regnamespace AND p.proname LIKE 'pool_platform_%' GROUP BY p.proname`;
 
 // One long-lived psql backend driven over stdin; run() resolves with the rows of one command and its
 // SQLSTATE/message once psql echoes a unique marker, so several sessions can hold open transactions at once.
@@ -189,27 +317,20 @@ describe('commercial migrations on a throwaway local PostgreSQL (opt-in)',{skip:
   const scalar=async sql=>rowsOf(await admin.run(sql))[0];
   const teams=async entry=>rowsOf(await admin.run(
     `SELECT w.week||':'||s.source||':'||(s.payload->>'team') FROM public.pool_platform_submissions s JOIN public.pool_platform_weeks w ON w.id=s.week_id WHERE s.entry_id='${entry}' ORDER BY w.week`));
-  const functionAcls=async()=>Object.fromEntries(rowsOf(await admin.run(`SELECT p.proname||'='||string_agg(g.entry,',' ORDER BY g.entry)
-    FROM pg_proc p CROSS JOIN LATERAL (
-      SELECT CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END||':'||a.privilege_type||CASE WHEN a.is_grantable THEN '+grant_option' ELSE '' END AS entry
-      FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
-    ) g
-    WHERE p.pronamespace='public'::regnamespace AND p.proname LIKE 'pool_platform_%' GROUP BY p.proname`)).map(r=>r.split('=')));
+  const functionAcls=async()=>Object.fromEntries(rowsOf(await admin.run(FUNCTION_ACLS_SQL)).map(r=>r.split('=')));
+  let neonAuthAclBefore;
 
   before(()=>{
-    const host=new URL(CLUSTER).hostname;
-    assert.ok(['localhost','127.0.0.1','[::1]'].includes(host),`refusing non-local database host ${host}`);
-    psqlSync(CLUSTER,`DO $$BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anonymous') THEN CREATE ROLE anonymous NOLOGIN; END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='${OWNER}') THEN CREATE ROLE ${OWNER} NOLOGIN; END IF;
-    END$$;`);
+    assertLocalCluster();
+    ensureRoles();
     psqlSync(CLUSTER,`CREATE DATABASE ${DB_NAME} OWNER ${OWNER};`);
     psqlSync(dbUrl(),STUB);
+    neonAuthAclBefore=privilegeState(dbUrl()).neonAuthAcl;
     // Hostile defaults, as a Data API environment might configure them: the migrations must still end with
-    // the intended privilege matrix.
+    // the intended privilege matrix. On PostgreSQL 17, ALL on tables includes MAINTAIN.
     psqlSync(dbUrl(),`ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anonymous,authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} IN SCHEMA public GRANT ALL ON TABLES TO anonymous,authenticated;`);
+ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} IN SCHEMA public GRANT ALL ON TABLES TO anonymous,authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} IN SCHEMA public GRANT ALL ON SEQUENCES TO anonymous,authenticated;`);
     psqlSync(dbUrl(),`SET ROLE ${OWNER};\n${readMigration('001_foundation.sql')}\n${readMigration('002_identity_submission_rls.sql')}`);
     psqlSync(dbUrl(),seedSql());
     admin=openSession(dbUrl(),'pp_it_admin');
@@ -237,18 +358,15 @@ ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} IN SCHEMA public GRANT ALL ON TABLES 
   });
 
   test('grants: anonymous has nothing; authenticated has SELECT-only tables and EXECUTE on the intended functions only',async()=>{
-    const tableRights=rowsOf(await admin.run(`SELECT c.relname||':'||has_table_privilege('anonymous',c.oid,'SELECT')||':'||has_table_privilege('authenticated',c.oid,'SELECT')||':'||has_table_privilege('authenticated',c.oid,'INSERT,UPDATE,DELETE,TRUNCATE') FROM pg_class c WHERE c.relnamespace='public'::regnamespace AND c.relkind='r' AND c.relname LIKE 'pool_platform_%' ORDER BY 1`));
-    for(const row of tableRights)assert.match(row,/:false:true:false$/,row);
-    // Exact non-owner table ACLs: the hostile default granted ALL to anonymous and authenticated, and only
-    // authenticated SELECT (no grant option) may remain.
-    const tableAcls=rowsOf(await admin.run(`SELECT c.relname||'='||COALESCE(string_agg(g.entry,',' ORDER BY g.entry),'')
-      FROM pg_class c LEFT JOIN LATERAL (
-        SELECT CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END||':'||a.privilege_type||CASE WHEN a.is_grantable THEN '+grant_option' ELSE '' END AS entry
-        FROM aclexplode(COALESCE(c.relacl,acldefault('r',c.relowner))) a WHERE a.grantee<>c.relowner
-      ) g ON true
-      WHERE c.relnamespace='public'::regnamespace AND c.relkind='r' AND c.relname LIKE 'pool_platform_%' GROUP BY c.relname ORDER BY 1`));
-    assert.equal(tableAcls.length,9);
-    for(const row of tableAcls)assert.match(row,/^pool_platform_[a-z_]+=authenticated:SELECT$/,row);
+    // The hostile defaults granted ALL on tables and sequences (MAINTAIN included on PostgreSQL 17); only
+    // authenticated SELECT (no grant option) may remain, on every table, for every privilege the server knows.
+    const defaults=Object.fromEntries(rowsOf(await admin.run(`SELECT d.defaclobjtype::text||'='||string_agg(DISTINCT a.privilege_type,',' ORDER BY a.privilege_type)
+      FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) a WHERE a.grantee='authenticated'::regrole GROUP BY d.defaclobjtype`)).map(r=>r.split('=')));
+    assert.equal(defaults.r,tablePrivileges().join(','),'setup: authenticated is defaulted ALL table privileges');
+    assert.equal(defaults.S,'SELECT,UPDATE,USAGE','setup: authenticated is defaulted ALL sequence privileges');
+    assertPrivilegeContract(privilegeState(dbUrl()),'hostile defaults');
+    assertNoMaintain(dbUrl(),'hostile defaults');
+    assert.equal(privilegeState(dbUrl()).neonAuthAcl,neonAuthAclBefore,'002 must not change privileges on neon_auth."user"');
     const fnRights=Object.fromEntries(rowsOf(await admin.run(`SELECT p.proname||'='||has_function_privilege('authenticated',p.oid,'EXECUTE')||','||has_function_privilege('anonymous',p.oid,'EXECUTE')||','||has_function_privilege('public',p.oid,'EXECUTE') FROM pg_proc p WHERE p.pronamespace='public'::regnamespace AND p.proname LIKE 'pool_platform_%'`)).map(r=>r.split('=')));
     for(const internal of INTERNAL_FUNCTIONS)assert.equal(fnRights[internal],'false,false,false',internal);
     for(const rpc of AUTHENTICATED_FUNCTIONS)assert.equal(fnRights[rpc],'true,false,false',rpc);
@@ -256,22 +374,44 @@ ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} IN SCHEMA public GRANT ALL ON TABLES 
     assert.equal(await scalar(`SELECT has_schema_privilege('authenticated','public','CREATE')::text||has_schema_privilege('anonymous','public','CREATE')::text`),'falsefalse');
   });
 
-  test('grants: re-applying 002 strips hostile pre-existing function grants, grant options and re-grants included',async()=>{
+  test('grants: re-applying 002 strips hostile pre-existing table, column, sequence and function grants, grant options and re-grants included',async()=>{
     const fns=rowsOf(await admin.run(`SELECT p.oid::regprocedure FROM pg_proc p WHERE p.pronamespace='public'::regnamespace AND p.proname LIKE 'pool_platform_%' ORDER BY 1`));
     assert.equal(fns.length,14);
     psqlSync(dbUrl(),[
       ...fns.map(f=>`GRANT EXECUTE ON FUNCTION ${f} TO PUBLIC,anonymous;\nGRANT EXECUTE ON FUNCTION ${f} TO authenticated WITH GRANT OPTION;`),
+      ...TABLES.map(t=>`GRANT ALL ON public.${t} TO PUBLIC,anonymous;\nGRANT ALL ON public.${t} TO authenticated WITH GRANT OPTION;`),
+      'GRANT UPDATE (status) ON public.pool_platform_entries TO authenticated;',
+      `GRANT ALL ON SEQUENCE public.${AUDIT_SEQUENCE} TO PUBLIC;\nGRANT ALL ON SEQUENCE public.${AUDIT_SEQUENCE} TO authenticated WITH GRANT OPTION;`,
       'SET ROLE authenticated;',
-      ...fns.map(f=>`GRANT EXECUTE ON FUNCTION ${f} TO anonymous;`)
+      ...fns.map(f=>`GRANT EXECUTE ON FUNCTION ${f} TO anonymous;`),
+      ...TABLES.map(t=>`GRANT SELECT,INSERT${hasMaintain()?',MAINTAIN':''} ON public.${t} TO anonymous;`),
+      `GRANT USAGE ON SEQUENCE public.${AUDIT_SEQUENCE} TO anonymous;`
     ].join('\n'));
     const hostile=await functionAcls();
     for(const name of INTERNAL_FUNCTIONS){
       for(const grant of ['PUBLIC:EXECUTE','anonymous:EXECUTE','authenticated:EXECUTE+grant_option'])assert.ok(hostile[name].split(',').includes(grant),`${name} setup: ${hostile[name]}`);
     }
+    const hostileTables=privilegeState(dbUrl());
+    for(const table of TABLES){
+      assert.deepEqual(hostileTables.rights[`anonymous ${table}`],tablePrivileges(),`setup: anonymous holds everything on ${table}`);
+      assert.ok(hostileTables.acl[table].includes(`authenticated:SELECT+grant_option by ${OWNER}`),`setup: ${table} grant option`);
+      assert.ok(hostileTables.acl[table].includes(`anonymous:SELECT by authenticated`),`setup: ${table} re-granted by authenticated`);
+    }
     const p1=await actor('hostile_p1','p1');
     assert.equal(rowsOf(await p1.run(`SELECT public.pool_platform_payload_valid('survivor','{}'::jsonb,NULL,NULL,'{}'::jsonb)`))[0],'f','setup: the hostile grant really makes the helper callable');
+    rowsOf(await p1.run('BEGIN'));
+    rowsOf(await p1.run('LOCK TABLE public.pool_platform_submissions IN ACCESS EXCLUSIVE MODE'));
+    await p1.run('ROLLBACK');
     await p1.close();
+    if(hasMaintain()){
+      // On 17 the MAINTAIN grant alone lets authenticated vacuum the table (PostgreSQL 16 would skip it).
+      const vacuum=psqlRun(dbUrl(),'SET ROLE authenticated;\nVACUUM public.pool_platform_weeks;');
+      assert.equal(vacuum.status,0,vacuum.stderr);
+      assert.doesNotMatch(vacuum.stderr,/skipping it/,'setup: MAINTAIN really lets authenticated vacuum');
+    }
     psqlSync(dbUrl(),`SET ROLE ${OWNER};\n${readMigration('002_identity_submission_rls.sql')}`);
+    assertPrivilegeContract(privilegeState(dbUrl()),'re-applied 002');
+    assertNoMaintain(dbUrl(),'re-applied 002');
     assert.deepEqual(await functionAcls(),EXPECTED_FUNCTION_ACLS);
     const again=await actor('hostile_again','p1'),anon=session('hostile_anon');
     rowsOf(await anon.run('SET ROLE anonymous'));
@@ -283,6 +423,11 @@ ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} IN SCHEMA public GRANT ALL ON TABLES 
       ])assert.equal((await s.run(sql)).error?.sqlstate,'42501',`${s.name}: ${sql}`);
     }
     assert.equal((await anon.run(`SELECT public.pool_platform_participant_context('it-survivor')`)).error?.sqlstate,'42501');
+  });
+
+  test('MAINTAIN-class operations: authenticated cannot LOCK, REINDEX, CLUSTER, TRUNCATE, VACUUM or ANALYZE a commercial table',async()=>{
+    await assertMaintenanceDenied(dbUrl(),'seeded database');
+    assert.equal(await scalar(`SELECT count(*)>0 FROM public.pool_platform_entries`),'t','the denied TRUNCATEs left the data in place');
   });
 
   test('RLS: reads are scoped to the caller; no direct writes; anonymous is denied',async()=>{
@@ -575,5 +720,180 @@ ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} IN SCHEMA public GRANT ALL ON TABLES 
     assert.equal(jsonOf(await submit(p2,K2,K_P2,'participant',{picks:{g1:'away',g2:'home'},tiebreak:0})).code,'created','identical Pickem payloads in two weeks are fine');
     assert.equal(jsonOf(await submit(p2,K2,K_P2,'participant',{picks:{g1:'home',g2:'home'},tiebreak:'47'})).revision,2);
     assert.equal(await scalar(`SELECT count(*) FROM public.pool_platform_submissions WHERE entry_id='${K_P2}' AND payload ? 'team'`),'0');
+  });
+});
+
+// Privilege scenarios in small separate databases (no seed), and the live Neon validation kit run exactly as
+// shipped against each of them. Every database here is created by this block and dropped afterwards.
+describe('privilege scenarios and the live Neon validation kit on throwaway local PostgreSQL (opt-in)',{skip:SKIP},()=>{
+  const created=[];
+  const scenario=(suffix,{stub=true,setup=''}={})=>{
+    const name=`${DB_NAME}_${suffix}`;
+    created.push(name);
+    psqlSync(CLUSTER,`CREATE DATABASE ${name} OWNER ${OWNER};`);
+    if(stub)psqlSync(urlFor(name),STUB);
+    if(setup)psqlSync(urlFor(name),setup);
+    return urlFor(name);
+  };
+  const apply=(url,...files)=>psqlSync(url,`SET ROLE ${OWNER};\n${files.map(readMigration).join('\n')}`);
+  const functionAclsOf=url=>Object.fromEntries(psqlSync(url,FUNCTION_ACLS_SQL).split('\n').map(r=>r.split('=')));
+  const assertPreflightPasses=(url,label)=>{
+    const rows=runKit(url,'neon-preflight.sql');
+    assert.deepEqual(failingChecks(rows),[],label);
+    assert.deepEqual([verdictOf(rows).actual,verdictOf(rows).ok],['PASS',true],label);
+    return rows;
+  };
+  const assertCatalogPasses=(url,label)=>{
+    const rows=runKit(url,'neon-catalog-verify.sql');
+    assert.deepEqual(failingChecks(rows),[],label);
+    assert.deepEqual([verdictOf(rows).actual,verdictOf(rows).ok],['PASS',true],label);
+    const maintain=rows.find(r=>r.check_id==='C21');
+    assert.deepEqual([maintain.required,maintain.ok],hasMaintain()?[true,true]:[false,null],`${label}: C21 is required exactly from PostgreSQL 17`);
+    return rows;
+  };
+
+  before(()=>{assertLocalCluster();ensureRoles()});
+  after(()=>{for(const name of created)psqlSync(CLUSTER,`DROP DATABASE IF EXISTS ${name} WITH (FORCE);`)});
+
+  test('A. clean default privileges: anonymous ends with nothing, authenticated with SELECT only, and the kit passes',async()=>{
+    const url=scenario('clean');
+    assertPreflightPasses(url,'clean preflight');
+    const neonAuthAcl=privilegeState(url).neonAuthAcl;
+    apply(url,'001_foundation.sql','002_identity_submission_rls.sql');
+    const state=privilegeState(url);
+    assertPrivilegeContract(state,'clean defaults');
+    assert.equal(state.neonAuthAcl,neonAuthAcl,'neon_auth."user" is untouched');
+    assertNoMaintain(url,'clean defaults');
+    await assertMaintenanceDenied(url,'clean defaults');
+    assert.deepEqual(functionAclsOf(url),EXPECTED_FUNCTION_ACLS);
+    assertCatalogPasses(url,'clean catalog');
+  });
+
+  test('B. hostile default privileges: authenticated granted ALL on tables before 002 still ends with SELECT only',async()=>{
+    const url=scenario('hostile',{setup:`ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} IN SCHEMA public GRANT ALL ON TABLES TO authenticated;`});
+    const pre=assertPreflightPasses(url,'hostile preflight: 002 resets these defaults');
+    assert.match(pre.find(r=>r.check_id==='P19').actual,new RegExp(`tables in public: authenticated:${hasMaintain()?'MAINTAIN':'TRIGGER'};`),'P19 reports the defaults 002 resets');
+    apply(url,'001_foundation.sql');
+    // Between 001 and 002 the default really has granted authenticated every table privilege, MAINTAIN on 17.
+    const between=privilegeState(url);
+    for(const table of TABLES.filter(t=>t!=='pool_platform_entry_invites'))assert.deepEqual(between.rights[`authenticated ${table}`],tablePrivileges(),`setup: ${table}`);
+    apply(url,'002_identity_submission_rls.sql');
+    assertPrivilegeContract(privilegeState(url),'hostile defaults');
+    assertNoMaintain(url,'hostile defaults');
+    await assertMaintenanceDenied(url,'hostile defaults');
+    assertCatalogPasses(url,'hostile catalog');
+  });
+
+  test('hostile default privileges with grant options, PUBLIC, sequences and functions are all reset by 002',()=>{
+    const url=scenario('hostile_all',{setup:`
+ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} IN SCHEMA public GRANT ALL ON TABLES TO authenticated WITH GRANT OPTION;
+ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} GRANT ALL ON TABLES TO PUBLIC,anonymous;
+ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} IN SCHEMA public GRANT ALL ON SEQUENCES TO anonymous,authenticated WITH GRANT OPTION;
+ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} IN SCHEMA public GRANT ALL ON SEQUENCES TO PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} GRANT EXECUTE ON FUNCTIONS TO anonymous,authenticated WITH GRANT OPTION;`});
+    assertPreflightPasses(url,'hostile preflight with grant options');
+    apply(url,'001_foundation.sql','002_identity_submission_rls.sql');
+    assertPrivilegeContract(privilegeState(url),'hostile defaults with grant options');
+    assertNoMaintain(url,'hostile defaults with grant options');
+    assert.deepEqual(functionAclsOf(url),EXPECTED_FUNCTION_ACLS);
+    assertCatalogPasses(url,'hostile catalog with grant options');
+  });
+
+  test('grants made between 001 and 002, grant-option chains and PUBLIC included, are reset by 002',async()=>{
+    const url=scenario('between');
+    apply(url,'001_foundation.sql');
+    psqlSync(url,`GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated WITH GRANT OPTION;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO PUBLIC;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated WITH GRANT OPTION;
+SET ROLE authenticated;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anonymous;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anonymous;`);
+    const between=privilegeState(url);
+    assert.deepEqual(between.rights['anonymous pool_platform_weeks'],tablePrivileges(),'setup: anonymous holds everything through the chain');
+    assert.ok(between.acl.pool_platform_weeks.includes(`authenticated:SELECT+grant_option by ${OWNER}`),'setup: grant option');
+    apply(url,'002_identity_submission_rls.sql');
+    assertPrivilegeContract(privilegeState(url),'grants between 001 and 002');
+    assertNoMaintain(url,'grants between 001 and 002');
+    await assertMaintenanceDenied(url,'grants between 001 and 002');
+    assertCatalogPasses(url,'catalog after grants between 001 and 002');
+  });
+
+  test('re-applying 002 over unwanted grants made after an earlier application restores the contract',async()=>{
+    const url=scenario('reapply');
+    apply(url,'001_foundation.sql','002_identity_submission_rls.sql');
+    psqlSync(url,`GRANT ALL ON ALL TABLES IN SCHEMA public TO PUBLIC,anonymous;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated WITH GRANT OPTION;
+GRANT UPDATE (status) ON public.pool_platform_entries TO authenticated;
+GRANT INSERT (payload) ON public.pool_platform_submissions TO anonymous;
+GRANT ALL ON SEQUENCE public.${AUDIT_SEQUENCE} TO PUBLIC,anonymous;
+GRANT ALL ON SEQUENCE public.${AUDIT_SEQUENCE} TO authenticated WITH GRANT OPTION;
+SET ROLE authenticated;
+GRANT SELECT,INSERT${hasMaintain()?',MAINTAIN':''} ON ALL TABLES IN SCHEMA public TO anonymous;
+GRANT USAGE ON SEQUENCE public.${AUDIT_SEQUENCE} TO anonymous;`);
+    const hostile=runKit(url,'neon-catalog-verify.sql');
+    assert.deepEqual(failingChecks(hostile),['C13','C14','C16',...(hasMaintain()?['C21']:[]),'C22'],'the verifier reports the unwanted grants');
+    assert.equal(verdictOf(hostile).ok,false);
+    const s=openSession(url,'pp_it_reapply');
+    rowsOf(await s.run('SET ROLE authenticated'));rowsOf(await s.run('BEGIN'));
+    rowsOf(await s.run('LOCK TABLE public.pool_platform_submissions IN ACCESS EXCLUSIVE MODE'));
+    await s.run('ROLLBACK');await s.close();
+    apply(url,'002_identity_submission_rls.sql');
+    assertPrivilegeContract(privilegeState(url),'re-applied 002');
+    assertNoMaintain(url,'re-applied 002');
+    await assertMaintenanceDenied(url,'re-applied 002');
+    assert.deepEqual(functionAclsOf(url),EXPECTED_FUNCTION_ACLS);
+    assertCatalogPasses(url,'catalog after re-applying 002');
+  });
+
+  test('the catalog verifier reports each single fault on an otherwise correct database, and only that fault',()=>{
+    const url=scenario('faults');
+    apply(url,'001_foundation.sql','002_identity_submission_rls.sql');
+    assertCatalogPasses(url,'baseline');
+    const extra=hasMaintain()?'MAINTAIN':'TRIGGER';
+    const helper='public.pool_platform_payload_valid(text,jsonb,uuid,uuid,jsonb)';
+    for(const [fault,undo,expected] of [
+      [`GRANT ${extra} ON public.pool_platform_weeks TO authenticated`,`REVOKE ${extra} ON public.pool_platform_weeks FROM authenticated`,['C13','C14',...(hasMaintain()?['C21']:[])]],
+      ['GRANT SELECT ON public.pool_platform_pools TO PUBLIC','REVOKE SELECT ON public.pool_platform_pools FROM PUBLIC',['C13','C14','C22']],
+      ['GRANT SELECT ON public.pool_platform_pools TO authenticated WITH GRANT OPTION','REVOKE GRANT OPTION FOR SELECT ON public.pool_platform_pools FROM authenticated',['C14']],
+      ['GRANT UPDATE (status) ON public.pool_platform_entries TO authenticated','REVOKE UPDATE (status) ON public.pool_platform_entries FROM authenticated',['C22']],
+      [`GRANT EXECUTE ON FUNCTION ${helper} TO authenticated`,`REVOKE EXECUTE ON FUNCTION ${helper} FROM authenticated`,['C11','C12']],
+      ['CREATE TRIGGER pp_it_extra BEFORE INSERT ON public.pool_platform_weeks FOR EACH ROW EXECUTE FUNCTION public.pool_platform_guard_submission_source()','DROP TRIGGER pp_it_extra ON public.pool_platform_weeks',['C08']],
+      ['ALTER TABLE public.pool_platform_weeks DISABLE ROW LEVEL SECURITY','ALTER TABLE public.pool_platform_weeks ENABLE ROW LEVEL SECURITY',['C03']],
+      ['ALTER POLICY pool_platform_week_read ON public.pool_platform_weeks TO PUBLIC','ALTER POLICY pool_platform_week_read ON public.pool_platform_weeks TO authenticated',['C09']],
+      [`GRANT USAGE ON SEQUENCE public.${AUDIT_SEQUENCE} TO anonymous`,`REVOKE USAGE ON SEQUENCE public.${AUDIT_SEQUENCE} FROM anonymous`,['C16']],
+      ['CREATE FUNCTION public.pp_it_extra() RETURNS integer LANGUAGE sql AS $$SELECT 1$$','DROP FUNCTION public.pp_it_extra()',['C17']],
+      [`REVOKE SELECT ON neon_auth."user" FROM ${OWNER}`,`GRANT SELECT ON neon_auth."user" TO ${OWNER}`,['C24']]
+    ]){
+      psqlSync(url,`${fault};`);
+      const rows=runKit(url,'neon-catalog-verify.sql');
+      assert.deepEqual(failingChecks(rows),expected,fault);
+      assert.equal(verdictOf(rows).ok,false,fault);
+      psqlSync(url,`${undo};`);
+    }
+    assertCatalogPasses(url,'every fault undone');
+  });
+
+  test('the preflight stops on each unsafe condition, and only on that condition',()=>{
+    const clean=scenario('pf_clean');
+    assertPreflightPasses(clean,'clean');
+    const stops=(url,options)=>failingChecks(runKit(url,'neon-preflight.sql',options));
+    assert.deepEqual(stops(scenario('pf_no_auth',{stub:false})),['P07','P08','P10','P11','P12'],'no Neon Auth schema and no auth.user_id()');
+    assert.deepEqual(stops(scenario('pf_other',{setup:`ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} IN SCHEMA public GRANT SELECT ON TABLES TO ${OTHER_ROLE};`})),['P20'],'a default 002 does not reset');
+    const applied=scenario('pf_applied');
+    apply(applied,'001_foundation.sql','002_identity_submission_rls.sql');
+    assert.deepEqual(stops(applied),['P05'],'not a fresh database');
+    assert.deepEqual(stops(clean,{role:''}),['P16'],'run as a superuser');
+    assert.deepEqual(stops(scenario('pf_personal',{setup:'CREATE TABLE public.nfl_pool_weeks(season integer);'})),['P04'],'personal Pool Center table');
+    assert.deepEqual(stops(scenario('pf_create',{setup:'GRANT CREATE ON SCHEMA public TO PUBLIC;'})),['P18'],'PUBLIC CREATE on public');
+    assert.deepEqual(stops(clean,{before:'SET search_path=neon_auth,public;'}),['P14'],'extensions would not land in public');
+    assert.deepEqual(stops(scenario('pf_crypto',{setup:'CREATE SCHEMA pp_it_ext;\nCREATE EXTENSION pgcrypto SCHEMA pp_it_ext;'})),['P13'],'pgcrypto outside public');
+    const member=scenario('pf_member');
+    psqlSync(CLUSTER,`GRANT ${OWNER} TO authenticated;`);
+    try{assert.deepEqual(stops(member),['P17'],'authenticated inherits the migration role')}
+    finally{psqlSync(CLUSTER,`REVOKE ${OWNER} FROM authenticated;`)}
+    // The database-name guard, exercised without creating a database named like the personal one.
+    const name=new URL(clean).pathname.slice(1);
+    assert.deepEqual(stops(clean,{transform:sql=>sql.replace("current_database()<>'nfl_pool'",`current_database()<>'${name}'`)}),['P03'],'personal database name');
+    assertPreflightPasses(clean,'clean again');
   });
 });

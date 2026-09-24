@@ -144,15 +144,25 @@ AS $$
   )
 $$;
 
-REVOKE ALL ON public.pool_platform_tenants FROM anonymous;
-REVOKE ALL ON public.pool_platform_memberships FROM anonymous;
-REVOKE ALL ON public.pool_platform_pools FROM anonymous;
-REVOKE ALL ON public.pool_platform_seasons FROM anonymous;
-REVOKE ALL ON public.pool_platform_entries FROM anonymous;
-REVOKE ALL ON public.pool_platform_weeks FROM anonymous;
-REVOKE ALL ON public.pool_platform_submissions FROM anonymous;
-REVOKE ALL ON public.pool_platform_submission_audit FROM anonymous;
-REVOKE ALL ON public.pool_platform_entry_invites FROM anonymous;
+-- Table privileges are reset with REVOKE ALL, not a named privilege list: default privileges or an earlier
+-- run may already have given privileges a list does not name (PostgreSQL 17 adds MAINTAIN, which allows
+-- LOCK, VACUUM, REINDEX and CLUSTER), column privileges or grant options. REVOKE ALL on a table also drops
+-- its column privileges; PUBLIC is included because anonymous and authenticated inherit what it holds, and
+-- CASCADE drops what they passed on. Only SELECT is then given back, to authenticated.
+REVOKE ALL PRIVILEGES ON TABLE public.pool_platform_tenants FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL PRIVILEGES ON TABLE public.pool_platform_memberships FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL PRIVILEGES ON TABLE public.pool_platform_pools FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL PRIVILEGES ON TABLE public.pool_platform_seasons FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL PRIVILEGES ON TABLE public.pool_platform_entries FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL PRIVILEGES ON TABLE public.pool_platform_weeks FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL PRIVILEGES ON TABLE public.pool_platform_submissions FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL PRIVILEGES ON TABLE public.pool_platform_submission_audit FROM PUBLIC,anonymous,authenticated CASCADE;
+REVOKE ALL PRIVILEGES ON TABLE public.pool_platform_entry_invites FROM PUBLIC,anonymous,authenticated CASCADE;
+
+-- The audit identity sequence, the only sequence 001/002 create, picks up sequence default privileges the
+-- same way. Only the owner's SECURITY DEFINER functions insert audit rows; setval() by another role would
+-- make later audit inserts, and so every submission, collide on the primary key.
+REVOKE ALL PRIVILEGES ON SEQUENCE public.pool_platform_submission_audit_id_seq FROM PUBLIC,anonymous,authenticated CASCADE;
 
 GRANT SELECT ON public.pool_platform_tenants TO authenticated;
 GRANT SELECT ON public.pool_platform_memberships TO authenticated;
@@ -163,16 +173,6 @@ GRANT SELECT ON public.pool_platform_weeks TO authenticated;
 GRANT SELECT ON public.pool_platform_submissions TO authenticated;
 GRANT SELECT ON public.pool_platform_submission_audit TO authenticated;
 GRANT SELECT ON public.pool_platform_entry_invites TO authenticated;
-
-REVOKE INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public.pool_platform_tenants FROM authenticated;
-REVOKE INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public.pool_platform_memberships FROM authenticated;
-REVOKE INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public.pool_platform_pools FROM authenticated;
-REVOKE INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public.pool_platform_seasons FROM authenticated;
-REVOKE INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public.pool_platform_entries FROM authenticated;
-REVOKE INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public.pool_platform_weeks FROM authenticated;
-REVOKE INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public.pool_platform_submissions FROM authenticated;
-REVOKE INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public.pool_platform_submission_audit FROM authenticated;
-REVOKE INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public.pool_platform_entry_invites FROM authenticated;
 
 DROP POLICY IF EXISTS pool_platform_tenant_read ON public.pool_platform_tenants;
 CREATE POLICY pool_platform_tenant_read ON public.pool_platform_tenants
