@@ -86,7 +86,9 @@ function analyzeRow(row,contract){
   const kind=sourceName?(meaningful?'picks':'name-only'):(meaningful?'nameless':'noise');
   // Rows are placed on the table grid by their name baseline: pick text may sit ~1.8pt lower and may come first in the
   // PDF item order, so the grouped row's y is not a stable grid position.
-  const gridY=Number.isFinite(nameParts[0]?.y)?nameParts[0].y:Number(row.y);
+  // Name text on different baselines means stray text was grouped into the row: its name baseline is then untrusted.
+  const nameYs=nameParts.map(p=>p.y).filter(Number.isFinite);
+  const gridY=nameYs.length&&Math.max(...nameYs)-Math.min(...nameYs)<=1?nameYs[0]:Number(row.y);
   return{row,nameParts,cells,sourceName,nameX:nameParts[0]?.x??null,gridY,kind};
 }
 
@@ -149,7 +151,8 @@ function participantRegion(rows,contract,review,errors){
     const a=analyzeRow(row,contract);
     if(a.kind==='noise')continue;
     if(/^suicide pool$/i.test(a.sourceName)||/^week$/i.test(a.sourceName)){ignore(row,'sheet title or label');continue}
-    if(a.kind==='name-only'&&!/[\p{L}\p{N}]/u.test(a.sourceName)){ignore(row,'row without a participant name');continue}
+    // A row with no letter or digit is never an entrant, but it is surfaced for confirmation rather than dropped silently.
+    if(a.kind==='name-only'&&!/[\p{L}\p{N}]/u.test(a.sourceName)){ignore(row,'row without a participant name');review.detachedRows.push({page:row.pageNumber??null,label:a.sourceName});continue}
     region.push(a);
   }
   const model=columnModel(region,contract);

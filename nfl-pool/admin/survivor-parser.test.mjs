@@ -301,9 +301,23 @@ const parse=pages=>parseSurvivorPages(pages,{season:2026});
     const r=parse(base([at(700,[[20,name]])]));
     assert.deepEqual(r.errors,[],name);assert.equal(r.config.competitionSize,5,name);assert.deepEqual(r.review.blankEntrants.map(x=>x.label),[name]);
   }
+  // A row with no letter or digit is not an entrant, but it is surfaced for explicit confirmation, never dropped silently.
   for(const name of ['*','—','🏈🏈']){
     const r=parse(base([at(700,[[20,name]])]));
     assert.deepEqual(r.errors,[],name);assert.equal(r.config.competitionSize,4,name);
+    assert.deepEqual(r.review.detachedRows,[{page:1,label:name}],name);
+  }
+  // P4-PARSER-2: stray text grouped into a participant row through the (first-listed) pick baseline puts the row's name
+  // text on two baselines; the row's name baseline is then not trusted, and the real blank entrant below still counts.
+  for(const noteX of [18,22]){
+    const its=[...header.parts.map(p=>({str:p.text,transform:[1,0,0,1,p.x,760]}))];let yy=748;
+    for(const [n,p] of [['D.C.',['PIT','SF']],['DJS',['LV','SF']],['Thaddius',['LAC']],['Alpha',['JAX','BAL']],['Late Entry',[]],['Bravo',['KC','NE']],['Charlie',['GB','TB']]]){
+      p.forEach((t,i)=>its.push({str:t,transform:[1,0,0,1,151+33*i,yy-1.8]}));its.push({str:n,transform:[1,0,0,1,20,yy]});
+      if(n==='Alpha')its.push({str:'paid',transform:[1,0,0,1,noteX,yy-3.5]});yy-=12;
+    }
+    const r=parse([{pageNumber:1,rows:groupSurvivorPdfTextItems(its)}]);
+    assert.deepEqual(r.errors,[],`note x ${noteX}`);assert.equal(r.config.competitionSize,7,`note x ${noteX}`);
+    assert.deepEqual(r.review.blankEntrants.map(x=>x.label),['Late Entry'],`note x ${noteX}`);
   }
 }
 {

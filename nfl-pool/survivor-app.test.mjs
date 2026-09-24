@@ -119,6 +119,12 @@ async function view(feeds){
   assert.deepEqual(v2.seen.filter(w=>w<=2).sort(),[1,2]);
   assert.equal(v2.$('svFeed').textContent,'LIVE · 2 TEAM RESULTS UNVERIFIED');assert.match(v2.row('DJS'),/ALIVE/);
 }
+// The score-feed time limit must stay below the refresh interval (the fast timers above cannot check this).
+{
+  const limit=Number(source.match(/SCORE_FEED_TIMEOUT_MS=(\d+)/)?.[1]),interval=Number(source.match(/setInterval\([^\n]*?,(\d+)\);\s*$/m)?.[1]);
+  assert(Number.isFinite(limit)&&Number.isFinite(interval),'time limit and refresh interval found');
+  assert(limit>0&&limit<interval,`score-feed time limit ${limit} ms must be below the ${interval} ms refresh interval`);
+}
 // A hung refresh of an unsettled earlier week times out on its own: its cached results stay, and the current week
 // still updates (a hung current week is reported as unavailable instead of silently stale).
 {
