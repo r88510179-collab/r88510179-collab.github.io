@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 
 const parserSource=readFileSync(new URL('./parser-core.js',import.meta.url),'utf8');
@@ -874,7 +875,8 @@ const adminPatched=(()=>{
   assert(parserImport,'admin harness expects a versioned parser-core import');
   swap(parserImport[0],`from '${new URL(`./parser-core.js?v=${parserImport[1]}`,import.meta.url).href}';`);
   swap("await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs')","globalThis.__pickemTest.pdfjs");
-  return s;
+  // Each instance binds its own page and schedule feed, so two Admin pages can run side by side against one database.
+  return `const {document,fetch}=globalThis.__pickemTest;\n${s}`;
 })();
 class AdminEl{
   constructor(id){Object.assign(this,{id,hidden:false,disabled:false,checked:false,value:'',textContent:'',innerHTML:'',className:'',files:null,listeners:{},onchange:null,classList:{add(){},remove(){}}})}
@@ -902,9 +904,11 @@ const ADMIN_SHEETS={
   'weeks.pdf':[sheetPage(2,[...tracked,anonA,anonB]),sheetPage(3,[...tracked,anonA])]
 };
 let adminInstance=0;
-async function bootAdmin(){
+async function bootAdmin({rows=[]}={}){
   const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new AdminEl(id));return els.get(id)};
-  const db={session:{id:'admin-1',email:'djsmokke@gmail.com'},rows:[],log:[],dispatched:[],readGate:null,writeGate:null},net={gate:null};
+  // `rows` is the nfl_pool_weeks table: pages booted with the same array share it, and each keeps its own session, logs
+  // and hooks. `affected` records how many rows each committed write changed.
+  const db={session:{id:'admin-1',email:'djsmokke@gmail.com'},rows,log:[],dispatched:[],affected:[],readGate:null,writeGate:null,readFail:null,beforeWrite:null,afterWrite:null},net={gate:null};
   class Query{
     constructor(table){Object.assign(this,{table,op:'select',filters:[],row:null})}
     select(){return this}
@@ -921,18 +925,31 @@ async function bootAdmin(){
       if(this.op!=='select'&&db.writeGate){const gate=db.writeGate;db.writeGate=null;await gate.promise}
       db.log.push(this.op);
       const match=r=>this.filters.every(([k,v])=>r[k]===v);
-      if(this.op==='select')return{data:db.rows.filter(match).map(r=>structuredClone(r)),error:null};
-      if(this.op==='insert'){db.rows.push(structuredClone(this.row));return{data:[{season:this.row.season,week:this.row.week,revision:this.row.revision}],error:null}}
-      const hits=db.rows.filter(match);for(const r of hits)Object.assign(r,structuredClone(this.row));
-      return{data:hits.map(r=>({season:r.season,week:r.week,revision:r.revision})),error:null};
+      if(this.op==='select'){if(db.readFail){const e=db.readFail;db.readFail=null;throw e}return{data:db.rows.filter(match).map(r=>structuredClone(r)),error:null}}
+      // A write can be raced by another writer (beforeWrite changes the table), fail before it commits (beforeWrite throws,
+      // or returns the response the client receives), or commit and lose its response (afterWrite throws, or returns the
+      // response the client receives instead).
+      if(db.beforeWrite){const f=db.beforeWrite;db.beforeWrite=null;const received=await f(this);if(received)return received}
+      let data;
+      if(this.op==='insert'){
+        // (season, week) is unique: a second insert of a week is refused, never merged.
+        if(db.rows.some(r=>r.season===this.row.season&&r.week===this.row.week)){db.affected.push(0);return{data:null,error:{code:'23505',message:'duplicate key value violates unique constraint'}}}
+        db.rows.push(structuredClone(this.row));data=[{season:this.row.season,week:this.row.week,revision:this.row.revision}];
+      }else{
+        const hits=db.rows.filter(match);for(const r of hits)Object.assign(r,structuredClone(this.row));
+        data=hits.map(r=>({season:r.season,week:r.week,revision:r.revision}));
+      }
+      db.affected.push(data.length);
+      if(db.afterWrite){const f=db.afterWrite;db.afterWrite=null;const received=await f(this);if(received)return received}
+      return{data,error:null};
     }
   }
-  globalThis.document={getElementById:$};
   globalThis.__pickemTest={
+    document:{getElementById:$},
+    fetch:async()=>{if(net.gate)await net.gate.promise;return{ok:true,status:200,json:async()=>structuredClone(scheduleFeed)}},
     neonModule:{createClient:()=>({auth:{getSession:async()=>({data:db.session?{user:db.session,session:{token:'t'}}:null}),signOut:async()=>{db.session=null},emailOtp:{sendVerificationOtp:async()=>({error:null})},signIn:{emailOtp:async()=>({error:null})}},from:table=>new Query(table)})},
     pdfjs:{GlobalWorkerOptions:{},getDocument:({data})=>{const pages=ADMIN_SHEETS[new TextDecoder().decode(data)];return{promise:Promise.resolve({numPages:pages.length,getPage:async n=>({getTextContent:async()=>({items:pages[n-1]})})})}}}
   };
-  globalThis.fetch=async()=>{if(net.gate)await net.gate.promise;return{ok:true,status:200,json:async()=>structuredClone(scheduleFeed)}};
   await import(`data:text/javascript;base64,${Buffer.from(adminPatched+`\n//pickem admin instance ${++adminInstance}`).toString('base64')}`);
   await adminFlush();
   $('season').value='2026';
@@ -1270,4 +1287,288 @@ async function bootAdmin(){
   assert.equal(row.config.fullFieldReady,true);assert.equal(row.config.fieldEntries.length,2);
 }
 
-console.log('parser-core regular-table region, continuation, fail-closed field, duplicate, and privacy regressions passed');
+// ---------------------------------------------------------------------------------------------------------------------
+// Pick'em publication write integrity: compare-and-swap replacement across pages, the insert uniqueness boundary, exact
+// write confirmation, and read-back of writes whose response was lost.
+const sheetDigest=name=>createHash('sha256').update(name).digest('hex');
+// Week 2 as an earlier publish stored it.
+const lockedWeek2=(revision,source_sha256='earlier-sheet',updated_at='2026-09-10T12:00:00.000Z')=>({season:2026,week:2,status:'locked',config:{season:2026,week:2,source:{kind:'weekly-upload',filename:'earlier.pdf',sha256:source_sha256}},source_filename:'earlier.pdf',source_sha256,revision,published_at:updated_at,locked_at:updated_at,updated_at});
+const STALE=revision=>`Publish failed: Week 2 changed before this write (no row matched revision ${revision}). Nothing from this stale attempt was written. Read and validate the sheet again before publishing.`;
+const CONFIRMED_BY_READ_BACK=' Success confirmed by read-back after the database response was lost or incomplete.';
+const NOT_VALIDATED='The selected file changed or is no longer validated. Read and validate it again before publishing.';
+// The page has dropped its validated candidate and its replace confirmation: a publish is refused before the database.
+async function assertRevalidationRequired(t,label){
+  assert.equal(t.$('review').hidden,true,label);assert.equal(t.$('publishBtn').disabled,true,label);assert.equal(t.$('replaceLocked').checked,false,label);
+  const dispatched=t.db.dispatched.length;await t.publish();
+  assert.equal(t.db.dispatched.length,dispatched,`${label}: a new publish is refused before any database access`);
+  assert.equal(t.$('message').textContent,NOT_VALIDATED,label);
+}
+{
+  // ADMIN 7a — CROSS-SESSION STALE REPLACEMENT. Two Admin pages share one database in which Week 2 is locked at revision 3.
+  // Page A validates a count-6 correction of six.pdf and page B a tracked-only correction of summary.pdf, and both
+  // publishes read revision 3 before either replacement commits. A commits revision 4 first. B's replacement, predicated
+  // on the revision 3 it read, then matches no row: A's correction stays exactly as stored, B reports the conflict and not
+  // success, and B must read and validate again, and confirm the replacement again, before it can replace revision 4.
+  const table=[lockedWeek2(3)];
+  const a=await bootAdmin({rows:table}),b=await bootAdmin({rows:table});
+  await a.count('6');await a.choose('six.pdf');await a.parse();a.$('replaceLocked').checked=true;
+  await b.choose('summary.pdf');await b.parse();b.$('replaceLocked').checked=true;
+  assert.notEqual(sheetDigest('six.pdf'),sheetDigest('summary.pdf'));
+  const heldA=adminDeferred(),heldB=adminDeferred();a.db.writeGate=heldA;b.db.writeGate=heldB;
+  const pa=a.publish();await adminUntil(()=>a.db.writeGate===null,'A dispatches its replacement');
+  const pb=b.publish();await adminUntil(()=>b.db.writeGate===null,'B dispatches its replacement');
+  assert.deepEqual([a.db.log,b.db.log],[['select'],['select']],'both pages read Week 2 before either replacement commits');
+  assert.deepEqual([a.db.dispatched,b.db.dispatched],[['select','update'],['select','update']]);
+  assert.deepEqual(table,[lockedWeek2(3)]);
+  heldA.resolve();await pa;await adminFlush();
+  assert.equal(a.$('message').textContent,'Week 2 published and locked successfully. Revision 4.');
+  const corrected=structuredClone(table[0]);
+  assert.equal(corrected.revision,4);assert.equal(corrected.source_sha256,sheetDigest('six.pdf'));assert.equal(corrected.config.competitionSize,6);
+  heldB.resolve();await pb;await adminFlush();
+  assert.deepEqual(b.db.affected,[0],'B\'s compare-and-swap matched no row');
+  assert.deepEqual(table,[corrected],'A\'s correction is the only revision 4, and B did not overwrite it');
+  assert.equal(b.$('message').className,'notice error');assert.equal(b.$('message').textContent,STALE(3));
+  assert.equal(b.$('publishResult').hidden,true,'B shows no publication result');
+  await assertRevalidationRequired(b,'B after its stale replacement');
+  assert.deepEqual(table,[corrected]);
+  // After a fresh read, replacing A's correction is a new, deliberate replacement of revision 4.
+  await b.parse();assert.equal(b.$('publishBtn').disabled,false);
+  await b.publish();assert.match(b.$('message').textContent,/Week 2 is already locked/);assert.deepEqual(table,[corrected]);
+  b.$('replaceLocked').checked=true;await b.publish();
+  assert.equal(b.$('message').textContent,'Week 2 published and locked successfully. Revision 5.');
+  assert.equal(table.length,1);assert.equal(table[0].revision,5);assert.equal(table[0].source_sha256,sheetDigest('summary.pdf'));
+}
+{
+  // ADMIN 7b — NEW WEEK INSERT RACE. Both pages find no Week 2 and insert it; A's insert commits first. B's insert is
+  // refused by the unique season/week key and never merged into A's row: A's week stays as stored, B reports that another
+  // publish created the week first and that nothing from its attempt was written, and B must read and validate again.
+  const table=[];
+  const a=await bootAdmin({rows:table}),b=await bootAdmin({rows:table});
+  await a.count('6');await a.choose('six.pdf');await a.parse();
+  await b.choose('summary.pdf');await b.parse();
+  const heldA=adminDeferred(),heldB=adminDeferred();a.db.writeGate=heldA;b.db.writeGate=heldB;
+  const pa=a.publish();await adminUntil(()=>a.db.writeGate===null,'A dispatches its insert');
+  const pb=b.publish();await adminUntil(()=>b.db.writeGate===null,'B dispatches its insert');
+  heldA.resolve();await pa;await adminFlush();
+  assert.equal(a.$('message').textContent,'Week 2 published and locked successfully. Revision 1.');
+  const created=structuredClone(table);
+  heldB.resolve();await pb;await adminFlush();
+  assert.deepEqual(b.db.affected,[0]);assert.deepEqual(table,created);
+  assert.equal(table.length,1);assert.equal(table[0].source_sha256,sheetDigest('six.pdf'));
+  assert.equal(b.$('message').textContent,'Publish failed: another publish created Week 2 before this write (duplicate key value violates unique constraint). Nothing from this attempt was written. Read and validate the sheet again before publishing.');
+  assert.deepEqual(b.db.log,['select','insert'],'a refused insert is neither read back nor retried');
+  await assertRevalidationRequired(b,'B after its refused insert');
+  assert.deepEqual(table,created);
+}
+{
+  // ADMIN 7c — TRUE STALE COMPARE-AND-SWAP FAILURE. After this page reads revision 3 and before its replacement runs,
+  // another writer replaces Week 2 with revision 4. The replacement, predicated on revision 3, affects no row; revision 4
+  // stays exactly as that writer stored it; the conflict is reported, never success; and a fresh validation is required.
+  const table=[lockedWeek2(3)],t=await bootAdmin({rows:table});
+  await t.count('6');await t.choose('six.pdf');await t.parse();t.$('replaceLocked').checked=true;
+  const theirs=lockedWeek2(4,'their-sheet','2026-09-24T09:00:00.000Z');
+  t.db.beforeWrite=()=>{table[0]=structuredClone(theirs)};
+  await t.publish();await adminFlush();
+  assert.deepEqual(t.db.log,['select','update']);assert.deepEqual(t.db.affected,[0]);
+  assert.deepEqual(table,[theirs]);
+  assert.equal(t.$('message').className,'notice error');assert.equal(t.$('message').textContent,STALE(3));
+  await assertRevalidationRequired(t,'after the stale replacement');
+  assert.deepEqual(table,[theirs]);
+}
+{
+  // ADMIN 7d — LOST RESPONSE AFTER A COMMITTED INSERT. Week 2 is new. The insert commits and its response is lost: the
+  // client throws, or returns a network error. The page stays frozen while it reads Week 2 back; the read-back finds
+  // exactly this attempt (revision 1 with this file's digest and this write's timestamp), so the publication is reported
+  // as successful, confirmed by read-back. Nothing is written again, then or by a later Publish.
+  const lost=[['thrown',()=>{throw new TypeError('Failed to fetch')}],['returned',()=>({data:null,error:{message:'FetchError: Failed to fetch',code:''}})]];
+  for(const [how,lose] of lost){
+    const t=await bootAdmin();
+    await t.count('6');await t.choose('six.pdf');await t.parse();
+    const readBack=adminDeferred();t.db.afterWrite=()=>{t.db.readGate=readBack;return lose()};
+    const pending=t.publish();await adminUntil(()=>t.db.dispatched.length===3,`${how}: the read-back is dispatched`);
+    assert.deepEqual(t.db.dispatched,['select','insert','select'],how);
+    assert.equal(t.db.readGate,null,`${how}: the read-back holds the gate`);assert.deepEqual(t.db.log,['select','insert'],`${how}: the read-back is still held`);
+    assert.equal(t.$('busy').hidden,false,how);
+    for(const id of ['parseBtn','publishBtn','file','season','totalEntries','detectedWeek','tiebreakGame','replaceLocked'])assert.equal(t.$(id).disabled,true,`${how}: #${id}`);
+    await t.publish();assert.deepEqual(t.db.dispatched,['select','insert','select'],`${how}: no second publish during the read-back`);
+    t.$('totalEntries').value='7';await t.$('totalEntries').dispatch('input');
+    assert.equal(t.$('totalEntries').value,'6',how);assert.equal(t.$('message').textContent,PUBLISH_FROZEN,how);
+    readBack.resolve();await pending;await adminFlush();
+    assert.equal(t.db.rows.length,1,how);const [row]=t.db.rows;
+    assert.equal(row.revision,1,how);assert.equal(row.source_sha256,sheetDigest('six.pdf'),how);assert.equal(row.config.competitionSize,6,how);
+    assert.equal(t.$('message').className,'notice success',how);
+    assert.equal(t.$('message').textContent,`Week 2 published and locked successfully. Revision 1.${CONFIRMED_BY_READ_BACK}`,how);
+    assert.equal(t.$('publishResult').hidden,false,how);assert.equal(t.$('busy').hidden,true,how);
+    const landed=structuredClone(row);await t.publish();await adminFlush();
+    assert.match(t.$('message').textContent,/Week 2 is already locked/,how);
+    assert.equal(t.writes(),1,`${how}: the landed insert is never written again`);assert.deepEqual(t.db.rows,[landed],how);
+  }
+}
+{
+  // ADMIN 7e — LOST RESPONSE AFTER A COMMITTED REPLACEMENT. From revision 3, the compare-and-swap replacement commits
+  // revision 4 and its response is lost. The read-back proves revision 4 carries this attempt's digest and timestamp, so
+  // the replacement is reported as successful, and the lost response never produces a revision 5: not from the publish
+  // itself, and not from publishing again.
+  const table=[lockedWeek2(3)],t=await bootAdmin({rows:table});
+  await t.count('6');await t.choose('six.pdf');await t.parse();t.$('replaceLocked').checked=true;
+  t.db.afterWrite=()=>{throw new TypeError('Failed to fetch')};
+  await t.publish();await adminFlush();
+  assert.deepEqual(t.db.log,['select','update','select']);assert.deepEqual(t.db.affected,[1]);
+  assert.equal(table.length,1);assert.equal(table[0].revision,4);assert.equal(table[0].source_sha256,sheetDigest('six.pdf'));assert.equal(table[0].config.competitionSize,6);
+  assert.equal(t.$('message').textContent,`Week 2 published and locked successfully. Revision 4.${CONFIRMED_BY_READ_BACK}`);
+  assert.equal(t.$('replaceLocked').checked,false,'the replace confirmation is spent, as after any successful replacement');
+  const landed=structuredClone(table[0]);await t.publish();await adminFlush();
+  assert.match(t.$('message').textContent,/Week 2 is already locked/);
+  assert.equal(t.writes(),1,'no revision 5');assert.deepEqual(table,[landed]);
+}
+{
+  // ADMIN 7f — AMBIGUOUS FOREIGN ROW. The write fails with an exception and the read-back shows a Week 2 that does not
+  // prove this attempt landed: another writer's revision 4 (from another sheet, or even from this same sheet written at
+  // another time), a later revision 5, another writer's new week, or a row that differs from this attempt's write in any
+  // one of revision, digest, timestamp or locked status. Success is never reported, nothing is retried, the row found is
+  // left alone, and the page must read and validate again. `found` receives the attempted row.
+  const other='2026-09-24T09:00:00.000Z',six=sheetDigest('six.pdf');
+  const cases=[
+    ['another sheet at the target revision',lockedWeek2(3),()=>lockedWeek2(4,'their-sheet',other)],
+    ['this same sheet written by another publish',lockedWeek2(3),()=>lockedWeek2(4,six,other)],
+    ['another sheet written at the same instant',lockedWeek2(3),mine=>lockedWeek2(4,'their-sheet',mine.updated_at)],
+    ['this sheet and instant at another revision',lockedWeek2(3),mine=>lockedWeek2(5,six,mine.updated_at)],
+    ['this attempt\'s write no longer locked',lockedWeek2(3),mine=>({...lockedWeek2(4,six,mine.updated_at),status:'draft'})],
+    ['a later revision',lockedWeek2(3),()=>lockedWeek2(5,'their-sheet',other)],
+    ['another writer\'s new week',null,()=>lockedWeek2(1,'their-sheet',other)]
+  ];
+  for(const [label,before,foreign] of cases){
+    const table=before?[before]:[],t=await bootAdmin({rows:table});
+    await t.count('6');await t.choose('six.pdf');await t.parse();t.$('replaceLocked').checked=!!before;
+    let found;
+    t.db.beforeWrite=q=>{found=foreign(q.row);table.splice(0,table.length,structuredClone(found));throw new TypeError('Failed to fetch')};
+    await t.publish();await adminFlush();
+    assert.deepEqual(t.db.log,['select',before?'update':'insert','select'],`${label}: one write and one read-back, no retry`);
+    assert.deepEqual(t.db.affected,[],`${label}: this attempt's write never committed`);
+    assert.deepEqual(table,[found],`${label}: the row found is left alone`);
+    assert.equal(t.$('message').className,'notice error',label);
+    assert.equal(t.$('message').textContent,`Publish not confirmed: Failed to fetch. Read-back does not show this attempt's write: Week 2 is at revision ${found.revision}. Nothing was retried. Read and validate the sheet again before publishing.`,label);
+    assert.equal(t.$('publishResult').hidden,true,label);
+    await assertRevalidationRequired(t,label);
+    assert.deepEqual(table,[found],label);
+  }
+}
+{
+  // ADMIN 7g — PROVEN NOT LANDED. The write fails before it commits, and the read-back shows Week 2 exactly as this publish
+  // read it: still revision 3, or still unpublished. Nothing was written, so the still-validated page may retry, and the
+  // retry replaces or creates the week once.
+  for(const before of [lockedWeek2(3),null]){
+    const label=before?'replacement':'new week',table=before?[structuredClone(before)]:[],t=await bootAdmin({rows:table});
+    await t.count('6');await t.choose('six.pdf');await t.parse();t.$('replaceLocked').checked=!!before;
+    t.db.beforeWrite=()=>{throw new TypeError('Failed to fetch')};
+    await t.publish();await adminFlush();
+    assert.deepEqual(t.db.log,['select',before?'update':'insert','select'],label);
+    assert.deepEqual(table,before?[before]:[],label);
+    assert.equal(t.$('message').className,'notice error',label);
+    assert.equal(t.$('message').textContent,`Publish failed: Failed to fetch. Read-back shows Week 2 ${before?'still at revision 3':'still unpublished'}, so this attempt wrote nothing. You can retry Publish.`,label);
+    assert.equal(t.$('review').hidden,false,label);assert.equal(t.$('publishBtn').disabled,false,`${label}: the validated page may retry`);
+    assert.equal(t.$('replaceLocked').checked,!!before,`${label}: the replace confirmation still applies`);
+    await t.publish();await adminFlush();
+    const revision=before?4:1;
+    assert.equal(t.$('message').textContent,`Week 2 published and locked successfully. Revision ${revision}.`,label);
+    assert.equal(table.length,1,label);assert.equal(table[0].revision,revision,label);assert.equal(table[0].source_sha256,sheetDigest('six.pdf'),label);
+    assert.deepEqual(t.db.affected,[1],`${label}: written once`);
+  }
+  // A LATE COMMIT. The read-back shows the week unchanged, but the write it could not see yet commits afterwards. The retry
+  // checks that attempt first, finds it written as exactly this configuration, and writes nothing more.
+  for(const before of [lockedWeek2(3),null]){
+    const label=`late ${before?'replacement':'new week'}`,table=before?[structuredClone(before)]:[],t=await bootAdmin({rows:table});
+    await t.count('6');await t.choose('six.pdf');await t.parse();t.$('replaceLocked').checked=!!before;
+    let late;t.db.beforeWrite=q=>{late=structuredClone(q.row);throw new TypeError('Failed to fetch')};
+    await t.publish();await adminFlush();
+    assert.match(t.$('message').textContent,/so this attempt wrote nothing\. You can retry Publish\.$/,label);
+    table.splice(0,table.length,{...(before||{}),...late});
+    const landed=structuredClone(table);
+    await t.publish();await adminFlush();
+    assert.equal(t.$('message').className,'notice success',label);
+    assert.equal(t.$('message').textContent,`Week 2 published and locked successfully. Revision ${before?4:1}. The earlier attempt of this publication had been written after all, so nothing new was written.`,label);
+    assert.deepEqual(t.db.log,['select',before?'update':'insert','select','select'],`${label}: the retry only reads`);
+    assert.deepEqual(table,landed,label);
+  }
+}
+{
+  // ADMIN 7h — UNKNOWN OUTCOME. A replacement's write response is lost and the read-back fails too. Nothing is retried or
+  // reported as success, and the page must read and validate again. The next publish of Week 2 first checks the attempt
+  // it could not confirm: if that attempt landed as exactly this configuration, this is reported instead of writing a
+  // duplicate revision; if it never landed, or another configuration is being published, the new write goes ahead.
+  const UNKNOWN='Publish outcome unknown: Failed to fetch. Week 2 could not be read back (offline), so nothing was retried. Read and validate the sheet again; the next publish of this week checks whether this attempt was written before writing anything.';
+  const unknownOutcome=async committed=>{
+    const table=[lockedWeek2(3)],t=await bootAdmin({rows:table});
+    await t.count('6');await t.choose('six.pdf');await t.parse();t.$('replaceLocked').checked=true;
+    t.db[committed?'afterWrite':'beforeWrite']=()=>{t.db.readFail=new TypeError('offline');throw new TypeError('Failed to fetch')};
+    await t.publish();await adminFlush();
+    assert.deepEqual(t.db.log,['select','update','select']);
+    assert.equal(t.$('message').className,'notice error');assert.equal(t.$('message').textContent,UNKNOWN);
+    await assertRevalidationRequired(t,'after the unknown outcome');
+    assert.equal(table[0].revision,committed?4:3);
+    return{table,t};
+  };
+  {
+    // The attempt had landed; the same configuration is validated and published again.
+    const {table,t}=await unknownOutcome(true),landed=structuredClone(table[0]);
+    await t.parse();t.$('replaceLocked').checked=true;await t.publish();await adminFlush();
+    assert.equal(t.$('message').className,'notice success');
+    assert.equal(t.$('message').textContent,'Week 2 published and locked successfully. Revision 4. The earlier attempt of this publication had been written after all, so nothing new was written.');
+    assert.equal(t.writes(),1,'no duplicate revision 5');assert.deepEqual(table,[landed]);
+    assert.equal(t.$('replaceLocked').checked,false);
+    await t.publish();assert.match(t.$('message').textContent,/Week 2 is already locked/);assert.equal(t.writes(),1);
+  }
+  {
+    // The attempt had not landed; publishing the same configuration writes it, never reporting a false earlier write.
+    const {table,t}=await unknownOutcome(false);
+    await t.parse();t.$('replaceLocked').checked=true;await t.publish();await adminFlush();
+    assert.equal(t.$('message').textContent,'Week 2 published and locked successfully. Revision 4.');
+    assert.equal(t.writes(),2);assert.equal(table.length,1);assert.equal(table[0].revision,4);assert.equal(table[0].source_sha256,sheetDigest('six.pdf'));
+  }
+  {
+    // The attempt had landed; another configuration of the sheet (tracked-only) is a real replacement of revision 4.
+    const {table,t}=await unknownOutcome(true);
+    await t.count('');await t.parse();t.$('replaceLocked').checked=true;await t.publish();await adminFlush();
+    assert.equal(t.$('message').textContent,'Week 2 published and locked successfully. Revision 5.');
+    assert.equal(t.writes(),2);assert.equal(table.length,1);assert.equal(table[0].revision,5);assert.equal(table[0].config.fullFieldReady,false);
+  }
+}
+{
+  // ADMIN 7i — EXACT WRITE CONFIRMATION. A write whose response does not confirm exactly one row with this season, week
+  // and revision (no data, no rows from an insert, two rows, another revision) is never a normal success, whether or not
+  // the write committed: a read-back decides it.
+  const cases=[
+    ['insert answered with no data',null,{data:null,error:null}],
+    ['insert answered with no rows',null,{data:[],error:null}],
+    ['update answered with two rows',lockedWeek2(3),{data:[{season:2026,week:2,revision:4},{season:2026,week:2,revision:4}],error:null}],
+    ['update answered with another revision',lockedWeek2(3),{data:[{season:2026,week:2,revision:3}],error:null}]
+  ];
+  for(const [label,before,answer] of cases)for(const committed of [true,false]){
+    const name=`${label}, ${committed?'committed':'not committed'}`,table=before?[structuredClone(before)]:[],t=await bootAdmin({rows:table});
+    await t.count('6');await t.choose('six.pdf');await t.parse();t.$('replaceLocked').checked=!!before;
+    t.db[committed?'afterWrite':'beforeWrite']=()=>structuredClone(answer);
+    await t.publish();await adminFlush();
+    assert.deepEqual(t.db.log,['select',before?'update':'insert','select'],`${name}: decided by a read-back`);
+    const revision=before?4:1;
+    if(committed){
+      assert.equal(t.$('message').textContent,`Week 2 published and locked successfully. Revision ${revision}.${CONFIRMED_BY_READ_BACK}`,name);
+      assert.equal(table.length,1,name);assert.equal(table[0].revision,revision,name);
+    }else{
+      assert.equal(t.$('message').textContent,`Publish failed: The database did not confirm exactly one written Pick'em week. Read-back shows Week 2 ${before?'still at revision 3':'still unpublished'}, so this attempt wrote nothing. You can retry Publish.`,name);
+      assert.deepEqual(table,before?[before]:[],name);
+    }
+  }
+}
+{
+  // ADMIN 7j — the revision is the concurrency token: an existing week without a valid revision is never replaced blind.
+  for(const revision of [null,0,'3',3.5]){
+    const table=[{...lockedWeek2(3),revision}],t=await bootAdmin({rows:table});
+    await t.count('6');await t.choose('six.pdf');await t.parse();t.$('replaceLocked').checked=true;
+    await t.publish();await adminFlush();
+    assert.deepEqual(t.db.log,['select'],`revision ${revision}: nothing is written`);
+    assert.equal(t.$('message').textContent,'Week 2 has an unexpected revision value. Nothing was written.',`revision ${revision}`);
+    assert.deepEqual(table,[{...lockedWeek2(3),revision}]);
+  }
+}
+
+console.log('parser-core regular-table region, continuation, fail-closed field, duplicate, privacy, and publication write-integrity regressions passed');

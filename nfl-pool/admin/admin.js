@@ -16,6 +16,10 @@ let fileGeneration=0,parseGeneration=0,candidateFile=null,candidateFileGeneratio
 // The accepted Total pool entries value is the authoritative count; the field only displays it. An edit is accepted only
 // while no publish is in flight: during a publish the value is frozen and the field is put back to it.
 let totalEntriesInput={raw:'',badInput:false};
+// A publish whose write the database neither confirmed nor refused: its read-back failed, or found nothing written yet (a
+// write whose response was lost can still commit afterwards). The next publish of that week checks whether it landed
+// before writing anything, so a write that did land is not written a second time.
+let lastAttempt=null;
 
 function selectedSeason(){const n=Number($('season').value);if(!Number.isInteger(n)||n<2020||n>2100)throw new Error('Season must be between 2020 and 2100.');return n}
 function totalEntriesField(){const el=$('totalEntries');return{raw:String(el.value??'').trim(),badInput:!!el.validity?.badInput}}
@@ -169,6 +173,33 @@ function renderReview(){
 }
 
 async function sha256(file){const buf=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('')}
+// The publication boundary. An existing week is replaced only from the revision this publish read (compare-and-swap on
+// season, week and revision); a new week is only inserted, never upserted, so a concurrent insert of the same week is
+// refused by the database's unique season/week key. Only a response confirming exactly one row with the new revision is a
+// normal success; any other outcome is decided by reading the week back. A write is identified by its revision, source
+// digest and timestamp, so the read-back tells this exact write apart from no write and from any other publish's write.
+async function readWeek(season,week){
+  const {data,error}=await neon.from('nfl_pool_weeks').select('season,week,status,revision,source_sha256,updated_at').eq('season',season).eq('week',week);if(error)throw error;
+  if(!Array.isArray(data)||data.length>1||data.some(r=>r?.season!==season||r?.week!==week))throw new Error(`The database returned an unreadable result for Week ${week}.`);
+  return data[0]||null;
+}
+const sameInstant=(a,b)=>Number.isFinite(Date.parse(a))&&Date.parse(a)===Date.parse(b);
+const sameWrite=(row,w)=>!!row&&!!w&&row.revision===w.revision&&row.source_sha256===w.source_sha256&&sameInstant(row.updated_at,w.updated_at);
+const attemptLanded=(row,attempt)=>sameWrite(row,attempt)&&row.status==='locked';
+function markPublished(attempt,note=''){if(fileContextCurrent(attempt.file,attempt.generation)){message(`Week ${attempt.week} published and locked successfully. Revision ${attempt.revision}.${note}`,'success');$('publishResult').hidden=false;$('trackerLink').href=`../?season=${attempt.season}&week=${attempt.week}`;$('replaceLocked').checked=false}}
+function requireRevalidation(text){parseGeneration++;invalidateParsedState();message(text,'error')}
+async function reportWriteOutcome(attempt,error){
+  const base=error?.message||String(error),code=error?.code?` (${error.code})`:'';
+  if(String(error?.code)==='23505'){requireRevalidation(`Publish failed: another publish created Week ${attempt.week} before this write (${base}). Nothing from this attempt was written. Read and validate the sheet again before publishing.`);return}
+  let row;
+  try{row=await readWeek(attempt.season,attempt.week)}
+  catch(readError){lastAttempt=attempt;requireRevalidation(`Publish outcome unknown: ${base}${code}. Week ${attempt.week} could not be read back (${readError?.message||readError}), so nothing was retried. Read and validate the sheet again; the next publish of this week checks whether this attempt was written before writing anything.`);return}
+  if(attemptLanded(row,attempt)){markPublished(attempt,' Success confirmed by read-back after the database response was lost or incomplete.');return}
+  // Still exactly as this publish read it (or still absent): nothing is written yet, so the validated page may publish
+  // again. The attempt is remembered in case its write still commits after this read-back.
+  if(attempt.prior?sameWrite(row,attempt.prior):row===null){lastAttempt=attempt;message(`Publish failed: ${base}${code}. Read-back shows Week ${attempt.week} ${row?`still at revision ${row.revision}`:'still unpublished'}, so this attempt wrote nothing. You can retry Publish.`,'error');return}
+  requireRevalidation(`Publish not confirmed: ${base}${code}. Read-back does not show this attempt's write: Week ${attempt.week} is ${row?`at revision ${row.revision}`:'not published'}. Nothing was retried. Read and validate the sheet again before publishing.`);
+}
 $('publishBtn').addEventListener('click',async()=>{
   // One publish at a time. A disabled button does not stop script from invoking this listener, so the handler refuses
   // re-entry itself, before any check, message or database call; only the publish holding the flag releases it.
@@ -179,22 +210,31 @@ $('publishBtn').addEventListener('click',async()=>{
   publishInFlight=true;$('file').disabled=true;setBusy(true,'Publishing and locking week…');message('');
   const cfg=structuredClone(publishCandidate.config),configSnapshot=JSON.stringify(publishCandidate.config),replaceLocked=$('replaceLocked').checked,errors=validateConfig(cfg);
   const assertPublishContext=()=>{if(!fileContextCurrent(publishFile,publishGeneration)||candidate!==publishCandidate||candidateFile!==publishFile||candidateFileGeneration!==publishGeneration||!scheduleVerified||JSON.stringify(publishCandidate.config)!==configSnapshot||candidateCompetitionSize!==publishCompetitionSize||!competitionSizeCurrent(publishCompetitionSize))throw staleFileError()};
+  let attempt=null;
   try{
     if(errors.length)throw new Error(errors.join(' · '));
     assertPublishContext();
-    const {data:rows,error:readError}=await neon.from('nfl_pool_weeks').select('season,week,status,revision').eq('season',cfg.season).eq('week',cfg.week).limit(1);if(readError)throw readError;assertPublishContext();
-    const existing=Array.isArray(rows)&&rows.length?rows[0]:null;
-    if(existing?.status==='locked'&&!replaceLocked)throw new Error(`Week ${cfg.week} is already locked. Check “replace locked week” only if you intentionally need to correct it.`);
-    const digest=await sha256(publishFile);assertPublishContext();const nowIso=new Date().toISOString(),revision=(existing?.revision||0)+1;
+    const existing=await readWeek(cfg.season,cfg.week);assertPublishContext();
+    const digest=await sha256(publishFile);assertPublishContext();
     cfg.source={kind:'weekly-upload',filename:publishFile.name,sha256:digest};
+    // An undecided earlier attempt of this week that landed as exactly this configuration is this publication.
+    const earlier=lastAttempt?.season===cfg.season&&lastAttempt.week===cfg.week?lastAttempt:null;
+    if(earlier){lastAttempt=null;if(attemptLanded(existing,earlier)&&earlier.config===JSON.stringify(cfg)){markPublished({...earlier,file:publishFile,generation:publishGeneration},' The earlier attempt of this publication had been written after all, so nothing new was written.');return}}
+    if(existing?.status==='locked'&&!replaceLocked)throw new Error(`Week ${cfg.week} is already locked. Check “replace locked week” only if you intentionally need to correct it.`);
+    if(existing&&!(Number.isSafeInteger(existing.revision)&&existing.revision>0))throw new Error(`Week ${cfg.week} has an unexpected revision value. Nothing was written.`);
+    const nowIso=new Date().toISOString(),revision=(existing?.revision||0)+1;
     const row={season:cfg.season,week:cfg.week,status:'locked',config:cfg,source_filename:publishFile.name,source_sha256:digest,revision,published_at:nowIso,locked_at:nowIso,updated_at:nowIso};
-    assertPublishContext();let write;
-    if(existing)write=await neon.from('nfl_pool_weeks').update(row).eq('season',cfg.season).eq('week',cfg.week).select('season,week,revision');
-    else write=await neon.from('nfl_pool_weeks').insert(row).select('season,week,revision');
-    if(write.error)throw write.error;
-    if(fileContextCurrent(publishFile,publishGeneration)){message(`Week ${cfg.week} published and locked successfully. Revision ${revision}.`,'success');$('publishResult').hidden=false;$('trackerLink').href=`../?season=${cfg.season}&week=${cfg.week}`;$('replaceLocked').checked=false}
+    assertPublishContext();attempt={season:cfg.season,week:cfg.week,revision,source_sha256:digest,updated_at:nowIso,prior:existing,config:JSON.stringify(cfg),file:publishFile,generation:publishGeneration};
+    const write=existing?await neon.from('nfl_pool_weeks').update(row).eq('season',cfg.season).eq('week',cfg.week).eq('revision',existing.revision).select('season,week,revision'):await neon.from('nfl_pool_weeks').insert(row).select('season,week,revision');
+    if(write?.error)throw write.error;
+    const written=Array.isArray(write?.data)?write.data:null;
+    if(existing&&written?.length===0){requireRevalidation(`Publish failed: Week ${cfg.week} changed before this write (no row matched revision ${existing.revision}). Nothing from this stale attempt was written. Read and validate the sheet again before publishing.`);return}
+    if(written?.length!==1||written[0]?.season!==cfg.season||written[0]?.week!==cfg.week||written[0]?.revision!==revision)throw new Error('The database did not confirm exactly one written Pick\'em week');
+    markPublished(attempt);
   }catch(e){
-    if(e?.name==='StaleFileContext'){invalidateParsedState();message('The selected file or publish settings changed before publishing completed. Validate the current file again.','error')}
+    // Once the write is dispatched, every failure is a write outcome to be decided, never a plain error.
+    if(attempt)await reportWriteOutcome(attempt,e);
+    else if(e?.name==='StaleFileContext'){invalidateParsedState();message('The selected file or publish settings changed before publishing completed. Validate the current file again.','error')}
     else message(e.message||String(e),'error')
   }finally{showTotalEntries();publishInFlight=false;$('file').disabled=false;setBusy(false)}
 });
