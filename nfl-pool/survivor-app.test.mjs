@@ -27,26 +27,34 @@ config.competitionSize=6;config.currentWeekEntryCount=3;
 class El{constructor(){this.textContent='';this.innerHTML='';this.className='';this.value='';this.listeners={}}addEventListener(t,f){(this.listeners[t]||=[]).push(f)}}
 const flush=async(n=12)=>{for(let i=0;i<n;i++)await new Promise(r=>setTimeout(r,0))};
 
-async function view(feeds){
-  const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new El());return els.get(id)};
-  const seen=[];
-  globalThis.document={getElementById:$,body:{dataset:{view:'survivor'}}};
+async function view(feeds,rowsOverride=null){
+  const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new El());return els.get(id)},docListeners={};
+  const seen=[],signals=[],doc={getElementById:$,body:{dataset:{view:'survivor'}},visibilityState:'hidden',addEventListener(t,f){(docListeners[t]||=[]).push(f)}};
+  globalThis.document=doc;
   globalThis.location={href:'https://example.test/nfl-pool/?view=survivor',search:'?view=survivor'};
   globalThis.history={state:null,replaceState(){}};
   let tick=null;const intervals=[];globalThis.setInterval=(fn,ms)=>{tick=fn;intervals.push(ms);return 0};
   const token='x.'+Buffer.from(JSON.stringify({exp:Math.floor(Date.now()/1000)+3600})).toString('base64url')+'.y';
-  globalThis.fetch=async url=>{
+  const defaultRows=[{season:2026,week:2,status:'locked',revision:7,config:structuredClone(config)}],rowsData=rowsOverride||defaultRows;
+  globalThis.fetch=async (url,init={})=>{
     const u=new URL(url);
     if(u.pathname.endsWith('/token/anonymous'))return{ok:true,json:async()=>({token})};
-    if(u.pathname.endsWith('/nfl_survivor_weeks'))return{ok:true,json:async()=>[{season:2026,week:2,status:'locked',revision:7,config:structuredClone(config)}]};
-    const w=Number(u.searchParams.get('week'));seen.push(w);
-    const payload=feeds[w];if(payload==='hang')return new Promise(()=>{});if(!payload)return{ok:false,status:404,json:async()=>({})};
+    if(u.pathname.endsWith('/nfl_survivor_weeks'))return{ok:true,json:async()=>structuredClone(rowsData)};
+    const w=Number(u.searchParams.get('week'));seen.push(w);if(init.signal)signals.push({week:w,signal:init.signal});
+    const payload=feeds[w];
+    if(typeof payload==='function')return payload({week:w,signal:init.signal});
+    if(payload==='hang')return new Promise((resolve,reject)=>{if(init.signal)init.signal.addEventListener('abort',()=>{const e=new Error('Aborted');e.name='AbortError';reject(e)},{once:true})});
+    if(!payload)return{ok:false,status:404,json:async()=>({})};
     return{ok:true,status:200,json:async()=>structuredClone(payload)};
   };
   await import(`data:text/javascript;base64,${Buffer.from(patched+`\n//instance ${++instance}`).toString('base64')}`);
   await flush();
   const row=name=>$('svTracked').innerHTML.split('survivor-tracked-row').find(s=>s.includes(`<b>${name}</b>`))||'';
-  return{$,row,seen,feeds,intervals,refresh:async()=>{seen.length=0;tick();await flush()}};
+  return{
+    $,row,seen,feeds,signals,intervals,
+    refresh:async()=>{seen.length=0;tick();await flush()},
+    resume:async()=>{seen.length=0;doc.visibilityState='visible';for(const fn of docListeners.visibilitychange||[])fn();await flush()}
+  };
 }
 
 // Well-formed feeds: production semantics are unchanged.
@@ -152,4 +160,45 @@ async function view(feeds){
   assert.match(v.$('svDecisionEntries').innerHTML,/Week-ahead schedule unavailable/);
 }
 
-console.log('survivor public view feed-context, malformed-final, duplicate, absent-team, provisional and decision-gate regressions passed');
+// A score-feed timeout aborts the underlying request rather than only abandoning its wrapper.
+{
+  const v=await view({1:week(W1,1),2:'hang',3:week(W3,3)});
+  await new Promise(r=>realSetTimeout(r,40));await flush();
+  const current=v.signals.find(x=>x.week===2)?.signal;
+  assert(current,'current-week score request must carry an AbortSignal');
+  assert.equal(current.aborted,true,'timed-out current-week request must be aborted');
+  assert.equal(v.$('svFeed').textContent,'RESULT FEED UNAVAILABLE');
+}
+// A newer schedule refresh cancels the older same-config request and produces the board from the newer response.
+{
+  const v=await view({1:week(W1,1),2:week(W2,2),3:'hang'});
+  await new Promise(r=>realSetTimeout(r,20));await flush();
+  const firstSchedule=v.signals.find(x=>x.week===3)?.signal;
+  assert(firstSchedule,'initial Week-3 schedule request should exist');
+  v.feeds[3]=week(W3,3);
+  await v.refresh();await new Promise(r=>realSetTimeout(r,20));await flush();
+  assert.equal(firstSchedule.aborted,true,'superseded schedule request must be aborted');
+  assert.match(v.$('svDecisionEntries').innerHTML,/Week 3 Board/);
+}
+// Invalid selected-week configuration never leaves the selector pointing at data from another week.
+{
+  const bad=structuredClone(config);bad.week=3;
+  const rowsData=[
+    {season:2026,week:3,status:'locked',revision:8,config:bad},
+    {season:2026,week:2,status:'locked',revision:7,config:structuredClone(config)}
+  ];
+  const v=await view({1:week(W1,1),2:week(W2,2),3:week(W3,3)},rowsData);
+  const sel=v.$('survivorWeekSelect');assert.equal(sel.value,'2026-2');
+  sel.value='2026-3';sel.listeners.change[0]();await flush();
+  assert.equal(sel.value,'2026-2','failed switch must restore the rendered week');
+  assert.match(v.$('survivorError').innerHTML,/Unable to switch Survivor week/);
+  assert.match(v.row('D.C.'),/ALIVE/);
+}
+// Returning to the foreground immediately reuses the normal guarded score refresh path.
+{
+  const v=await view({1:week(W1,1),2:week(W2,2),3:week(W3,3)});
+  await v.resume();
+  assert(v.seen.includes(2),'foreground resume must refresh the current Survivor week');
+}
+
+console.log('survivor public view feed-context, malformed-final, duplicate, absent-team, provisional, request-cancellation, selection-rollback and resume regressions passed');
