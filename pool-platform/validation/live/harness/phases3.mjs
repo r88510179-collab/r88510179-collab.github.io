@@ -44,9 +44,9 @@ export async function batch(rec) {
     [{entry_id: eid('PK-BATCH01'), payload: card('hhhhh', 41)}, 'created'],
     [{entry_id: eid('PK-BATCH02'), payload: card('hhhhh', 42)}, 'source_conflict:participant'],
     [{entry_id: eid('PK-BATCH03'), payload: {picks: {g1: 'away'}}}, 'invalid_payload'],
-    [{entry_id: uuid(), payload: card()}, 'invalid_entry_week'],
+    [{entry_id: uuid(), payload: card()}, 'commissioner_required'],
     [{entry_id: 'not-a-uuid', payload: card()}, /invalid input syntax for type uuid/],
-    [{entry_id: eid('B-01'), payload: card()}, 'invalid_entry_week'],
+    [{entry_id: eid('B-01'), payload: card()}, 'commissioner_required'],
     [{entry_id: eid('PK-INACTIVE'), payload: card()}, 'entry_not_active'],
     [{entry_id: eid('PK-BATCH03')}, 'invalid_payload'],
     [{entry_id: eid('PK-BATCH01'), payload: card('ahhhh', 43)}, 'updated']
@@ -54,7 +54,7 @@ export async function batch(rec) {
   r = await rpc(tA, 'pool_platform_submit_batch', {p_week_id: w9, p_source: 'commissioner_import', p_items: items.map(x => x[0])});
   const got = (r.json || []).map(x => x.ok ? x.result?.code : x.code);
   const pass = r.ok && got.length === items.length && items.every(([, exp], i) => exp instanceof RegExp ? exp.test(got[i] || '') : got[i] === exp);
-  rec.check('BT1', 'mixed batch: new row, participant conflict, malformed, unknown, non-uuid, other-tenant, inactive, empty, same-source update', pass, {summary: `${summarize(r)} codes=${JSON.stringify(got.map(g => scrub(g || '')))}`});
+  rec.check('BT1', 'mixed batch: new row, participant conflict, malformed, unknown entry and other-tenant entry (commissioner_required), non-uuid, inactive, empty, same-source update', pass, {summary: `${summarize(r)} codes=${JSON.stringify(got.map(g => scrub(g || '')))}`});
   const row = await subRow('D', w9, eid('PK-BATCH02'));
   rec.check('BT2', 'the batch never overwrote the participant row', row?.source === 'participant' && row?.revision === 1 && JSON.stringify(row?.payload) === JSON.stringify(card('aaaaa', 40)), {summary: JSON.stringify({source: row?.source, revision: row?.revision})});
   for (const [cid, key, week, src, itemsArg, exp, desc] of [
@@ -103,15 +103,41 @@ export async function authorder(rec) {
     }
   }
   rec.check('AO1', `${n} unauthorized probes (F, E, G, C × 15 states × 3 sources) all returned only entry_not_owned / commissioner_required with no details`, true, {summary: `probes=${n}`});
-  // Pair-resolution behaviour before authorization (observation, see report).
-  const f = await jwtFor('F');
-  const obs = {};
-  for (const [k, weekId, entryId] of [['random_week+D_entry', uuid(), eid('PK-D03')], ['tenantB_week+D_entry', W(PB, 1), eid('PK-D03')],
-    ['D_week+random_entry', W(PK, 12), uuid()], ['D_week+D_entry', W(PK, 12), eid('PK-D03')]]) {
-    const r = await rpc(f, 'pool_platform_submit_entry', {p_week_id: weekId, p_entry_id: entryId, p_source: 'participant', p_payload: card()});
-    obs[k] = r.message;
+  // The (week, entry) relationship is revealed only after authorization: an unauthorized caller gets the same
+  // authorization error for the entry's own week, an unrelated real week (same tenant or Tenant B) and a
+  // nonexistent week, and for a nonexistent entry.
+  const weeks = {matching: W(PK, 12), same_tenant_other_season: W(SV, 9), tenantB: W(PB, 1), nonexistent: uuid()};
+  const seen = {};
+  for (const caller of ['F', 'E', 'G', 'C']) {
+    for (const [wk, weekId] of Object.entries(weeks)) {
+      for (const [ek, entryId] of [['PK-D03', eid('PK-D03')], ['nonexistent', uuid()]]) {
+        for (const [src, exp] of [['participant', 'entry_not_owned'], ['commissioner_import', 'commissioner_required'], ['commissioner_manual', 'commissioner_required']]) {
+          const r = await submit(caller, weekId, entryId, src, card());
+          n++;
+          seen[`${src}:${r.message}`] = (seen[`${src}:${r.message}`] || 0) + 1;
+          if (!(failedWith(r, exp) && r.details == null && r.hint == null)) rec.stop('P1', `AO2-${caller}-${wk}-${ek}-${src}`, `pair-existence leak: ${caller} ${src} on ${ek} + ${wk} week returned ${summarize(r)} instead of ${exp}`, {summary: summarize(r)});
+        }
+      }
+    }
   }
-  rec.info('AO2', 'outsider F: unresolvable (week, entry) pairs → invalid_entry_week before authorization; a resolvable pair → entry_not_owned', {summary: JSON.stringify(obs)});
+  rec.check('AO2', 'unauthorized callers (F, E, G, C): matching, unrelated same-tenant, Tenant B and nonexistent weeks, real and nonexistent entries → only entry_not_owned / commissioner_required', true, {summary: JSON.stringify(seen)});
+  // Tenant B's commissioner passes the batch gate on its own week, but a Tenant A entry and a nonexistent entry are
+  // still commissioner_required, never invalid_entry_week.
+  const b = await rpc(await jwtFor('C'), 'pool_platform_submit_batch', {p_week_id: W(PB, 1), p_source: 'commissioner_import', p_items: [{entry_id: eid('PK-D03'), payload: card()}, {entry_id: uuid(), payload: card()}]});
+  const bCodes = (b.json || []).map(x => x.ok ? x.result?.code : x.code);
+  if (!(b.ok && bCodes.length === 2 && bCodes.every(c => c === 'commissioner_required'))) rec.stop('P1', 'AO2b', `pair-existence leak through the batch: ${summarize(b)} ${JSON.stringify(bCodes)}`, {summary: summarize(b)});
+  rec.check('AO2b', 'C batch on its own Tenant B week: Tenant A entry and nonexistent entry → commissioner_required per item', true, {summary: JSON.stringify(bCodes)});
+  // Authorized callers still learn the week does not belong (no row is written).
+  for (const [key, src, entry, weekKeys] of [['D', 'participant', 'PK-D03', ['same_tenant_other_season', 'tenantB', 'nonexistent']],
+    ['A', 'commissioner_manual', 'PK-D03', ['same_tenant_other_season', 'tenantB', 'nonexistent']],
+    ['A', 'commissioner_import', 'PK-D03', ['same_tenant_other_season', 'tenantB', 'nonexistent']]]) {
+    for (const wk of weekKeys) {
+      const r = await submit(key, weeks[wk], eid(entry), src, card());
+      rec.check(`AO2c-${key}-${src}-${wk}`, `authorized ${key} ${src} on ${entry} + ${wk} week → invalid_entry_week`, failedWith(r, 'invalid_entry_week'), {summary: summarize(r)});
+    }
+  }
+  const cb = await submit('C', W(PK, 12), eid('B-01'), 'commissioner_manual', card());
+  rec.check('AO2c-C-B01', 'authorized C commissioner_manual on its own B-01 + Tenant A week → invalid_entry_week', failedWith(cb, 'invalid_entry_week'), {summary: summarize(cb)});
   // Uniform answers where existence could otherwise leak.
   const pairs = [
     ['AO3', 'F', 'pool_platform_commissioner_context', {p_pool_slug: 'neighborhood-pickem'}, {p_pool_slug: 'no-such-pool-zz'}, 'commissioner_required'],

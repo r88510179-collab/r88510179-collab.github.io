@@ -5,6 +5,7 @@ import test from 'node:test';
 
 const m1=fs.readFileSync(new URL('./migrations/001_foundation.sql',import.meta.url),'utf8');
 const m2=fs.readFileSync(new URL('./migrations/002_identity_submission_rls.sql',import.meta.url),'utf8');
+const m3=fs.readFileSync(new URL('./migrations/003_submit_entry_authorization_order.sql',import.meta.url),'utf8');
 
 const TABLES=[
   'pool_platform_tenants','pool_platform_memberships','pool_platform_pools','pool_platform_seasons',
@@ -266,28 +267,52 @@ test('Survivor team reuse is blocked atomically per entry by a partial unique in
   assert.match(functionBody('pool_platform_participant_context'),/WHERE hs\.entry_id=e\.id AND hw\.season_id=v_season\.id AND hw\.week<>v_week\.week\n/,
     'participant history must list every other week so the browser marks the same teams used');
   const submit=functionBody('pool_platform_submit_entry');
-  assert.match(submit,/WHERE w\.id=p_week_id AND e\.id=p_entry_id\n  FOR NO KEY UPDATE OF e;/,'submissions for one entry must serialize on the entry row');
+  assert.match(submit,/WHERE e\.id=p_entry_id\n  FOR NO KEY UPDATE OF e;/,'submissions for one entry must serialize on the entry row');
   assert.match(submit,/EXCEPTION WHEN unique_violation THEN\n[\s\S]*GET STACKED DIAGNOSTICS v_constraint=CONSTRAINT_NAME;\n  IF v_constraint='pool_platform_submissions_survivor_team_unique'\n  THEN RAISE EXCEPTION 'team_already_used'; END IF;\n  RAISE;\nEND;\n$/);
 });
 
 test('submit_entry authorizes before entry-state, week-state, payload and history checks',()=>{
   const body=functionBody('pool_platform_submit_entry');
   const at=text=>{const i=body.indexOf(text);assert.ok(i>0,`missing ${text}`);return i};
-  const resolved=at("RAISE EXCEPTION 'invalid_entry_week'");
+  const locked=at('FOR NO KEY UPDATE OF e;');
   const owner=at("RAISE EXCEPTION 'entry_not_owned'");
   const commissioner=at("RAISE EXCEPTION 'commissioner_required'");
+  const pair=at("RAISE EXCEPTION 'invalid_entry_week'");
   const entryState=at("RAISE EXCEPTION 'entry_not_active'");
   const weekState=at("RAISE EXCEPTION 'week_not_open'");
   const deadline=at("RAISE EXCEPTION 'deadline_passed'");
   const payloadShape=at("RAISE EXCEPTION 'invalid_payload'");
   const history=at('public.pool_platform_payload_valid(');
-  assert.ok(resolved<owner&&owner<commissioner,'authorization runs right after the entry/week pair resolves');
+  assert.ok(locked<owner&&owner<commissioner,'authorization runs right after the entry resolves and locks');
+  assert.ok(commissioner<pair,'the week/season relationship is revealed only after authorization');
   for(const [name,i] of Object.entries({entryState,weekState,deadline,payloadShape,history})){
-    assert.ok(i>commissioner,`${name} must come after authorization`);
+    assert.ok(i>pair,`${name} must come after authorization and the week check`);
   }
+  assert.equal(body.split("RAISE EXCEPTION 'invalid_entry_week'").length-1,1,'invalid_entry_week is raised in one place');
   assert.match(body,/IF p_source IS NULL OR p_source NOT IN \('participant','commissioner_import','commissioner_manual'\)/);
   assert.match(body,/IF v_entry_status IS DISTINCT FROM 'active' THEN RAISE EXCEPTION 'entry_not_active'; END IF;/);
-  assert.match(body,/SELECT p\.tenant_id,e\.owner_auth_user_id,e\.status,w\.status,/);
+  // Entry-centred resolution: the week is an optional LEFT JOIN confined to the entry's own season, so an
+  // unauthorized caller's answer never depends on whether the week exists or matches.
+  assert.match(body,/SELECT p\.tenant_id,e\.owner_auth_user_id,e\.status,w\.id,w\.status,/);
+  assert.match(body,/  FROM public\.pool_platform_entries e\n  JOIN public\.pool_platform_seasons s ON s\.id=e\.season_id\n  JOIN public\.pool_platform_pools p ON p\.id=s\.pool_id\n  LEFT JOIN public\.pool_platform_weeks w ON w\.id=p_week_id AND w\.season_id=e\.season_id\n  WHERE e\.id=p_entry_id\n  FOR NO KEY UPDATE OF e;/);
+  assert.match(body,/IF v_tenant_id IS NULL OR v_owner IS NULL OR v_owner<>v_uid THEN RAISE EXCEPTION 'entry_not_owned'; END IF;/);
+  assert.match(body,/IF v_tenant_id IS NULL OR NOT public\.pool_platform_is_tenant_commissioner\(v_tenant_id\)\n    THEN RAISE EXCEPTION 'commissioner_required'; END IF;/);
+  assert.match(body,/IF v_week_id IS NULL THEN RAISE EXCEPTION 'invalid_entry_week'; END IF;/);
+});
+
+test('003 replaces only submit_entry, with exactly the corrected 002 definition and ACL',()=>{
+  const scan3=scanSql(m3);
+  assert.deepEqual(scan3.errors,[]);
+  const stmts=scan3.statements.map(s=>s.text);
+  const fromM2=functionStatements(scan2).find(s=>functionName(s)==='pool_platform_submit_entry').text;
+  const revoke='REVOKE ALL ON FUNCTION public.pool_platform_submit_entry(uuid,uuid,text,jsonb) FROM PUBLIC,anonymous,authenticated CASCADE;';
+  const grant='GRANT EXECUTE ON FUNCTION public.pool_platform_submit_entry(uuid,uuid,text,jsonb) TO authenticated;';
+  assert.equal(stmts.length,4,'a guard, the function, its REVOKE and its GRANT; nothing else');
+  assert.match(stmts[0],/^DO \$guard\$\nBEGIN\n  IF to_regprocedure\('public\.pool_platform_submit_entry\(uuid,uuid,text,jsonb\)'\) IS NULL THEN\n/);
+  assert.equal(stmts[1],fromM2,'003 carries the 002 definition byte for byte');
+  assert.deepEqual(stmts.slice(2),[revoke,grant]);
+  assert.ok(m2.includes(revoke)&&m2.includes(grant),'the same ACL lines 002 uses');
+  assert.doesNotMatch(stmts[0],/\b(?:CREATE|DROP|ALTER|GRANT|REVOKE|TRUNCATE|INSERT|UPDATE|DELETE)\b/,'the guard only checks and raises');
 });
 
 test('audit history records the genuine previous payload',()=>{

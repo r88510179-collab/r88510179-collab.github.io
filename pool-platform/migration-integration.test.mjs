@@ -223,7 +223,8 @@ const ENTRY_DEFS=[
   ['OOO','p1'],['RACE','p1'],['B1','p1'],['B2','p2'],['C','p1'],['D','p1'],['D2','p1'],['IDX','p1'],['MAP','p1'],
   ['AUTH','p1'],['INACTIVE','p1','inactive'],['ELIMINATED','p1','eliminated'],['ARCHIVED','p1','archived'],
   ['ACTIVE','p1'],['BATCH','p1'],['LOCK','p1'],['INV1',null],['INV2',null],['INV3',null],['INV4',null],
-  ['RINV1',null],['RINV2',null],['RINV3',null],['TYPED','p1'],['TYPED_BATCH','p1'],['TYPED_RR','p1'],['TYPED_RR2','p1']
+  ['RINV1',null],['RINV2',null],['RINV3',null],['TYPED','p1'],['TYPED_BATCH','p1'],['TYPED_RR','p1'],['TYPED_RR2','p1'],
+  ['PAIR','p1']
 ];
 const E=Object.fromEntries(ENTRY_DEFS.map(([code],i)=>[code,uuid('50000000',i+1)]));
 const K_P2=uuid('51000000',1),K_RIVAL=uuid('51000000',2);
@@ -594,6 +595,60 @@ ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} IN SCHEMA public GRANT ALL ON SEQUENC
     failsWith(await submit(p1,W4,E.AUTH,'participant','[1,2]'),'invalid_payload');
     failsWith(await submit(p1,W4,E.AUTH,null,{team:'denver'}),'invalid_source');
     assert.deepEqual(await teams(E.AUTH),['3:participant:austin']);
+  });
+
+  test('authorization precedes the entry/week relationship: a hidden pair never changes an unauthorized answer',async()=>{
+    const p1=await actor('pair_p1','p1'),p2=await actor('pair_p2','p2'),commish=await actor('pair_commish','commish'),rival=await actor('pair_rival','rival');
+    const NOWEEK=uuid('4f000000',1),NOENTRY=uuid('5f000000',1);
+    const err=r=>{assert.ok(r.error,`expected a failure but the call succeeded: ${r.rows}`);return `${r.error.sqlstate}:${r.error.message}`};
+    const batchCodes=async(s,week,entries)=>jsonOf(await s.run(`SELECT public.pool_platform_submit_batch('${week}','commissioner_import',${lit(entries.map(entry_id=>({entry_id,payload:{team:'austin'}})))})`)).map(r=>r.ok?r.result.code:r.code);
+    // E.PAIR belongs to p1 in Tenant 1's Survivor season. W4 is its season's week; K1 is a Tenant 1 week of
+    // another season; R1 is a Tenant 2 week (so rival, who commissions Tenant 2, may run a batch on it).
+    const weeks={'matching real week':W4,'unrelated same-tenant week':K1,'unrelated other-tenant week':R1,'nonexistent week':NOWEEK};
+    const counts=async()=>scalar(`SELECT count(*)||':'||(SELECT count(*) FROM public.pool_platform_submission_audit) FROM public.pool_platform_submissions`);
+    const before=await counts();
+
+    // Unauthorized participant: identical entry_not_owned for every week, and for an entry that does not exist.
+    for(const [label,week] of Object.entries(weeks)){
+      assert.equal(err(await submit(p2,week,E.PAIR,'participant',{team:'austin'})),'P0001:entry_not_owned',`participant, ${label}`);
+      assert.equal(err(await submit(p2,week,NOENTRY,'participant',{team:'austin'})),'P0001:entry_not_owned',`participant, missing entry, ${label}`);
+    }
+    // Unauthorized commissioner sources: a non-commissioner (p2) and another tenant's commissioner (rival),
+    // including on rival's own week R1, all get commissioner_required, as does a missing entry.
+    for(const caller of [p2,rival]){
+      for(const source of ['commissioner_import','commissioner_manual']){
+        for(const [label,week] of Object.entries(weeks)){
+          assert.equal(err(await submit(caller,week,E.PAIR,source,{team:'austin'})),'P0001:commissioner_required',`${caller.name} ${source}, ${label}`);
+          assert.equal(err(await submit(caller,week,NOENTRY,source,{team:'austin'})),'P0001:commissioner_required',`${caller.name} ${source}, missing entry, ${label}`);
+        }
+      }
+    }
+    // Through the batch: rival passes the batch gate on its own week R1, and a Tenant 1 commissioner on W4, but a
+    // Tenant 1 / Tenant 2 / missing entry outside the caller's tenant is commissioner_required, never invalid_entry_week.
+    assert.deepEqual(await batchCodes(rival,R1,[E.PAIR,NOENTRY]),['commissioner_required','commissioner_required']);
+    assert.deepEqual(await batchCodes(commish,W4,[K_RIVAL,NOENTRY]),['commissioner_required','commissioner_required']);
+    assert.equal(await counts(),before,'no unauthorized probe wrote a submission or an audit row');
+
+    // Authorized callers still learn the week does not belong: owner and entry-tenant commissioner alike.
+    for(const [label,week] of Object.entries(weeks)){
+      if(week===W4)continue;
+      assert.equal(err(await submit(p1,week,E.PAIR,'participant',{team:'austin'})),'P0001:invalid_entry_week',`owner, ${label}`);
+      for(const source of ['commissioner_import','commissioner_manual']){
+        assert.equal(err(await submit(commish,week,E.PAIR,source,{team:'austin'})),'P0001:invalid_entry_week',`commissioner ${source}, ${label}`);
+      }
+      assert.equal(err(await submit(rival,week===R1?W4:week,K_RIVAL,'commissioner_manual',{team:'austin'})),'P0001:invalid_entry_week',`rival on its own entry, ${label}`);
+    }
+    assert.deepEqual(await batchCodes(commish,K1,[E.PAIR]),['invalid_entry_week'],'same-tenant entry of another season in a batch');
+    assert.equal(await counts(),before,'no mismatched pair wrote anything');
+
+    // The matching pair still goes through, and the entry row lock still serializes a concurrent submission.
+    rowsOf(await p1.run('BEGIN'));
+    assert.equal(jsonOf(await submit(p1,W4,E.PAIR,'participant',{team:'austin'})).code,'created');
+    const queued=submit(commish,W3,E.PAIR,'commissioner_manual',{team:'austin'});
+    await waitForLockWait(commish);
+    rowsOf(await p1.run('COMMIT'));
+    failsWith(await queued,'team_already_used');
+    assert.deepEqual(await teams(E.PAIR),['4:participant:austin']);
   });
 
   test('entry status: inactive, eliminated and archived entries cannot submit through any ordinary channel',async()=>{
