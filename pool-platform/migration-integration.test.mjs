@@ -157,6 +157,15 @@ const FUNCTION_ACLS_SQL=`SELECT p.proname||'='||string_agg(g.entry,',' ORDER BY 
     ) g
     WHERE p.pronamespace='public'::regnamespace AND p.proname LIKE 'pool_platform_%' GROUP BY p.proname`;
 
+// Every commercial function (full definition, owner and ACL), table (ACL and RLS) and policy, to show that a
+// migration left everything else exactly as it was.
+const CATALOG_SNAPSHOT_SQL=`SELECT json_build_object(
+  'functions',(SELECT json_object_agg(p.oid::regprocedure::text,json_build_object('def',pg_get_functiondef(p.oid),'owner',pg_get_userbyid(p.proowner),'acl',p.proacl::text))
+    FROM pg_proc p WHERE p.pronamespace='public'::regnamespace AND p.proname LIKE 'pool_platform_%'),
+  'tables',(SELECT json_object_agg(c.relname,json_build_object('acl',c.relacl::text,'rls',c.relrowsecurity))
+    FROM pg_class c WHERE c.relnamespace='public'::regnamespace AND c.relkind='r' AND c.relname LIKE 'pool_platform_%'),
+  'policies',(SELECT json_agg(p ORDER BY p.tablename,p.policyname) FROM pg_policies p WHERE p.schemaname='public'))`;
+
 // One long-lived psql backend driven over stdin; run() resolves with the rows of one command and its
 // SQLSTATE/message once psql echoes a unique marker, so several sessions can hold open transactions at once.
 function openSession(url,name){
@@ -219,6 +228,8 @@ const S_SURV=uuid('30000000',1),S_PICK=uuid('30000000',2),S_RIVAL=uuid('30000000
 const W3=uuid('40000000',3),W4=uuid('40000000',4),W5_LOCKED=uuid('40000000',5),W6_PAST=uuid('40000000',6);
 const W7_TYPED=uuid('40000000',7),W8_TYPED=uuid('40000000',8);
 const K1=uuid('41000000',1),K2=uuid('41000000',2),R1=uuid('42000000',1);
+// Well-formed UUIDs that name no week and no entry.
+const W_MISSING=uuid('49000000',1),E_MISSING=uuid('59000000',1);
 const ENTRY_DEFS=[
   ['OOO','p1'],['RACE','p1'],['B1','p1'],['B2','p2'],['C','p1'],['D','p1'],['D2','p1'],['IDX','p1'],['MAP','p1'],
   ['AUTH','p1'],['INACTIVE','p1','inactive'],['ELIMINATED','p1','eliminated'],['ARCHIVED','p1','archived'],
@@ -596,6 +607,74 @@ ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} IN SCHEMA public GRANT ALL ON SEQUENC
     assert.deepEqual(await teams(E.AUTH),['3:participant:austin']);
   });
 
+  // Whether a week belongs to an entry's season, and whether an entry exists at all, is told only to the entry
+  // owner (participant source) or a commissioner of the entry's tenant (commissioner sources).
+  test('authorization precedes the entry/week match: unauthorized callers get the same failure for the matching, an unrelated or a missing week',async()=>{
+    const callers={};
+    for(const [key,user] of [['p1','p1'],['p2','p2'],['commish','commish'],['rival','rival'],['outsider','wrong']])callers[key]=await actor(`match_${key}`,user);
+    assert.equal(await scalar(`SELECT (SELECT count(*) FROM public.pool_platform_weeks WHERE id='${W_MISSING}')+(SELECT count(*) FROM public.pool_platform_entries WHERE id='${E_MISSING}')`),'0');
+    const writes=()=>scalar(`SELECT (SELECT count(*) FROM public.pool_platform_submissions)||'/'||(SELECT count(*) FROM public.pool_platform_submission_audit)`);
+    const before=await writes();
+    const probe=async(key,week,entry,source)=>{
+      const r=await submit(callers[key],week,entry,source,{team:'denver'});
+      assert.ok(r.error,`${key} ${source} ${week}/${entry} succeeded`);
+      return `${r.error.sqlstate} ${r.error.message}`;
+    };
+    // E.AUTH is p1's entry in the Tenant 1 Survivor season: W4 is its own week, K1 a Tenant 1 week of another
+    // season, R1 a Tenant 2 week (the rival commissioner's own), W_MISSING no week at all.
+    const weeks={matching:W4,otherSeason:K1,otherTenant:R1,missing:W_MISSING};
+    for(const [source,expected,keys] of [
+      ['participant','entry_not_owned',['p2','commish','rival','outsider']],
+      ['commissioner_import','commissioner_required',['p1','p2','rival','outsider']],
+      ['commissioner_manual','commissioner_required',['p1','p2','rival','outsider']]
+    ]){
+      for(const key of keys){
+        for(const [label,week] of Object.entries(weeks)){
+          assert.equal(await probe(key,week,E.AUTH,source),`P0001 ${expected}`,`${key} ${source}: another's real entry with the ${label} week`);
+        }
+        for(const [label,week] of Object.entries(weeks)){
+          assert.equal(await probe(key,week,E_MISSING,source),`P0001 ${expected}`,`${key} ${source}: a missing entry with the ${label} week`);
+        }
+      }
+    }
+    // Authorized callers still learn that the week is not the entry's: the owner and the Tenant 1 commissioner. A
+    // missing entry has no owner and no tenant, so it stays an authorization failure for them too.
+    for(const [key,source,denied] of [['p1','participant','entry_not_owned'],['commish','commissioner_import','commissioner_required'],['commish','commissioner_manual','commissioner_required']]){
+      for(const [label,week] of Object.entries(weeks)){
+        if(label!=='matching')assert.equal(await probe(key,week,E.AUTH,source),'P0001 invalid_entry_week',`${key} ${source}: own entry with the ${label} week`);
+        assert.equal(await probe(key,week,E_MISSING,source),`P0001 ${denied}`,`${key} ${source}: a missing entry with the ${label} week`);
+      }
+    }
+    // Batch items go through submit_entry: an entry of another season of the caller's tenant is invalid_entry_week;
+    // another tenant's entry and a missing entry are both commissioner_required, whichever of them exists.
+    const batch=async(s,week,entries)=>jsonOf(await s.run(`SELECT public.pool_platform_submit_batch('${week}','commissioner_import',${lit(entries.map(entry_id=>({entry_id,payload:{team:'denver'}})))})`))
+      .map(r=>r.ok?r.result.code:r.code);
+    assert.deepEqual(await batch(callers.commish,W4,[K_P2,K_RIVAL,E_MISSING]),['invalid_entry_week','commissioner_required','commissioner_required']);
+    assert.deepEqual(await batch(callers.rival,R1,[E.AUTH,E_MISSING]),['commissioner_required','commissioner_required']);
+    assert.equal(await writes(),before,'no probe wrote a submission or an audit row');
+    assert.deepEqual(await teams(E.AUTH),['3:participant:austin']);
+  });
+
+  test('the entry row is locked before authorization whatever week is asked for: unauthorized probes queue on it alike, then fail alike',async()=>{
+    const holder=await actor('lockall_holder','p1');
+    rowsOf(await holder.run('BEGIN'));
+    assert.equal(jsonOf(await submit(holder,W4,E.AUTH,'participant',{team:'denver'})).code,'created');
+    const probes=[
+      ['p2','participant',W4,'entry_not_owned'],['p2','participant',R1,'entry_not_owned'],['p2','participant',W_MISSING,'entry_not_owned'],
+      ['rival','commissioner_manual',W4,'commissioner_required'],['rival','commissioner_manual',K1,'commissioner_required'],
+      ['rival','commissioner_manual',W_MISSING,'commissioner_required']
+    ];
+    const sessions=[];
+    for(const [i,[key]] of probes.entries())sessions.push(await actor(`lockall_${i}`,key));
+    const pending=probes.map(([,source,week],i)=>submit(sessions[i],week,E.AUTH,source,{team:'seattle'}));
+    // Before the fix only the matching week reached the entry lock; the others answered at once.
+    for(const s of sessions)await waitForLockWait(s);
+    await holder.run('ROLLBACK');
+    const results=await Promise.all(pending);
+    results.forEach((r,i)=>failsWith(r,probes[i][3]));
+    assert.deepEqual(await teams(E.AUTH),['3:participant:austin']);
+  });
+
   test('entry status: inactive, eliminated and archived entries cannot submit through any ordinary channel',async()=>{
     const p1=await actor('status_p1','p1'),commish=await actor('status_commish','commish');
     for(const code of ['INACTIVE','ELIMINATED','ARCHIVED']){
@@ -856,6 +935,60 @@ GRANT USAGE ON SEQUENCE public.${AUDIT_SEQUENCE} TO anonymous;`);
     await assertMaintenanceDenied(url,'re-applied 002');
     assert.deepEqual(functionAclsOf(url),EXPECTED_FUNCTION_ACLS);
     assertCatalogPasses(url,'catalog after re-applying 002');
+  });
+
+  // 003 is the forward migration for a database that applied 002 before the submit_entry authorization-order fix.
+  // On a database built from the current 002 it changes nothing; its guard stops it anywhere else.
+  test('003 forward migration: replaces only submit_entry and resets only its privileges; stops, leaving nothing behind, on the wrong database, role or definition',()=>{
+    const FN='public.pool_platform_submit_entry(uuid,uuid,text,jsonb)';
+    const snapshot=url=>JSON.parse(psqlSync(url,CATALOG_SNAPSHOT_SQL));
+    const bodySha=url=>psqlSync(url,`SELECT COALESCE((SELECT encode(sha256(convert_to(prosrc,'UTF8')),'hex') FROM pg_proc WHERE oid=to_regprocedure('${FN}')),'missing')`);
+    // As the runbook applies migrations (psql --single-transaction): a stop rolls all of 003 back.
+    const forward=(url,role=OWNER)=>psqlRun(url,`\\set ON_ERROR_STOP 1\n${role?`SET ROLE ${role};\n`:''}BEGIN;\n${readMigration('003_submit_entry_authorization_order.sql')}\nCOMMIT;`);
+    const stops=(url,message,label,role)=>{
+      const run=forward(url,role);
+      assert.notEqual(run.status,0,`${label}: 003 must stop`);
+      assert.match(run.stderr,message,label);
+    };
+
+    const url=scenario('forward');
+    apply(url,'001_foundation.sql','002_identity_submission_rls.sql');
+    const fixed=bodySha(url),clean=snapshot(url);
+    let run=forward(url);
+    assert.equal(run.status,0,run.stderr);
+    assert.deepEqual(snapshot(url),clean,'on a database built from the current 002, 003 changes nothing');
+    assertCatalogPasses(url,'catalog after 003');
+
+    // Unwanted grants made after 002: 003 resets submit_entry's and leaves every other function's as it found them.
+    psqlSync(url,['pool_platform_submit_entry(uuid,uuid,text,jsonb)','pool_platform_submit_batch(uuid,text,jsonb)'].map(f=>
+      `GRANT EXECUTE ON FUNCTION public.${f} TO PUBLIC,anonymous;\nGRANT EXECUTE ON FUNCTION public.${f} TO authenticated WITH GRANT OPTION;`).join('\n'));
+    const granted=functionAclsOf(url);
+    assert.notEqual(granted.pool_platform_submit_entry,EXPECTED_FUNCTION_ACLS.pool_platform_submit_entry,'setup: submit_entry carries unwanted grants');
+    run=forward(url);
+    assert.equal(run.status,0,run.stderr);
+    assert.deepEqual(functionAclsOf(url),{...granted,pool_platform_submit_entry:EXPECTED_FUNCTION_ACLS.pool_platform_submit_entry});
+    apply(url,'002_identity_submission_rls.sql');
+    assert.deepEqual(snapshot(url),clean);
+
+    // Each guard stops 003 and leaves the database as it was.
+    stops(url,/run as pool_platform_it_owner, the owner of pool_platform_submit_entry, not [^:]+: stop/,'a superuser instead of the migration owner','');
+    psqlSync(url,'CREATE TABLE public.nfl_survivor_weeks(season integer);');
+    stops(url,/personal Pool Center database: stop/,'a personal Pool Center table');
+    psqlSync(url,'DROP TABLE public.nfl_survivor_weeks;');
+    assert.deepEqual(snapshot(url),clean);
+    const create=readMigration('002_identity_submission_rls.sql').match(/CREATE OR REPLACE FUNCTION public\.pool_platform_submit_entry\([\s\S]*?\n\$\$;/)[0];
+    psqlSync(url,`SET ROLE ${OWNER};\n${create.replace('\nBEGIN\n','\nBEGIN\n  -- an unreviewed edit\n')}`);
+    const drifted=bodySha(url);
+    assert.notEqual(drifted,fixed);
+    stops(url,new RegExp(`pool_platform_submit_entry body sha256 ${drifted} is not a reviewed definition: stop`),'an unreviewed definition');
+    assert.equal(bodySha(url),drifted,'an unreviewed definition is left for review, not overwritten');
+    apply(url,'002_identity_submission_rls.sql');
+    assert.deepEqual(snapshot(url),clean);
+
+    const bare=scenario('forward_bare');
+    apply(bare,'001_foundation.sql');
+    stops(bare,/public\.pool_platform_submit_entry\(uuid,uuid,text,jsonb\) does not exist: stop/,'a database without 002');
+    assert.equal(bodySha(bare),'missing','003 never creates the function');
   });
 
   test('the catalog verifier reports each single fault on an otherwise correct database, and only that fault',()=>{

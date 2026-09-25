@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import test from 'node:test';
 
 const m1=fs.readFileSync(new URL('./migrations/001_foundation.sql',import.meta.url),'utf8');
 const m2=fs.readFileSync(new URL('./migrations/002_identity_submission_rls.sql',import.meta.url),'utf8');
+// Forward migration for a database that applied 002 before the submit_entry authorization-order fix.
+const m3=fs.readFileSync(new URL('./migrations/003_submit_entry_authorization_order.sql',import.meta.url),'utf8');
 
 const TABLES=[
   'pool_platform_tenants','pool_platform_memberships','pool_platform_pools','pool_platform_seasons',
@@ -266,28 +269,62 @@ test('Survivor team reuse is blocked atomically per entry by a partial unique in
   assert.match(functionBody('pool_platform_participant_context'),/WHERE hs\.entry_id=e\.id AND hw\.season_id=v_season\.id AND hw\.week<>v_week\.week\n/,
     'participant history must list every other week so the browser marks the same teams used');
   const submit=functionBody('pool_platform_submit_entry');
-  assert.match(submit,/WHERE w\.id=p_week_id AND e\.id=p_entry_id\n  FOR NO KEY UPDATE OF e;/,'submissions for one entry must serialize on the entry row');
+  assert.match(submit,/\n  FROM public\.pool_platform_entries e\n  JOIN public\.pool_platform_seasons s ON s\.id=e\.season_id\n  JOIN public\.pool_platform_pools p ON p\.id=s\.pool_id\n  LEFT JOIN public\.pool_platform_weeks w ON w\.id=p_week_id AND w\.season_id=s\.id\n  WHERE e\.id=p_entry_id\n  FOR NO KEY UPDATE OF e;/,
+    'submissions for one entry must serialize on the entry row, whatever week is asked for');
   assert.match(submit,/EXCEPTION WHEN unique_violation THEN\n[\s\S]*GET STACKED DIAGNOSTICS v_constraint=CONSTRAINT_NAME;\n  IF v_constraint='pool_platform_submissions_survivor_team_unique'\n  THEN RAISE EXCEPTION 'team_already_used'; END IF;\n  RAISE;\nEND;\n$/);
 });
 
-test('submit_entry authorizes before entry-state, week-state, payload and history checks',()=>{
+test('submit_entry authorizes before the entry/week match and every entry-state, week-state, payload and history check',()=>{
   const body=functionBody('pool_platform_submit_entry');
   const at=text=>{const i=body.indexOf(text);assert.ok(i>0,`missing ${text}`);return i};
-  const resolved=at("RAISE EXCEPTION 'invalid_entry_week'");
+  const lock=at('FOR NO KEY UPDATE OF e;');
   const owner=at("RAISE EXCEPTION 'entry_not_owned'");
   const commissioner=at("RAISE EXCEPTION 'commissioner_required'");
+  const resolved=at("RAISE EXCEPTION 'invalid_entry_week'");
   const entryState=at("RAISE EXCEPTION 'entry_not_active'");
   const weekState=at("RAISE EXCEPTION 'week_not_open'");
   const deadline=at("RAISE EXCEPTION 'deadline_passed'");
   const payloadShape=at("RAISE EXCEPTION 'invalid_payload'");
   const history=at('public.pool_platform_payload_valid(');
-  assert.ok(resolved<owner&&owner<commissioner,'authorization runs right after the entry/week pair resolves');
+  // An unauthorized caller must not learn whether an entry exists or whether a week belongs to its season, so
+  // the entry resolves (and locks) on its own and the week match is reported only after authorization.
+  assert.ok(lock<owner&&owner<commissioner&&commissioner<resolved,'authorization runs right after the entry resolves, before the week match');
   for(const [name,i] of Object.entries({entryState,weekState,deadline,payloadShape,history})){
-    assert.ok(i>commissioner,`${name} must come after authorization`);
+    assert.ok(i>resolved,`${name} must come after authorization and the week match`);
   }
+  assert.equal(body.split("'invalid_entry_week'").length-1,1,'invalid_entry_week is raised in one place only');
+  assert.doesNotMatch(body,/FROM public\.pool_platform_weeks w\n/,'the pair must not be resolved week-first');
+  assert.doesNotMatch(body,/JOIN public\.pool_platform_entries e ON e\.season_id=/,'the entry must not be inner-joined to the requested week');
+  assert.match(body,/SELECT p\.tenant_id,e\.owner_auth_user_id,e\.status,w\.id,w\.status,/);
+  assert.match(body,/IF v_owner IS NULL OR v_owner<>v_uid THEN RAISE EXCEPTION 'entry_not_owned'; END IF;/,'a missing or unowned entry is not owned');
+  assert.match(body,/IF v_tenant_id IS NULL OR NOT public\.pool_platform_is_tenant_commissioner\(v_tenant_id\)\n    THEN RAISE EXCEPTION 'commissioner_required'; END IF;/,
+    'an entry that resolves to no tenant needs a commissioner too');
+  assert.match(body,/IF v_week_id IS NULL THEN RAISE EXCEPTION 'invalid_entry_week'; END IF;/);
   assert.match(body,/IF p_source IS NULL OR p_source NOT IN \('participant','commissioner_import','commissioner_manual'\)/);
   assert.match(body,/IF v_entry_status IS DISTINCT FROM 'active' THEN RAISE EXCEPTION 'entry_not_active'; END IF;/);
-  assert.match(body,/SELECT p\.tenant_id,e\.owner_auth_user_id,e\.status,w\.status,/);
+});
+
+test('003 forward migration: a guard, then submit_entry byte for byte as 002 defines it, with 002\'s own privilege statements, and nothing else',()=>{
+  const scan3=scanSql(m3);
+  assert.deepEqual(scan3.errors,[]);
+  const sig='public.pool_platform_submit_entry(uuid,uuid,text,jsonb)';
+  const [guard,create,...privileges]=scan3.statements.map(s=>s.text);
+  assert.equal(scan3.statements.length,4);
+  assert.match(guard,/^DO \$\$\n/);
+  assert.equal(create,functionStatements(scan2).find(s=>functionName(s)==='pool_platform_submit_entry').text,'the definition is 002\'s, byte for byte');
+  assert.deepEqual(privileges,[`REVOKE ALL ON FUNCTION ${sig} FROM PUBLIC,anonymous,authenticated CASCADE;`,`GRANT EXECUTE ON FUNCTION ${sig} TO authenticated;`]);
+  for(const stmt of privileges)assert.ok(scan2.statements.some(s=>s.text===stmt),`002 carries ${stmt}`);
+  assert.doesNotMatch(codeOnly(m3),/\b(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT|START)\b/i,'psql --single-transaction supplies the one transaction');
+  // The guard admits exactly two bodies: the corrected one 002 now carries, and the reviewed pre-fix one (002 at
+  // 5e59ddd) that the live database holds. Anything else is left alone.
+  const sha256=text=>crypto.createHash('sha256').update(text,'utf8').digest('hex');
+  const admitted=[...guard.matchAll(/'([0-9a-f]{64})'/g)].map(m=>m[1]);
+  assert.equal(admitted.length,2);
+  assert.ok(admitted.includes(sha256(functionBody('pool_platform_submit_entry'))),'the guard admits the corrected body');
+  assert.match(guard,/encode\(sha256\(convert_to\(p\.prosrc,'UTF8'\)\),'hex'\)/);
+  assert.match(guard,/IF current_database\(\)='nfl_pool'\n     OR EXISTS \(SELECT 1 FROM pg_catalog\.pg_class c WHERE c\.relname IN \('nfl_pool_weeks','nfl_survivor_weeks'\)\)/);
+  assert.match(guard,/to_regprocedure\('public\.pool_platform_submit_entry\(uuid,uuid,text,jsonb\)'\)/);
+  assert.match(guard,/IF v_owner IS DISTINCT FROM \(SELECT r\.oid FROM pg_catalog\.pg_roles r WHERE r\.rolname=current_user\)/);
 });
 
 test('audit history records the genuine previous payload',()=>{

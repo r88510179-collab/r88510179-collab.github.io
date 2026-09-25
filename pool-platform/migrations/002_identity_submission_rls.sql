@@ -506,6 +506,7 @@ DECLARE
   v_tenant_id uuid;
   v_owner text;
   v_entry_status text;
+  v_week_id uuid;
   v_week_status text;
   v_opens timestamptz;
   v_deadline timestamptz;
@@ -520,28 +521,33 @@ BEGIN
   IF p_source IS NULL OR p_source NOT IN ('participant','commissioner_import','commissioner_manual')
   THEN RAISE EXCEPTION 'invalid_source'; END IF;
 
-  -- Resolve the entry/week pair and lock the entry row: every submission for one entry (any week, any
-  -- source) queues here, so the Survivor reuse check reads that entry's committed history. The unique
-  -- index pool_platform_submissions_survivor_team_unique still guarantees the outcome on its own.
-  SELECT p.tenant_id,e.owner_auth_user_id,e.status,w.status,w.opens_at,w.deadline_at,p.pool_type,w.config
-  INTO v_tenant_id,v_owner,v_entry_status,v_week_status,v_opens,v_deadline,v_pool_type,v_week_config
-  FROM public.pool_platform_weeks w
-  JOIN public.pool_platform_seasons s ON s.id=w.season_id
+  -- Resolve and lock the entry row with its season, pool and tenant, whatever week was asked for: every
+  -- submission for one entry (any week, any source) queues here, so the Survivor reuse check reads that
+  -- entry's committed history. The unique index pool_platform_submissions_survivor_team_unique still
+  -- guarantees the outcome on its own. The requested week is joined only within the entry's own season,
+  -- and whether it matched is looked at only once the caller is authorized.
+  SELECT p.tenant_id,e.owner_auth_user_id,e.status,w.id,w.status,w.opens_at,w.deadline_at,p.pool_type,w.config
+  INTO v_tenant_id,v_owner,v_entry_status,v_week_id,v_week_status,v_opens,v_deadline,v_pool_type,v_week_config
+  FROM public.pool_platform_entries e
+  JOIN public.pool_platform_seasons s ON s.id=e.season_id
   JOIN public.pool_platform_pools p ON p.id=s.pool_id
-  JOIN public.pool_platform_entries e ON e.season_id=s.id
-  WHERE w.id=p_week_id AND e.id=p_entry_id
+  LEFT JOIN public.pool_platform_weeks w ON w.id=p_week_id AND w.season_id=s.id
+  WHERE e.id=p_entry_id
   FOR NO KEY UPDATE OF e;
 
-  IF v_tenant_id IS NULL THEN RAISE EXCEPTION 'invalid_entry_week'; END IF;
-
-  -- Authorize before any entry-state, week-state, payload or history check, so a caller who is not the
-  -- entry owner (participant) or a tenant commissioner (commissioner sources) only ever sees that failure.
+  -- Authorize before the week or any entry-state, week-state, payload or history check, so a caller who is
+  -- not the entry owner (participant) or a commissioner of the entry's tenant (commissioner sources) only
+  -- ever sees that failure: it does not tell whether the entry exists or whether the week belongs to it. A
+  -- missing entry has no owner and no tenant, so it fails the same way.
   IF p_source='participant' THEN
     IF v_owner IS NULL OR v_owner<>v_uid THEN RAISE EXCEPTION 'entry_not_owned'; END IF;
   ELSE
-    IF NOT public.pool_platform_is_tenant_commissioner(v_tenant_id)
+    IF v_tenant_id IS NULL OR NOT public.pool_platform_is_tenant_commissioner(v_tenant_id)
     THEN RAISE EXCEPTION 'commissioner_required'; END IF;
   END IF;
+
+  -- Only an authorized caller learns whether the week belongs to the entry's season.
+  IF v_week_id IS NULL THEN RAISE EXCEPTION 'invalid_entry_week'; END IF;
 
   -- Ordinary submissions need an active entry; inactive, eliminated and archived entries are closed.
   IF v_entry_status IS DISTINCT FROM 'active' THEN RAISE EXCEPTION 'entry_not_active'; END IF;
