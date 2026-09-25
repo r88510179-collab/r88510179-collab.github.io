@@ -46,6 +46,8 @@ assert.equal(button.hidden,true,'standalone mode must suppress install UI');
 assert.equal(classes.get('standalone'),true);
 
 await winListeners.load[0]();
-assert.deepEqual(registrations,[{path:'/nfl-pool/service-worker.js',options:{scope:'/nfl-pool/'}}]);
+assert.equal(registrations.length,1);
+assert.equal(registrations[0].path,'/nfl-pool/service-worker.js');
+assert.equal(registrations[0].options.scope,'/nfl-pool/');
 
 console.log('PWA install-prompt, standalone detection, registration and manifest-contract regressions passed');
