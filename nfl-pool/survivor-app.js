@@ -6,7 +6,8 @@ const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aw
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
 const ESPN_SCOREBOARD='https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
 const LOGO_CODE={WAS:'wsh'};
-let rows=[],cfg=null,resultsByWeek=[],nextWeekMatchups=[],nextWeekFetchedAt=0,nextWeekError='',anonToken=null,anonExpiresAt=0,anonRequest=null,refreshId=0;
+let rows=[],cfg=null,resultsByWeek=[],nextWeekMatchups=[],nextWeekFetchedAt=0,nextWeekError='',anonToken=null,anonExpiresAt=0,anonRequest=null,refreshId=0,nextWeekRequestId=0,nextWeekController=null;
+const activeScoreControllers=new Set();
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 
@@ -89,32 +90,50 @@ function render(){
 async function updateDecisionSchedule(force=false){
   if(!cfg)return;const scheduleCfg=cfg;
   if(!force&&nextWeekMatchups.length&&Date.now()-nextWeekFetchedAt<300000){render();return}
+  const requestId=++nextWeekRequestId;
+  if(nextWeekController)nextWeekController.abort();
+  const controller=new AbortController;nextWeekController=controller;
   try{
-    const week=scheduleCfg.week+1,r=await fetch(`${ESPN_SCOREBOARD}?dates=${scheduleCfg.season}&week=${week}&seasontype=2`,{cache:'no-store'});
+    const week=scheduleCfg.week+1,r=await fetch(`${ESPN_SCOREBOARD}?dates=${scheduleCfg.season}&week=${week}&seasontype=2`,{cache:'no-store',signal:controller.signal});
     if(!r.ok)throw new Error(`Week ${week} schedule ${r.status}`);
-    const j=await r.json();if(cfg!==scheduleCfg)return;
+    const j=await r.json();if(requestId!==nextWeekRequestId||cfg!==scheduleCfg)return;
     const matchups=survivorMarketMatchups(j?.events);
     if(!matchups.length)throw new Error(`Week ${week} schedule is not available yet`);
     const contextError=survivorFeedContextError(j,{season:scheduleCfg.season,week});if(contextError)throw new Error(contextError);
+    if(requestId!==nextWeekRequestId||cfg!==scheduleCfg)return;
     nextWeekMatchups=matchups;nextWeekFetchedAt=Date.now();nextWeekError='';render();
-  }catch(e){if(cfg!==scheduleCfg)return;nextWeekError=e.message||String(e);if(!nextWeekMatchups.length)render();console.warn(e)}
+  }catch(e){
+    if(e?.name==='AbortError'||requestId!==nextWeekRequestId||cfg!==scheduleCfg)return;
+    nextWeekError=e.message||String(e);if(!nextWeekMatchups.length)render();console.warn(e);
+  }finally{
+    if(requestId===nextWeekRequestId&&nextWeekController===controller)nextWeekController=null;
+  }
 }
 
 // Each score request must settle before the next 20 s refresh, so a hung week can never hold up the others.
 const SCORE_FEED_TIMEOUT_MS=15000;
-function withinTime(promise,label){return new Promise((resolve,reject)=>{const t=setTimeout(()=>reject(new Error(`${label} timed out`)),SCORE_FEED_TIMEOUT_MS);promise.then(v=>{clearTimeout(t);resolve(v)},e=>{clearTimeout(t);reject(e)})})}
+function abortActiveScoreRequests(){for(const controller of activeScoreControllers)controller.abort();activeScoreControllers.clear()}
+function withinTime(task,label){
+  const controller=new AbortController;activeScoreControllers.add(controller);
+  return new Promise((resolve,reject)=>{
+    let settled=false,t=null;
+    const finish=(fn,value)=>{if(settled)return;settled=true;if(t!==null)clearTimeout(t);activeScoreControllers.delete(controller);fn(value)};
+    t=setTimeout(()=>{controller.abort();finish(reject,new Error(`${label} timed out`))},SCORE_FEED_TIMEOUT_MS);
+    Promise.resolve().then(()=>task(controller.signal)).then(value=>finish(resolve,value),error=>finish(reject,error));
+  });
+}
 
 async function updateScores(){
-  if(!cfg)return;const id=++refreshId,scoreCfg=cfg;
+  if(!cfg)return;abortActiveScoreRequests();const id=++refreshId,scoreCfg=cfg;
   try{
     const current=scoreCfg.week-1,indexes=Array.from({length:scoreCfg.week},(_,i)=>i).filter(i=>i===current||!weekSettled(i));
-    const outcomes=await Promise.allSettled(indexes.map(i=>withinTime((async()=>{
-      const week=i+1,r=await fetch(`${ESPN_SCOREBOARD}?dates=${scoreCfg.season}&week=${week}&seasontype=2`,{cache:'no-store'});
+    const outcomes=await Promise.allSettled(indexes.map(i=>withinTime(async signal=>{
+      const week=i+1,r=await fetch(`${ESPN_SCOREBOARD}?dates=${scoreCfg.season}&week=${week}&seasontype=2`,{cache:'no-store',signal});
       if(!r.ok)throw new Error(`Week ${week} score feed ${r.status}`);
       const json=await r.json(),contextError=survivorFeedContextError(json,{season:scoreCfg.season,week});
       if(contextError)throw new Error(contextError);
       return survivorBuildResults(json.events,{season:scoreCfg.season,week});
-    })(),`Week ${i+1} score feed`)));
+    },`Week ${i+1} score feed`)));
     if(id!==refreshId||cfg!==scoreCfg)return;
     // Each week stands alone: a failed refresh of an earlier week keeps its last verified results.
     const failed=[];
@@ -127,7 +146,12 @@ async function updateScores(){
 }
 
 function choose(row,{push=false}={}){
-  cfg=validateConfig(row.config);resultsByWeek=[];nextWeekMatchups=[];nextWeekFetchedAt=0;nextWeekError='';$('survivorWeekSelect').value=`${row.season}-${row.week}`;render();updateScores();
+  const nextCfg=validateConfig(row.config);
+  abortActiveScoreRequests();refreshId++;
+  if(nextWeekController){nextWeekController.abort();nextWeekController=null}
+  nextWeekRequestId++;
+  cfg=nextCfg;resultsByWeek=[];nextWeekMatchups=[];nextWeekFetchedAt=0;nextWeekError='';
+  $('survivorWeekSelect').value=`${row.season}-${row.week}`;$('survivorError').innerHTML='';render();void updateScores();
   if(push){const u=new URL(location.href);u.searchParams.set('view','survivor');u.searchParams.set('sw',String(row.week));u.searchParams.set('season',String(row.season));history.replaceState(history.state,'',u)}
 }
 
@@ -136,9 +160,15 @@ async function load(){
   if(!r.ok)throw new Error(`Survivor data ${r.status}`);rows=await r.json();if(!Array.isArray(rows)||!rows.length)throw new Error('No published Survivor weeks found');
   const sel=$('survivorWeekSelect');sel.innerHTML=rows.map(x=>`<option value="${x.season}-${x.week}">${x.season} · Week ${x.week}</option>`).join('');
   const qs=new URLSearchParams(location.search),requested=Number(qs.get('sw')),season=Number(qs.get('season'))||rows[rows.length-1].season;let chosen=requested?rows.find(x=>x.season===season&&x.week===requested):null;if(!chosen)chosen=rows[rows.length-1];
-  sel.addEventListener('change',()=>{const [s,w]=sel.value.split('-').map(Number),row=rows.find(x=>x.season===s&&x.week===w);if(row)choose(row,{push:true})});
+  sel.addEventListener('change',()=>{
+    const previous=cfg?`${cfg.season}-${cfg.week}`:sel.value,[s,w]=sel.value.split('-').map(Number),row=rows.find(x=>x.season===s&&x.week===w);
+    if(!row)return;
+    try{choose(row,{push:true})}
+    catch(e){sel.value=previous;$('survivorError').innerHTML=`<div class="error">Unable to switch Survivor week: ${esc(e.message||String(e))}</div>`;console.warn(e)}
+  });
   choose(chosen);
 }
 
 load().catch(e=>{$('survivorError').innerHTML=`<div class="error">Survivor is not published yet: ${esc(e.message)}</div>`;console.warn(e)});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&cfg&&document.body.dataset.view==='survivor')updateScores()});
 setInterval(()=>{if(cfg&&document.body.dataset.view==='survivor')updateScores()},20000);

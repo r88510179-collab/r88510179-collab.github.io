@@ -1,29 +1,22 @@
 'use strict';
-const CACHE='pool-center-shell-v7';
+const CACHE='pool-center-shell-v8';
 const SHELL=[
   './',
   './index.html',
   './style.css?v=premium-v3',
   './slate.css?v=slate-v1',
   './weekly.css?v=premium-v2',
-  './weekly-app.js?v=weekly-v10',
+  './weekly-app.js?v=weekly-v11',
+  './public-math.js?v=2',
   './survivor.css?v=3',
-  './survivor-app.js?v=3',
-  './survivor-math.js?v=3',
+  './survivor-app.js?v=4',
+  './survivor-math.js?v=4',
   './score-feed-proxy.js?v=1',
   './pwa.js?v=1',
   './manifest.webmanifest',
   './assets/pool-center-icon.svg',
   './assets/pool-center-icon-192.svg',
-  './assets/pool-center-icon-512.svg',
-  './admin/',
-  './admin/index.html',
-  './admin/admin.css?v=premium-v3',
-  './admin/admin.js?v=6',
-  './admin/parser-core.js?v=7',
-  './admin/survivor.html',
-  './admin/survivor-admin.js?v=1',
-  './admin/survivor-parser.js?v=1'
+  './assets/pool-center-icon-512.svg'
 ];
 self.addEventListener('install',event=>{
   event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)).then(()=>self.skipWaiting()));
@@ -52,8 +45,8 @@ self.addEventListener('fetch',event=>{
   const url=new URL(request.url);
   if(url.origin!==self.location.origin)return;
   if(request.mode==='navigate'){
-    const fallback=/\/nfl-pool\/admin(?:\/|$)/.test(url.pathname)?'./admin/index.html':'./index.html';
-    event.respondWith(networkFirst(request,fallback));
+    if(/\/nfl-pool\/admin(?:\/|$)/.test(url.pathname)){event.respondWith(fetch(request));return}
+    event.respondWith(networkFirst(request,'./index.html'));
     return;
   }
   if(/\.(?:css|js|svg|webmanifest)$/i.test(url.pathname)||url.pathname.endsWith('/')){
