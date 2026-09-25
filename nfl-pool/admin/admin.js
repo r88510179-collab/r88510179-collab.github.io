@@ -170,6 +170,9 @@ function renderReview(){
 
 async function sha256(file){const buf=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('')}
 $('publishBtn').addEventListener('click',async()=>{
+  // One publish at a time. A disabled button does not stop script from invoking this listener, so the handler refuses
+  // re-entry itself, before any check, message or database call; only the publish holding the flag releases it.
+  if(publishInFlight)return;
   if(!session||session.user?.email?.toLowerCase()!==ADMIN_EMAIL){message('Sign in before publishing.','error');return}
   const publishFile=currentFile,publishGeneration=fileGeneration,publishCandidate=candidate,publishCompetitionSize=candidateCompetitionSize;
   if(!publishCandidate||!scheduleVerified||!fileContextCurrent(publishFile,publishGeneration)||candidateFile!==publishFile||candidateFileGeneration!==publishGeneration||!competitionSizeCurrent(publishCompetitionSize)||!totalEntriesShown()){invalidateParsedState();message('The selected file changed or is no longer validated. Read and validate it again before publishing.','error');return}
