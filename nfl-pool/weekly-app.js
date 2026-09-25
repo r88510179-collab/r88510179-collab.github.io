@@ -217,7 +217,16 @@ function render(){
   renderRace(race);renderSwings(race);
 }
 function warn(list){const e=$('error');e.replaceChildren();if(!list.length)return;const b=document.createElement('div');b.className='error';b.textContent=`Some feed data was ignored to protect standings: ${list.join(' · ')}`;e.appendChild(b)}
-function parseEvent(e,a,h,old){const c=e?.competitions?.[0],away=c?.competitors?.find(x=>x.homeAway==='away'),home=c?.competitors?.find(x=>x.homeAway==='home');if(!away||!home)return{game:old,warning:`${a}-${h}: missing competitor data`};const st=e.status?.type?.state||'pre',done=e.status?.type?.completed===true,as=score(away.score),hs=score(home.score);if((st==='in'||done)&&(as===null||hs===null))return{game:old,warning:`${a}-${h}: invalid score ignored`};const tied=done&&as===hs;return{game:{away:a,home:h,state:st,completed:done,winner:done&&!tied?(as>hs?a:h):null,awayScore:as,homeScore:hs,detail:String(e.status?.type?.shortDetail||e.status?.type?.detail||(done?(tied?'Final · Tie':'Final'):'Scheduled')),eventId:e.id?String(e.id):old.eventId},warning:null}}
+function exactCompetitorPair(e){
+  const competitions=Array.isArray(e?.competitions)?e.competitions:[];
+  if(competitions.length!==1)return null;
+  const competitors=Array.isArray(competitions[0]?.competitors)?competitions[0].competitors:[];
+  if(competitors.length!==2)return null;
+  const away=competitors.filter(x=>x?.homeAway==='away'),home=competitors.filter(x=>x?.homeAway==='home');
+  if(away.length!==1||home.length!==1)return null;
+  return{away:away[0],home:home[0]};
+}
+function parseEvent(e,a,h,old){const pair=exactCompetitorPair(e);if(!pair)return{game:old,warning:`${a}-${h}: malformed competitor data ignored`};const {away,home}=pair,st=e.status?.type?.state||'pre',done=e.status?.type?.completed===true,as=score(away.score),hs=score(home.score);if((st==='in'||done)&&(as===null||hs===null))return{game:old,warning:`${a}-${h}: invalid score ignored`};const tied=done&&as===hs;return{game:{away:a,home:h,state:st,completed:done,winner:done&&!tied?(as>hs?a:h):null,awayScore:as,homeScore:hs,detail:String(e.status?.type?.shortDetail||e.status?.type?.detail||(done?(tied?'Final · Tie':'Final'):'Scheduled')),eventId:e.id?String(e.id):old.eventId},warning:null}}
 function eventContextWarning(e,a,h){
   const season=e?.season?.year,seasonType=e?.season?.type,week=e?.week?.number;
   if(season!=null&&Number(season)!==CFG.season)return `${a}-${h}: feed season ${season} does not match ${CFG.season}`;
@@ -225,7 +234,7 @@ function eventContextWarning(e,a,h){
   if(week!=null&&Number(week)!==CFG.week)return `${a}-${h}: feed week ${week} does not match ${CFG.week}`;
   return null;
 }
-function selectEvent(events,a,h,old){const q=events.filter(e=>{const c=e?.competitions?.[0],x=c?.competitors?.find(v=>v.homeAway==='away'),y=c?.competitors?.find(v=>v.homeAway==='home');return norm(x?.team?.abbreviation)===a&&norm(y?.team?.abbreviation)===h});if(!q.length)return{event:null,warning:`${a}-${h}: expected game missing from feed`};if(q.length!==1)return{event:null,warning:`${a}-${h}: duplicate events ignored`};const e=q[0],contextWarning=eventContextWarning(e,a,h);if(contextWarning)return{event:null,warning:contextWarning};if(old.eventId&&e.id&&String(e.id)!==String(old.eventId))return{event:null,warning:`${a}-${h}: event identity changed`};return{event:e,warning:null}}
+function selectEvent(events,a,h,old){const q=events.filter(e=>{const c=e?.competitions?.[0],x=c?.competitors?.find(v=>v.homeAway==='away'),y=c?.competitors?.find(v=>v.homeAway==='home');return norm(x?.team?.abbreviation)===a&&norm(y?.team?.abbreviation)===h});if(!q.length)return{event:null,warning:`${a}-${h}: expected game missing from feed`};if(q.length!==1)return{event:null,warning:`${a}-${h}: duplicate events ignored`};const e=q[0],pair=exactCompetitorPair(e);if(!pair||norm(pair.away?.team?.abbreviation)!==a||norm(pair.home?.team?.abbreviation)!==h)return{event:null,warning:`${a}-${h}: malformed competitor data ignored`};const contextWarning=eventContextWarning(e,a,h);if(contextWarning)return{event:null,warning:contextWarning};if(old.eventId&&e.id&&String(e.id)!==String(old.eventId))return{event:null,warning:`${a}-${h}: event identity changed`};return{event:e,warning:null}}
 function ageSeconds(ts){const ms=Date.parse(ts);if(!Number.isFinite(ms))return null;const delta=Date.now()-ms;if(delta<-60000)return null;return Math.max(0,Math.floor(delta/1000))}
 function setSync(fetchedAt,warnings=[]){lastFetchedAt=typeof fetchedAt==='string'?fetchedAt:null;const age=ageSeconds(lastFetchedAt),delayed=age===null||age>30,incomplete=warnings.length>0,label=incomplete?'INCOMPLETE':delayed?'DELAYED':'LIVE',ageText=age===null?'age unknown':`data ${age}s old`;$('sync').textContent=`${label} · ${ageText}${warnings.length?` · ${warnings.length} warning${warnings.length===1?'':'s'}`:''}`;$('dot').style.background=incomplete||delayed?'var(--gold)':'var(--green)'}
 async function feed(signal){const url=`${ESPN_SCOREBOARD}?dates=${CFG.season}&seasontype=2&week=${CFG.week}&limit=100&_=${Date.now()}`,r=await fetch(url,{signal,cache:'no-store',headers:{Accept:'application/json'}});if(!r.ok)throw new Error(`ESPN ${r.status}`);const j=await r.json();if(!j||!Array.isArray(j.events))throw new Error('invalid ESPN payload');return{fetchedAt:new Date().toISOString(),events:j.events}}

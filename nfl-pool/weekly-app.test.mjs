@@ -85,6 +85,13 @@ async function view(){
   assert.equal(v.$('leaderName').textContent,'D.C.');
   assert.match(v.warning(),/feed season type 1 is not regular season/);
 
+  const malformed=game({awayScore:'10',homeScore:'31'});
+  malformed.competitions[0].competitors.push({homeAway:'away',team:{abbreviation:'LV'},score:'7'});
+  v.setPayload({events:[malformed]});await v.refresh();
+  assert.equal(v.$('leaderName').textContent,'D.C.','malformed competitor cardinality must not replace the verified result');
+  assert.equal(v.$('leaderRecord').textContent,'1–0');
+  assert.match(v.warning(),/malformed competitor data ignored/);
+
   v.setFailure(true);await v.refresh();
   assert.match(v.$('sync').textContent,/^FEED UNAVAILABLE/);
   assert.equal(v.$('leaderRecord').textContent,'1–0','feed failure must preserve last-good standings');
