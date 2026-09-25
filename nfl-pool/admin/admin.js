@@ -176,15 +176,26 @@ async function sha256(file){const buf=await crypto.subtle.digest('SHA-256',await
 // The publication boundary. An existing week is replaced only from the revision this publish read (compare-and-swap on
 // season, week and revision); a new week is only inserted, never upserted, so a concurrent insert of the same week is
 // refused by the database's unique season/week key. Only a response confirming exactly one row with the new revision is a
-// normal success; any other outcome is decided by reading the week back. A write is identified by its revision, source
-// digest and timestamp, so the read-back tells this exact write apart from no write and from any other publish's write.
+// normal success; any other outcome is decided by reading the week back. A write is identified by its season and week,
+// revision, source digest, timestamp, status and configuration, so the read-back tells this exact write apart from no
+// write and from any other publish's write, even one of the same file at the same revision and instant.
 async function readWeek(season,week){
-  const {data,error}=await neon.from('nfl_pool_weeks').select('season,week,status,revision,source_sha256,updated_at').eq('season',season).eq('week',week);if(error)throw error;
+  const {data,error}=await neon.from('nfl_pool_weeks').select('season,week,status,revision,source_sha256,updated_at,config').eq('season',season).eq('week',week);if(error)throw error;
   if(!Array.isArray(data)||data.length>1||data.some(r=>r?.season!==season||r?.week!==week))throw new Error(`The database returned an unreadable result for Week ${week}.`);
   return data[0]||null;
 }
+// A configuration compared as the JSON a write sends: object keys sorted at every depth, arrays in their own order, so
+// the key order a database returns (a JSONB column keeps none) never decides a comparison. A value that is not JSON has
+// no canonical form (null), and a write whose configuration has none matches no row.
+function canonicalJson(value){
+  const text=v=>Array.isArray(v)?`[${v.map(text).join(',')}]`:v!==null&&typeof v==='object'?`{${Object.keys(v).sort().map(k=>`${JSON.stringify(k)}:${text(v[k])}`).join(',')}}`:JSON.stringify(v);
+  try{const json=JSON.stringify(value);return json===undefined?null:text(JSON.parse(json))}catch{return null}
+}
 const sameInstant=(a,b)=>Number.isFinite(Date.parse(a))&&Date.parse(a)===Date.parse(b);
-const sameWrite=(row,w)=>!!row&&!!w&&row.revision===w.revision&&row.source_sha256===w.source_sha256&&sameInstant(row.updated_at,w.updated_at);
+// What a read-back identifies a write by. Two publishes of one file can write the same revision at the same instant with
+// different configurations, and only one of them lands, so the configuration (as canonical JSON) is part of it.
+const writeIdentity=row=>row&&{season:row.season,week:row.week,revision:row.revision,source_sha256:row.source_sha256,updated_at:row.updated_at,status:row.status,config:canonicalJson(row.config)};
+const sameWrite=(row,w)=>!!row&&!!w&&row.season===w.season&&row.week===w.week&&row.revision===w.revision&&row.source_sha256===w.source_sha256&&sameInstant(row.updated_at,w.updated_at)&&row.status===w.status&&w.config!==null&&canonicalJson(row.config)===w.config;
 const attemptLanded=(row,attempt)=>sameWrite(row,attempt)&&row.status==='locked';
 function markPublished(attempt,note=''){if(fileContextCurrent(attempt.file,attempt.generation)){message(`Week ${attempt.week} published and locked successfully. Revision ${attempt.revision}.${note}`,'success');$('publishResult').hidden=false;$('trackerLink').href=`../?season=${attempt.season}&week=${attempt.week}`;$('replaceLocked').checked=false}}
 function requireRevalidation(text){parseGeneration++;invalidateParsedState();message(text,'error')}
@@ -219,12 +230,12 @@ $('publishBtn').addEventListener('click',async()=>{
     cfg.source={kind:'weekly-upload',filename:publishFile.name,sha256:digest};
     // An undecided earlier attempt of this week that landed as exactly this configuration is this publication.
     const earlier=lastAttempt?.season===cfg.season&&lastAttempt.week===cfg.week?lastAttempt:null;
-    if(earlier){lastAttempt=null;if(attemptLanded(existing,earlier)&&earlier.config===JSON.stringify(cfg)){markPublished({...earlier,file:publishFile,generation:publishGeneration},' The earlier attempt of this publication had been written after all, so nothing new was written.');return}}
+    if(earlier){lastAttempt=null;if(attemptLanded(existing,earlier)&&earlier.config===canonicalJson(cfg)){markPublished({...earlier,file:publishFile,generation:publishGeneration},' The earlier attempt of this publication had been written after all, so nothing new was written.');return}}
     if(existing?.status==='locked'&&!replaceLocked)throw new Error(`Week ${cfg.week} is already locked. Check “replace locked week” only if you intentionally need to correct it.`);
     if(existing&&!(Number.isSafeInteger(existing.revision)&&existing.revision>0))throw new Error(`Week ${cfg.week} has an unexpected revision value. Nothing was written.`);
     const nowIso=new Date().toISOString(),revision=(existing?.revision||0)+1;
     const row={season:cfg.season,week:cfg.week,status:'locked',config:cfg,source_filename:publishFile.name,source_sha256:digest,revision,published_at:nowIso,locked_at:nowIso,updated_at:nowIso};
-    assertPublishContext();attempt={season:cfg.season,week:cfg.week,revision,source_sha256:digest,updated_at:nowIso,prior:existing,config:JSON.stringify(cfg),file:publishFile,generation:publishGeneration};
+    assertPublishContext();attempt={...writeIdentity(row),prior:writeIdentity(existing),file:publishFile,generation:publishGeneration};
     const write=existing?await neon.from('nfl_pool_weeks').update(row).eq('season',cfg.season).eq('week',cfg.week).eq('revision',existing.revision).select('season,week,revision'):await neon.from('nfl_pool_weeks').insert(row).select('season,week,revision');
     if(write?.error)throw write.error;
     const written=Array.isArray(write?.data)?write.data:null;
