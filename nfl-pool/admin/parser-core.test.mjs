@@ -886,6 +886,7 @@ const adminFlush=async(n=8)=>{for(let i=0;i<n;i++)await new Promise(r=>setTimeou
 const adminUntil=async(ready,what)=>{for(let i=0;i<200&&!ready();i++)await new Promise(r=>setTimeout(r,0));assert(ready(),what)};
 const adminDeferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r});return{promise,resolve}};
 const PUBLISH_FROZEN='Publishing is in progress. Total pool entries cannot be changed until it finishes.';
+const FILE_FROZEN='Publishing is in progress. Wait for it to finish before changing files.';
 const FEED_TEAMS=[['CAR','ATL'],['NO','BAL'],['MIN','CHI'],['CIN','HOU'],['PIT','NE'],['GB','NYJ'],['CLE','TB'],['PHI','TEN'],['JAX','DEN'],['LV','LAC'],['SEA','ARI'],['WAS','DAL'],['MIA','SF'],['IND','KC'],['NYG','LAR']];
 const scheduleFeed={events:FEED_TEAMS.map(([away,home],i)=>({id:String(401+i),date:'2026-09-13T17:00:00Z',competitions:[{competitors:[{homeAway:'away',team:{abbreviation:away}},{homeAway:'home',team:{abbreviation:home}}]}]}))};
 function sheetPage(week,participantLines){
@@ -903,7 +904,7 @@ const ADMIN_SHEETS={
 let adminInstance=0;
 async function bootAdmin(){
   const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new AdminEl(id));return els.get(id)};
-  const db={session:{id:'admin-1',email:'djsmokke@gmail.com'},rows:[],log:[],readGate:null,writeGate:null},net={gate:null};
+  const db={session:{id:'admin-1',email:'djsmokke@gmail.com'},rows:[],log:[],dispatched:[],readGate:null,writeGate:null},net={gate:null};
   class Query{
     constructor(table){Object.assign(this,{table,op:'select',filters:[],row:null})}
     select(){return this}
@@ -913,6 +914,8 @@ async function bootAdmin(){
     update(row){this.op='update';this.row=row;return this}
     then(ok,fail){return this.run().then(ok,fail)}
     async run(){
+      // `dispatched` records every query the publisher issues, held or not; `log` records those that have completed.
+      db.dispatched.push(this.op);
       if(this.op==='select'&&db.readGate){const gate=db.readGate;db.readGate=null;await gate.promise}
       // A held write has been dispatched by the publisher; it commits only when the test releases it.
       if(this.op!=='select'&&db.writeGate){const gate=db.writeGate;db.writeGate=null;await gate.promise}
@@ -1171,6 +1174,64 @@ async function bootAdmin(){
   assert.equal(t.db.rows.length,1);assert.equal(t.db.rows[0].config.competitionSize,6);
   assert.equal(t.$('totalEntries').value,'6','the field shows the frozen count');
   assert.match(t.$('validation').innerHTML,/Full-field regular Pick'em data validated · 6 entries/);
+}
+{
+  // ADMIN 4k — one publish at a time, enforced by the Publish handler itself. While publish A waits on its database read,
+  // or has its insert, or its update of a locked week, dispatched and held, publish B invokes the registered listener
+  // directly, as script can although the button is disabled. B returns at once, so the freeze holds until A ends; and when
+  // A's finally lifts it, no second publish is left running behind it: an edit accepted from then on stands, and exactly
+  // one read and one write of the validated snapshot, with one revision, ever reach the database.
+  for(const [gate,replace] of [['readGate',false],['writeGate',false],['readGate',true],['writeGate',true]]){
+    const write=replace?'update':'insert',revision=replace?2:1,label=`${write}, A held at ${gate}`;
+    const t=await bootAdmin();
+    await t.count('6');await t.choose('six.pdf');await t.parse();
+    if(replace){await t.publish();t.$('replaceLocked').checked=true;t.db.dispatched.length=0;t.db.log.length=0}
+    const heldA=adminDeferred();t.db[gate]=heldA;
+    const a=t.publish();await adminUntil(()=>t.db[gate]===null,`${label}: A is held`);
+    assert.equal(t.$('publishBtn').disabled,true,`${label}: the button is disabled, so it is not what refuses B`);
+    const heldB=adminDeferred();t.db[gate]=heldB;
+    let bDone=false;const b=t.publish().then(()=>{bDone=true});await adminFlush();
+    const bReturnedAtOnce=bDone;
+    // A is still running, so everything stays frozen: the controls, a count edit, a file change and the candidate.
+    assert.equal(t.$('busy').hidden,false,label);
+    for(const id of ['parseBtn','publishBtn','file','season','totalEntries','detectedWeek','tiebreakGame','replaceLocked'])assert.equal(t.$(id).disabled,true,`${label}: #${id}`);
+    t.$('totalEntries').value='7';await t.$('totalEntries').dispatch('input');
+    assert.equal(t.$('totalEntries').value,'6',label);assert.equal(t.$('message').textContent,PUBLISH_FROZEN,label);
+    await t.choose('summary.pdf');
+    assert.equal(t.$('message').textContent,FILE_FROZEN,label);assert.match(t.$('fileName').textContent,/^six\.pdf /,label);
+    assert.equal(t.$('review').hidden,false,label);
+    // A ends normally, and only now is the freeze lifted.
+    heldA.resolve();await a;await adminFlush();
+    assert.equal(t.$('message').textContent,`Week 2 published and locked successfully. Revision ${revision}.`,label);
+    assert.equal(t.$('busy').hidden,true,label);assert.equal(t.$('file').disabled,false,label);assert.equal(t.$('totalEntries').disabled,false,label);
+    // The lift is not early: a count edit is accepted, and nothing is still publishing that could overtake it.
+    await t.count('7');
+    assert.equal(t.$('message').textContent,'Total pool entries changed. Read the weekly sheet again.',label);
+    assert.equal(bDone,true,`${label}: no second publish is still running behind the lifted freeze`);
+    assert.equal(bReturnedAtOnce,true,`${label}: B returned at once`);
+    assert.equal(t.db[gate],heldB,`${label}: B never reached the database`);t.db[gate]=null;
+    assert.deepEqual(t.db.dispatched,['select',write],`${label}: one read and one ${write}, both A's`);
+    heldB.resolve();await b;await adminFlush();
+    assert.deepEqual(t.db.log,['select',write],label);
+    assert.equal(t.db.rows.length,1,label);assert.equal(t.db.rows[0].revision,revision,label);assert.equal(t.db.rows[0].config.competitionSize,6,label);
+    assert.equal(t.$('message').textContent,'Total pool entries changed. Read the weekly sheet again.',`${label}: no late publish result`);
+  }
+}
+{
+  // ADMIN 4l — a refused publish is silent in any state: it shows no message, clears none and invalidates nothing. Publish
+  // A has its insert dispatched and held; B arrives after a rejected count edit, after a season change has invalidated the
+  // candidate, and after sign-out. The guard precedes the handler's own sign-in and validation checks, so neither runs.
+  const t=await bootAdmin();
+  await t.count('6');await t.choose('six.pdf');await t.parse();
+  const gate=adminDeferred();t.db.writeGate=gate;
+  const a=t.publish();await adminUntil(()=>t.db.writeGate===null,'the publish dispatches its write');
+  const refused=async(change,shown)=>{await change();assert.equal(t.$('message').textContent,shown);await t.publish();assert.equal(t.$('message').textContent,shown,`B left "${shown}" alone`)};
+  await refused(async()=>{t.$('totalEntries').value='7';await t.$('totalEntries').dispatch('input')},PUBLISH_FROZEN);
+  await refused(async()=>{t.$('season').value='2025';await t.$('season').dispatch('change')},'Season changed. Read the weekly sheet again.');
+  await refused(()=>t.$('signOut').dispatch('click'),'Signed out.');
+  assert.deepEqual(t.db.dispatched,['select','insert'],'no refused publish reached the database');
+  gate.resolve();await a;await adminFlush();
+  assert.deepEqual(t.db.log,['select','insert']);assert.equal(t.db.rows.length,1);
 }
 {
   // ADMIN 5/6 — changing the file or the season still invalidates the candidate.
