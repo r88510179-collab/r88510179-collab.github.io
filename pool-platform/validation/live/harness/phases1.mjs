@@ -3,7 +3,8 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {AUTH_URL, DATA_URL, ORIGIN, IDENTITIES, secrets, state, save, authCall, data, rpc, decodeJwt, claimsSummary,
-  tamperPayload, algNone, forgeWithRandomKey, JWT_SHAPE, fp, scrub, summarize, ident, jwtFor, syntheticEmail} from './lib.mjs';
+  tamperPayload, algNone, forgeWithRandomKey, JWT_SHAPE, fp, scrub, summarize, ident, jwtFor, syntheticEmail,
+  identityProbe, clientResult} from './lib.mjs';
 
 // The repo's own client modules (pool-platform/auth-core.js, platform-client.js), three levels up from here.
 const POOL_PLATFORM = path.resolve(import.meta.dirname, '..', '..', '..');
@@ -115,9 +116,8 @@ export async function sdk(rec, key = 'D') {
     pc.neon = neon;
     const sess = await pc.getSession();
     rec.check('K03', 'PlatformClient.getSession() returns the signed-in user', sess?.user?.id === state.users[key].id, {summary: `user match=${sess?.user?.id === state.users[key].id}`});
-    let uid;
-    try { uid = await pc.rpc('pool_platform_current_user_id'); } catch (e) { uid = `error: ${scrub(e.message)}`; }
-    rec.check('K04', 'PlatformClient.rpc() sends the session JWT; auth.user_id() resolves to the signed-in user', uid === state.users[key].id, {summary: `result matches ${key}=${uid === state.users[key].id}${typeof uid === 'string' && uid.startsWith('error') ? ` ${uid}` : ''}`});
+    await identityProbe(rec, 'K04', 'PlatformClient.rpc() sends the session JWT; auth.user_id() resolves to the signed-in user', state.users[key].id,
+      () => clientResult(() => pc.rpc('pool_platform_current_user_id')));
     await neon.auth.signOut();
     let after;
     try { after = await pc.getSession(); } catch { after = null; }
@@ -152,8 +152,9 @@ export async function context(rec) {
 export async function auth(rec) {
   const fx = state.fixtures;
   for (const key of Object.keys(IDENTITIES)) {
-    const r = await rpc(await jwtFor(key), 'pool_platform_current_user_id');
-    rec.check(`A-${key}-uid`, `auth.user_id() (through pool_platform_current_user_id) resolves to ${key}`, r.ok && r.json === state.users[key].id, {summary: `${summarize(r)} match=${r.json === state.users[key].id}`});
+    const t = await jwtFor(key);
+    await identityProbe(rec, `A-${key}-uid`, `auth.user_id() (through pool_platform_current_user_id) resolves to ${key}`, state.users[key].id,
+      () => rpc(t, 'pool_platform_current_user_id'));
   }
   const expect = {A: [true, false], B: [true, false], C: [false, true], D: [false, false], E: [false, false], F: [false, false], G: [false, false]};
   for (const [key, [a, b]] of Object.entries(expect)) {

@@ -194,7 +194,7 @@ export function summarize(r) {
   return parts.join(' ');
 }
 export function recorder(section) {
-  const out = {pass: 0, fail: 0, info: 0};
+  const out = {pass: 0, fail: 0, info: 0, reliability: 0};
   const write = rec => fs.appendFileSync(EVIDENCE, JSON.stringify(redact({ts: new Date().toISOString(), section, ...rec})) + '\n');
   return {
     out,
@@ -209,6 +209,15 @@ export function recorder(section) {
       write({id, desc, result: 'INFO', detail});
       console.log(`INFO [${section}] ${id} ${desc}${detail.summary ? ` :: ${scrub(detail.summary)}` : ''}`);
     },
+    // The NULL-identity condition outlasted its one retry, so the check could not be established. A failure (never
+    // a pass), counted in fail and in reliability, and not a security finding.
+    reliability(id, desc, detail = {}) {
+      out.fail++;
+      out.reliability++;
+      write({id, desc, result: 'FAIL-RELIABILITY', detail});
+      console.log(`FAIL-RELIABILITY [${section}] ${id} ${desc}${detail.summary ? ` :: ${scrub(detail.summary)}` : ''}`);
+      return false;
+    },
     stop(severity, id, desc, detail = {}) {
       write({id, desc, result: `STOP-${severity}`, detail});
       console.log(`STOP-${severity} [${section}] ${id} ${desc}${detail.summary ? ` :: ${scrub(detail.summary)}` : ''}`);
@@ -222,3 +231,60 @@ export const failedWith = (r, message) => r.status >= 400 && r.message === messa
 export const denied = r => (r.status === 401 || r.status === 403) && (r.code === '42501' || /permission denied/i.test(r.message || ''));
 export const uuid = () => crypto.randomUUID();
 export const sleep = ms => new Promise(res => setTimeout(res, ms));
+
+// ---------- identity: the NULL-identity reliability condition ----------
+// Observed on the commercial endpoint: the first request served by a newly opened Data API -> Postgres backend
+// connection can run with auth.user_id() = NULL although its JWT is valid, and an immediate retry succeeded. Only
+// that correlation is established, not the cause inside Neon. A NULL identity fails closed (each reviewed RPC raises
+// auth_required as its first statement, before it reads, locks or writes; RLS shows it no row of any table), but it
+// never counts as a passed check. Every identity result is exactly one of:
+//   CORRECT  the expected user id: continue
+//   NULL     no identity (a null user id, or an RPC's auth_required): the same request runs once more, never a third
+//            time; NULL again is a RELIABILITY failure
+//   WRONG    a user id other than the expected one: P0 stop at once
+//   ERROR    anything else (an HTTP or client error, an unexpected value): a failure, never a pass
+export const IDENTITY = Object.freeze({CORRECT: 'CORRECT', NULL: 'NULL', WRONG: 'WRONG', ERROR: 'ERROR'});
+export const authRequired = r => !!r && failedWith(r, 'auth_required');
+
+// r is a Data API result (data()/rpc()) or a PlatformClient.rpc() outcome from clientResult().
+export function classifyIdentity(expectedUserId, r) {
+  if (typeof expectedUserId !== 'string' || !expectedUserId) throw new Error('classifyIdentity: the expected user id is required');
+  if (r?.ok) {
+    if (r.json === expectedUserId) return IDENTITY.CORRECT;
+    if (r.json === null) return IDENTITY.NULL;
+    return typeof r.json === 'string' && r.json !== '' ? IDENTITY.WRONG : IDENTITY.ERROR;
+  }
+  return authRequired(r) ? IDENTITY.NULL : IDENTITY.ERROR;
+}
+
+// PlatformClient.rpc() resolves with the RPC's value or throws; this gives it the shape of a Data API result.
+export async function clientResult(call) {
+  try { return {via: 'PlatformClient.rpc', ok: true, status: null, json: await call()}; }
+  catch (e) { return {via: 'PlatformClient.rpc', ok: false, status: null, json: null, message: scrub(e?.message ?? e)}; }
+}
+const resultSummary = r => r?.via ? (r.ok ? `${r.via} resolved ${scrub(JSON.stringify(r.json))}` : `${r.via} threw: ${scrub(r.message).slice(0, 160)}`) : summarize(r);
+
+// Runs an identity-sensitive request, and runs it once more only when isNull says the first answer is the
+// NULL-identity signal. No loop: a request runs at most twice.
+export async function retryOnNull(attempt, isNull = authRequired) {
+  const first = await attempt();
+  if (!isNull(first)) return {result: first, first, retried: false, nullAgain: false};
+  const result = await attempt();
+  return {result, first, retried: true, nullAgain: !!isNull(result)};
+}
+
+// An identity probe (pool_platform_current_user_id, directly or through PlatformClient.rpc): classified, retried once
+// on NULL, and recorded with the expected and returned user ids. WRONG stops (P0), NULL twice is a RELIABILITY
+// failure and ERROR fails. An informational probe records INFO instead of a check, but still stops on WRONG.
+export async function identityProbe(rec, id, desc, expectedUserId, attempt, {informational = false} = {}) {
+  const x = await retryOnNull(attempt, r => classifyIdentity(expectedUserId, r) === IDENTITY.NULL);
+  const classification = classifyIdentity(expectedUserId, x.result);
+  const detail = {expected_user_id: expectedUserId, returned_user_id: x.result?.ok && typeof x.result.json === 'string' ? x.result.json : null,
+    classification, summary: resultSummary(x.result), attempts: x.retried ? 2 : 1,
+    ...(x.retried ? {first_attempt: {classification: IDENTITY.NULL, summary: resultSummary(x.first)}} : {})};
+  if (classification === IDENTITY.WRONG) rec.stop('P0', id, `${desc}: WRONG identity (a user id other than the expected one)`, detail);
+  if (informational) rec.info(id, desc, detail);
+  else if (classification === IDENTITY.NULL) rec.reliability(id, `${desc}: identity NULL on the request and on its one retry`, detail);
+  else rec.check(id, desc, classification === IDENTITY.CORRECT, detail);
+  return {classification, ...x};
+}

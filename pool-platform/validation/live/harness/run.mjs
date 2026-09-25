@@ -19,7 +19,8 @@ if (!wanted.length || unknown.length) {
   console.error(`phases: ${Object.keys(PHASES).join(' ')}${unknown.length ? `\nunknown: ${unknown.join(' ')}` : ''}`);
   process.exit(2);
 }
-const totals = {pass: 0, fail: 0, info: 0};
+// fail includes the RELIABILITY failures (NULL identity through the one retry), also counted in reliability.
+const totals = {pass: 0, fail: 0, info: 0, reliability: 0};
 let code = 0;
 for (const name of wanted) {
   const rec = recorder(name);
@@ -31,9 +32,9 @@ for (const name of wanted) {
     else { console.log(`\n*** harness error in ${name}: ${String(e?.stack || e).replace(/eyJ[A-Za-z0-9_.-]+/g, '<jwt-redacted>')}`); code = 1; }
   }
   for (const k of Object.keys(totals)) totals[k] += rec.out[k];
-  console.log(`--- ${name}: pass=${rec.out.pass} fail=${rec.out.fail} info=${rec.out.info}`);
+  console.log(`--- ${name}: pass=${rec.out.pass} fail=${rec.out.fail} info=${rec.out.info} reliability=${rec.out.reliability}`);
   save();
   if (code) break;
 }
-console.log(`\nTOTAL pass=${totals.pass} fail=${totals.fail} info=${totals.info}${code === 3 ? ' (STOPPED)' : code ? ' (ERROR)' : ''}`);
+console.log(`\nTOTAL pass=${totals.pass} fail=${totals.fail} info=${totals.info} reliability=${totals.reliability}${code === 3 ? ' (STOPPED)' : code ? ' (ERROR)' : ''}`);
 process.exit(code);

@@ -4,7 +4,8 @@
   "type": "module",
   "description": "Commercial V1 live security/behaviour validation harness (synthetic data only). Not part of the app.",
   "scripts": {
-    "live": "node harness/run.mjs"
+    "live": "node harness/run.mjs",
+    "test": "node --test harness/*.test.mjs"
   },
   "dependencies": {
     "@neondatabase/neon-js": "0.7.0-beta",

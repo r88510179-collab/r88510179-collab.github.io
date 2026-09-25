@@ -4,7 +4,8 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {AUTH_URL, DATA_URL, ORIGIN, secrets, state, save, data, rpc, authCall, jwtFor, summarize, failedWith, uuid, sleep,
-  decodeJwt, claimsSummary, JWT_SHAPE, jwtSecondsLeft, scrub, fp, ident} from './lib.mjs';
+  decodeJwt, claimsSummary, JWT_SHAPE, jwtSecondsLeft, scrub, fp, ident, IDENTITY, classifyIdentity, clientResult, identityProbe,
+  retryOnNull} from './lib.mjs';
 import {eid, W, PK, SV, PB, card, submit, createInvite, claim, subRow} from './phases2.mjs';
 
 // The repo's own client modules (pool-platform/auth-core.js, platform-client.js), three levels up from here.
@@ -75,6 +76,21 @@ export async function batch(rec) {
   rec.check('BT9', 'anonymous (no JWT) cannot call the batch RPC', !r.ok, {summary: summarize(r)});
 }
 
+// Evidence for a request that retryOnNull ran a second time because the first answer was auth_required.
+function noteNull(rec, id, x) {
+  if (x.retried) rec.info(`${id}-null`, `auth_required (NULL identity) on the first request; retried once${x.nullAgain ? ': NULL again' : ''}`,
+    {classification: IDENTITY.NULL, first: summarize(x.first), retry: summarize(x.result)});
+}
+// A check over retryOnNull outcomes ([outcome, pass] pairs): a RELIABILITY failure when its only failing requests are
+// the ones still NULL after their retry, otherwise the ordinary check.
+function checkRetried(rec, id, desc, outcomes, detail) {
+  const failing = outcomes.filter(([x, pass]) => !pass(x.result));
+  if (failing.length && failing.every(([x]) => x.nullAgain)) {
+    return rec.reliability(id, `${desc}: not established, ${failing.length} request(s) NULL identity (auth_required) on the request and on its one retry`, detail);
+  }
+  return rec.check(id, desc, !failing.length, detail);
+}
+
 // 15: unauthorized callers see only the authorization failure, whatever the payload, history, week or entry state.
 export async function authorder(rec) {
   const probes = [
@@ -94,44 +110,63 @@ export async function authorder(rec) {
     ['locked participant row (if locked)', W(PK, 7), eid('PK-LOCK-P'), card()],
     ['valid payload in an open week', W(PK, 12), eid('PK-D03'), card()]
   ];
+  // Every request here goes through retryOnNull. auth_required is the NULL-identity signal, raised before the RPC
+  // reads anything, so it discloses nothing and gets one retry. NULL again leaves that probe unestablished: a
+  // RELIABILITY failure of its summary check, never an authorization-order finding. Any other unexpected answer,
+  // first or on the retry, stops or fails exactly as before.
+  const unestablished = n => ({summary: `${n.length} probe(s) NULL identity (auth_required) on the request and on its one retry: ${n.join(' ')}`});
   let n = 0;
+  const ao1Null = [];
   for (const caller of ['F', 'E', 'G', 'C']) {
     for (const [label, weekId, entryId, body] of probes) {
       for (const [src, exp] of [['participant', 'entry_not_owned'], ['commissioner_import', 'commissioner_required'], ['commissioner_manual', 'commissioner_required']]) {
-        const r = await submit(caller, weekId, entryId, src, body);
+        const x = await retryOnNull(() => submit(caller, weekId, entryId, src, body));
+        const r = x.result;
         n++;
+        noteNull(rec, `AO-${caller}-${n}`, x);
+        if (x.nullAgain) { ao1Null.push(`AO-${caller}-${n}`); continue; }
         const ok = failedWith(r, exp) && r.details == null && r.hint == null;
         if (!ok) rec.stop('P1', `AO-${caller}-${n}`, `authorization-order leak: ${caller} ${src} on "${label}" returned ${summarize(r)} instead of ${exp}`, {summary: summarize(r)});
       }
     }
   }
-  rec.check('AO1', `${n} unauthorized probes (F, E, G, C × 15 states × 3 sources) all returned only entry_not_owned / commissioner_required with no details`, true, {summary: `probes=${n}`});
+  const ao1 = `${n} unauthorized probes (F, E, G, C × 15 states × 3 sources) all returned only entry_not_owned / commissioner_required with no details`;
+  if (ao1Null.length) rec.reliability('AO1', `${ao1}: not established`, unestablished(ao1Null));
+  else rec.check('AO1', ao1, true, {summary: `probes=${n}`});
   // Whether a week belongs to an entry's season, and whether the entry exists, is told only to its owner or a
   // commissioner of its tenant: for anyone else a real or missing entry with its own week, another season's week,
   // a Tenant B week or a missing week all answer the same authorization failure.
   const weeks = [['own week', W(PK, 12)], ['other-season week', W(SV, 9)], ['Tenant B week', W(PB, 1)], ['missing week', uuid()]];
   let m = 0;
+  const ao2Null = [];
   for (const caller of ['F', 'E', 'G', 'C']) {
     for (const [entryLabel, entryId] of [['D entry', eid('PK-D03')], ['missing entry', uuid()]]) {
       for (const [weekLabel, weekId] of weeks) {
         for (const [src, exp] of [['participant', 'entry_not_owned'], ['commissioner_import', 'commissioner_required'], ['commissioner_manual', 'commissioner_required']]) {
-          const r = await submit(caller, weekId, entryId, src, card());
+          const x = await retryOnNull(() => submit(caller, weekId, entryId, src, card()));
+          const r = x.result;
           m++;
+          noteNull(rec, `AO2-${caller}-${m}`, x);
+          if (x.nullAgain) { ao2Null.push(`AO2-${caller}-${m}`); continue; }
           const ok = failedWith(r, exp) && r.details == null && r.hint == null;
           if (!ok) rec.stop('P2', `AO2-${caller}-${m}`, `entry/week disclosure: ${caller} ${src} with ${entryLabel} and ${weekLabel} returned ${summarize(r)} instead of ${exp}`, {summary: summarize(r)});
         }
       }
     }
   }
-  rec.check('AO2', `${m} unauthorized entry/week probes (F, E, G, C × real or missing entry × own, other-season, Tenant B or missing week × 3 sources) all returned only entry_not_owned / commissioner_required`, true, {summary: `probes=${m}`});
+  const ao2 = `${m} unauthorized entry/week probes (F, E, G, C × real or missing entry × own, other-season, Tenant B or missing week × 3 sources) all returned only entry_not_owned / commissioner_required`;
+  if (ao2Null.length) rec.reliability('AO2', `${ao2}: not established`, unestablished(ao2Null));
+  else rec.check('AO2', ao2, true, {summary: `probes=${m}`});
   // Authorized callers still learn that a week is not their entry's; a missing entry stays an authorization failure.
   const authorized = [];
   for (const [key, src, denied] of [['D', 'participant', 'entry_not_owned'], ['A', 'commissioner_import', 'commissioner_required'], ['B', 'commissioner_manual', 'commissioner_required']]) {
-    for (const [weekLabel, weekId] of weeks.slice(1)) authorized.push([`${key} ${src} PK-D03 + ${weekLabel}`, await submit(key, weekId, eid('PK-D03'), src, card()), 'invalid_entry_week']);
-    authorized.push([`${key} ${src} missing entry + own week`, await submit(key, W(PK, 12), uuid(), src, card()), denied]);
+    for (const [weekLabel, weekId] of weeks.slice(1)) authorized.push([`${key} ${src} PK-D03 + ${weekLabel}`, await retryOnNull(() => submit(key, weekId, eid('PK-D03'), src, card())), 'invalid_entry_week']);
+    const missingEntry = uuid();
+    authorized.push([`${key} ${src} missing entry + own week`, await retryOnNull(() => submit(key, W(PK, 12), missingEntry, src, card())), denied]);
   }
-  rec.check('AO10', 'owner D and Tenant A commissioners A, B: PK-D03 with another season\'s, a Tenant B or a missing week → invalid_entry_week; a missing entry → entry_not_owned / commissioner_required',
-    authorized.every(([, r, exp]) => failedWith(r, exp)), {summary: authorized.map(([label, r]) => `${label}: ${summarize(r)}`).join('; ')});
+  authorized.forEach(([, x], i) => noteNull(rec, `AO10-${i + 1}`, x));
+  checkRetried(rec, 'AO10', 'owner D and Tenant A commissioners A, B: PK-D03 with another season\'s, a Tenant B or a missing week → invalid_entry_week; a missing entry → entry_not_owned / commissioner_required',
+    authorized.map(([, x, exp]) => [x, r => failedWith(r, exp)]), {summary: authorized.map(([label, x]) => `${label}: ${summarize(x.result)}`).join('; ')});
   // Uniform answers where existence could otherwise leak.
   const pairs = [
     ['AO3', 'F', 'pool_platform_commissioner_context', {p_pool_slug: 'neighborhood-pickem'}, {p_pool_slug: 'no-such-pool-zz'}, 'commissioner_required'],
@@ -144,8 +179,11 @@ export async function authorder(rec) {
   ];
   for (const [cid, key, fn, real, fake, exp] of pairs) {
     const t = await jwtFor(key);
-    const a = await rpc(t, fn, real), b = await rpc(t, fn, fake);
-    rec.check(cid, `${key} ${fn}: real and nonexistent targets get the same ${exp}`, failedWith(a, exp) && failedWith(b, exp), {summary: `${summarize(a)} | ${summarize(b)}`});
+    const a = await retryOnNull(() => rpc(t, fn, real)), b = await retryOnNull(() => rpc(t, fn, fake));
+    noteNull(rec, `${cid}-real`, a);
+    noteNull(rec, `${cid}-nonexistent`, b);
+    checkRetried(rec, cid, `${key} ${fn}: real and nonexistent targets get the same ${exp}`, [a, b].map(x => [x, r => failedWith(r, exp)]),
+      {summary: `${summarize(a.result)} | ${summarize(b.result)}`});
   }
 }
 
@@ -214,7 +252,10 @@ export async function surface(rec) {
   for (const [fn, args] of intended) {
     const a = await rpc(tD, fn, args);
     const executed = a.ok || a.code === 'P0001';
-    rec.check(`SF-auth-${fn}`, `authenticated can execute ${fn}`, executed, {summary: summarize(a)});
+    // This check is about EXECUTE (a NULL identity proves it too), but the identity it returns is still classified.
+    const identity = fn === 'pool_platform_current_user_id' ? {expected_user_id: state.users.D.id, classification: classifyIdentity(state.users.D.id, a)} : {};
+    if (identity.classification === IDENTITY.WRONG) rec.stop('P0', `SF-auth-${fn}`, `D's JWT resolved to another user id`, {summary: summarize(a), ...identity, returned_user_id: a.json});
+    rec.check(`SF-auth-${fn}`, `authenticated can execute ${fn}`, executed, {summary: summarize(a), ...identity});
     for (const [label, token] of callers.slice(0, 2)) {
       if (label === 'anonJWT' && !token) continue;
       const x = await rpc(token, fn, args);
@@ -267,22 +308,50 @@ export async function isolation(rec, keys = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 
     weeks: new Set(Object.values(fx.weeks[PB]).map(w => w.id)), entries: new Set(Object.values(fx.entries).filter(e => e.slug === PB).map(e => e.id))};
   const seasonOf = {}; for (const [slug, id] of Object.entries(fx.seasons)) seasonOf[slug] = id;
   const ownedBy = k => new Set(Object.entries(state.owned).filter(([, w]) => w === k).map(([c]) => eid(c)));
-  const view = {};
+  const isComm = key => key === 'A' || key === 'B' || key === 'C';
+  // Reads that cannot come back empty once the identity resolves: a commissioner's own tenant, memberships, pools,
+  // seasons, entries and weeks (fixtures, O1), and a participant's owned entries with their tenants, pools, seasons
+  // and weeks. A NULL identity sees no row of any table, so no rows there is the NULL-identity signal and that read
+  // runs once more. A commissioner sees audit rows only with their submissions, so audit rows beside an empty
+  // submissions read is the same signal.
+  const rowsCertain = (key, tbl, v) => isComm(key)
+    ? ['pool_platform_tenants', 'pool_platform_memberships', 'pool_platform_pools', 'pool_platform_seasons', 'pool_platform_entries',
+      'pool_platform_weeks'].includes(tbl) || (tbl === 'pool_platform_submissions' && v.pool_platform_submission_audit.length > 0)
+    : ownedBy(key).size > 0 && ['pool_platform_tenants', 'pool_platform_pools', 'pool_platform_seasons', 'pool_platform_entries', 'pool_platform_weeks'].includes(tbl);
+  const view = {}, errored = {}, stillNull = {};
   for (const key of keys) {
     const t = await jwtFor(key);
     const v = {};
+    errored[key] = [];
+    stillNull[key] = [];
+    const readFailed = (tbl, r) => { rec.check(`ISO-${key}-${tbl}-read`, `${key} can query ${tbl} (RLS-filtered)`, false, {summary: summarize(r)}); errored[key].push(tbl); };
     for (const tbl of TABLES) {
       const r = await data('GET', `/${tbl}?select=*`, {token: t});
-      if (!r.ok) { rec.check(`ISO-${key}-${tbl}-read`, `${key} can query ${tbl} (RLS-filtered)`, false, {summary: summarize(r)}); v[tbl] = []; continue; }
+      if (!r.ok) { readFailed(tbl, r); v[tbl] = []; continue; }
       v[tbl] = r.json;
+    }
+    for (const tbl of TABLES) {
+      if (v[tbl].length || errored[key].includes(tbl) || !rowsCertain(key, tbl, v)) continue;
+      const r = await data('GET', `/${tbl}?select=*`, {token: t});
+      rec.info(`ISO-${key}-${tbl}-null`, `${key} got no ${tbl} row where its identity must see rows (NULL identity); read once more`,
+        {classification: IDENTITY.NULL, retry: `${summarize(r)} rows=${r.ok && Array.isArray(r.json) ? r.json.length : '-'}`});
+      if (!r.ok) readFailed(tbl, r);
+      else if (r.json.length) v[tbl] = r.json;
+      else stillNull[key].push(tbl);
     }
     view[key] = v;
   }
   const leak = (key, desc, bad) => { if (bad.length) rec.stop('P0', `ISO-${key}-leak`, `${key}: ${desc}`, {summary: `${bad.length} row(s)`}); };
   for (const key of keys) {
     const v = view[key];
-    const isComm = key === 'A' || key === 'B' || key === 'C';
-    if (isComm) {
+    // A leak check against the fixtures always runs: any row a read returns is a real row. A check that compares one
+    // read with another runs only when the read it compares with answered, never on a read left empty by NULL
+    // identity (or failed), which would turn every row of the other into a false leak.
+    const answered = tbl => !errored[key].includes(tbl) && !stillNull[key].includes(tbl);
+    const settle = (desc, pass, detail) => stillNull[key].length
+      ? rec.reliability(`ISO-${key}`, `${desc}: not established, ${stillNull[key].join(', ')} returned no rows on the read and on its one retry`, detail)
+      : rec.check(`ISO-${key}`, desc, !errored[key].length && pass, detail);
+    if (isComm(key)) {
       const T = key === 'C' ? B : A, O = key === 'C' ? A : B;
       leak(key, 'other-tenant tenant rows', v.pool_platform_tenants.filter(x => x.id !== T.tenant));
       leak(key, 'other-tenant memberships', v.pool_platform_memberships.filter(x => x.tenant_id !== T.tenant));
@@ -291,11 +360,13 @@ export async function isolation(rec, keys = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 
       leak(key, 'other-tenant weeks', v.pool_platform_weeks.filter(x => !T.weeks.has(x.id)));
       leak(key, 'other-tenant entries', v.pool_platform_entries.filter(x => !T.entries.has(x.id)));
       leak(key, 'other-tenant submissions', v.pool_platform_submissions.filter(x => !T.entries.has(x.entry_id)));
-      const subIds = new Set(v.pool_platform_submissions.map(x => x.id));
-      leak(key, 'audit rows of submissions outside its view', v.pool_platform_submission_audit.filter(x => !subIds.has(x.submission_id)));
+      if (answered('pool_platform_submissions')) {
+        const subIds = new Set(v.pool_platform_submissions.map(x => x.id));
+        leak(key, 'audit rows of submissions outside its view', v.pool_platform_submission_audit.filter(x => !subIds.has(x.submission_id)));
+      }
       leak(key, 'other-tenant invites', v.pool_platform_entry_invites.filter(x => !T.entries.has(x.entry_id)));
       const complete = v.pool_platform_pools.length === T.pools.size && v.pool_platform_seasons.length === T.seasons.size && v.pool_platform_weeks.length === T.weeks.size && v.pool_platform_entries.length === T.entries.size;
-      rec.check(`ISO-${key}`, `${key} (${key === 'C' ? 'Tenant B' : 'Tenant A'} commissioner) sees its whole tenant and nothing of the other`, complete && v.pool_platform_tenants.length === 1,
+      settle(`${key} (${key === 'C' ? 'Tenant B' : 'Tenant A'} commissioner) sees its whole tenant and nothing of the other`, complete && v.pool_platform_tenants.length === 1,
         {summary: `tenants=${v.pool_platform_tenants.length} memberships=${v.pool_platform_memberships.length} pools=${v.pool_platform_pools.length} seasons=${v.pool_platform_seasons.length} weeks=${v.pool_platform_weeks.length} entries=${v.pool_platform_entries.length} submissions=${v.pool_platform_submissions.length} audit=${v.pool_platform_submission_audit.length} invites=${v.pool_platform_entry_invites.length}`});
       state.results[`iso_${key}`] = Object.fromEntries(TABLES.map(tb => [tb, v[tb].length]));
       void O;
@@ -306,14 +377,18 @@ export async function isolation(rec, keys = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 
       leak(key, 'audit rows (commissioner-only)', v.pool_platform_submission_audit);
       leak(key, 'invite rows (commissioner-only)', v.pool_platform_entry_invites);
       leak(key, 'membership rows (it has none)', v.pool_platform_memberships);
-      const mySeasons = new Set(v.pool_platform_entries.map(x => x.season_id));
-      leak(key, 'seasons without an owned entry', v.pool_platform_seasons.filter(x => !mySeasons.has(x.id)));
-      leak(key, 'weeks outside seasons it participates in', v.pool_platform_weeks.filter(x => !mySeasons.has(x.season_id)));
-      const myPools = new Set(v.pool_platform_seasons.map(x => x.pool_id));
-      leak(key, 'pools without an owned entry', v.pool_platform_pools.filter(x => !myPools.has(x.id)));
-      leak(key, 'tenants without an owned entry', v.pool_platform_tenants.filter(x => !v.pool_platform_pools.some(p => p.tenant_id === x.id)));
+      if (answered('pool_platform_entries')) {
+        const mySeasons = new Set(v.pool_platform_entries.map(x => x.season_id));
+        leak(key, 'seasons without an owned entry', v.pool_platform_seasons.filter(x => !mySeasons.has(x.id)));
+        leak(key, 'weeks outside seasons it participates in', v.pool_platform_weeks.filter(x => !mySeasons.has(x.season_id)));
+      }
+      if (answered('pool_platform_seasons')) {
+        const myPools = new Set(v.pool_platform_seasons.map(x => x.pool_id));
+        leak(key, 'pools without an owned entry', v.pool_platform_pools.filter(x => !myPools.has(x.id)));
+      }
+      if (answered('pool_platform_pools')) leak(key, 'tenants without an owned entry', v.pool_platform_tenants.filter(x => !v.pool_platform_pools.some(p => p.tenant_id === x.id)));
       const exact = v.pool_platform_entries.length === mine.size;
-      rec.check(`ISO-${key}`, `${key} sees exactly its own ${mine.size} entr${mine.size === 1 ? 'y' : 'ies'} and their context, nothing else`, exact,
+      settle(`${key} sees exactly its own ${mine.size} entr${mine.size === 1 ? 'y' : 'ies'} and their context, nothing else`, exact,
         {summary: `tenants=${v.pool_platform_tenants.length} pools=${v.pool_platform_pools.length} seasons=${v.pool_platform_seasons.length} weeks=${v.pool_platform_weeks.length} entries=${v.pool_platform_entries.length} submissions=${v.pool_platform_submissions.length} audit=0 invites=0 memberships=0`});
       state.results[`iso_${key}`] = Object.fromEntries(TABLES.map(tb => [tb, v[tb].length]));
     }
@@ -329,31 +404,40 @@ export async function isolation(rec, keys = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 
     }
     rec.check(`ISO-${label}`, `${label}: no protected rows from any of the 9 tables`, true, {summary: JSON.stringify(codes)});
   }
-  // Context RPCs.
-  const ctx = async (key, fn, args) => rpc(await jwtFor(key), fn, args);
-  let r = await ctx('A', 'pool_platform_commissioner_context', {p_pool_slug: PB});
-  rec.check('ISO-ctx1', 'A cannot load the Tenant B commissioner context', failedWith(r, 'commissioner_required'), {summary: summarize(r)});
-  r = await ctx('C', 'pool_platform_commissioner_context', {p_pool_slug: PK});
-  rec.check('ISO-ctx2', 'C cannot load a Tenant A commissioner context', failedWith(r, 'commissioner_required'), {summary: summarize(r)});
-  r = await ctx('B', 'pool_platform_commissioner_context', {p_pool_slug: SV});
-  rec.check('ISO-ctx3', 'co-commissioner B loads a Tenant A commissioner context', r.ok && r.json?.pool?.slug === SV, {summary: summarize(r)});
+  // Context RPCs. auth_required (NULL identity) gets one retry; NULL again is a RELIABILITY failure, never INFO.
+  const ctx = async (id, key, fn, args) => {
+    const t = await jwtFor(key);
+    const x = await retryOnNull(() => rpc(t, fn, args));
+    noteNull(rec, id, x);
+    return x;
+  };
+  const one = (x, pass) => [[x, pass]];
+  let x = await ctx('ISO-ctx1', 'A', 'pool_platform_commissioner_context', {p_pool_slug: PB});
+  checkRetried(rec, 'ISO-ctx1', 'A cannot load the Tenant B commissioner context', one(x, r => failedWith(r, 'commissioner_required')), {summary: summarize(x.result)});
+  x = await ctx('ISO-ctx2', 'C', 'pool_platform_commissioner_context', {p_pool_slug: PK});
+  checkRetried(rec, 'ISO-ctx2', 'C cannot load a Tenant A commissioner context', one(x, r => failedWith(r, 'commissioner_required')), {summary: summarize(x.result)});
+  x = await ctx('ISO-ctx3', 'B', 'pool_platform_commissioner_context', {p_pool_slug: SV});
+  checkRetried(rec, 'ISO-ctx3', 'co-commissioner B loads a Tenant A commissioner context', one(x, r => r.ok && r.json?.pool?.slug === SV), {summary: summarize(x.result)});
   for (const key of ['D', 'E', ...(state.users.H ? ['H'] : [])]) {
     const mine = ownedBy(key);
     for (const slug of [PK, SV]) {
-      r = await ctx(key, 'pool_platform_participant_context', {p_pool_slug: slug, p_season: null, p_week: null});
-      if (!r.ok) { rec.info(`ISO-pctx-${key}-${slug}`, `${key} participant context ${slug}`, {summary: summarize(r)}); continue; }
+      const cid = `ISO-pctx-${key}-${slug}`, desc = `${key} participant context for ${slug} lists only its own active entries and their own history`;
+      x = await ctx(cid, key, 'pool_platform_participant_context', {p_pool_slug: slug, p_season: null, p_week: null});
+      const r = x.result;
+      if (x.nullAgain) { checkRetried(rec, cid, desc, one(x, () => false), {summary: summarize(r)}); continue; }
+      if (!r.ok) { rec.info(cid, `${key} participant context ${slug}`, {summary: summarize(r)}); continue; }
       const foreign = r.json.entries.filter(e => !mine.has(e.id));
       const text = JSON.stringify(r.json);
       const otherIds = [...Object.values(state.fixtures.entries)].map(e => e.id).filter(id => !mine.has(id) && text.includes(id));
-      if (foreign.length || otherIds.length) rec.stop('P0', `ISO-pctx-${key}-${slug}`, `${key} participant context exposes other entries`, {summary: `${foreign.length}/${otherIds.length}`});
-      rec.check(`ISO-pctx-${key}-${slug}`, `${key} participant context for ${slug} lists only its own active entries and their own history`, true, {summary: `entries=${r.json.entries.length} week=${r.json.week?.week}`});
+      if (foreign.length || otherIds.length) rec.stop('P0', cid, `${key} participant context exposes other entries`, {summary: `${foreign.length}/${otherIds.length}`});
+      rec.check(cid, desc, true, {summary: `entries=${r.json.entries.length} week=${r.json.week?.week}`});
     }
-    r = await ctx(key, 'pool_platform_participant_context', {p_pool_slug: PB, p_season: null, p_week: null});
-    rec.check(`ISO-pctx-${key}-${PB}`, `${key} cannot load the Tenant B participant context`, failedWith(r, 'pool_not_found'), {summary: summarize(r)});
+    x = await ctx(`ISO-pctx-${key}-${PB}`, key, 'pool_platform_participant_context', {p_pool_slug: PB, p_season: null, p_week: null});
+    checkRetried(rec, `ISO-pctx-${key}-${PB}`, `${key} cannot load the Tenant B participant context`, one(x, r => failedWith(r, 'pool_not_found')), {summary: summarize(x.result)});
   }
   for (const key of ['F', 'G']) for (const slug of [PK, SV, PB]) {
-    r = await ctx(key, 'pool_platform_participant_context', {p_pool_slug: slug, p_season: null, p_week: null});
-    rec.check(`ISO-out-${key}-${slug}`, `${key} participant context ${slug} → pool_not_found`, failedWith(r, 'pool_not_found'), {summary: summarize(r)});
+    x = await ctx(`ISO-out-${key}-${slug}`, key, 'pool_platform_participant_context', {p_pool_slug: slug, p_season: null, p_week: null});
+    checkRetried(rec, `ISO-out-${key}-${slug}`, `${key} participant context ${slug} → pool_not_found`, one(x, r => failedWith(r, 'pool_not_found')), {summary: summarize(x.result)});
   }
   save();
 }
@@ -413,17 +497,36 @@ export async function deadline(rec) {
   rec.check('DL7', 'the pre-deadline row is unchanged (revision 1)', row?.revision === 1, {summary: `revision=${row?.revision}`});
 }
 
+// On the commercial endpoint the Data API accepted a JWT until about 29 s after its exp and rejected it from about
+// 31-33 s (an expired JWT answers HTTP 400). The expired-token assertion therefore runs only once a token is at least
+// JWT_EXPIRY_GATE_S past exp: a token already past exp waits for the gate (at most that long); one not yet expired is
+// left for a later run. An accepted request past the gate is still a P0 stop.
+export const JWT_EXPIRY_GATE_S = 35;
+
 export async function jwtexpiry(rec) {
   let tested = 0;
+  const notYet = [];
   for (const [key, tok] of Object.entries(secrets.firstJwts || {})) {
-    if (!tok || jwtSecondsLeft(tok) > -5) continue;
+    if (!tok) continue;
+    const exp = decodeJwt(tok).payload.exp;
+    const pastExpNow = Date.now() / 1000 - exp;
+    if (pastExpNow < 0) { notYet.push({key, exp, seconds_past_exp: Number(pastExpNow.toFixed(3))}); continue; }
+    const waitedMs = pastExpNow < JWT_EXPIRY_GATE_S ? Math.ceil((JWT_EXPIRY_GATE_S - pastExpNow) * 1000) : 0;
+    if (waitedMs) await sleep(waitedMs);
+    // Captured before the probe request: the JWT's exp, when the probe starts and how far past exp that is.
+    const probeStart = Date.now();
+    const timing = {exp, exp_at: new Date(exp * 1000).toISOString(), probe_start: new Date(probeStart).toISOString(),
+      seconds_past_exp: Number((probeStart / 1000 - exp).toFixed(3)), gate_s: JWT_EXPIRY_GATE_S, waited_ms: waitedMs};
     const r = await rpc(tok, 'pool_platform_current_user_id');
-    if (r.ok) rec.stop('P0', `JX-${key}`, 'expired JWT accepted', {summary: summarize(r)});
-    rec.check(`JX-${key}`, `${key}'s first JWT, expired ${-jwtSecondsLeft(tok)}s ago, is rejected`, !r.ok, {summary: summarize(r)});
-    const fresh = await rpc(await jwtFor(key), 'pool_platform_current_user_id');
-    rec.check(`JX-${key}-fresh`, `${key} with a freshly issued JWT works again`, fresh.ok && fresh.json === state.users[key].id, {summary: summarize(fresh)});
+    if (r.ok) rec.stop('P0', `JX-${key}`, `expired JWT accepted ${timing.seconds_past_exp}s past exp`,
+      {summary: summarize(r), timing, identity: classifyIdentity(state.users[key].id, r)});
+    rec.check(`JX-${key}`, `${key}'s first JWT, ${timing.seconds_past_exp}s past exp at probe start, is rejected`, !r.ok, {summary: summarize(r), timing});
+    const fresh = await jwtFor(key);
+    await identityProbe(rec, `JX-${key}-fresh`, `${key} with a freshly issued JWT works again`, state.users[key].id,
+      () => rpc(fresh, 'pool_platform_current_user_id'));
     if (++tested >= 3) break;
   }
+  if (notYet.length) rec.info('JX-gate', `${notYet.length} first JWT(s) not yet past exp: not asserted (gate ${JWT_EXPIRY_GATE_S}s past exp)`, {tokens: notYet});
   if (!tested) rec.info('JX', 'no stored JWT has expired yet; run this phase again later');
 }
 
@@ -436,8 +539,8 @@ export async function signout(rec, key = 'F') {
   rec.check('SO2', 'after sign-out the session cookie no longer yields a session', r.status === 200 ? !r.json?.session : r.status >= 400, {summary: `HTTP ${r.status} session=${!!r.json?.session}`});
   r = await authCall(id, 'GET', '/token');
   rec.check('SO3', 'after sign-out /token issues no JWT', !(r.status === 200 && JWT_SHAPE.test(r.json?.token || '')), {summary: `HTTP ${r.status}`});
-  const x = await rpc(jwt, 'pool_platform_current_user_id');
-  rec.info('SO4', `JWT minted before sign-out, ${jwtSecondsLeft(jwt)}s before its exp`, {summary: `${summarize(x)} (stateless JWTs stay valid until exp)`});
+  await identityProbe(rec, 'SO4', `JWT minted before sign-out, ${jwtSecondsLeft(jwt)}s before its exp (stateless JWTs stay valid until exp)`, state.users[key].id,
+    () => rpc(jwt, 'pool_platform_current_user_id'), {informational: true});
   id.jwt = null; id.jar = {}; save();
 }
 
@@ -502,9 +605,8 @@ export async function human_verify(rec) {
     state.users.H = {id: sess.user.id, email: id.email.replace(/^(.).*(@.*)$/, '$1***$2'), label: 'Operator mailbox participant (real OTP)', emailVerifiedAfterOtp: sess.user.emailVerified};
     save();
     rec.check('H4', 'OTP sign-in marks the operator email verified (Neon Auth user object)', sess.user.emailVerified === true, {summary: `emailVerified=${sess.user.emailVerified}`});
-    let uid;
-    try { uid = await pc.rpc('pool_platform_current_user_id'); } catch (e) { uid = `error ${scrub(e.message)}`; }
-    rec.check('H5', 'auth.user_id() resolves to H through the Data API (PlatformClient.rpc)', uid === sess.user.id, {summary: `match=${uid === sess.user.id}`});
+    await identityProbe(rec, 'H5', 'auth.user_id() resolves to H through the Data API (PlatformClient.rpc)', sess.user.id,
+      () => clientResult(() => pc.rpc('pool_platform_current_user_id')));
     let cl;
     try { cl = await pc.claimInvite(secrets.invites['PK-H01']); } catch (e) { cl = {error: scrub(e.message)}; }
     rec.check('H6', 'email-bound invite + matching VERIFIED email → claimed', cl?.claimed === true && cl?.entry_id === eid('PK-H01'), {summary: JSON.stringify(cl)});

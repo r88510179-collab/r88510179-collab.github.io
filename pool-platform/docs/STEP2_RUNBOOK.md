@@ -2,6 +2,20 @@
 
 This runbook is intentionally blocked until the Step 2 candidate receives an independent read-only review.
 
+## Status: dedicated commercial Neon project
+
+- PostgreSQL 18.6, with the commercial schema: the catalog verification (step 10) verdict is C99 `PASS`.
+- 002 was applied there before the authorization-order fix. Migration 003 (`003_submit_entry_authorization_order.sql`)
+  is live: `pool_platform_submit_entry` has the corrected definition, whose body's SHA-256 fingerprint is
+  `f52183734e1f8c42c401e2a507e8c82323c259486909adca49d9537eed523c8f`.
+- The live security/behaviour validation (step 11, `validation/live/`) cleared: no commercial P0, P1 or P2 remains
+  from that phase.
+- The pgcrypto Data API surface check is recorded and decided (below): no ACL change is required at present.
+- Two platform behaviours were measured in step 11 (below): about 30 s of JWT expiry skew, and a NULL identity on the
+  first request of a newly opened Data API backend connection.
+- Step 12 has not started: `platform-config.js` holds no live configuration. Production CORS/allowed-origin
+  configuration is deferred until the production hosting origin is selected; localhost development works today.
+
 ## Before touching Neon
 
 Run every commercial suite locally, never against Neon. The opt-in PostgreSQL suites use disposable local
@@ -14,7 +28,9 @@ clusters and must pass on PostgreSQL 16, 17 and 18 (17 adds the table MAINTAIN p
       node --test pool-platform/migration-contract.test.mjs
 
 The integration suite also runs the read-only live validation kit in `validation/` against clean and hostile
-local privilege scenarios.
+local privilege scenarios. The live harness has its own local tests, against a scripted Data API:
+
+    cd pool-platform/validation/live && npm ci && npm test
 
 ## Dedicated Neon activation order
 
@@ -44,9 +60,9 @@ The earlier order, which applied migration 002 before Neon Auth and the Data API
    - function `auth.user_id()` returning text
    - table `neon_auth."user"` with `id`, `email`, `"emailVerified"` and `banned`
 
-   The reviewed migrations assume Neon Auth and the Data API provide exactly these; that has not been observed
-   on live Neon yet. If anything is missing or different, STOP; do not create stand-ins by hand. The preflight
-   checks all of it (P06 to P12).
+   The reviewed migrations assume Neon Auth and the Data API provide exactly these. On the dedicated commercial
+   project they did: 002 applied and the catalog verification passed (C99). If anything is missing or different,
+   STOP; do not create stand-ins by hand. The preflight checks all of it (P06 to P12).
 
 6. **Run `validation/neon-preflight.sql`** as the role that will run and own the migrations (use the same role
    for steps 6, 8, 9 and 10). It is one read-only SELECT over the catalogs:
@@ -130,6 +146,27 @@ callable public function). What reaches the outside depends on what the Data API
 pgcrypto's functions are stateless utilities: they read no commercial table and bypass no RLS, so being callable
 is not an authentication bypass by itself. What remains to weigh is surface area, for example compute-heavy calls
 such as `crypt` with a high-cost `gen_salt`, when deciding whether a later pass moves pgcrypto out of `public`.
+
+Recorded (step 11, dedicated commercial project): the catalog reports 37 pgcrypto functions callable by `anonymous`
+and `authenticated` (C23), and probing the Data API found seven callable utility functions. Decision: no pgcrypto ACL
+change is required at present. pgcrypto stays in `public` with its privileges unchanged, and 001 is unchanged.
+
+## Platform behaviours measured in step 11
+
+JWT expiry skew. The Data API accepted an expired JWT until about 29 s after its `exp` and rejected it from about 31
+to 33 s after (HTTP 400): about 30 s of skew. The live harness asserts expiry only once a token is at least 35 s past
+`exp`; an expired token accepted after that is still a P0.
+
+NULL identity on a newly opened backend connection. The first request served by a newly opened Data API → Postgres
+backend connection repeatedly ran with `auth.user_id()` = NULL (10 new backends, 10 NULL results), and an immediate
+retry succeeded. No wrong identity was observed, all protected data stayed denied, and every identity-using commercial
+RPC failed closed with `auth_required` before any read, lock, write or side effect. It is a reliability issue, not a
+demonstrated authorization bypass. Only the correlation with newly opened backend connections is established; the
+cause inside Neon is not known.
+
+- The live harness classifies every identity result as CORRECT, NULL, WRONG or ERROR. It retries a NULL once and
+  records a NULL that persists as a RELIABILITY failure, never a pass. A wrong identity is a P0
+  (`validation/live/README.md`).
 
 ## Identity tests
 
@@ -252,7 +289,7 @@ Do not use the live commercial backend with a real customer until:
 - independent code review: SHIP
 - preflight verdict PASS, then both migrations apply cleanly in dedicated dev
 - catalog verification verdict PASS (RLS/privilege matrix verified, no MAINTAIN from PostgreSQL 17 on)
-- pgcrypto Data API surface check recorded and decided
+- pgcrypto Data API surface check recorded and decided (done: no ACL change required at present)
 - race tests pass
 - browser/device matrix passes
 - synthetic demo works end-to-end
@@ -267,4 +304,6 @@ Known P2 items, intentionally not addressed in the Step 2 corrective passes:
 - importing the safe CSV rows when other rows fail client-side validation (the console currently blocks the whole import)
 - general signed-in error UX
 - hosting migration away from GitHub Pages (the commercial app currently shares an origin with the Pool Center)
+- production CORS/allowed-origin configuration for Neon Auth and the Data API, until the production hosting origin is
+  selected (localhost development works today)
 - broader commercial UX polish
