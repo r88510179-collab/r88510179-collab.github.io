@@ -1,0 +1,14 @@
+{
+  "name": "pool-platform-live-validation",
+  "private": true,
+  "type": "module",
+  "description": "Commercial V1 live security/behaviour validation harness (synthetic data only). Not part of the app.",
+  "scripts": {
+    "live": "node harness/run.mjs"
+  },
+  "dependencies": {
+    "@neondatabase/neon-js": "0.7.0-beta",
+    "pg": "8.23.0",
+    "undici": "6.28.1"
+  }
+}
