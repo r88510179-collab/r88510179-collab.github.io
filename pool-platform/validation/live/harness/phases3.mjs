@@ -44,9 +44,12 @@ export async function batch(rec) {
     [{entry_id: eid('PK-BATCH01'), payload: card('hhhhh', 41)}, 'created'],
     [{entry_id: eid('PK-BATCH02'), payload: card('hhhhh', 42)}, 'source_conflict:participant'],
     [{entry_id: eid('PK-BATCH03'), payload: {picks: {g1: 'away'}}}, 'invalid_payload'],
-    [{entry_id: uuid(), payload: card()}, 'invalid_entry_week'],
+    // Items go through submit_entry, which authorizes on the entry's own tenant before it looks at the week: a
+    // missing entry and a Tenant B entry are both commissioner_required; A's own other-season entry is invalid_entry_week.
+    [{entry_id: uuid(), payload: card()}, 'commissioner_required'],
     [{entry_id: 'not-a-uuid', payload: card()}, /invalid input syntax for type uuid/],
-    [{entry_id: eid('B-01'), payload: card()}, 'invalid_entry_week'],
+    [{entry_id: eid('B-01'), payload: card()}, 'commissioner_required'],
+    [{entry_id: eid('SV-D02'), payload: card()}, 'invalid_entry_week'],
     [{entry_id: eid('PK-INACTIVE'), payload: card()}, 'entry_not_active'],
     [{entry_id: eid('PK-BATCH03')}, 'invalid_payload'],
     [{entry_id: eid('PK-BATCH01'), payload: card('ahhhh', 43)}, 'updated']
@@ -54,7 +57,7 @@ export async function batch(rec) {
   r = await rpc(tA, 'pool_platform_submit_batch', {p_week_id: w9, p_source: 'commissioner_import', p_items: items.map(x => x[0])});
   const got = (r.json || []).map(x => x.ok ? x.result?.code : x.code);
   const pass = r.ok && got.length === items.length && items.every(([, exp], i) => exp instanceof RegExp ? exp.test(got[i] || '') : got[i] === exp);
-  rec.check('BT1', 'mixed batch: new row, participant conflict, malformed, unknown, non-uuid, other-tenant, inactive, empty, same-source update', pass, {summary: `${summarize(r)} codes=${JSON.stringify(got.map(g => scrub(g || '')))}`});
+  rec.check('BT1', 'mixed batch: new row, participant conflict, malformed, unknown, non-uuid, other-tenant, other-season, inactive, empty, same-source update', pass, {summary: `${summarize(r)} codes=${JSON.stringify(got.map(g => scrub(g || '')))}`});
   const row = await subRow('D', w9, eid('PK-BATCH02'));
   rec.check('BT2', 'the batch never overwrote the participant row', row?.source === 'participant' && row?.revision === 1 && JSON.stringify(row?.payload) === JSON.stringify(card('aaaaa', 40)), {summary: JSON.stringify({source: row?.source, revision: row?.revision})});
   for (const [cid, key, week, src, itemsArg, exp, desc] of [
@@ -103,15 +106,32 @@ export async function authorder(rec) {
     }
   }
   rec.check('AO1', `${n} unauthorized probes (F, E, G, C × 15 states × 3 sources) all returned only entry_not_owned / commissioner_required with no details`, true, {summary: `probes=${n}`});
-  // Pair-resolution behaviour before authorization (observation, see report).
-  const f = await jwtFor('F');
-  const obs = {};
-  for (const [k, weekId, entryId] of [['random_week+D_entry', uuid(), eid('PK-D03')], ['tenantB_week+D_entry', W(PB, 1), eid('PK-D03')],
-    ['D_week+random_entry', W(PK, 12), uuid()], ['D_week+D_entry', W(PK, 12), eid('PK-D03')]]) {
-    const r = await rpc(f, 'pool_platform_submit_entry', {p_week_id: weekId, p_entry_id: entryId, p_source: 'participant', p_payload: card()});
-    obs[k] = r.message;
+  // Whether a week belongs to an entry's season, and whether the entry exists, is told only to its owner or a
+  // commissioner of its tenant: for anyone else a real or missing entry with its own week, another season's week,
+  // a Tenant B week or a missing week all answer the same authorization failure.
+  const weeks = [['own week', W(PK, 12)], ['other-season week', W(SV, 9)], ['Tenant B week', W(PB, 1)], ['missing week', uuid()]];
+  let m = 0;
+  for (const caller of ['F', 'E', 'G', 'C']) {
+    for (const [entryLabel, entryId] of [['D entry', eid('PK-D03')], ['missing entry', uuid()]]) {
+      for (const [weekLabel, weekId] of weeks) {
+        for (const [src, exp] of [['participant', 'entry_not_owned'], ['commissioner_import', 'commissioner_required'], ['commissioner_manual', 'commissioner_required']]) {
+          const r = await submit(caller, weekId, entryId, src, card());
+          m++;
+          const ok = failedWith(r, exp) && r.details == null && r.hint == null;
+          if (!ok) rec.stop('P2', `AO2-${caller}-${m}`, `entry/week disclosure: ${caller} ${src} with ${entryLabel} and ${weekLabel} returned ${summarize(r)} instead of ${exp}`, {summary: summarize(r)});
+        }
+      }
+    }
   }
-  rec.info('AO2', 'outsider F: unresolvable (week, entry) pairs → invalid_entry_week before authorization; a resolvable pair → entry_not_owned', {summary: JSON.stringify(obs)});
+  rec.check('AO2', `${m} unauthorized entry/week probes (F, E, G, C × real or missing entry × own, other-season, Tenant B or missing week × 3 sources) all returned only entry_not_owned / commissioner_required`, true, {summary: `probes=${m}`});
+  // Authorized callers still learn that a week is not their entry's; a missing entry stays an authorization failure.
+  const authorized = [];
+  for (const [key, src, denied] of [['D', 'participant', 'entry_not_owned'], ['A', 'commissioner_import', 'commissioner_required'], ['B', 'commissioner_manual', 'commissioner_required']]) {
+    for (const [weekLabel, weekId] of weeks.slice(1)) authorized.push([`${key} ${src} PK-D03 + ${weekLabel}`, await submit(key, weekId, eid('PK-D03'), src, card()), 'invalid_entry_week']);
+    authorized.push([`${key} ${src} missing entry + own week`, await submit(key, W(PK, 12), uuid(), src, card()), denied]);
+  }
+  rec.check('AO10', 'owner D and Tenant A commissioners A, B: PK-D03 with another season\'s, a Tenant B or a missing week → invalid_entry_week; a missing entry → entry_not_owned / commissioner_required',
+    authorized.every(([, r, exp]) => failedWith(r, exp)), {summary: authorized.map(([label, r]) => `${label}: ${summarize(r)}`).join('; ')});
   // Uniform answers where existence could otherwise leak.
   const pairs = [
     ['AO3', 'F', 'pool_platform_commissioner_context', {p_pool_slug: 'neighborhood-pickem'}, {p_pool_slug: 'no-such-pool-zz'}, 'commissioner_required'],
