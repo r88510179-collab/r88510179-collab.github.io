@@ -1,5 +1,33 @@
 import {extractAccessToken,normalizeEmail,validEmail,validOtp,normalizeInviteToken,authErrorMessage} from './auth-core.js';
 
+// The first request a newly opened Data API backend connection serves can run with auth.user_id() = NULL although its
+// JWT is valid (observed on the commercial Neon endpoint; the cause inside Neon is not established). The RPC then fails
+// closed with exactly 'auth_required', and rpc() sends the same request once more, after AUTH_RETRY_DELAY_MS.
+// That is safe only because every browser-callable RPC raises 'auth_required' as its first statement, before it reads,
+// locks or writes anything, so the first request did nothing. A new RPC must keep that order or this retry would replay
+// its work; platform-client.test.mjs checks the migrations for it.
+const AUTH_REQUIRED='auth_required';
+const AUTH_RETRY_DELAY_MS=200;
+export const SIGN_IN_NOT_CONFIRMED='Your sign-in could not be confirmed. Try again, or sign out and sign in again.';
+
+async function postRpc(url,token,args){
+  const response=await fetch(url,{
+    method:'POST',
+    headers:{
+      'Authorization':`Bearer ${token}`,
+      'Content-Type':'application/json',
+      'Accept':'application/json'
+    },
+    body:JSON.stringify(args)
+  });
+  const text=await response.text();
+  let body=null;
+  try{body=text?JSON.parse(text):null}catch{body=text}
+  return {response,text,body};
+}
+
+const authRequired=({response,body})=>!response.ok&&!!body&&typeof body==='object'&&body.message===AUTH_REQUIRED;
+
 export class PlatformClient{
   constructor(config){
     this.config=config;
@@ -50,18 +78,14 @@ export class PlatformClient{
     const sessionResult=await this.neon.auth.getSession();
     const token=extractAccessToken(sessionResult);
     if(!token)throw new Error('Authentication required.');
-    const response=await fetch(`${this.config.dataUrl.replace(/\/$/,'')}/rpc/${encodeURIComponent(name)}`,{
-      method:'POST',
-      headers:{
-        'Authorization':`Bearer ${token}`,
-        'Content-Type':'application/json',
-        'Accept':'application/json'
-      },
-      body:JSON.stringify(args)
-    });
-    const text=await response.text();
-    let body=null;
-    try{body=text?JSON.parse(text):null}catch{body=text}
+    const url=`${this.config.dataUrl.replace(/\/$/,'')}/rpc/${encodeURIComponent(name)}`;
+    let result=await postRpc(url,token,args);
+    if(authRequired(result)){
+      await new Promise(resolve=>setTimeout(resolve,AUTH_RETRY_DELAY_MS));
+      result=await postRpc(url,token,args);
+      if(authRequired(result))throw new Error(SIGN_IN_NOT_CONFIRMED);
+    }
+    const {response,text,body}=result;
     if(!response.ok){
       const message=body?.message||body?.details||body?.hint||text||`HTTP ${response.status}`;
       throw new Error(authErrorMessage(message));

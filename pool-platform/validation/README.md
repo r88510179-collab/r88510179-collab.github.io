@@ -46,7 +46,8 @@ On the dedicated commercial Neon project, PostgreSQL 18.6:
   RPC failed closed (`auth_required`) before any side effect. This is a reliability issue, not a demonstrated
   authorization bypass. Only the correlation with newly opened backend connections is established; the cause inside
   Neon is not known. The harness retries a NULL identity once and records a NULL that persists as a RELIABILITY
-  failure; a wrong identity stays a P0 (`live/README.md`).
+  failure; a wrong identity stays a P0 (`live/README.md`). The client retries an RPC that failed with exactly
+  `auth_required` once (`platform-client.js`).
 
 ## The contract after migration 002
 

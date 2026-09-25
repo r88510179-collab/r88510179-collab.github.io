@@ -167,6 +167,11 @@ cause inside Neon is not known.
 - The live harness classifies every identity result as CORRECT, NULL, WRONG or ERROR. It retries a NULL once and
   records a NULL that persists as a RELIABILITY failure, never a pass. A wrong identity is a P0
   (`validation/live/README.md`).
+- The client (`PlatformClient.rpc()` in `platform-client.js`) resends a request that failed with exactly
+  `auth_required` once, after about 200 ms, and never any other failure; a second `auth_required` shows the user a
+  sign-in message instead of the raw code. The retry is safe only because every browser-callable RPC raises
+  `auth_required` as its first statement, before it reads, locks or writes anything. `platform-client.test.mjs` checks
+  the migrations for that order, and any new RPC must keep it.
 
 ## Identity tests
 
