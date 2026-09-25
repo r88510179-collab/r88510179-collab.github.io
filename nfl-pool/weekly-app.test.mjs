@@ -23,16 +23,16 @@ const config={schemaVersion:1,season:2026,week:3,tiebreakGameIndex:0,
     {id:'djs',displayName:'DJS',pickNumbers:[2],tiebreak:44}
   ]
 };
-const game=({season=2026,seasonType=2,week=3,awayScore='24',homeScore='17'}={})=>({
-  id:'den-kc',season:{year:season,type:seasonType},week:{number:week},
+const game=({season=2026,seasonType=2,week=3,away='DEN',home='KC',id=`${away.toLowerCase()}-${home.toLowerCase()}`,awayScore='24',homeScore='17'}={})=>({
+  id,season:{year:season,type:seasonType},week:{number:week},
   status:{type:{state:'post',completed:true,shortDetail:'Final'}},
   competitions:[{competitors:[
-    {homeAway:'away',team:{abbreviation:'DEN'},score:awayScore},
-    {homeAway:'home',team:{abbreviation:'KC'},score:homeScore}
+    {homeAway:'away',team:{abbreviation:away},score:awayScore},
+    {homeAway:'home',team:{abbreviation:home},score:homeScore}
   ]}]
 });
 
-async function view(){
+async function view({weekConfig=config,initialScorePayload={events:[game()]}}={}){
   const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new El());return els.get(id)},docListeners={};
   const doc={
     body:{dataset:{}},title:'',visibilityState:'hidden',
@@ -45,13 +45,13 @@ async function view(){
   globalThis.window={addEventListener(t,f){(windowListeners[t]||=[]).push(f)},scrollTo(){}};
   globalThis.location={href:'https://example.test/nfl-pool/?view=home',search:'?view=home'};
   globalThis.history={pushState(){},state:null};
-  let tick=null,scorePayload={events:[game()]},scoreFailure=false,scoreCalls=0;
+  let tick=null,scorePayload=structuredClone(initialScorePayload),scoreFailure=false,scoreCalls=0;
   globalThis.setInterval=(fn,ms)=>{assert.equal(ms,20000);tick=fn;return 0};
   const token='x.'+Buffer.from(JSON.stringify({exp:Math.floor(Date.now()/1000)+3600})).toString('base64url')+'.y';
   globalThis.fetch=async (url,init={})=>{
     const u=new URL(url);
     if(u.pathname.endsWith('/token/anonymous'))return{ok:true,json:async()=>({token})};
-    if(u.pathname.endsWith('/nfl_pool_weeks'))return{ok:true,json:async()=>[{season:2026,week:3,status:'locked',revision:1,config:structuredClone(config)}]};
+    if(u.pathname.endsWith('/nfl_pool_weeks'))return{ok:true,json:async()=>[{season:2026,week:3,status:'locked',revision:1,config:structuredClone(weekConfig)}]};
     scoreCalls++;
     if(scoreFailure)return{ok:false,status:503,json:async()=>({})};
     return{ok:true,status:200,json:async()=>structuredClone(scorePayload)};
@@ -71,7 +71,8 @@ async function view(){
 {
   const v=await view();
   assert.equal(v.$('leaderName').textContent,'D.C.');
-  assert.equal(v.$('leaderRecord').textContent,'1–0');
+  assert.equal(v.$('leaderRecord').textContent,'1–0','exactly one competition with one away/home pair must be accepted');
+  assert.equal(v.warning(),'','valid one-competition event should not warn');
 
   v.setPayload({events:[game({week:4,awayScore:'10',homeScore:'31'})]});await v.refresh();
   assert.equal(v.$('leaderName').textContent,'D.C.','wrong-week feed must not replace the verified result');
@@ -88,16 +89,62 @@ async function view(){
   const malformed=game({awayScore:'10',homeScore:'31'});
   malformed.competitions[0].competitors.push({homeAway:'away',team:{abbreviation:'LV'},score:'7'});
   v.setPayload({events:[malformed]});await v.refresh();
-  assert.equal(v.$('leaderName').textContent,'D.C.','malformed competitor cardinality must not replace the verified result');
+  assert.equal(v.$('leaderName').textContent,'D.C.','incorrect competitor cardinality must not replace the verified result');
   assert.equal(v.$('leaderRecord').textContent,'1–0');
   assert.match(v.warning(),/malformed competitor data ignored/);
 
+  const malformedCases=[
+    ['zero competitions',e=>{e.competitions=[]}],
+    ['multiple competitions',e=>{e.competitions.push(structuredClone(e.competitions[0]))}],
+    ['null competition',e=>{e.competitions=[null]}],
+    ['empty competition object',e=>{e.competitions=[{}]}],
+    ['null competitors collection',e=>{e.competitions[0].competitors=null}],
+    ['non-array competitors',e=>{e.competitions[0].competitors={}}],
+    ['null competitor entry',e=>{e.competitions[0].competitors=[null,{homeAway:'home',team:{abbreviation:'KC'},score:'31'}]}],
+    ['duplicate away roles',e=>{e.competitions[0].competitors=[{homeAway:'away',team:{abbreviation:'DEN'},score:'10'},{homeAway:'away',team:{abbreviation:'KC'},score:'31'}]}],
+    ['duplicate home roles',e=>{e.competitions[0].competitors=[{homeAway:'home',team:{abbreviation:'DEN'},score:'10'},{homeAway:'home',team:{abbreviation:'KC'},score:'31'}]}]
+  ];
+  for(const [label,mutate] of malformedCases){
+    const event=game({awayScore:'10',homeScore:'31'});mutate(event);
+    v.setPayload({events:[event]});await v.refresh();
+    assert.equal(v.$('leaderRecord').textContent,'1–0',`${label}: malformed event must preserve last-good game state`);
+    assert(v.warning(),`${label}: malformed event must surface a warning`);
+    assert.doesNotMatch(v.$('sync').textContent,/^FEED UNAVAILABLE/,`${label}: malformed event must not become a feed outage`);
+    assert.match(v.$('sync').textContent,/^INCOMPLETE/,`${label}: malformed event should surface incomplete state`);
+  }
+
   v.setFailure(true);await v.refresh();
-  assert.match(v.$('sync').textContent,/^FEED UNAVAILABLE/);
+  assert.match(v.$('sync').textContent,/^FEED UNAVAILABLE/,'legitimate score-feed/network failure must remain FEED UNAVAILABLE');
   assert.equal(v.$('leaderRecord').textContent,'1–0','feed failure must preserve last-good standings');
 
   v.setFailure(false);v.setPayload({events:[game()]});
   assert.equal(await v.resume(),1,'foreground resume must start exactly one Pick’em refresh');
 }
 
-console.log('weekly public feed-context, fail-safe preservation and foreground-refresh regressions passed');
+{
+  const mixedConfig={schemaVersion:1,season:2026,week:3,tiebreakGameIndex:0,
+    games:[
+      {away:'DEN',home:'KC',awayNumber:1,homeNumber:2,date:'2026-09-27'},
+      {away:'MIA',home:'BUF',awayNumber:3,homeNumber:4,date:'2026-09-27'}
+    ],
+    participants:[
+      {id:'dc',displayName:'D.C.',pickNumbers:[1,3],tiebreak:41},
+      {id:'djs',displayName:'DJS',pickNumbers:[2,4],tiebreak:44}
+    ]
+  };
+  const initial={events:[game(),game({away:'MIA',home:'BUF',awayScore:'10',homeScore:'20'})]};
+  const v=await view({weekConfig:mixedConfig,initialScorePayload:initial});
+  assert.equal(v.$('leaderRecord').textContent,'1–1','mixed-feed harness should begin from two verified finals');
+
+  const malformed=game({awayScore:'10',homeScore:'31'});malformed.competitions[0].competitors={};
+  const validUpdate=game({away:'MIA',home:'BUF',awayScore:'30',homeScore:'20'});
+  v.setPayload({events:[malformed,validUpdate]});await v.refresh();
+  assert.equal(v.$('leaderName').textContent,'D.C.');
+  assert.equal(v.$('leaderRecord').textContent,'2–0','valid event must update while malformed matchup preserves its last-good DEN result');
+  assert.match(v.warning(),/DEN-KC:/,'malformed expected event must surface a matchup warning');
+  assert.match(v.$('sync').textContent,/^INCOMPLETE/);
+  assert.match(v.$('sync').textContent,/1 warning/,'mixed feed should count only the affected malformed matchup');
+  assert.doesNotMatch(v.$('sync').textContent,/FEED UNAVAILABLE/,'one malformed event must not turn a usable mixed feed into an outage');
+}
+
+console.log('weekly public feed-context, malformed-event isolation, fail-safe preservation and foreground-refresh regressions passed');
