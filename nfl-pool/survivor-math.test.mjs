@@ -382,3 +382,28 @@ for(const [as,hs] of [[null,null],['',''],[' ',' '],['absent','absent'],['17.5',
 }
 
 console.log('survivor strict score, malformed final, duplicate-feed, context, absent-team and gating regressions passed');
+
+
+// ---- HDC-04: Week-ahead market codes reach the public decision board's markup, so only NFL codes may pass.
+// Any other feed abbreviation, on either side, drops its whole matchup; valid codes and feed aliases pass unchanged.
+{
+  const NFL=['ARI','ATL','BAL','BUF','CAR','CHI','CIN','CLE','DAL','DEN','DET','GB','HOU','IND','JAX','KC','LV','LAC','LAR','MIA','MIN','NE','NO','NYG','NYJ','PHI','PIT','SEA','SF','TB','TEN','WAS'];
+  const event=(away,home,odds)=>({competitions:[{competitors:[{homeAway:'away',team:{abbreviation:away}},{homeAway:'home',team:{abbreviation:home}}],...(odds?{odds:[odds]}:{})}]});
+  const pairs=[];for(let i=0;i<NFL.length;i+=2)pairs.push([NFL[i],NFL[i+1]]);
+  for(const feed of [pairs,pairs.map(p=>p.map(t=>t.toLowerCase()))])
+    assert.deepEqual(survivorMarketMatchups(feed.map(([a,h])=>event(a,h))),pairs.map(([away,home])=>({away,home,date:null,favorite:null,spread:null})),'all 32 NFL codes pass');
+  assert.deepEqual(survivorMarketMatchups([event('JAC','WSH',{details:'WSH -3'}),event('wsh','jac',{details:'JAC -2.5'})]),[
+    {away:'JAX',home:'WAS',date:null,favorite:'WAS',spread:3},
+    {away:'WAS',home:'JAX',date:null,favorite:'JAX',spread:2.5}
+  ]);
+  const kept={away:'MIA',home:'BUF',date:null,favorite:'BUF',spread:3.5};
+  for(const code of ['x" onerror="alert(1)','"><img src=x onerror=alert(1)>','KC/../x','K C','XXX','OAK','TBD','KCC','7',7,{},'',null,undefined]){
+    for(const [away,home] of [[code,'KC'],['KC',code],[code,code]]){
+      const odds={spread:-7,awayTeamOdds:{favorite:away===code},homeTeamOdds:{favorite:home===code}};
+      const parsed=survivorMarketMatchups([event(away,home,odds),event('MIA','BUF',{details:'BUF -3.5'})]);
+      assert.deepEqual(parsed,[kept],`${JSON.stringify(code)} (${away===code?'away':'home'}${away===home?'+home':''}) must never become a decision option`);
+    }
+  }
+}
+
+console.log('survivor Week-ahead market NFL-code allowlist regressions passed');

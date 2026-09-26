@@ -6,7 +6,7 @@ import {readFileSync} from 'node:fs';
 const source=readFileSync(new URL('./survivor-app.js',import.meta.url),'utf8');
 const from="from './survivor-math.js?v=4';";
 assert(source.includes(from),'harness expects the survivor-math import');
-const patched=source.replace(from,`from '${new URL('./survivor-math.js?v=4',import.meta.url).href}';`);
+const mathHref=new URL('./survivor-math.js?v=4',import.meta.url).href,patched=source.replace(from,`from '${mathHref}';`);
 let instance=0;
 // Fast timers: the view's 15 s score-feed time limit elapses in 5 ms here; short timers are unchanged.
 // The long delays requested are recorded so the real time limit can be checked against the real refresh interval.
@@ -27,7 +27,7 @@ config.competitionSize=6;config.currentWeekEntryCount=3;
 class El{constructor(){this.textContent='';this.innerHTML='';this.className='';this.value='';this.listeners={}}addEventListener(t,f){(this.listeners[t]||=[]).push(f)}}
 const flush=async(n=12)=>{for(let i=0;i<n;i++)await new Promise(r=>setTimeout(r,0))};
 
-async function view(feeds,rowsOverride=null){
+async function view(feeds,rowsOverride=null,app=patched){
   const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new El());return els.get(id)},docListeners={};
   const seen=[],signals=[],doc={getElementById:$,body:{dataset:{view:'survivor'}},visibilityState:'hidden',addEventListener(t,f){(docListeners[t]||=[]).push(f)}};
   globalThis.document=doc;
@@ -47,7 +47,7 @@ async function view(feeds,rowsOverride=null){
     if(!payload)return{ok:false,status:404,json:async()=>({})};
     return{ok:true,status:200,json:async()=>structuredClone(payload)};
   };
-  await import(`data:text/javascript;base64,${Buffer.from(patched+`\n//instance ${++instance}`).toString('base64')}`);
+  await import(`data:text/javascript;base64,${Buffer.from(app+`\n//instance ${++instance}`).toString('base64')}`);
   await flush();
   const row=name=>$('svTracked').innerHTML.split('survivor-tracked-row').find(s=>s.includes(`<b>${name}</b>`))||'';
   return{
@@ -202,3 +202,72 @@ async function view(feeds,rowsOverride=null){
 }
 
 console.log('survivor public view feed-context, malformed-final, duplicate, absent-team, provisional, request-cancellation, selection-rollback and resume regressions passed');
+
+
+// ---- HDC-04: live next-week feed codes reach the decision board's <img src>. Only NFL codes may become options, and
+// the logo sink URL-encodes whatever reaches it, so every src value stays one well-formed attribute.
+const LOGO_IMG=/^<img src="https:\/\/a\.espncdn\.com\/i\/teamlogos\/nfl\/500\/[^"<>&\s\/]+\.png" alt="">$/;
+function assertLogoImgs(html,label){
+  const tags=html.match(/<img\b[^>]*>/g)||[];
+  assert.equal(tags.length,html.split('<img').length-1,`${label}: every <img is one tag`);
+  for(const tag of tags)assert.match(tag,LOGO_IMG,`${label}: attribute-breaking logo ${tag}`);
+}
+// Next-week (Week 3) feed with market lines on several games; WAS and JAX arrive under their feed aliases WSH and JAC.
+const line=odds=>(a,h,n)=>{const g=game(a,h,n,{completed:false});g.competitions[0].odds=[odds];return g};
+const NEXT=W3.map(([a,h])=>[a==='WAS'?'WSH':a,h==='JAX'?'JAC':h]);
+const LINES={MIA:line({details:'BUF -3.5'}),PIT:line({details:'PIT -2.5'}),ARI:line({details:'SF -6'}),NE:line({details:'LV -3.5'}),WSH:line({details:'WSH -4'}),IND:line({spread:-3,homeTeamOdds:{favorite:true},awayTeamOdds:{favorite:false}})};
+const OPTION=/<div class="survivor-option-row"><div><span class="survivor-team"><img src="([^"]*)" alt=""><b>([^<]*)<\/b><\/span><span class="survivor-opponent">([^<]*)<\/span><\/div><div class="survivor-option-meta"><b>([^<]*)<\/b><span>([^<]*)<\/span><\/div><\/div>/g;
+// The board per tracked entry; an option reads "team | opponent | market | availability | logo file".
+function board(html){
+  const out={};
+  for(const article of html.split('<article').slice(1)){
+    const name=article.match(/class="section-kicker">([^<]*)</)[1],[safer,leverage='']=article.split('<h4>Field leverage</h4>');
+    const options=part=>{const rows=[...part.matchAll(OPTION)];assert.equal(rows.length,part.split('survivor-option-row').length-1,`${name}: every option row parses`);return rows.map(([,src,team,vs,market,avail])=>`${team} | ${vs} | ${market} | ${avail} | ${src.split('/').pop()}`)};
+    out[name]={head:article.match(/<h3>([^<]*)<\/h3>/)[1],burned:[...article.matchAll(/survivor-burned-chip">([^<]*)</g)].map(m=>m[1]),safer:options(safer),leverage:options(leverage)};
+  }
+  return out;
+}
+const KC='KC | vs DEN | Favorite -7.5 | 2/2 can use · 100% | kc.png',WAS='WAS | @ LAC | Favorite -4 | 2/2 can use · 100% | wsh.png',LV='LV | vs NE | Favorite -3.5 | 1/2 can use · 50% | lv.png';
+const BUF='BUF | vs MIA | Favorite -3.5 | 2/2 can use · 100% | buf.png',JAX='JAX | vs IND | Favorite -3 | 2/2 can use · 100% | jax.png',PIT='PIT | @ CIN | Favorite -2.5 | 1/2 can use · 50% | pit.png';
+const OUT={head:'Out of Survivor',burned:['LAC'],safer:[],leverage:[]};
+// A well-formed feed renders exactly as before: board, ordering, market labels, availability and logo URLs.
+{
+  const v=await view({1:week(W1,1),2:week(W2,2),3:week(NEXT,3,LINES)}),html=v.$('svDecisionEntries').innerHTML;
+  assertLogoImgs(html,'well-formed feed');
+  assert.deepEqual(board(html),{
+    'D.C.':{head:'Week 3 Board',burned:['PIT','SF'],safer:[KC,WAS,LV,BUF],leverage:[LV,KC,WAS,BUF]},
+    DJS:{head:'Week 3 Board',burned:['LV','SF'],safer:[KC,WAS,BUF,JAX],leverage:[PIT,KC,WAS,BUF]},
+    Thaddeus:OUT
+  });
+  assert(html.includes('<img src="https://a.espncdn.com/i/teamlogos/nfl/500/wsh.png" alt=""><b>WAS</b>'),'WAS keeps its ESPN logo code');
+  assert.match(v.$('svDecisionNote').textContent,/^Field availability = share of surviving entries/);
+}
+// A hostile next-week abbreviation, flagged as the favorite on either side, never becomes an option: its matchup is
+// dropped whole (so its NFL opponent, KC or WAS, is not offered either); the remaining options are unchanged.
+{
+  const A='x" onerror="alert(1)',B='"><img src=x onerror=alert(1)>';
+  const pairs=NEXT.map(([a,h])=>[a==='DEN'?A:a,h==='LAC'?B:h]);
+  const lines={...LINES,[A]:line({spread:-10,awayTeamOdds:{favorite:true},homeTeamOdds:{favorite:false}}),WSH:line({spread:-9,homeTeamOdds:{favorite:true},awayTeamOdds:{favorite:false}})};
+  const v=await view({1:week(W1,1),2:week(W2,2),3:week(pairs,3,lines)}),html=v.$('svDecisionEntries').innerHTML;
+  assertLogoImgs(html,'hostile feed');
+  assert.doesNotMatch(html,/onerror|alert/i,'hostile abbreviation must not reach the board');
+  assert.deepEqual(board(html),{
+    'D.C.':{head:'Week 3 Board',burned:['PIT','SF'],safer:[LV,BUF,JAX],leverage:[LV,BUF,JAX]},
+    DJS:{head:'Week 3 Board',burned:['LV','SF'],safer:[BUF,JAX,PIT],leverage:[PIT,BUF,JAX]},
+    Thaddeus:OUT
+  });
+}
+// Defense in depth: with the allowlist bypassed by a stand-in market parser (only the survivor-math import is
+// re-pointed; the app runs unmodified), a hostile code that reaches the logo sink still yields one well-formed src.
+for(const [code,encoded,text] of [
+  ['x" onerror="alert(1)','x%22%20onerror%3D%22alert(1)','x&quot; onerror=&quot;alert(1)'],
+  ['"><img src=x onerror=alert(1)>','%22%3E%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E','&quot;&gt;&lt;img src=x onerror=alert(1)&gt;']
+]){
+  const stand=`export * from '${mathHref}';import {survivorMarketMatchups as parse} from '${mathHref}';const swap=t=>t==='KC'?${JSON.stringify(code)}:t;export const survivorMarketMatchups=events=>parse(events).map(m=>({...m,away:swap(m.away),home:swap(m.home),favorite:swap(m.favorite)}));`;
+  const app=source.replace(from,`from 'data:text/javascript;base64,${Buffer.from(stand).toString('base64')}';`);
+  const v=await view({1:week(W1,1),2:week(W2,2),3:week(NEXT,3,LINES)},null,app),html=v.$('svDecisionEntries').innerHTML;
+  assertLogoImgs(html,`logo sink ${code}`);
+  assert(html.includes(`<img src="https://a.espncdn.com/i/teamlogos/nfl/500/${encoded}.png" alt=""><b>${text}</b>`),`hostile code reaches the logo sink encoded as ${encoded}`);
+}
+
+console.log('survivor decision-board NFL-code allowlist and logo output-encoding regressions passed');
