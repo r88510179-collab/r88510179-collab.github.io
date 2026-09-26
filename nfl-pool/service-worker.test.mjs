@@ -194,4 +194,174 @@ for(const request of [page('/nfl-pool/?view=home'),asset('/nfl-pool/weekly-app.j
   cached.delete(request.url);
 }
 
-console.log('service-worker precache graph, cache rollover, public fallback, HTTP error fallback, navigation redirect and Admin isolation regressions passed');
+// Route boundary (RB). Pool Center is one document, /nfl-pool/ or /nfl-pool/index.html, whose views are selected by
+// query string (?view=home, ?view=survivor, ...), never by pathname. index.html loads its CSS, JavaScript and icons by
+// relative URL, so the shell renders only at those two paths. Any other navigation under the /nfl-pool/ scope is not a
+// Pool Center route: it gets the exact network result, never a cached copy of itself or the ./index.html shell, and the
+// worker neither reads nor writes the cache for it.
+const opaqueRedirect=()=>{const response={type:'opaqueredirect',status:0,ok:false,clone:()=>({type:'opaqueredirect',status:0,ok:false,cloneOf:response})};return response};
+const outcome=response=>response.type==='opaqueredirect'?'a redirect':`HTTP ${response.status}`;
+const documentPaths=['/nfl-pool/','/nfl-pool/index.html','/nfl-pool/?view=home','/nfl-pool/?view=survivor','/nfl-pool/?view=survivor&sw=3&season=2026','/nfl-pool/index.html?view=picks'];
+const invalidPaths=['/nfl-pool/assets/','/nfl-pool/foo','/nfl-pool/assets/missing/','/nfl-pool/not-a-route','/nfl-pool/assets/?view=home','/nfl-pool/foo?view=survivor&sw=3&season=2026','/nfl-pool/index.html/','/nfl-pool/assets/index.html'];
+for(const path of documentPaths){
+  // RB-A, RB-B, RB-C. Both document paths, with or without a query string, keep the HDC-02 navigation behavior.
+  const request=page(path),lastGood=httpResponse(200);
+  assert.equal(cached.get('./index.html'),fallback,'the Pool Center shell is cached for this regression');
+  for(const status of [404,503]){
+    // RB-K. An HTTP error serves the cached copy of the requested page, else the ./index.html shell, else the original
+    // response; it is never cached.
+    const failed=httpResponse(status);
+    network=()=>failed;
+    cached.set(request.url,lastGood);
+    let seen=await route(request);
+    assert.equal(seen.result,lastGood,`HTTP ${status} for ${path} must serve the cached copy of the requested page`);
+    assert.deepEqual(seen.fetched,[request]);
+    assert.deepEqual(seen.matched,[request],'the requested page is looked up before the shell');
+    assert.deepEqual(seen.put,[],`HTTP ${status} must never be written to the cache`);
+    cached.delete(request.url);
+    seen=await route(request);
+    assert.equal(seen.result,fallback,`HTTP ${status} for uncached ${path} must fall back to the cached Pool Center shell`);
+    assert.deepEqual(seen.matched,[request,'./index.html']);
+    assert.deepEqual(seen.put,[]);
+    cached.delete('./index.html');
+    seen=await route(request);
+    assert.equal(seen.result,failed,`HTTP ${status} for ${path} with nothing cached must be returned as-is`);
+    assert.deepEqual(seen.matched,[request,'./index.html']);
+    assert.deepEqual(seen.put,[]);
+    cached.set('./index.html',fallback);
+  }
+  // RB-L. A thrown fetch serves the cached copy of the requested page, else the shell, else rejects with the original
+  // network error.
+  network=()=>{throw offline};
+  cached.set(request.url,lastGood);
+  let seen=await route(request);
+  assert.equal(seen.result,lastGood,`offline ${path} must serve the cached copy of the requested page`);
+  assert.deepEqual(seen.matched,[request]);
+  cached.delete(request.url);
+  seen=await route(request);
+  assert.equal(seen.result,fallback,`offline uncached ${path} must fall back to the cached Pool Center shell`);
+  assert.deepEqual(seen.matched,[request,'./index.html']);
+  cached.delete('./index.html');
+  seen=await route(request);
+  assert.equal(seen.error,offline,`offline ${path} with nothing cached must reject with the original network error`);
+  assert.deepEqual(seen.matched,[request,'./index.html']);
+  assert.deepEqual(seen.put,[]);
+  cached.set('./index.html',fallback);
+  // RB-M. A successful response is returned as-is and a clone is cached under the request.
+  const fresh=httpResponse(200);
+  network=()=>fresh;
+  seen=await route(request);
+  assert.equal(seen.result,fresh,`a successful ${path} response must be returned as-is`);
+  assert.deepEqual(seen.matched,[]);
+  assert.equal(seen.put.length,1,`a successful ${path} response must be cached`);
+  assert.equal(seen.put[0].request,request);
+  assert.equal(seen.put[0].response.cloneOf,fresh);
+  // RB-N. A redirect is returned unchanged, even with the requested page cached, and is never cached.
+  const redirect=opaqueRedirect();
+  network=()=>redirect;
+  cached.set(request.url,lastGood);
+  seen=await route(request);
+  assert.equal(seen.result,redirect,`a ${path} redirect must be returned unchanged`);
+  assert.deepEqual(seen.matched,[]);
+  assert.deepEqual(seen.put,[]);
+  cached.delete(request.url);
+}
+{
+  // RB-D, RB-F, RB-G, RB-H. The production-observed case: /nfl-pool/assets/ is a directory, not a Pool Center route.
+  // Its HTTP 404 is returned unchanged whether the invalid URL itself, the ./index.html shell, both or neither are
+  // cached; the worker calls neither caches.match nor cache.put for it.
+  const request=page('/nfl-pool/assets/'),notFound=httpResponse(404);
+  network=()=>notFound;
+  for(const [state,urlCached,shellCached] of [
+    ['the invalid URL and the shell both cached',true,true],
+    ['only the invalid URL cached',true,false],
+    ['only the ./index.html shell cached',false,true],
+    ['nothing cached',false,false]
+  ]){
+    if(urlCached)cached.set(request.url,httpResponse(200));else cached.delete(request.url);
+    if(shellCached)cached.set('./index.html',fallback);else cached.delete('./index.html');
+    const seen=await route(request);
+    assert.equal(seen.result,notFound,`HTTP 404 for /nfl-pool/assets/ with ${state} must be returned unchanged`);
+    assert.deepEqual(seen.fetched,[request]);
+    assert.deepEqual(seen.matched,[],`/nfl-pool/assets/ with ${state} must not call caches.match`);
+    assert.deepEqual(seen.put,[],`/nfl-pool/assets/ with ${state} must not call cache.put`);
+  }
+  cached.delete(request.url);
+  cached.set('./index.html',fallback);
+}
+for(const path of invalidPaths){
+  // RB-E, RB-C, RB-H. Every invalid public pathname, nested or not, with or without a query string, and near-misses of
+  // the two document paths get the exact network result even with their own URL and the shell cached.
+  const request=page(path);
+  cached.set(request.url,httpResponse(200));
+  assert.equal(cached.get('./index.html'),fallback,'the Pool Center shell is cached for this regression');
+  for(const response of [httpResponse(404),httpResponse(500),httpResponse(503),opaqueRedirect()]){
+    network=()=>response;
+    const seen=await route(request);
+    assert.equal(seen.result,response,`${outcome(response)} for ${path} must be returned unchanged`);
+    assert.deepEqual(seen.fetched,[request]);
+    assert.deepEqual(seen.matched,[],`${path} is not a Pool Center route and must not call caches.match`);
+    assert.deepEqual(seen.put,[],`${path} is not a Pool Center route and must not call cache.put`);
+  }
+  // RB-I. A successful response is returned directly and is not cached by this worker.
+  const fresh=httpResponse(200);
+  network=()=>fresh;
+  let seen=await route(request);
+  assert.equal(seen.result,fresh,`a successful ${path} response must be returned as-is`);
+  assert.deepEqual(seen.matched,[]);
+  assert.deepEqual(seen.put,[],`a successful ${path} response must not be cached by this worker`);
+  // RB-J. A thrown fetch propagates the original network failure; no cached copy or shell replaces it.
+  network=()=>{throw offline};
+  seen=await route(request);
+  assert.equal(seen.error,offline,`offline ${path} must reject with the original network error`);
+  assert.equal(seen.result,undefined);
+  assert.deepEqual(seen.fetched,[request]);
+  assert.deepEqual(seen.matched,[]);
+  assert.deepEqual(seen.put,[]);
+  cached.delete(request.url);
+}
+for(const path of ['/nfl-pool/admin','/nfl-pool/admin/','/nfl-pool/admin/survivor.html?season=2026']){
+  // RB-O. Admin navigation stays direct-network: an HTTP 404 is returned unchanged with the Admin page and the shell
+  // cached, and a successful response is not cached.
+  const request=page(path),notFound=httpResponse(404),fresh=httpResponse(200);
+  cached.set(request.url,httpResponse(200));
+  network=()=>notFound;
+  let seen=await route(request);
+  assert.equal(seen.result,notFound,`Admin ${path} must return the direct network response`);
+  assert.deepEqual(seen.fetched,[request]);
+  assert.deepEqual(seen.matched,[],'Admin navigation must not consult the cache or the public shell');
+  assert.deepEqual(seen.put,[]);
+  network=()=>fresh;
+  seen=await route(request);
+  assert.equal(seen.result,fresh);
+  assert.deepEqual(seen.matched,[]);
+  assert.deepEqual(seen.put,[],'Admin navigation responses are never cached');
+  cached.delete(request.url);
+}
+for(const path of ['/nfl-pool/style.css?v=premium-v3','/nfl-pool/pwa.js?v=1','/nfl-pool/assets/pool-center-icon.svg','/nfl-pool/manifest.webmanifest']){
+  // RB-P. Public static assets keep networkFirst with their own cached copy as the only fallback: an HTTP 404 or a
+  // thrown fetch serves the cached copy, an uncached 404 is returned as-is (never the shell), and a success is cached.
+  const request=asset(path),lastGood=httpResponse(200),notFound=httpResponse(404),fresh=httpResponse(200);
+  cached.set(request.url,lastGood);
+  network=()=>notFound;
+  let seen=await route(request);
+  assert.equal(seen.result,lastGood,`HTTP 404 for ${path} must serve its cached copy`);
+  assert.deepEqual(seen.matched,[request]);
+  assert.deepEqual(seen.put,[]);
+  network=()=>{throw offline};
+  seen=await route(request);
+  assert.equal(seen.result,lastGood,`offline ${path} must serve its cached copy`);
+  assert.deepEqual(seen.matched,[request]);
+  cached.delete(request.url);
+  network=()=>notFound;
+  seen=await route(request);
+  assert.equal(seen.result,notFound,`HTTP 404 for uncached ${path} must be returned as-is, never the shell`);
+  assert.deepEqual(seen.matched,[request]);
+  network=()=>fresh;
+  seen=await route(request);
+  assert.equal(seen.result,fresh);
+  assert.equal(seen.put.length,1,`a successful ${path} response must be cached`);
+  assert.equal(seen.put[0].request,request);
+}
+
+console.log('service-worker precache graph, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary and Admin isolation regressions passed');
