@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 
 const source=readFileSync(new URL('./survivor-app.js',import.meta.url),'utf8');
-const from="from './survivor-math.js?v=4';";
+const from="from './survivor-math.js?v=5';";
 assert(source.includes(from),'harness expects the survivor-math import');
-const mathHref=new URL('./survivor-math.js?v=4',import.meta.url).href,patched=source.replace(from,`from '${mathHref}';`);
+const mathHref=new URL('./survivor-math.js?v=5',import.meta.url).href,patched=source.replace(from,`from '${mathHref}';`);
 let instance=0;
 // Fast timers: the view's 15 s score-feed time limit elapses in 5 ms here; short timers are unchanged.
 // The long delays requested are recorded so the real time limit can be checked against the real refresh interval.

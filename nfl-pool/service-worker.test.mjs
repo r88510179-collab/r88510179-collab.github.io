@@ -7,13 +7,13 @@ const index=readFileSync(new URL('./index.html',import.meta.url),'utf8');
 for(const asset of [
   './weekly-app.js?v=weekly-v11',
   './public-math.js?v=2',
-  './survivor-app.js?v=4',
-  './survivor-math.js?v=4'
+  './survivor-app.js?v=5',
+  './survivor-math.js?v=5'
 ])assert(source.includes(`'${asset}'`),`precache must include ${asset}`);
-assert(!source.includes("'./survivor-math.js?v=3'"));
+assert(!source.includes("'./survivor-math.js?v=4'"));
 assert(!source.includes("'./admin/"),'Admin pages are network-dependent and must not be precached');
 assert(index.includes('weekly-app.js?v=weekly-v11'));
-assert(index.includes('survivor-app.js?v=4'));
+assert(index.includes('survivor-app.js?v=5'));
 
 const listeners={},deleted=[],fetchCalls=[],matchCalls=[],putCalls=[];
 let added=[],network=()=>okResponse;
@@ -23,7 +23,7 @@ const httpResponse=status=>{const response={status,ok:status>=200&&status<300,cl
 const cache={addAll:async assets=>{added=Array.from(assets)},put:async(request,response)=>{putCalls.push({request,response})}};
 const caches={
   open:async()=>cache,
-  keys:async()=>['pool-center-shell-v7','pool-center-shell-v8'],
+  keys:async()=>['pool-center-shell-v8','pool-center-shell-v9'],
   delete:async key=>{deleted.push(key);return true},
   match:async key=>{matchCalls.push(key);return cached.get(typeof key==='string'?key:key.url)}
 };
@@ -39,12 +39,12 @@ vm.runInNewContext(source,{self,caches,fetch,URL,Promise,console});
 let installPromise;
 listeners.install({waitUntil:p=>{installPromise=p}});await installPromise;
 assert(added.includes('./public-math.js?v=2'));
-assert(added.includes('./survivor-math.js?v=4'));
+assert(added.includes('./survivor-math.js?v=5'));
 assert(!added.some(x=>x.startsWith('./admin')));
 
 let activatePromise;
 listeners.activate({waitUntil:p=>{activatePromise=p}});await activatePromise;
-assert.deepEqual(deleted,['pool-center-shell-v7']);
+assert.deepEqual(deleted,['pool-center-shell-v8']);
 
 const adminRequest={method:'GET',mode:'navigate',url:'https://example.test/nfl-pool/admin/survivor.html'};
 let adminResponse;
