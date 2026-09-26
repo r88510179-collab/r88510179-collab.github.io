@@ -163,5 +163,35 @@ for(const request of [page('/nfl-pool/?view=home'),asset('/nfl-pool/weekly-app.j
   assert.deepEqual(seen.put,[],'Admin navigation responses are never cached');
   cached.delete(request.url);
 }
+{
+  // G. A public navigation the origin answers with a redirect reaches the worker as an opaqueredirect (status 0,
+  // ok false). It is a redirect, not an HTTP error: the exact response is returned so the browser follows it, even
+  // with the requested page and the Pool Center shell both cached; neither is consulted and nothing is cached.
+  const request=page('/nfl-pool/?view=survivor'),lastGood=httpResponse(200);
+  const redirect={type:'opaqueredirect',status:0,ok:false,clone:()=>({type:'opaqueredirect',status:0,ok:false,cloneOf:redirect})};
+  cached.set(request.url,lastGood);
+  assert.equal(cached.get(request.url),lastGood,'the requested page is cached for this regression');
+  assert.equal(cached.get('./index.html'),fallback,'the Pool Center shell is cached for this regression');
+  network=()=>redirect;
+  let seen=await route(request);
+  assert.equal(seen.result,redirect,'a public navigation redirect must be returned unchanged, not a cached page or the shell');
+  assert.deepEqual(seen.fetched,[request]);
+  assert.deepEqual(seen.matched,[],'a redirect must consult neither the requested page cache nor the ./index.html fallback');
+  assert.deepEqual(seen.put,[],'a redirect must never be written to the cache');
+  // With only the shell cached, the redirect is still not replaced by the ./index.html fallback.
+  cached.delete(request.url);
+  seen=await route(request);
+  assert.equal(seen.result,redirect,'a public navigation redirect must not be replaced by the cached shell');
+  assert.deepEqual(seen.matched,[]);
+  assert.deepEqual(seen.put,[]);
+  // A non-OK response that is not a redirect, such as an HTTP 404, still takes the HTTP error fallback.
+  cached.set(request.url,lastGood);
+  network=()=>Object.assign(httpResponse(404),{type:'basic'});
+  seen=await route(request);
+  assert.equal(seen.result,lastGood,'an HTTP 404 must still serve the cached copy of the requested page');
+  assert.deepEqual(seen.matched,[request]);
+  assert.deepEqual(seen.put,[]);
+  cached.delete(request.url);
+}
 
-console.log('service-worker precache graph, cache rollover, public fallback, HTTP error fallback and Admin isolation regressions passed');
+console.log('service-worker precache graph, cache rollover, public fallback, HTTP error fallback, navigation redirect and Admin isolation regressions passed');

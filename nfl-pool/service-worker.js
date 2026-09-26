@@ -28,6 +28,7 @@ async function networkFirst(request,fallback){
   let response;
   try{
     response=await fetch(request);
+    if(response&&response.type==='opaqueredirect')return response;
     if(response&&response.ok){
       const cache=await caches.open(CACHE);
       await cache.put(request,response.clone());
