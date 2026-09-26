@@ -205,13 +205,14 @@ export function survivorDecisionOptions(entry,nextWeekIndex,resultsByWeek,matchu
 }
 
 
+// Only NFL codes become Week-ahead matchups (as in survivorBuildResults); any other feed abbreviation drops its matchup.
 export function survivorMarketMatchups(events){
   const out=[];
   for(const event of events||[]){
     const c=event?.competitions?.[0],away=c?.competitors?.find(x=>x.homeAway==='away'),home=c?.competitors?.find(x=>x.homeAway==='home');
     if(!away||!home)continue;
     const a=normalizeSurvivorCode(away.team?.abbreviation),h=normalizeSurvivorCode(home.team?.abbreviation);
-    if(!a||!h)continue;
+    if(!SURVIVOR_TEAM_CODES.has(a)||!SURVIVOR_TEAM_CODES.has(h))continue;
     const odds=c?.odds?.[0]||{},details=String(odds?.details||'').trim();
     const awayFavorite=odds?.awayTeamOdds?.favorite===true,homeFavorite=odds?.homeTeamOdds?.favorite===true;
     const explicitConflict=awayFavorite&&homeFavorite;

@@ -33,7 +33,7 @@ function validateConfig(c){
   return c;
 }
 
-function logo(team){const code=(LOGO_CODE[team]||team.toLowerCase());return`https://a.espncdn.com/i/teamlogos/nfl/500/${code}.png`}
+function logo(team){const code=(LOGO_CODE[team]||team.toLowerCase());return`https://a.espncdn.com/i/teamlogos/nfl/500/${encodeURIComponent(code)}.png`}
 function teamChip(team){return team?`<span class="survivor-team"><img src="${logo(team)}" alt=""><b>${esc(team)}</b></span>`:'<span class="survivor-none">NO PICK</span>'}
 function allEntries(){return cfg?[...cfg.trackedEntries,...cfg.fieldEntries]:[]}
 
