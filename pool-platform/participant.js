@@ -1,10 +1,13 @@
-import {PLATFORM_CONFIG} from './platform-config.js';
-import {PlatformClient} from './platform-client.js';
+import {CONFIG_UNAVAILABLE,PlatformClient} from './platform-client.js';
 import {SUBMISSION_SOURCES,validatePickPayload} from './submission-core.js';
 import {normalizeGames,pickemPayloadFromSelections,survivorLegalTeams,validateSurvivorSelection,entrySubmissionAccess} from './participant-core.js';
+import './sw-register.js';
 
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+// The service worker never stores platform-config.js, so no cached copy can pin this page to an old backend. When it
+// cannot be read (offline, or missing from the deployment) the page says so and stops: it never falls back to the sandbox.
+const {PLATFORM_CONFIG}=await import('./platform-config.js').catch(e=>{$('modePill').textContent='UNAVAILABLE';message('sessionError',CONFIG_UNAVAILABLE);throw e});
 const params=new URLSearchParams(location.search);
 const poolSlug=params.get('pool')||PLATFORM_CONFIG.defaultPoolSlug;
 let inviteToken=params.get('invite')||'';
@@ -172,4 +175,3 @@ $('pickForm').addEventListener('submit',async event=>{
   finally{if(state.context&&state.entry)$('submitBtn').disabled=!currentAccess().editable}
 });
 initialize().catch(e=>message('sessionError',e.message));
-if('serviceWorker' in navigator){navigator.serviceWorker.register('./service-worker.js').catch(()=>{})}

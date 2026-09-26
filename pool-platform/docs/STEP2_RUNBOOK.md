@@ -13,8 +13,10 @@ This runbook is intentionally blocked until the Step 2 candidate receives an ind
 - The pgcrypto Data API surface check is recorded and decided (below): no ACL change is required at present.
 - Two platform behaviours were measured in step 11 (below): about 30 s of JWT expiry skew, and a NULL identity on the
   first request of a newly opened Data API backend connection.
-- Step 12 has not started: `platform-config.js` holds no live configuration. Production CORS/allowed-origin
-  configuration is deferred until the production hosting origin is selected; localhost development works today.
+- Step 12 has not started. The frontend is prepared for it (`FRONTEND_INTEGRATION_RUNBOOK.md`): a live
+  configuration is generated into the git-ignored `dist/` from `POOL_PLATFORM_*` variables at build time and never
+  committed, and the tracked `platform-config.js` stays the sandbox. Production CORS/allowed-origin configuration is
+  deferred until the production hosting origin is selected; localhost development works today.
 
 ## Before touching Neon
 
@@ -31,6 +33,12 @@ The integration suite also runs the read-only live validation kit in `validation
 local privilege scenarios. The live harness has its own local tests, against a scripted Data API:
 
     cd pool-platform/validation/live && npm ci && npm test
+
+The frontend's build, configuration, SDK-bundle, CSP and service-worker checks, and the opt-in pages in headless
+Chromium:
+
+    cd pool-platform && npm ci && npm test
+    POOL_PLATFORM_TEST_BROWSER=1 NODE_PATH="$(npm root -g)" node --test pool-platform/ui-contract.test.mjs
 
 ## Dedicated Neon activation order
 
@@ -102,17 +110,19 @@ The earlier order, which applied migration 002 before Neon Auth and the Data API
     source-lock race tests and the payload tests below. The local integration suite covers the same
     expectations; this step shows the live stack behaves the same way.
 
-12. **Connect the dev frontend.** Set the client config in `platform-config.js`:
-    - mode: live
-    - authUrl: commercial Neon Auth URL
-    - dataUrl: commercial Data API URL
-    - defaultPoolSlug: the pilot pool slug
+12. **Connect the dev frontend.** Do not edit `platform-config.js`. Build a live artifact from the environment,
+    outside git, as `FRONTEND_INTEGRATION_RUNBOOK.md` describes:
+    - `POOL_PLATFORM_MODE=live`
+    - `POOL_PLATFORM_AUTH_URL`: commercial Neon Auth URL
+    - `POOL_PLATFORM_DATA_URL`: commercial Data API URL
+    - `POOL_PLATFORM_DEFAULT_POOL_SLUG`: the pilot pool slug
 
     These URLs are endpoint configuration, not database passwords. Keep all privileged database credentials
-    out of browser code. Then repeat the identity tests through the participant and commissioner pages and run
-    the commissioner import tests.
+    out of browser code. Serve the build at `http://localhost:4173` (`npm run serve`), then repeat the identity
+    tests through the participant and commissioner pages and run the commissioner import tests.
 
-13. **Browser/device matrix.** Run the device matrix below.
+13. **Browser/device matrix.** Run the device matrix below, and the browser matrix of
+    `FRONTEND_INTEGRATION_RUNBOOK.md`.
 
 ## Synthetic pilot seed
 
@@ -308,7 +318,8 @@ Known P2 items, intentionally not addressed in the Step 2 corrective passes:
 - invite revocation/undo UI (revoked_at exists in the schema but has no commissioner workflow)
 - importing the safe CSV rows when other rows fail client-side validation (the console currently blocks the whole import)
 - general signed-in error UX
-- hosting migration away from GitHub Pages (the commercial app currently shares an origin with the Pool Center)
+- hosting migration away from GitHub Pages (the commercial app currently shares an origin with the Pool Center);
+  the intended design is `HOSTING_ARCHITECTURE.md`, and nothing of it is configured
 - production CORS/allowed-origin configuration for Neon Auth and the Data API, until the production hosting origin is
   selected (localhost development works today)
 - broader commercial UX polish

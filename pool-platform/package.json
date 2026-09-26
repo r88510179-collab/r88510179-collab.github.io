@@ -1,0 +1,17 @@
+{
+  "name": "pool-platform-commercial-frontend",
+  "private": true,
+  "type": "module",
+  "description": "Commercial V1 static frontend. The build copies an explicit allow-list into dist/ and bundles the pinned Neon SDK as a same-origin module.",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "serve": "node scripts/serve.mjs",
+    "test": "node --test *.test.mjs"
+  },
+  "dependencies": {
+    "@neondatabase/neon-js": "0.7.0-beta"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

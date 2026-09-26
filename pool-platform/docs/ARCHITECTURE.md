@@ -77,7 +77,7 @@ Do not implement silent cross-source overwrite.
 
 Initial recommended stack:
 
-- GitHub Pages or equivalent static hosting for the web client
+- static hosting for the web client on its own commercial origin (planned: a Vercel project limited to `pool-platform/` that publishes only the allow-listed `dist/`; see `HOSTING_ARCHITECTURE.md`, nothing configured yet)
 - Neon/Postgres for data
 - Neon/Auth or equivalent passwordless authentication
 - serverless/API layer only for operations that cannot safely be direct database calls
@@ -127,6 +127,10 @@ No demo credential may access production customer data.
 - Invitation tokens are 256-bit random values; only SHA-256 hashes are stored.
 - Optional invitation email binding prevents another signed-in email from claiming the link, and the bound email must be verified in Neon Auth.
 - The commercial service worker only manages caches under its own pool-platform-commercial- prefix and only stores an allow-list of same-origin static files; auth, Data API, cross-origin and query-string URLs are never cached.
+- The worker is registered from `sw-register.js` with scope `./` and never stores or answers `platform-config.js`, so no cached configuration can pin a page to an old backend; a page that cannot load its configuration says so and never falls back to the sandbox.
+- The browser loads the pinned `@neondatabase/neon-js` 0.7.0-beta from its own origin (`vendor/neon-js.js`, bundled from `package-lock.json`); no code is loaded from a CDN.
+- The pages carry no inline script or style, so they run under `script-src 'self'` and `style-src 'self'`.
+- The runtime configuration is generated at build time from `POOL_PLATFORM_*` variables (public endpoint URLs only, validated, fail closed); the tracked `platform-config.js` is the sandbox.
 - Commercial pool slugs are globally unique in V1 to keep links simple.
 - Participant invite pages use a no-referrer policy.
 - Dynamic commissioner-controlled text is escaped before HTML rendering.

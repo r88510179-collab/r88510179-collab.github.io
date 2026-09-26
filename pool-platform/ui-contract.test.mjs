@@ -2,9 +2,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
 import {createRequire} from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
 import test,{after,before,describe} from 'node:test';
 import vm from 'node:vm';
+import {CONFIG_UNAVAILABLE,SIGN_IN_NOT_CONFIRMED} from './platform-client.js';
+import {buildCommercialFrontend} from './scripts/build.mjs';
+import {contentSecurityPolicy} from './scripts/runtime-config.mjs';
+import {startServer} from './scripts/serve.mjs';
 
 const read=name=>fs.readFileSync(new URL('./'+name,import.meta.url),'utf8');
 const participant=read('participant.html')+read('participant.js');
@@ -42,8 +47,8 @@ test('participant summary is built from text nodes; the typed tiebreak never rea
 test('participant Sign out and signed-in errors live in the shell, outside every card that context, invites or errors hide',()=>{
   const html=read('participant.html'),js=read('participant.js');
   const shell=html.slice(html.indexOf('<main class="shell">'),html.indexOf('<section'));
-  assert.match(shell,/<div class="topbar">[\s\S]*<button class="button compact secondary hidden" id="signOut" type="button" style="min-height:44px">Sign out<\/button>/);
-  assert.match(shell,/<div class="notice error hidden" id="sessionError" role="alert"/);
+  assert.match(shell,/<div class="topbar">[\s\S]*<button class="button compact secondary hidden tap-target" id="signOut" type="button">Sign out<\/button>/);
+  assert.match(shell,/<div class="notice error hidden shell-notice" id="sessionError" role="alert">/);
   assert.equal(html.match(/id="signOut"/g).length,1);
   // Only the session decides whether Sign out shows: not the entry context, an invite claim or an error.
   assert.equal(js.match(/show\('signOut'/g).length,1);
@@ -85,8 +90,8 @@ test('participant Survivor choices submit the stable key and show the escaped di
 test('commissioner Sign out and signed-in errors live in the shell; async work renders only for the session that started it',()=>{
   const html=read('commissioner.html'),js=read('commissioner.js');
   const shell=html.slice(html.indexOf('<main class="shell">'),html.indexOf('<section'));
-  assert.match(shell,/<div class="topbar">[\s\S]*<button class="button compact secondary hidden" id="signOut" type="button" style="min-height:44px">Sign out<\/button>/);
-  assert.match(shell,/<div class="notice error hidden" id="sessionError" role="alert"/);
+  assert.match(shell,/<div class="topbar">[\s\S]*<button class="button compact secondary hidden tap-target" id="signOut" type="button">Sign out<\/button>/);
+  assert.match(shell,/<div class="notice error hidden shell-notice" id="sessionError" role="alert">/);
   assert.equal(html.match(/id="signOut"/g).length,1);
   // Only the session decides whether Sign out shows: not the pool context, an import or an error.
   assert.equal(js.match(/show\('signOut'/g).length,1);
@@ -125,10 +130,13 @@ test('responsive baseline keeps mobile controls touch-friendly',()=>{
   assert.match(css,/font-size:16px/);
   assert.match(css,/min-height:48px/);
   assert.match(css,/@media\(max-width:560px\)/);
+  // Sign out is a .compact button (42px); .tap-target follows .compact with equal specificity, so it wins: 44px.
+  assert.match(css,/\.compact\{min-height:42px;[^}]*\}\.tap-target\{min-height:44px\}/);
+  assert.match(css,/\.shell-notice\{margin-bottom:14px\}/);
 });
 
 test('service worker precaches all Step 2 modules',()=>{
-  for(const asset of ['participant.js','commissioner.js','platform-client.js','participant-core.js','import-core.js','auth-core.js']){
+  for(const asset of ['participant.js','commissioner.js','platform-client.js','participant-core.js','import-core.js','auth-core.js','sw-register.js']){
     assert.match(sw,new RegExp(asset.replace('.','\\.')));
   }
 });
@@ -199,12 +207,13 @@ test('activation removes only older commercial caches; Pool Center and unrelated
   assert.deepEqual([...worker.stores.keys()].sort(),[...survivors].sort());
 });
 
-test('install precaches every listed static module, at bare same-origin paths, in the commercial cache only',async()=>{
+test('install precaches exactly the listed static modules, at bare same-origin paths, in the commercial cache only',async()=>{
   const worker=await installedWorker();
   const keys=[...worker.stores.get(worker.cacheName).keys()];
-  for(const asset of ['','index.html','participant.html','commissioner.html','styles.css','participant.js','commissioner.js','submission-core.js','participant-core.js','import-core.js','auth-core.js','platform-config.js','platform-client.js','manifest.webmanifest']){
-    assert.ok(keys.includes(`${ORIGIN}/pool-platform/${asset}`),asset||'./');
-  }
+  const listed=['','index.html','participant.html','commissioner.html','styles.css','sw-register.js','participant.js','commissioner.js','submission-core.js','participant-core.js','import-core.js','auth-core.js','platform-client.js','manifest.webmanifest'];
+  assert.deepEqual(keys.sort(),listed.map(asset=>`${ORIGIN}/pool-platform/${asset}`).sort());
+  // The runtime configuration and the bundled SDK are never precached.
+  for(const absent of ['platform-config.js','vendor/neon-js.js','service-worker.js'])assert.ok(!keys.some(key=>key.endsWith(`/${absent}`)),absent);
   assert.ok(keys.every(key=>key.startsWith(`${ORIGIN}/pool-platform/`)&&!key.includes('?')));
   assert.deepEqual([...worker.stores.keys()],[worker.cacheName]);
 });
@@ -239,6 +248,8 @@ test('cross-origin, auth, Data API, non-GET, Authorization-bearing and query req
     request('https://ep-demo.apirest.c-2.us-east-2.aws.neon.tech/neondb/rest/v1/rpc/pool_platform_submit_entry',{method:'POST'}),
     request('https://ep-demo.apirest.c-2.us-east-2.aws.neon.tech/neondb/rest/v1/pool_platform_entries'),
     request('https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm'),
+    request(`${ORIGIN}/pool-platform/platform-config.js`),
+    request(`${ORIGIN}/pool-platform/vendor/neon-js.js`),
     request(`${ORIGIN}/neondb/auth/get-session`),
     request(`${ORIGIN}/pool-platform/rpc/pool_platform_participant_context`),
     request(`${ORIGIN}/pool-platform/auth-core.js`,{method:'POST'}),
@@ -269,13 +280,53 @@ test('listed static modules are served network-first and refreshed only from cle
   assert.equal(cached.response.body,'precached /pool-platform/import-core.js');
 });
 
+test('the runtime configuration is never stored or answered by the worker, online or offline, so no cached copy can pin a backend',async()=>{
+  assert.doesNotMatch(sw,/platform-config\.js'/,'not in the precache list');
+  const config=`${ORIGIN}/pool-platform/platform-config.js`;
+  for(const network of [async()=>fakeResponse({body:'export const PLATFORM_CONFIG={}'}),async()=>{throw new TypeError('offline')}]){
+    const worker=await installedWorker({network});
+    for(const mode of ['cors','same-origin','no-cors']){
+      assert.equal((await worker.dispatch('fetch',{request:request(config,{mode})})).responded,false,mode);
+    }
+    // Typed into the address bar it is a navigation: fetched from the network, never stored; offline the landing page.
+    const navigation=await worker.dispatch('fetch',{request:request(config,{mode:'navigate'})});
+    assert.notEqual(navigation.response?.body,'precached /pool-platform/platform-config.js');
+    assert.deepEqual(worker.log.puts,[]);
+    for(const store of worker.stores.values())assert.ok(![...store.keys()].some(key=>key.includes('platform-config')));
+  }
+});
+
+test('activation deletes the v3 commercial cache, the last one that held platform-config.js, and nothing outside the namespace',async()=>{
+  const current=(await installedWorker()).cacheName;
+  assert.equal(current,'pool-platform-commercial-v4');
+  const worker=bootWorker({cacheNames:['pool-platform-commercial-v3',current,PERSONAL_CACHE,'another-app-v1']});
+  await worker.dispatch('activate');
+  assert.deepEqual(worker.log.deleted,['pool-platform-commercial-v3']);
+  assert.deepEqual([...worker.stores.keys()].sort(),[current,PERSONAL_CACHE,'another-app-v1'].sort());
+});
+
+test('a request carrying Authorization is never stored, in any header case and for navigations too',async()=>{
+  const worker=await installedWorker();
+  for(const name of ['Authorization','authorization','AUTHORIZATION']){
+    const asset=await worker.dispatch('fetch',{request:request(`${ORIGIN}/pool-platform/participant.js`,{headers:{[name]:'Bearer a.b.c'}})});
+    assert.equal(asset.responded,false,name);
+    const page=await worker.dispatch('fetch',{request:request(`${ORIGIN}/pool-platform/participant.html`,{mode:'navigate',headers:{[name]:'Bearer a.b.c'}})});
+    assert.equal(page.response.body,'network',name);
+  }
+  assert.deepEqual(worker.log.puts,[]);
+});
+
 // Opt-in: the real participant page in headless Chromium through Playwright.
 //   POOL_PLATFORM_TEST_BROWSER=1 NODE_PATH="$(npm root -g)" node --test pool-platform/ui-contract.test.mjs
 // Sandbox runs as shipped. Live mode is stubbed only at the network edge: platform-config.js is served as a
-// live config, the pinned Neon SDK URL as an in-page fake auth client, and the Data API RPCs by an in-memory
-// stand-in, so the page's own auth shell, invite, rendering and submit code runs unmodified.
+// live config, the same-origin bundled SDK (vendor/neon-js.js) as an in-page fake auth client, and the Data API
+// RPCs by an in-memory stand-in, so the page's own auth shell, invite, rendering and submit code runs unmodified.
+// Every page is served with the production Content-Security-Policy, and clean() fails on any violation reported.
 const BROWSER=process.env.POOL_PLATFORM_TEST_BROWSER||'';
-const SDK_URL=/import\('(https:[^']+)'\)/.exec(read('platform-client.js'))[1];
+const SDK_PATH=/import\('\.\/(vendor\/[^']+)'\)/.exec(read('platform-client.js'))?.[1];
+// The stand-in Data API is same-origin and the fake SDK never calls the Auth URL, so connect-src 'self' suffices.
+const PAGE_CSP=contentSecurityPolicy({authUrl:'',dataUrl:''});
+const ESBUILD=(()=>{try{return !!createRequire(import.meta.url).resolve('esbuild')}catch{return false}})();
 const FAKE_SDK=`const b64=s=>btoa(s).replace(/[+]/g,'-').replace(/[/]/g,'_').replace(/=+$/,'');
 const auth=()=>window.__fakeAuth;
 const jwt=email=>[b64('{"alg":"none","typ":"JWT"}'),b64(JSON.stringify({email})),b64('shape-only-signature')].join('.');
@@ -298,7 +349,7 @@ function serveDirectory(root){
     if(name.includes('/')||name.includes('..')){res.writeHead(404).end();return}
     fs.readFile(new URL(name,root),(error,body)=>{
       if(error){res.writeHead(404).end();return}
-      res.writeHead(200,{'content-type':types[path.extname(name)]||'application/octet-stream'}).end(body);
+      res.writeHead(200,{'content-type':types[path.extname(name)]||'application/octet-stream','content-security-policy':PAGE_CSP}).end(body);
     });
   });
   return new Promise(resolve=>server.listen(0,'127.0.0.1',()=>resolve(server)));
@@ -353,11 +404,14 @@ function dataApi(world){
     const claims=(request.headers().authorization||'').replace(/^Bearer /,'').split('.')[1];
     const email=claims?JSON.parse(Buffer.from(claims,'base64url').toString()).email:null;
     const args=request.postDataJSON()||{};
-    world.calls.push({name,email,args});
+    world.calls.push({name,email,args,at:Date.now(),method:request.method(),url:request.url(),headers:request.headers(),body:request.postData()});
     const held=world.gates.find(g=>g.name===name&&!g.done);
     if(held){if(held.skip>0)held.skip--;else{held.done=true;held.seen();await held.released}}
     const reply=(status,body)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
     const fail=message=>reply(400,{code:'P0001',details:null,hint:null,message});
+    // world.authRequired[name]: how many more calls of that RPC answer auth_required before anything else happens,
+    // as a newly opened Data API connection that saw no identity would (the database raises it first).
+    if(world.authRequired?.[name]>0){world.authRequired[name]--;return fail('auth_required')}
     if(!email)return fail('auth_required');
     if(name==='pool_platform_claim_entry_invite'){
       const invite=world.invites[args.p_invite_token];
@@ -414,17 +468,22 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     await new Promise(resolve=>server?server.close(resolve):resolve());
   });
 
+  // Collects every Content-Security-Policy violation a page reports, as "<directive> <blocked URI> <source>:<line>".
+  const recordCsp=page=>page.addInitScript(()=>{
+    window.__csp=[];document.addEventListener('securitypolicyviolation',e=>window.__csp.push(`${e.effectiveDirective} ${e.blockedURI} ${e.sourceFile}:${e.lineNumber}`));
+  });
   async function openPage({world=null,signedInAs=null,query='',width=390,height=844,path='participant.html',poolSlug='it-pool'}={}){
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width,height}});
     contexts.push(context);
     const page=await context.newPage(),seen={dialogs:[],errors:[]};
     page.on('dialog',dialog=>{seen.dialogs.push(dialog.message());dialog.dismiss().catch(()=>{})});
     page.on('pageerror',error=>seen.errors.push(error.message));
+    await recordCsp(page);
     if(world){
       await page.addInitScript(email=>{window.__fakeAuth={email}},signedInAs);
       await page.route(`${base}/platform-config.js`,route=>route.fulfill({contentType:'text/javascript',
         body:`export const PLATFORM_CONFIG=Object.freeze({mode:'live',authUrl:'https://auth.pool.test/auth',dataUrl:'${base}/data-api',defaultPoolSlug:${JSON.stringify(poolSlug)}});`}));
-      await page.route(SDK_URL,route=>route.fulfill({contentType:'text/javascript',headers:{'access-control-allow-origin':'*'},body:FAKE_SDK}));
+      await page.route(`${base}/${SDK_PATH}`,route=>route.fulfill({contentType:'text/javascript',body:FAKE_SDK}));
       await page.route(`${base}/data-api/rpc/*`,dataApi(world));
     }
     await page.goto(`${base}/${path}${query}`);
@@ -438,6 +497,7 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     assert.deepEqual(seen.errors,[],'no page error');
     assert.equal(await page.evaluate(()=>window.__xss),undefined,'no injected handler ran');
     assert.equal(await page.locator('img,svg,script:not([src])').count(),0,'no injected element exists');
+    assert.deepEqual(await page.evaluate(()=>window.__csp),[],'no Content-Security-Policy violation');
   };
   const pickAll=async(page,sides)=>{for(const [i,side] of sides.entries())await page.click(`label[for="game-${i}-${side}"]`)};
   // Lets the page finish whatever a just-delivered response set in motion.
@@ -878,5 +938,161 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
         await clean(page,seen);
       }
     }
+  });
+
+  test('live: an RPC answered auth_required is resent once, unchanged, about 200 ms later; a second auth_required shows the sign-in message and nothing more is sent',async()=>{
+    const same=(first,second,label)=>{
+      for(const key of ['method','url','body'])assert.equal(second[key],first[key],`${label}: ${key}`);
+      assert.deepEqual(second.headers,first.headers,`${label}: headers, bearer token included`);
+      const gap=second.at-first.at;
+      assert.ok(gap>=190&&gap<1500,`${label}: resent after ${gap} ms`);
+    };
+    const calls=(world,name)=>world.calls.filter(c=>c.name===name);
+    // The context load answers auth_required once: the resent request loads the entry.
+    {
+      const world=liveWorld({owners:{'entry-1':'player@example.test'}});world.authRequired={pool_platform_participant_context:1};
+      const {page,seen}=await openPage({world,signedInAs:'player@example.test'});
+      await page.locator('#pickForm').waitFor({state:'visible'});
+      const loads=calls(world,'pool_platform_participant_context');
+      assert.equal(loads.length,2);same(loads[0],loads[1],'context');
+      await visible(page,{sessionError:false,entryCard:true,signOut:true});
+      await clean(page,seen);
+    }
+    // A submit answers auth_required once: the first request did nothing, the resent one saves exactly once.
+    {
+      const world=liveWorld({owners:{'entry-1':'player@example.test'}});
+      const {page,seen}=await openPage({world,signedInAs:'player@example.test'});
+      await page.locator('#pickForm').waitFor({state:'visible'});
+      world.authRequired={pool_platform_submit_entry:1};
+      await pickAll(page,['away','home']);await page.fill('#tiebreak','47');await page.click('#submitBtn');
+      await page.locator('#submittedMeta',{hasText:'Revision 1 '}).waitFor();
+      const submits=calls(world,'pool_platform_submit_entry');
+      assert.equal(submits.length,2);same(submits[0],submits[1],'submit');
+      assert.equal(world.entries[0].submission.revision,1);
+      await visible(page,{validation:false,sessionError:false});
+      await clean(page,seen);
+    }
+    // auth_required twice: two requests, the friendly message, and no third request although it would succeed.
+    {
+      const world=liveWorld({owners:{'entry-1':'player@example.test'}});world.authRequired={pool_platform_participant_context:2};
+      const {page,seen}=await openPage({world,signedInAs:'player@example.test'});
+      await page.locator('#sessionError').waitFor({state:'visible'});
+      assert.equal(await page.textContent('#sessionError'),SIGN_IN_NOT_CONFIRMED);
+      await page.waitForTimeout(600);
+      const loads=calls(world,'pool_platform_participant_context');
+      assert.equal(loads.length,2,'no third request');same(loads[0],loads[1],'context twice');
+      await visible(page,{signOut:true,entryCard:false,pickForm:false,authCard:false});
+      await clean(page,seen);
+    }
+  });
+
+  test('a page that cannot load platform-config.js (offline, or missing) says so and shows neither the sandbox nor a sign-in',async()=>{
+    for(const path of ['participant.html','commissioner.html']){
+      for(const failure of ['internetdisconnected','missing']){
+        const context=await browser.newContext({serviceWorkers:'block'});contexts.push(context);
+        const page=await context.newPage(),errors=[],label=`${path} ${failure}`;
+        page.on('pageerror',error=>errors.push(error.message));
+        await recordCsp(page);
+        await page.route(`${base}/platform-config.js`,route=>failure==='missing'?route.fulfill({status:404,contentType:'text/plain',body:'not found'}):route.abort(failure));
+        await page.goto(`${base}/${path}`);
+        await page.locator('#sessionError').waitFor({state:'visible'});
+        assert.equal(await page.textContent('#sessionError'),CONFIG_UNAVAILABLE,label);
+        assert.equal(await page.textContent('#modePill'),'UNAVAILABLE',label);
+        for(const id of ['authCard','signOut','entryCard','pickForm','emptyCard','consoleCard','entriesCard','importCard']){
+          if(await page.locator(`#${id}`).count())assert.equal(await page.isVisible(`#${id}`),false,`${label}: #${id}`);
+        }
+        assert.equal(errors.length,1,`${label}: the failed configuration import is the only error`);
+        assert.deepEqual(await page.evaluate(()=>window.__csp),[],label);
+      }
+    }
+  });
+
+  test('service worker in Chromium: commercial scope, exactly the allow-list cached, the configuration never stored; offline the cached shell says so, and online a reload recovers',async()=>{
+    const own=await serveDirectory(new URL('./',import.meta.url)),port=own.address().port,origin=`http://127.0.0.1:${port}`;
+    const stop=()=>new Promise(resolve=>{own.close(()=>resolve());own.closeAllConnections()});
+    try{
+      const context=await browser.newContext();contexts.push(context);
+      const page=await context.newPage(),errors=[];
+      page.on('pageerror',error=>errors.push(error.message));
+      await recordCsp(page);
+      await page.goto(`${origin}/index.html`);
+      const registration=await page.evaluate(async()=>{const r=await navigator.serviceWorker.ready;return{scope:r.scope,script:r.active.scriptURL,updateViaCache:r.updateViaCache}});
+      assert.deepEqual(registration,{scope:`${origin}/`,script:`${origin}/service-worker.js`,updateViaCache:'none'});
+      const cached=()=>page.evaluate(async()=>{
+        const out={};for(const name of await caches.keys())out[name]=(await (await caches.open(name)).keys()).map(r=>r.url).sort();return out;
+      });
+      const listed=['','index.html','participant.html','commissioner.html','styles.css','sw-register.js','participant.js','commissioner.js',
+        'submission-core.js','participant-core.js','import-core.js','auth-core.js','platform-client.js','manifest.webmanifest'].map(asset=>`${origin}/${asset}`).sort();
+      assert.deepEqual(await cached(),{'pool-platform-commercial-v4':listed});
+      await page.goto(`${origin}/participant.html`);
+      await page.locator('#pickForm').waitFor({state:'visible'});
+      assert.equal(await page.evaluate(()=>navigator.serviceWorker.controller?.scriptURL),`${origin}/service-worker.js`);
+      assert.deepEqual(await cached(),{'pool-platform-commercial-v4':listed},'loading the configuration stored nothing');
+      // The host unreachable: the worker serves the page and its modules from cache, the configuration cannot load.
+      await stop();
+      await page.reload();
+      await page.locator('#sessionError').waitFor({state:'visible'});
+      assert.equal(await page.textContent('#sessionError'),CONFIG_UNAVAILABLE);
+      assert.equal(await page.textContent('#modePill'),'UNAVAILABLE');
+      assert.equal(await page.isVisible('#pickForm'),false,'nothing rendered from a cached configuration');
+      // Reachable again: a reload recovers.
+      await new Promise(resolve=>own.listen(port,'127.0.0.1',resolve));
+      await page.reload();
+      await page.locator('#pickForm').waitFor({state:'visible'});
+      assert.equal(await page.textContent('#modePill'),'SANDBOX · synthetic');
+      assert.deepEqual(await cached(),{'pool-platform-commercial-v4':listed});
+      assert.equal(errors.length,1,'only the offline configuration import failed');
+      assert.deepEqual(await page.evaluate(()=>window.__csp),[]);
+    }finally{if(own.listening)await stop()}
+  });
+
+  test('real bundled SDK: a live build served by scripts/serve.mjs at localhost signs in far enough to send a code under the production CSP',{skip:ESBUILD?false:'run npm ci in pool-platform to bundle the real SDK'},async()=>{
+    const work=fs.mkdtempSync(path.join(os.tmpdir(),'pool-platform-live-')),dist=path.join(work,'dist');
+    const AUTH='https://auth.pool.test/neondb/auth',DATA='https://data.pool.test/neondb/rest/v1';
+    try{
+      await buildCommercialFrontend({outDir:dist,env:{POOL_PLATFORM_MODE:'live',POOL_PLATFORM_AUTH_URL:AUTH,POOL_PLATFORM_DATA_URL:DATA,POOL_PLATFORM_DEFAULT_POOL_SLUG:'it-pool'}});
+      const local=await startServer({dir:dist,port:0,log:()=>{}});
+      try{
+        assert.match(local.csp,/connect-src 'self' https:\/\/auth\.pool\.test https:\/\/data\.pool\.test;/);
+        const context=await browser.newContext({serviceWorkers:'block'});contexts.push(context);
+        const page=await context.newPage(),errors=[],auth=[],data=[];
+        page.on('pageerror',error=>errors.push(error.message));
+        await recordCsp(page);
+        // Stand-in Neon Auth: no session yet, and an Email OTP send that succeeds. No Data API call may happen.
+        await context.route('https://auth.pool.test/**',route=>{
+          const request=route.request(),pathname=new URL(request.url()).pathname;
+          auth.push({method:request.method(),pathname,headers:request.headers(),body:request.postData()});
+          const headers={'access-control-allow-origin':new URL(local.url).origin,'access-control-allow-credentials':'true','content-type':'application/json'};
+          if(pathname==='/neondb/auth/get-session')return route.fulfill({status:200,headers,body:'null'});
+          if(pathname==='/neondb/auth/email-otp/send-verification-otp')return route.fulfill({status:200,headers,body:'{"success":true}'});
+          return route.fulfill({status:404,headers,body:'{}'});
+        });
+        await context.route('https://data.pool.test/**',route=>{data.push(route.request().url());return route.abort()});
+        await page.goto(`${local.url}participant.html`);
+        await page.locator('#authCard').waitFor({state:'visible'});
+        assert.equal(await page.evaluate(()=>location.hostname),'localhost');
+        assert.equal(await page.textContent('#modePill'),'LIVE · secure');
+        await page.fill('#email','Player@Example.test');await page.click('#sendCode');
+        await page.locator('#otpWrap').waitFor({state:'visible'});
+        assert.equal(await page.textContent('#authError'),'');
+        assert.deepEqual(auth.map(r=>`${r.method} ${r.pathname}`),['GET /neondb/auth/get-session','POST /neondb/auth/email-otp/send-verification-otp']);
+        assert.deepEqual(JSON.parse(auth[1].body),{email:'player@example.test',type:'sign-in'});
+        const info=JSON.parse(auth[0].headers['x-neon-client-info']);
+        assert.deepEqual([info.sdk,info.version,info.runtime],['@neondatabase/neon-js','0.7.0-beta','browser'],'the exact pinned SDK is what runs');
+        assert.deepEqual(data,[]);
+        assert.deepEqual(errors,[]);
+        // The one report the SDK may cause: zod's eval feature probe (allowsEval: try { new F(""); } catch), which
+        // finds eval blocked and keeps zod on its non-eval path. No other directive may be violated.
+        const bundle=fs.readFileSync(path.join(dist,'vendor/neon-js.js'),'utf8').split('\n');
+        const violations=await page.evaluate(()=>window.__csp);
+        assert.ok(violations.length<=1,JSON.stringify(violations));
+        const probe=new RegExp(`^script-src eval ${`${local.url}vendor/neon-js.js`.replace(/[.*+?^${}()|[\]\\/]/g,'\\$&')}:(\\d+)$`);
+        for(const violation of violations){
+          const at=probe.exec(violation);
+          assert.ok(at,violation);
+          assert.equal(bundle[Number(at[1])-1].trim(),'new F("");',violation);
+        }
+      }finally{await local.close()}
+    }finally{fs.rmSync(work,{recursive:true,force:true})}
   });
 });

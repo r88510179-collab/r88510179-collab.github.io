@@ -9,6 +9,8 @@ import {extractAccessToken,normalizeEmail,validEmail,validOtp,normalizeInviteTok
 const AUTH_REQUIRED='auth_required';
 const AUTH_RETRY_DELAY_MS=200;
 export const SIGN_IN_NOT_CONFIRMED='Your sign-in could not be confirmed. Try again, or sign out and sign in again.';
+// Shown when a page cannot load platform-config.js, which the service worker never caches (offline, or missing).
+export const CONFIG_UNAVAILABLE='This page could not load its configuration. Check your connection, then reload.';
 
 async function postRpc(url,token,args){
   const response=await fetch(url,{
@@ -40,7 +42,8 @@ export class PlatformClient{
 
   async init(){
     if(!this.live)return this;
-    const {createClient}=await import('https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm');
+    // The pinned @neondatabase/neon-js 0.7.0-beta, bundled by scripts/build.mjs into a module on this same origin.
+    const {createClient}=await import('./vendor/neon-js.js');
     this.neon=createClient({auth:{url:this.config.authUrl},dataApi:{url:this.config.dataUrl}});
     return this;
   }

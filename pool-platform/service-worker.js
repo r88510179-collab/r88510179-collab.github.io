@@ -1,12 +1,15 @@
-// The commercial app shares its origin, and so Cache Storage, with other apps. This worker only ever deletes
+// The commercial app may share its origin, and so Cache Storage, with other apps. This worker only ever deletes
 // caches in its own namespace and only stores an explicit list of same-origin static files at their bare
 // paths: never auth or Data API traffic, cross-origin requests, or any URL with a query string (invites).
+// platform-config.js is deliberately not listed, so the worker neither stores nor answers it: the runtime
+// configuration always comes from the network and no cached copy can pin a page to an old backend. v3 cached
+// it; activating this version deletes v3. The bundled SDK (vendor/neon-js.js) is left to the network as well.
 const CACHE_PREFIX='pool-platform-commercial-';
-const CACHE=`${CACHE_PREFIX}v3`;
+const CACHE=`${CACHE_PREFIX}v4`;
 const ASSETS=[
-  './','./index.html','./participant.html','./commissioner.html','./styles.css',
+  './','./index.html','./participant.html','./commissioner.html','./styles.css','./sw-register.js',
   './participant.js','./commissioner.js','./submission-core.js','./participant-core.js',
-  './import-core.js','./auth-core.js','./platform-config.js','./platform-client.js','./manifest.webmanifest'
+  './import-core.js','./auth-core.js','./platform-client.js','./manifest.webmanifest'
 ];
 const STATIC_PATHS=new Set(ASSETS.map(asset=>new URL(asset,self.location).pathname));
 

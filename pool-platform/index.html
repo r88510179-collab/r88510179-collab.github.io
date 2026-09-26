@@ -19,7 +19,7 @@
       <div class="eyebrow">Participant experience</div>
       <h1>Submit weekly football picks from any device.</h1>
       <p class="meta">The commercial foundation supports direct participant entry or commissioner entry. The first finalized source claims that entry for the week so the other path cannot overwrite it.</p>
-      <div class="actions" style="margin-top:14px">
+      <div class="actions action-bar">
         <a class="button primary link-button" href="./participant.html">Open participant demo</a>
         <a class="button secondary link-button" href="./commissioner.html">Open commissioner demo</a>
       </div>
@@ -42,8 +42,6 @@
 
     <footer class="footer">Testing concept · identity/submission backend remains review-only</footer>
   </main>
-  <script>
-    if('serviceWorker' in navigator){navigator.serviceWorker.register('./service-worker.js').catch(()=>{})}
-  </script>
+  <script type="module" src="./sw-register.js"></script>
 </body>
 </html>

@@ -1,10 +1,13 @@
-import {PLATFORM_CONFIG} from './platform-config.js';
-import {PlatformClient} from './platform-client.js';
+import {CONFIG_UNAVAILABLE,PlatformClient} from './platform-client.js';
 import {SUBMISSION_SOURCES} from './submission-core.js';
 import {prepareCommissionerImport,describeImportError,summarizeBatchResults} from './import-core.js';
+import './sw-register.js';
 
 const $=id=>document.getElementById(id),params=new URLSearchParams(location.search);
 const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+// The service worker never stores platform-config.js, so no cached copy can pin this page to an old backend. When it
+// cannot be read (offline, or missing from the deployment) the page says so and stops: it never falls back to the sandbox.
+const {PLATFORM_CONFIG}=await import('./platform-config.js').catch(e=>{$('modePill').textContent='UNAVAILABLE';msg('sessionError',CONFIG_UNAVAILABLE);throw e});
 const poolSlug=params.get('pool')||PLATFORM_CONFIG.defaultPoolSlug,client=new PlatformClient(PLATFORM_CONFIG);
 const state={session:null,context:null,season:null,week:null,pendingEmail:''};
 function show(id,on=true){$(id).classList.toggle('hidden',!on)}
@@ -111,4 +114,3 @@ async function initialize(){
   if(state.session)await openSession();
 }
 initialize().catch(e=>msg('sessionError',e.message));
-if('serviceWorker' in navigator){navigator.serviceWorker.register('./service-worker.js').catch(()=>{})}
