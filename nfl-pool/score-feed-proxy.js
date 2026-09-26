@@ -2,7 +2,7 @@
   'use strict';
   const ESPN_ORIGIN='https://site.api.espn.com';
   const ESPN_PATH='/apis/site/v2/sports/football/nfl/scoreboard';
-  const PROXY='https://br-late-hat-b55ygmj4-nflscores.compute.c-7.us-east-2.aws.neon.tech/';
+  const PROXY='https://br-late-hat-b55ygmj4-nflscores2.compute.c-7.us-east-2.aws.neon.tech/';
   const nativeFetch=window.fetch.bind(window);
 
   window.fetch=function(input,init){

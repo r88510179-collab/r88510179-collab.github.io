@@ -1,5 +1,5 @@
 'use strict';
-const CACHE='pool-center-shell-v9';
+const CACHE='pool-center-shell-v10';
 const SHELL=[
   './',
   './index.html',
@@ -11,7 +11,7 @@ const SHELL=[
   './survivor.css?v=3',
   './survivor-app.js?v=5',
   './survivor-math.js?v=5',
-  './score-feed-proxy.js?v=1',
+  './score-feed-proxy.js?v=2',
   './pwa.js?v=1',
   './manifest.webmanifest',
   './assets/pool-center-icon.svg',

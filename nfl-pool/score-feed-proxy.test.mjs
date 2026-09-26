@@ -8,6 +8,9 @@ const source=readFileSync(new URL('./score-feed-proxy.js',import.meta.url),'utf8
 const PROXY=source.match(/const PROXY='([^']+)';/)?.[1];
 assert(PROXY,'the shim declares its PROXY base URL');
 assert.equal(new URL(PROXY).href,PROXY,'PROXY is an absolute URL');
+// The Neon Function nflscores2 (deployment 1, 2026-09-26T23:02:50.545776Z), exactly its invocation_url. nflscores stays
+// deployed, unchanged, as the rollback target.
+assert.equal(PROXY,'https://br-late-hat-b55ygmj4-nflscores2.compute.c-7.us-east-2.aws.neon.tech/','PROXY is the nflscores2 invocation_url');
 const SCOREBOARD='https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard',NOW=1790000000000;
 
 function load(){
