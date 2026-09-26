@@ -271,3 +271,59 @@ for(const [code,encoded,text] of [
 }
 
 console.log('survivor decision-board NFL-code allowlist and logo output-encoding regressions passed');
+
+
+// ---- FCR-01: in production every scoreboard request goes through the Neon score proxy, whose payload has no season or
+// week context anywhere: {fetchedAt, events:[{id, status.type.{state,completed}, competitions[].competitors[].{homeAway,
+// score,team.abbreviation}}]} (date and status details only where ESPN sends them), plus competitions[].odds when ESPN
+// has a line. The view needs no change: with the odds subset the proxy-shaped feed renders the same board as the
+// ESPN-shaped feed; without it (the deployment-1 contract) no option is a market favorite. The LINES odds are already
+// that subset.
+const proxied=(payload,{odds=true}={})=>({fetchedAt:'2026-09-26T12:00:00.000Z',events:payload.events.map(e=>({
+  id:e.id,status:{type:{state:e.status.type.state,completed:e.status.type.completed}},
+  competitions:e.competitions.map(c=>({
+    competitors:c.competitors.map(x=>({homeAway:x.homeAway,score:x.score,team:{abbreviation:x.team.abbreviation}})),
+    ...(odds&&c.odds?.[0]?{odds:[c.odds[0]]}:{})
+  }))
+}))});
+assert.doesNotMatch(JSON.stringify([proxied(week(W1,1)),proxied(week(NEXT,3,LINES))]),/"(?:season|week)"/,'proxy-shaped feeds carry no season/week');
+// Proxy-shaped feeds with market lines: the identical board, market labels, ordering, availability and logos.
+{
+  const espn=await view({1:week(W1,1),2:week(W2,2),3:week(NEXT,3,LINES)});
+  const v=await view({1:proxied(week(W1,1)),2:proxied(week(W2,2)),3:proxied(week(NEXT,3,LINES))}),html=v.$('svDecisionEntries').innerHTML;
+  assert.equal(html,espn.$('svDecisionEntries').innerHTML,'proxy-shaped feeds render the identical board');
+  assert.equal(v.$('svDecisionNote').textContent,espn.$('svDecisionNote').textContent);
+  assertLogoImgs(html,'proxy-shaped feed');
+  assert.deepEqual(board(html),{
+    'D.C.':{head:'Week 3 Board',burned:['PIT','SF'],safer:[KC,WAS,LV,BUF],leverage:[LV,KC,WAS,BUF]},
+    DJS:{head:'Week 3 Board',burned:['LV','SF'],safer:[KC,WAS,BUF,JAX],leverage:[PIT,KC,WAS,BUF]},
+    Thaddeus:OUT
+  });
+}
+// Proxy-shaped feeds without market lines (what deployment 1 serves): every option reads "No market favorite", Safer
+// favorites is empty for each eligible entry, and Field leverage falls back to all legal options by availability.
+{
+  const v=await view({1:proxied(week(W1,1)),2:proxied(week(W2,2)),3:proxied(week(NEXT,3,LINES),{odds:false})}),html=v.$('svDecisionEntries').innerHTML;
+  const row=(team,vs,avail)=>`${team} | ${vs} | No market favorite | ${avail} | ${team.toLowerCase()}.png`,FULL='2/2 can use · 100%',HALF='1/2 can use · 50%';
+  assertLogoImgs(html,'proxy-shaped feed without lines');
+  assert.deepEqual(board(html),{
+    'D.C.':{head:'Week 3 Board',burned:['PIT','SF'],safer:[],leverage:[row('LV','vs NE',HALF),row('ARI','@ SF',FULL),row('ATL','@ TB',FULL),row('BAL','@ CLE',FULL)]},
+    DJS:{head:'Week 3 Board',burned:['LV','SF'],safer:[],leverage:[row('PIT','@ CIN',HALF),row('ARI','@ SF',FULL),row('ATL','@ TB',FULL),row('BAL','@ CLE',FULL)]},
+    Thaddeus:OUT
+  });
+  assert.equal(html.split('No market-favorite lines are available yet.').length-1,2,'each eligible entry shows the empty Safer favorites state');
+  assert.doesNotMatch(html,/Favorite -|Market favorite/,'no option is labelled a market favorite');
+  assert.match(v.$('svDecisionNote').textContent,/^Field availability = share of surviving entries/);
+}
+// Every week proxy-shaped: the same tracked states, distribution, progress, feed status and board as the ESPN-shaped test.
+{
+  const espn=await view({1:week(W1,1),2:week(W2,2),3:week(W3,3)});
+  const v=await view({1:proxied(week(W1,1)),2:proxied(week(W2,2)),3:proxied(week(W3,3))});
+  for(const id of ['svTracked','svDistribution','svProgress','svDecisionEntries'])assert.equal(v.$(id).innerHTML,espn.$(id).innerHTML,`${id} markup`);
+  for(const id of ['svFeed','svSummaryNote','svPoolSize','svEntered','svStillIn','svPending','svDecisionWeek','svDecisionNote','svMeta'])assert.equal(v.$(id).textContent,espn.$(id).textContent,`${id} text`);
+  assert.match(v.row('D.C.'),/ALIVE/);assert.match(v.row('DJS'),/ALIVE/);
+  assert.match(v.row('Thaddeus'),/OUT/);assert.match(v.row('Thaddeus'),/LAC lost in Week 1/);
+  assert.equal(v.$('svFeed').textContent,'LIVE · NFL results');assert.equal(v.$('svPending').textContent,0);
+}
+
+console.log('survivor decision-board proxy-shaped feed (with and without market lines) regressions passed');
