@@ -1,7 +1,7 @@
 'use strict';
 import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';
-import {groupSurvivorPdfTextItems,parseSurvivorPages,validateSurvivorConfig} from './survivor-parser.js?v=2';
-import {verifySurvivorSchedule,survivorPublishGuard} from './survivor-publish-checks.js?v=1';
+import {groupSurvivorPdfTextItems,parseSurvivorPages,validateSurvivorConfig} from './survivor-parser.js?v=3';
+import {verifySurvivorSchedule,survivorPublishGuard} from './survivor-publish-checks.js?v=2';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
@@ -73,7 +73,7 @@ const sameInstant=(a,b)=>Number.isFinite(Date.parse(a))&&Date.parse(a)===Date.pa
 const attemptLanded=(row,attempt)=>!!row&&row.revision===attempt.revision&&row.source_sha256===attempt.digest&&sameInstant(row.updated_at,attempt.ts);
 
 function refreshGuard(c){
-  c.guard=survivorPublishGuard(c.config,{resultsByWeek:c.verification.resultsByWeek,currentGames:c.verification.weeks.find(w=>w.week===c.config.week)?.games||null,published:c.db?{checked:true,rows:c.db.rows}:{checked:false},detachedRows:c.review.detachedRows,unanchoredRows:c.review.unanchoredRows,symbolRows:c.review.symbolRows,contextUnexposed:c.verification.contextUnexposed});
+  c.guard=survivorPublishGuard(c.config,{resultsByWeek:c.verification.resultsByWeek,currentGames:c.verification.weeks.find(w=>w.week===c.config.week)?.games||null,published:c.db?{checked:true,rows:c.db.rows}:{checked:false},detachedRows:c.review.detachedRows,unanchoredRows:c.review.unanchoredRows,gridBreaks:c.review.gridBreaks,symbolRows:c.review.symbolRows,contextUnexposed:c.verification.contextUnexposed});
   if(c===candidate)renderCandidate();
 }
 async function checkPublished(target){

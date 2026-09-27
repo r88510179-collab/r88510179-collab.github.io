@@ -127,6 +127,41 @@ function pdfParticipantGeometry(row,parsed,gameCount){
   return{nameX:tokens[0]?.x,numericXs,nameItems};
 }
 
+
+// A tracked entrant can legitimately submit no weekly picks. Accept that state only when the PDF proves a completely
+// empty tracked pick row: the exact tracked name, no pick/tiebreak cells, one numeric value in the W column, and the row
+// sits exactly one proven row pitch from at least two complete tracked rows on the same page. Partial tracked rows remain
+// invalid and are never repaired or guessed.
+function pdfTrackedNoSubmissionRow(sourceRow,target,matchups,sourceRows){
+  if(!sourceRow||sourceRow.kind!=='pdf'||!Array.isArray(sourceRow.parts)||!targetRowIdentity(sourceRow.text,target))return null;
+  const gameCount=matchups.length,anchors=[];
+  for(const row of sourceRows||[]){
+    if(row?.kind!=='pdf'||row.pageNumber!==sourceRow.pageNumber)continue;
+    const parsed=regularParticipantRow(row.text,matchups),tracked=parsed&&trackedTargetForName(parsed.sourceName);
+    if(!tracked)continue;
+    const geometry=pdfParticipantGeometry(row,parsed,gameCount);
+    if(geometry)anchors.push({row,geometry});
+  }
+  if(anchors.length<2)return null;
+  const nameXs=anchors.map(a=>a.geometry.nameX),winXs=anchors.map(a=>a.geometry.numericXs[gameCount+1]);
+  if(Math.max(...nameXs)-Math.min(...nameXs)>14||Math.max(...winXs)-Math.min(...winXs)>8)return null;
+  const tokens=[];
+  for(const part of sourceRow.parts){
+    const x=Number(part?.x);if(!Number.isFinite(x))continue;
+    for(const token of clean(part?.text).split(' ').filter(Boolean))tokens.push({token,x});
+  }
+  const numeric=tokens.filter(t=>/^\d+$/.test(t.token));
+  if(numeric.length!==1||Math.abs(numeric[0].x-median(winXs))>10)return null;
+  const sourceName=clean(tokens.filter(t=>!/^\d+$/.test(t.token)).map(t=>t.token).join(' '));
+  if(!target.aliases.some(alias=>exactName(alias)===exactName(sourceName)))return null;
+  const y=Number(sourceRow.y),ys=anchors.map(a=>Number(a.row.y)).filter(Number.isFinite).sort((a,b)=>b-a),gaps=[];
+  for(let i=1;i<ys.length;i++){const gap=ys[i-1]-ys[i];if(gap>0)gaps.push(gap)}
+  if(!Number.isFinite(y)||!gaps.length)return null;
+  const pitch=median(gaps),nearest=Math.min(...ys.map(ay=>Math.abs(ay-y)));
+  if(!(pitch>0)||Math.abs(nearest-pitch)>Math.max(2,pitch*0.2))return null;
+  return{sourceName,pickNumbers:Array(gameCount).fill(null),tiebreak:null};
+}
+
 // A name split across PDF text items must still read as one left-to-right text run inside the name column:
 // each item starts within the previous item's glyph advance (at most 3/4 em per character, with the em bounded
 // by the table's own row pitch) plus one em of word space, and before the first pick column.
@@ -427,10 +462,11 @@ function parseWeekGroup(week,weekGroups,filename,season,expectedCompetitionSize)
   for(const target of TARGETS){
     const sourceHits=lines.filter(line=>targetRowIdentity(line,target));
     if(sourceHits.length!==1){errors.push(sourceHits.length>1?'Multiple '+target.displayName+' rows found':'Missing '+target.displayName);continue}
-    const parsed=parseLine(sourceHits[0]);
+    const line=sourceHits[0],matches=sourceByText.get(clean(line))||[],regular=parseLine(line);
+    const parsed=regular||(matches.length===1?pdfTrackedNoSubmissionRow(matches[0],target,matchups,sourceRows):null);
     if(!parsed){errors.push(target.displayName+': regular weekly row is structurally invalid');continue}
     if(!target.aliases.some(alias=>exactName(alias)===exactName(parsed.sourceName))){errors.push(target.displayName+': participant identity mismatch');continue}
-    errors.push(...validatePickNumbers(target.displayName,parsed.pickNumbers,parsed.tiebreak,numberToGame,gameCount));
+    if(regular)errors.push(...validatePickNumbers(target.displayName,parsed.pickNumbers,parsed.tiebreak,numberToGame,gameCount));
     participants.push({id:target.id,displayName:target.displayName,sourceName:parsed.sourceName,pickNumbers:parsed.pickNumbers,tiebreak:parsed.tiebreak});
   }
 
@@ -528,7 +564,8 @@ export function validateConfig(config){
     if(noPicks>1)errors.push(label+': at most one no-pick is allowed');
     if(seen.size+noPicks!==games.length)errors.push(label+': not exactly one pick/no-pick per game');
   };
-  participants.forEach(p=>validateEntry(p,p.displayName||'Tracked entry'));
+  const trackedNoSubmission=p=>Array.isArray(p?.pickNumbers)&&p.pickNumbers.length===games.length&&p.pickNumbers.every(n=>n===null)&&p.tiebreak===null;
+  participants.forEach(p=>{if(!trackedNoSubmission(p))validateEntry(p,p.displayName||'Tracked entry')});
 
   if(config.fullFieldReady===true){
     if(!Array.isArray(fieldEntries)||!fieldEntries.length)errors.push('Full-field ready requires anonymous field entries');

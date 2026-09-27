@@ -109,7 +109,7 @@ const perWeekText=byWeek=>{const weeks=[...byWeek].filter(([,n])=>n>0).sort((a,b
 
 // Partial/premature-sheet guard. It never changes Survivor rules: it decides whether publication is blocked, or needs the
 // admin's explicit confirmation that the sheet is the final submission set before blanks become no-pick eliminations.
-export function survivorPublishGuard(config,{resultsByWeek=[],currentGames=null,published=null,detachedRows=[],unanchoredRows=[],symbolRows=[],contextUnexposed=[]}={}){
+export function survivorPublishGuard(config,{resultsByWeek=[],currentGames=null,published=null,detachedRows=[],unanchoredRows=[],gridBreaks=[],symbolRows=[],contextUnexposed=[]}={}){
   const W=config.week,entries=entriesOf(config),facts=[],reasons=[],blocking=[];
   if(!published||published.checked!==true)blocking.push('Published Survivor weeks for this season have not been checked. Sign in; the comparison runs automatically.');
   const rows=(published?.rows||[]).filter(r=>r&&r.season===config.season&&Number.isInteger(r.week));
@@ -209,6 +209,10 @@ export function survivorPublishGuard(config,{resultsByWeek=[],currentGames=null,
     const shown=unanchoredRows.slice(0,6).map(r=>`"${r.label}"${r.page!=null?` (page ${r.page})`:''}`).join(', ')+(unanchoredRows.length>6?`, +${unanchoredRows.length-6} more`:'');
     reasons.push(`${plural(unanchoredRows.length,'row without picks','rows without picks')} on a page with no participant picks ${unanchoredRows.length===1?'was':'were'} counted as ${unanchoredRows.length===1?'an entrant':'entrants'} (OUT for no pick): ${shown}. If any is not a real entrant, do not publish.`);
   }
+  if(gridBreaks?.length){
+    const shown=gridBreaks.slice(0,4).map(r=>`"${r.upper}" → "${r.lower}"${r.page!=null?` (page ${r.page})`:''}`).join(', ')+(gridBreaks.length>4?`, +${gridBreaks.length-4} more`:'');
+    reasons.push(`${plural(gridBreaks.length,'One participant-table grid restart was','Participant-table grid restarts were')} counted across a single empty visual row: ${shown}. Confirm ${gridBreaks.length===1?'it is':'they are'} real continuations of the participant table.`);
+  }
   if(symbolRows?.length){
     const shown=symbolRows.slice(0,6).map(r=>`"${r.label}"${r.page!=null?` (page ${r.page})`:''}`).join(', ')+(symbolRows.length>6?`, +${symbolRows.length-6} more`:'');
     reasons.push(`${plural(symbolRows.length,'name-column row has','name-column rows have')} no letter or digit and ${symbolRows.length===1?'was':'were'} NOT counted as ${symbolRows.length===1?'an entrant':'entrants'}: ${shown}. If any is a real entrant, do not publish.`);
@@ -217,8 +221,9 @@ export function survivorPublishGuard(config,{resultsByWeek=[],currentGames=null,
   const replacing=existing?`, replacing ${existingKind} Week ${W} revision ${existing.revision}`:'';
   const separated=detachedRows?.length?` The ${plural(detachedRows.length,'separated row','separated rows')} listed above ${detachedRows.length===1?'is not an entrant':'are not entrants'}.`:'';
   const unanchored=unanchoredRows?.length?` The ${plural(unanchoredRows.length,'row','rows')} counted from a page without picks ${unanchoredRows.length===1?'is a real entrant':'are real entrants'}.`:'';
+  const gridRestart=gridBreaks?.length?` The ${plural(gridBreaks.length,'participant-table grid restart','participant-table grid restarts')} listed above ${gridBreaks.length===1?'is a real continuation':'are real continuations'}.`:'';
   const outs=noPickOuts||maybeNoPickOuts?` Publishing shows ${plural(noPickOuts,'entry','entries')} OUT for no pick${noPickOuts?` (${perWeekText(outsByWeek)})`:''}${maybeNoPickOuts?`, and up to ${maybeNoPickOuts} more once earlier results are final (${perWeekText(maybeByWeek)})`:''}.`:'';
   const symbols=symbolRows?.length?` The ${plural(symbolRows.length,'row','rows')} without a letter or digit listed above ${symbolRows.length===1?'is not an entrant':'are not entrants'}.`:'';
-  const confirmText=`I reviewed every item listed above and confirm this sheet is the final Survivor Week ${W} submission set — no more Week ${W} picks will be added${replacing}.${outs}${separated}${unanchored}${symbols}`;
+  const confirmText=`I reviewed every item listed above and confirm this sheet is the final Survivor Week ${W} submission set — no more Week ${W} picks will be added${replacing}.${outs}${separated}${unanchored}${gridRestart}${symbols}`;
   return{week:W,priorWeek:P,coveredThrough:covered,aliveEntering,picksAlive,missingAlive,unresolvedEntering,missingUnresolved,noPickOuts,maybeNoPickOuts,picksFromEliminated,notStarted,facts,reasons,blocking,requiresConfirmation:reasons.length>0,confirmText};
 }

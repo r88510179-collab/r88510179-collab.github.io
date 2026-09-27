@@ -50,6 +50,8 @@ function validateConfig(c){
   });
   const validateEntry=(p,label,tracked=false)=>{
     if(tracked&&typeof p?.displayName!=='string')throw new Error(`Invalid entry ${label}`);
+    const trackedNoSubmission=tracked&&Array.isArray(p?.pickNumbers)&&p.pickNumbers.length===c.games.length&&p.pickNumbers.every(n=>n===null)&&p?.tiebreak===null;
+    if(trackedNoSubmission)return;
     if(!Array.isArray(p?.pickNumbers)||p.pickNumbers.length!==c.games.length||!Number.isInteger(p?.tiebreak))throw new Error(`Invalid entry ${label}`);
     const seen=new Set();let noPicks=0;
     p.pickNumbers.forEach(n=>{if(!tracked&&n===0){noPicks++;return}const x=numbers.get(n);if(!x)throw new Error(`${label}: unknown pick ${n}`);if(seen.has(x.i))throw new Error(`${label}: multiple picks for game ${x.i+1}`);seen.add(x.i)});
@@ -76,7 +78,7 @@ function validateConfig(c){
 function applyConfig(c){
   CFG=validateConfig(c);M=CFG.games.map(g=>[norm(g.away),norm(g.home)]);
   const numberMap=new Map();CFG.games.forEach((g,i)=>{numberMap.set(g.awayNumber,{i,team:norm(g.away)});numberMap.set(g.homeNumber,{i,team:norm(g.home)})});
-  const mapTracked=(p,id,name)=>{const picks=Array(M.length).fill(null);p.pickNumbers.forEach(n=>{const hit=numberMap.get(n);picks[hit.i]=hit.team});return{name,id,mnf:p.tiebreak,picks,pickNumbers:p.pickNumbers.slice()}};
+  const mapTracked=(p,id,name)=>{const picks=Array(M.length).fill(null);p.pickNumbers.forEach(n=>{if(n===null)return;const hit=numberMap.get(n);if(hit)picks[hit.i]=hit.team});return{name,id,mnf:p.tiebreak,picks,pickNumbers:p.pickNumbers.slice()}};
   const mapField=(p,fi)=>{const picks=p.pickNumbers.map((n,i)=>{const g=CFG.games[i];if(n===g.awayNumber)return norm(g.away);if(n===g.homeNumber)return norm(g.home);return null});return{name:null,id:p.id||`field-${fi+1}`,mnf:p.tiebreak,picks,pickNumbers:p.pickNumbers.slice()}};
   P=CFG.participants.map((p,pi)=>mapTracked(p,p.id||String(pi),p.displayName));
   F=(CFG.fieldEntries||[]).map(mapField);
@@ -86,13 +88,15 @@ function formatWeekDates(){
   const dates=(CFG.games||[]).map(g=>g.date||g.sourceDate).filter(Boolean).map(v=>new Date(`${String(v).slice(0,10)}T12:00:00Z`)).filter(d=>!Number.isNaN(d.valueOf()));
   if(!dates.length)return `${CFG.season} season`;const lo=new Date(Math.min(...dates)),hi=new Date(Math.max(...dates));const fmt=d=>d.toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'UTC'});return lo.valueOf()===hi.valueOf()?`${fmt(lo)}, ${CFG.season}`:`${fmt(lo)}–${fmt(hi)}, ${CFG.season}`;
 }
+function tiebreakGuess(p){return Number.isInteger(p?.mnf)?String(p.mnf):'NO PICK'}
+function tiebreakDiff(p,t){return t.final?(Number.isInteger(p?.mnf)?Math.abs(p.mnf-t.total):Number.POSITIVE_INFINITY):null}
 function renderStaticLabels(){
-  $('weekLine').textContent=`Week ${CFG.week} · ${formatWeekDates()} · ${P.map(p=>p.name).join(' · ')}`;$('pulseWeek').textContent=`Week ${CFG.week}`;$('entryCount').textContent=fieldAvailable()?CFG.competitionSize:P.length;$('gameCount').textContent=M.length;$('finals').textContent=`0/${M.length}`;$('left').textContent=M.length;$('tbNote').textContent=`Tiebreak guesses: ${P.map(p=>`${p.name} ${p.mnf}`).join(' · ')}.`;const [a,h]=M[TIEBREAK_INDEX];$('footerRule').textContent=`Final NFL outcomes only · NFL ties = 0 points · ${a}–${h} tiebreak activates when that game is final.${fieldAvailable()?' Full-field entries are stored without competitor names.':''}`;
+  $('weekLine').textContent=`Week ${CFG.week} · ${formatWeekDates()} · ${P.map(p=>p.name).join(' · ')}`;$('pulseWeek').textContent=`Week ${CFG.week}`;$('entryCount').textContent=fieldAvailable()?CFG.competitionSize:P.length;$('gameCount').textContent=M.length;$('finals').textContent=`0/${M.length}`;$('left').textContent=M.length;$('tbNote').textContent=`Tiebreak guesses: ${P.map(p=>`${p.name} ${tiebreakGuess(p)}`).join(' · ')}.`;const [a,h]=M[TIEBREAK_INDEX];$('footerRule').textContent=`Final NFL outcomes only · NFL ties = 0 points · ${a}–${h} tiebreak activates when that game is final.${fieldAvailable()?' Full-field entries are stored without competitor names.':''}`;
 }
 function stats(p,games=G){return scoreEntry(p.picks,games)}
 function tiebreak(games=G){return tiebreakState(games[TIEBREAK_INDEX])}
-function rows(games=G){const t=tiebreak(games);return P.map((p,i)=>({...p,...stats(p,games),diff:t.final?Math.abs(p.mnf-t.total):null,i})).sort((a,b)=>b.w-a.w||a.l-b.l||(t.final?a.diff-b.diff:0)||a.i-b.i)}
-function topIndices(wins,t=tiebreak()){const best=Math.max(...wins);let leaders=wins.map((w,i)=>w===best?i:-1).filter(i=>i>=0);if(t.final&&leaders.length>1){const bestDiff=Math.min(...leaders.map(i=>Math.abs(P[i].mnf-t.total)));leaders=leaders.filter(i=>Math.abs(P[i].mnf-t.total)===bestDiff)}return leaders}
+function rows(games=G){const t=tiebreak(games);return P.map((p,i)=>({...p,...stats(p,games),diff:tiebreakDiff(p,t),i})).sort((a,b)=>b.w-a.w||a.l-b.l||(t.final?a.diff-b.diff:0)||a.i-b.i)}
+function topIndices(wins,t=tiebreak()){const best=Math.max(...wins);let leaders=wins.map((w,i)=>w===best?i:-1).filter(i=>i>=0);if(t.final&&leaders.length>1){const bestDiff=Math.min(...leaders.map(i=>tiebreakDiff(P[i],t)));leaders=leaders.filter(i=>tiebreakDiff(P[i],t)===bestDiff)}return leaders}
 function tiedWith(a,b,t=tiebreak()){return a.w===b.w&&a.l===b.l&&(!t.final||a.diff===b.diff)}
 function fieldAvailable(){return CFG?.fullFieldReady===true&&Array.isArray(CFG?.fieldEntries)&&Number.isInteger(CFG?.competitionSize)&&CFG.competitionSize===P.length+F.length&&F.length>0}
 function allCompetitionEntries(){return fieldAvailable()?[...P.map((p,i)=>({...p,_order:i,_tracked:true})),...F.map((p,i)=>({...p,_order:P.length+i,_tracked:false}))]:[]}
@@ -100,7 +104,7 @@ function sameFieldStanding(a,b,t){return !!a&&!!b&&a.w===b.w&&a.l===b.l&&(!t.fin
 function rankCompetition(games=G){
   if(!fieldAvailable())return null;
   const t=tiebreak(games),all=allCompetitionEntries();
-  const ranked=competitionRanks(all.map(p=>({...p,...stats(p,games),diff:t.final?Math.abs(p.mnf-t.total):null})),{tiebreakFinal:t.final});
+  const ranked=competitionRanks(all.map(p=>({...p,...stats(p,games),diff:tiebreakDiff(p,t)})),{tiebreakFinal:t.final});
   return{rows:ranked,byId:new Map(ranked.map(p=>[p.id,p])),size:ranked.length,bestWins:ranked[0]?.w??0,t};
 }
 function fieldSnapshot(games=G){
@@ -137,7 +141,7 @@ function gameIndexForTeam(team){return M.findIndex(([a,h])=>a===team||h===team)}
 function state(g){return g.completed?(g.winner?'FINAL':'FINAL TIE'):g.state==='in'?(g.detail||'LIVE'):(g.detail||'SCHEDULED')}
 function teamLogoUrl(t){const team=norm(String(t||'').toUpperCase()),code=ESPN_LOGO_CODE[team]||team.toLowerCase();return`https://a.espncdn.com/i/teamlogos/nfl/500/${encodeURIComponent(code)}.png`}
 function badge(t,size=''){const team=norm(String(t||'').toUpperCase());return`<span class="badge${size?` ${size}`:''}" style="--tc:${TEAM_COLORS[team]||'#33465f'}" aria-hidden="true"><span class="badge-fallback">${esc(team)}</span><img class="team-logo" src="${teamLogoUrl(team)}" alt="" loading="lazy" decoding="async" onerror="this.hidden=true"></span>`}
-function pickTeam(t){const team=norm(String(t||'').toUpperCase());return`<span class="pick-team">${badge(team,'mini')}<span>${esc(team)}</span></span>`}
+function pickTeam(t){if(!t)return'<span class="pick-team no-pick"><span>NO PICK</span></span>';const team=norm(String(t).toUpperCase());return`<span class="pick-team">${badge(team,'mini')}<span>${esc(team)}</span></span>`}
 function swingIndexes(unfinishedOnly=false,games=G){return M.map((_,i)=>i).filter(i=>new Set(P.map(p=>p.picks[i])).size>1&&(!unfinishedOnly||!games[i].completed))}
 function addState(map,wins,count){const key=wins.join(',');map.set(key,(map.get(key)||0)+count)}
 function raceStatus(games=G){
@@ -179,7 +183,7 @@ function render(){
     const leadTie=tiedWith(p,lead,t),fm=field?.metrics.get(p.id),overall=fm?fieldRankLabel(fm):'—',back=fm?(fm.behind?fm.behind:'—'):'—',ceiling=fm?ceilingRankLabel(fm):'—';
     const overallSub=fm?`<span class="standing-sub">Top ${fm.topPercent}% · ${fm.tieCount>1?`${fm.tieCount} tied`:'solo'}</span>`:'<span class="standing-sub">field unavailable</span>';
     const ceilingSub=fm?`<span class="standing-sub">WIN CEILING${t.final?'':' · unresolved tiebreak not projected'}</span>`:'';
-    return`<tr class="${leadTie?'leadrow':''}"><td>${rank}</td><td class="entry">${esc(p.name)}</td><td class="c"><span class="standing-overall">${overall}</span>${overallSub}</td><td class="c w">${p.w}</td><td class="c l">${p.l}</td><td class="c">${p.left}</td><td class="c">${back}</td><td class="c"><span class="standing-overall">${ceiling}</span>${ceilingSub}</td><td class="c">${p.mnf}${p.diff!=null?`<span class="standing-sub">Δ ${p.diff}</span>`:''}</td></tr>`;
+    const tb=Number.isInteger(p.mnf)?String(p.mnf):'—',tbDelta=Number.isFinite(p.diff)?`<span class="standing-sub">Δ ${p.diff}</span>`:'';return`<tr class="${leadTie?'leadrow':''}"><td>${rank}</td><td class="entry">${esc(p.name)}</td><td class="c"><span class="standing-overall">${overall}</span>${overallSub}</td><td class="c w">${p.w}</td><td class="c l">${p.l}</td><td class="c">${p.left}</td><td class="c">${back}</td><td class="c"><span class="standing-overall">${ceiling}</span>${ceilingSub}</td><td class="c">${tb}${tbDelta}</td></tr>`;
   }).join('');
 
   if($('homeStandings')){
@@ -213,7 +217,7 @@ function render(){
   }
   $('bestWins').textContent=field?.bestWins??lead?.w??0;
   const pc=Math.round(f/M.length*100);$('progressText').textContent=`${pc}%`;$('progressBar').style.width=`${pc}%`;
-  $('tbNote').textContent=t.final?`Tiebreak final total: ${t.total}. Tiebreak differences are active.`:`Tiebreak guesses: ${P.map(p=>`${p.name} ${p.mnf}`).join(' · ')}.`;
+  $('tbNote').textContent=t.final?`Tiebreak final total: ${t.total}. Tiebreak differences are active.`:`Tiebreak guesses: ${P.map(p=>`${p.name} ${tiebreakGuess(p)}`).join(' · ')}.`;
   renderRace(race);renderSwings(race);
 }
 function warn(list){const e=$('error');e.replaceChildren();if(!list.length)return;const b=document.createElement('div');b.className='error';b.textContent=`Some feed data was ignored to protect standings: ${list.join(' · ')}`;e.appendChild(b)}

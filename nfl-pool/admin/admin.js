@@ -1,5 +1,5 @@
 import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';
-import {TARGETS,detectWeek,groupPdfTextItems,carryForwardWeekHints,parseDocumentGroups,chooseBestCandidate,validateConfig} from './parser-core.js?v=8';
+import {TARGETS,detectWeek,groupPdfTextItems,carryForwardWeekHints,parseDocumentGroups,chooseBestCandidate,validateConfig} from './parser-core.js?v=9';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
@@ -32,6 +32,7 @@ function totalEntriesState(){const {raw,badInput}=totalEntriesInput;if(badInput)
 function selectedCompetitionSize(){acceptTotalEntries();const s=totalEntriesState();if(!s.ok)throw new Error(`Total pool entries must be a whole number of at least ${TARGETS.length}, or left blank.`);return s.value}
 function competitionSizeCurrent(value){const s=totalEntriesState();return s.ok&&s.value===value}
 const fieldUnavailableReason=c=>(c?.fullFieldIssues||[]).join('; ')||'regular competition field could not be validated';
+const trackedNoSubmission=p=>Array.isArray(p?.pickNumbers)&&p.pickNumbers.length>0&&p.pickNumbers.every(n=>n===null)&&p.tiebreak===null;
 function message(text,type='info'){$('message').className=`notice ${type}`;$('message').textContent=text;$('message').hidden=!text}
 function fileContextCurrent(file,generation){return !!file&&currentFile===file&&fileGeneration===generation}
 function canPublish(){return !!session&&!!candidate&&scheduleVerified&&candidateFile===currentFile&&candidateFileGeneration===fileGeneration&&competitionSizeCurrent(candidateCompetitionSize)&&totalEntriesShown()}
@@ -165,10 +166,10 @@ async function prepareCandidate(c,sourceFile,sourceGeneration,operation){
 function renderReview(){
   if(!candidate)return;$('review').hidden=false;const cfg=candidate.config;$('reviewTitle').textContent=`${cfg.season} · Week ${cfg.week} · ${cfg.games.length} games · ${cfg.competitionSize||cfg.participants.length} entries`;
   $('gameReview').innerHTML=cfg.games.map((g,i)=>`<tr><td>${i+1}</td><td><b>${g.awayNumber}</b> ${esc(g.awayName||g.away)}</td><td>at</td><td><b>${g.homeNumber}</b> ${esc(g.homeName||g.home)}</td><td>${esc(g.date||'—')}</td></tr>`).join('');
-  $('entryReview').innerHTML=cfg.participants.map(p=>`<tr><td>${esc(p.displayName)}</td><td class="nums">${p.pickNumbers.join(' ')}</td><td><b>${p.tiebreak}</b></td></tr>`).join('');
+  $('entryReview').innerHTML=cfg.participants.map(p=>{const blank=trackedNoSubmission(p);return`<tr><td>${esc(p.displayName)}</td><td class="nums">${blank?'NO PICKS SUBMITTED':p.pickNumbers.join(' ')}</td><td><b>${blank?'—':esc(p.tiebreak)}</b></td></tr>`}).join('');
   const tb=$('tiebreakGame');tb.innerHTML=cfg.games.map((g,i)=>`<option value="${i}">${i+1}. ${g.away} at ${g.home}</option>`).join('');tb.value=String(cfg.tiebreakGameIndex);tb.onchange=()=>{cfg.tiebreakGameIndex=Number(tb.value)};
   const fieldWarning=cfg.fullFieldReady===true?`<span class="check">✓ Full-field regular Pick'em data validated · ${cfg.competitionSize} entries</span>`:`<span class="field-warn">⚠ Full-field metrics unavailable — ${esc(fieldUnavailableReason(candidate))}. The four tracked entries remain valid.</span>`;
-  $('validation').innerHTML=scheduleVerified?`<span class="check">✓ Tracked picks valid</span><span class="check">✓ Four tracked entries found</span><span class="check">✓ Anonymous privacy allowlist enforced</span>${fieldWarning}<span class="check">✓ NFL schedule matched</span>`:'<span class="bad">Schedule verification required</span>';
+  $('validation').innerHTML=scheduleVerified?`<span class="check">✓ Tracked rows valid</span><span class="check">✓ Four tracked entries found</span><span class="check">✓ Anonymous privacy allowlist enforced</span>${fieldWarning}<span class="check">✓ NFL schedule matched</span>`:'<span class="bad">Schedule verification required</span>';
   $('publishBtn').disabled=!canPublish();
 }
 

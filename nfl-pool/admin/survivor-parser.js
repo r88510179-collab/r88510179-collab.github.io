@@ -215,6 +215,19 @@ function participantRegion(rows,contract,review,errors){
     });
     const runs=[];let last=-1;
     list.forEach((a,idx)=>{if(a.kind!=='picks'||out.has(a))return;if(last>=0&&joins(list,last,idx))runs[runs.length-1].push(a);else runs.push([a]);last=idx});
+    // Excel PDF exports can visibly restart one participant table after a single completely empty row. Count across that
+    // restart only when the page has exactly two substantial pick runs (10+ rows each), nothing textual sits between
+    // their edge rows, and the second run resumes exactly two row pitches later on the same lattice. The ambiguity is
+    // surfaced in review.gridBreaks so publication requires explicit admin confirmation; short detached clusters still
+    // fail closed under the existing rules.
+    if(runs.length===2&&runs.every(run=>run.length>=10)){
+      const upper=runs[0],lower=runs[1],upperLast=upper[upper.length-1],lowerFirst=lower[0];
+      const ui=list.indexOf(upperLast),li=list.indexOf(lowerFirst),gap=upperLast.gridY-lowerFirst.gridY,tolerance=Math.max(1,pitch*0.12);
+      if(li===ui+1&&gap>pitch*1.75&&Math.abs(gap-2*pitch)<=tolerance&&latticeDeviation(upperLast,lowerFirst)<slack){
+        review.gridBreaks.push({page:upperLast.row.pageNumber??null,upper:upperLast.sourceName,lower:lowerFirst.sourceName});
+        runs.splice(0,2,[...upper,...lower]);
+      }
+    }
     const size=Math.max(0,...runs.map(r=>r.length)),largest=runs.filter(r=>r.length===size);
     for(const run of runs)if(largest.length>1||run!==largest[0])for(const a of run)out.set(a,a.sourceName+': row with picks is separated from the participant row grid on page '+(a.row.pageNumber??'?')+'; table membership cannot be proven');
     return out;
@@ -250,7 +263,7 @@ function participantRegion(rows,contract,review,errors){
 }
 
 export function parseSurvivorPages(pages,{season=2026,filename='survivor.pdf'}={}){
-  const errors=[],rows=[],review={blankEntrants:[],ignoredRows:[],detachedRows:[],unanchoredRows:[],symbolRows:[]};
+  const errors=[],rows=[],review={blankEntrants:[],ignoredRows:[],detachedRows:[],unanchoredRows:[],symbolRows:[],gridBreaks:[]};
   for(const page of pages||[])for(const row of page.rows||[])rows.push({...row,kind:'pdf',pageNumber:page.pageNumber});
   const contract=headerContract(rows);
   if(!contract)return{errors:['Survivor Week header/columns could not be proven'],config:null,competitionSize:0,currentWeekEntryCount:0,review};
