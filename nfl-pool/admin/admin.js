@@ -1,5 +1,5 @@
 import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';
-import {TARGETS,detectWeek,groupPdfTextItems,carryForwardWeekHints,parseDocumentGroups,chooseBestCandidate,validateConfig} from './parser-core.js?v=9';
+import {TARGETS,detectWeek,groupPdfTextItems,carryForwardWeekHints,parseDocumentGroups,chooseBestCandidate,validateConfig} from './parser-core.js?v=10';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
@@ -26,8 +26,8 @@ function totalEntriesField(){const el=$('totalEntries');return{raw:String(el.val
 function acceptTotalEntries(){if(!publishInFlight)totalEntriesInput=totalEntriesField()}
 function totalEntriesShown(){const f=totalEntriesField();return f.raw===totalEntriesInput.raw&&f.badInput===totalEntriesInput.badInput}
 function showTotalEntries(){$('totalEntries').value=totalEntriesInput.raw}
-// The official total pool entry count. Blank means none was supplied (tracked entries only); anything else must be a whole
-// number of at least the tracked entries. It is only compared with the parsed field, never used to shape it.
+// Optional independent cross-check for the total pool entry count. Blank means the parser derives the full field directly
+// from the validated weekly sheet, matching the normal weekly workflow. A supplied count is only compared, never used to shape it.
 function totalEntriesState(){const {raw,badInput}=totalEntriesInput;if(badInput)return{ok:false};if(!raw)return{ok:true,value:null};const n=/^\d+$/.test(raw)?Number(raw):NaN;return Number.isSafeInteger(n)&&n>=TARGETS.length?{ok:true,value:n}:{ok:false}}
 function selectedCompetitionSize(){acceptTotalEntries();const s=totalEntriesState();if(!s.ok)throw new Error(`Total pool entries must be a whole number of at least ${TARGETS.length}, or left blank.`);return s.value}
 function competitionSizeCurrent(value){const s=totalEntriesState();return s.ok&&s.value===value}

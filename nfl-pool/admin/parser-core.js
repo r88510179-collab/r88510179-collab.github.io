@@ -516,9 +516,13 @@ function parseWeekGroup(week,weekGroups,filename,season,expectedCompetitionSize)
   // the field's size. The admin's authoritative total pool entry count is the independent check: it gates full-field
   // validation only, and never selects, drops, adds or sizes a row. The published size stays the parsed one.
   const parsedCompetitionSize=participants.length+temporary.length;
-  if(expectedCompetitionSize===undefined||expectedCompetitionSize===null)fullFieldIssues.push('Authoritative total pool entry count is required for full-field validation');
-  else if(!Number.isSafeInteger(expectedCompetitionSize)||expectedCompetitionSize<TARGETS.length)fullFieldIssues.push(`Authoritative total pool entry count must be a whole number of at least ${TARGETS.length}`);
-  else if(parsedCompetitionSize!==expectedCompetitionSize)fullFieldIssues.push(`Parsed competition size ${parsedCompetitionSize} does not match authoritative total pool entries ${expectedCompetitionSize}`);
+  // The validated weekly sheet is the default field-size source, matching the normal weekly workflow. An admin-supplied
+  // total is optional independent evidence: when present it must match exactly, but a blank field no longer suppresses
+  // an otherwise fully validated anonymous field.
+  if(expectedCompetitionSize!==undefined&&expectedCompetitionSize!==null){
+    if(!Number.isSafeInteger(expectedCompetitionSize)||expectedCompetitionSize<TARGETS.length)fullFieldIssues.push(`Authoritative total pool entry count must be a whole number of at least ${TARGETS.length}`);
+    else if(parsedCompetitionSize!==expectedCompetitionSize)fullFieldIssues.push(`Parsed competition size ${parsedCompetitionSize} does not match authoritative total pool entries ${expectedCompetitionSize}`);
+  }
 
   const fullFieldReady=errors.length===0&&fullFieldIssues.length===0;
   const fieldEntries=fullFieldReady?temporary.map((row,i)=>({id:'field-'+String(i+1).padStart(3,'0'),pickNumbers:row.pickNumbers.slice(),tiebreak:row.tiebreak})):[];

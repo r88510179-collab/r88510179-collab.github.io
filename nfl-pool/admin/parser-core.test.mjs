@@ -767,7 +767,6 @@ function assertFieldReady(c,competitionSize){
 // parser input, so no parser-only rule can separate them. The admin's authoritative total pool entry count is independent
 // external evidence: it only gates full-field validation and never selects, drops, adds or renames a row.
 const countMismatch=(parsed,expected)=>`Parsed competition size ${parsed} does not match authoritative total pool entries ${expected}`;
-const COUNT_REQUIRED='Authoritative total pool entry count is required for full-field validation';
 const COUNT_INVALID='Authoritative total pool entry count must be a whole number of at least 4';
 function assertTrackedOnly(c,issue,label=''){
   assert.deepEqual(c.errors,[],label);
@@ -796,17 +795,17 @@ function assertTrackedOnly(c,issue,label=''){
     assertFieldReady(entrant,6);
     assert.equal(JSON.stringify(entrant.config).includes('Winning'),false,label);
     assert(!Object.keys(entrant.config).some(k=>/expected|authoritative/i.test(k)),'the count is not persisted in the config');
-    // Without the count, neither reading of the rows can validate.
-    assertTrackedOnly(parseMixed(items,'count-pair'),COUNT_REQUIRED,label);
+    // With no external count, automatic mode publishes every structurally validated row.
+    assertFieldReady(parseMixed(items,'count-pair'),6);
   }
 }
 {
-  // COUNT GATE — a missing count (absent or null) closes the full field; the tracked four stay valid and publishable.
+  // AUTO COUNT — a missing count (absent or null) uses the structurally validated sheet itself and keeps full-field metrics.
   for(const expectedCompetitionSize of [undefined,null]){
     const candidates=parseDocumentGroups([{week:2,lines:[...matchups,...tracked,anonA],sourceRows:sourceRows([...matchups,...tracked,anonA],1),pageNumber:1,pageFingerprint:'count-missing'}],{filename:'fixture.pdf',season:2026,expectedCompetitionSize});
-    assertTrackedOnly(candidates[0],COUNT_REQUIRED,String(expectedCompetitionSize));
-    assert.deepEqual(candidates[0].fullFieldIssues,[COUNT_REQUIRED]);
-    assert.equal(chooseBestCandidate(candidates),candidates[0],'tracked-only publication remains available');
+    assertFieldReady(candidates[0],5);
+    assert.deepEqual(candidates[0].fullFieldIssues,[]);
+    assert.equal(chooseBestCandidate(candidates),candidates[0],'automatic full-field publication remains available');
   }
 }
 {
@@ -836,7 +835,7 @@ function assertTrackedOnly(c,issue,label=''){
 {
   // COUNT GATE — spreadsheets obey the same contract, including a complete summary-shaped row directly under the table.
   const base=[...tracked,anonA],summaryRow=sheetRow('Winning Picks',[...oddPicks,44,0]);
-  assertTrackedOnly(sheetParse(base),COUNT_REQUIRED,'sheet missing');
+  assertFieldReady(sheetParse(base),5);
   assertFieldReady(sheetParse(base,[],5),5);
   for(const expected of [4,6])assertTrackedOnly(sheetParse(base,[],expected),countMismatch(5,expected),'sheet '+expected);
   assertTrackedOnly(sheetParse(base,[summaryRow],5),countMismatch(6,5),'sheet summary');
@@ -991,22 +990,22 @@ async function bootAdmin({rows=[]}={}){
   const input=adminHtml.match(/<input id="totalEntries"[^>]*>/);
   assert(input,'Total pool entries input');
   assert.match(input[0],/type="number"/);assert.match(input[0],/min="4"/);assert.match(input[0],/step="1"/);
-  assert.match(adminHtml,/<label for="totalEntries">Total pool entries<\/label>/);
+  assert.match(adminHtml,/<label for="totalEntries">Total pool entries /);
+  assert.match(adminHtml,/Leave blank to count the validated pool entries automatically from the weekly sheet/);
   assert.equal(/\b282\b/.test(adminHtml)||/\b282\b/.test(adminSource),false,'no hardcoded pool size');
   for(const [,id] of adminSource.matchAll(/\$\('([A-Za-z]+)'\)/g))assert(adminHtml.includes(`id="${id}"`),`index.html lacks #${id}`);
 }
 {
-  // ADMIN 1/7 — blank count: the tracked parse succeeds, the full field is unavailable with the reason, and tracked-only
-  // publication stays possible without any anonymous field.
+  // ADMIN 1/7 — blank count: the weekly sheet automatically provides the validated full-field size.
   const t=await bootAdmin();
   await t.choose('six.pdf');await t.parse();
   assert.equal(t.$('review').hidden,false,t.$('message').textContent);
-  assert.match(t.$('message').textContent,new RegExp(`Full-field metrics unavailable — ${COUNT_REQUIRED}`));
-  assert.match(t.$('validation').innerHTML,new RegExp(`Full-field metrics unavailable — ${COUNT_REQUIRED}`));
-  assert.equal(t.$('publishBtn').disabled,false,'tracked-only publication remains available');
+  assert.match(t.$('message').textContent,/parsed with 6 competition entries/);
+  assert.match(t.$('validation').innerHTML,/Full-field regular Pick'em data validated · 6 entries/);
+  assert.equal(t.$('publishBtn').disabled,false,'automatic full-field publication remains available');
   await t.publish();
   const row=t.db.rows.find(r=>r.week===2);
-  assert.equal(row.config.fullFieldReady,false);assert.equal(row.config.fieldEntries,undefined);assert.equal(row.config.participants.length,4);
+  assert.equal(row.config.fullFieldReady,true);assert.equal(row.config.competitionSize,6);assert.equal(row.config.fieldEntries.length,2);
 }
 {
   // ADMIN 1b — reading the sheet reads and validates the field itself: a count the field shows without any input event
@@ -1171,9 +1170,9 @@ async function bootAdmin({rows=[]}={}){
   assert.equal(t.$('totalEntries').value,'6');
 }
 {
-  // ADMIN 4h — the same freeze for a tracked-only publish validated with a blank count. An edit to 282 while the write is
-  // held is rejected and the field is blank again; the frozen count stays blank and the tracked-only snapshot publishes.
-  // Afterwards 282 is accepted normally and needs a new read.
+  // ADMIN 4h — the same freeze for an automatic full-field publish validated with a blank count. An edit to 282 while
+  // the write is held is rejected and the field is blank again; the frozen automatic snapshot publishes. Afterwards 282
+  // is accepted normally and needs a new read.
   const t=await bootAdmin();
   await t.choose('six.pdf');await t.parse();
   const gate=adminDeferred();t.db.writeGate=gate;
@@ -1184,8 +1183,8 @@ async function bootAdmin({rows=[]}={}){
   gate.resolve();await pending;await adminFlush();
   assert.equal(t.db.rows.length,1);
   const [row]=t.db.rows;
-  assert.equal(row.config.fullFieldReady,false);assert.equal(row.config.fieldEntries,undefined);assert.equal(row.config.participants.length,4);
-  assert.equal(t.$('totalEntries').value,'');assert.equal(t.$('publishBtn').disabled,false,'the candidate is still the one validated blank');
+  assert.equal(row.config.fullFieldReady,true);assert.equal(row.config.competitionSize,6);assert.equal(row.config.fieldEntries.length,2);
+  assert.equal(t.$('totalEntries').value,'');assert.equal(t.$('publishBtn').disabled,false,'the automatic candidate is still the one validated blank');
   await t.count('282');
   assert.equal(t.$('review').hidden,true);assert.equal(t.$('publishBtn').disabled,true);
   await t.parse();
