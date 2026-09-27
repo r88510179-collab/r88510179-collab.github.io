@@ -618,7 +618,7 @@ export function validateConfig(config){
     if(!Array.isArray(p?.pickNumbers)||p.pickNumbers.length!==games.length)errors.push(label+': wrong pick count');
     const seen=new Set();let noPicks=0;
     for(const n of p?.pickNumbers||[]){if(allowNoPick&&n===0){noPicks++;continue}if(!nums.has(n))errors.push(label+': unknown pick '+n);else seen.add(nums.get(n))}
-    if(noPicks>maxNoPicks)errors.push(label+': too many no-picks');
+    if(noPicks>maxNoPicks)errors.push(label+(maxNoPicks===1?': at most one no-pick is allowed':': too many no-picks'));
     if(seen.size+noPicks!==games.length)errors.push(label+': not exactly one pick/no-pick per game');
   };
   const trackedNoSubmission=p=>Array.isArray(p?.pickNumbers)&&p.pickNumbers.length===games.length&&p.pickNumbers.every(n=>n===null)&&p.tiebreak===null;
