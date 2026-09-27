@@ -122,6 +122,18 @@ async function view({weekConfig=config,initialScorePayload={events:[game()]}}={}
 }
 
 {
+  // A proven tracked no-submission row is a real tracked entry: it loads, shows NO PICK, and scores as no picks.
+  const noSubmission=structuredClone(config);
+  noSubmission.participants.push({id:'thaddeus',displayName:'Thaddeus',pickNumbers:[null],tiebreak:null});
+  const v=await view({weekConfig:noSubmission});
+  assert.equal(v.warning(),'');
+  assert.equal(v.$('leaderName').textContent,'D.C.');
+  assert.equal(v.$('leaderRecord').textContent,'1–0');
+  assert.match(v.$('tbNote').textContent,/Thaddeus NO PICK/);
+  assert.match(v.$('pickBody').innerHTML,/NO PICK/);
+}
+
+{
   const mixedConfig={schemaVersion:1,season:2026,week:3,tiebreakGameIndex:0,
     games:[
       {away:'DEN',home:'KC',awayNumber:1,homeNumber:2,date:'2026-09-27'},

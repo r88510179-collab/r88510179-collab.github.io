@@ -449,6 +449,18 @@ console.log('survivor parser seeded realistic-sheet property test passed');
   const pair=sheet([...heading(),...table(),...entry('Legend',600,['KC']),...entry('Notes',588,['NE'])]);
   assert.deepEqual(pair.errors,[separated('Legend'),separated('Notes')]);assert.equal(pair.competitionSize,4);
 
+
+  // WEEK-3 REAL-PDF REGRESSION — a long participant table that restarts after exactly one empty visual row remains one
+  // field, but the restart is surfaced for explicit publication confirmation. Ten rows on each side make this a narrow
+  // production-shaped exception; the short detached-cluster and single-row attacks above/below remain rejected.
+  const upperNames=[['D.C.','PIT'],['DJS','LV'],['Upper 3','KC'],['Upper 4','KC'],['Upper 5','KC'],['Upper 6','KC'],['Upper 7','KC'],['Upper 8','KC'],['Upper 9','KC'],['JulesyPoo 1','LAC']];
+  const lowerNames=[['Thaddius','LAC'],['Lower 2','NE'],['Lower 3','NE'],['Lower 4','NE'],['Lower 5','NE'],['Lower 6','NE'],['Lower 7','NE'],['Lower 8','NE'],['Lower 9','NE'],['Lower 10','NE']];
+  const upper=upperNames.flatMap(([n,t],i)=>entry(n,748-12*i,[t])),lower=lowerNames.flatMap(([n,t],i)=>entry(n,616-12*i,[t]));
+  const restarted=sheet([...heading(),...upper,...lower]);
+  assert.deepEqual(restarted.errors,[]);assert.equal(restarted.competitionSize,20);
+  assert.deepEqual(restarted.review.gridBreaks,[{page:1,upper:'JulesyPoo 1',lower:'Thaddius'}]);
+  assert.deepEqual(validateSurvivorConfig(restarted.config),[]);
+
   // A normal participant on the next grid slot is accepted with no review item: picks alone never ask for confirmation.
   const normal=sheet([...heading(),...table(),...entry('Bravo',700,['NE'])]);
   assert.deepEqual(normal.errors,[]);assert.equal(normal.competitionSize,5);noReview(normal);

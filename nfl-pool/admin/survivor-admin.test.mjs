@@ -8,10 +8,11 @@ const here=new URL('.',import.meta.url);
 const source=readFileSync(new URL('./survivor-admin.js',import.meta.url),'utf8');
 const replacements=[
   ["import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';","const {createClient}=globalThis.__survivorTest.neonModule;"],
-  ["from './survivor-parser.js?v=2';",`from '${new URL('./survivor-parser.js?v=2',here).href}';`],
-  ["from './survivor-publish-checks.js?v=1';",`from '${new URL('./survivor-publish-checks.js?v=1',here).href}';`],
+  ["from './survivor-parser.js?v=3';",`from '${new URL('./survivor-parser.js?v=3',here).href}';`],
+  ["from './survivor-publish-checks.js?v=2';",`from '${new URL('./survivor-publish-checks.js?v=2',here).href}';`],
   ["await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs')","globalThis.__survivorTest.pdfjs"]
 ];
+assert(source.includes('gridBreaks:c.review.gridBreaks'),'publisher must pass parser-proven grid restarts to the confirmation guard');
 let patched=source;
 for(const [from,to] of replacements){assert(patched.includes(from),`harness expects: ${from}`);patched=patched.split(from).join(to)}
 let instance=0;

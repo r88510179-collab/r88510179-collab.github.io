@@ -234,6 +234,27 @@ function assertFieldReady(c,competitionSize){
   assert.equal(c.config.fullFieldReady,false);
 }
 
+{
+  // WEEK-3 REAL-PDF REGRESSION — a tracked row with no weekly picks is accepted only when its PDF geometry proves the
+  // exact tracked name, a lone W-column value, and ordinary one-row-pitch membership beside complete tracked rows.
+  // This is not the anonymous 0 sentinel: partial tracked rows and a lone number in the wrong column still fail closed.
+  const make=(text,parts,id)=>{
+    const lines=[...matchups,...tracked.slice(0,3),text,anonA],rows=sourceRows(lines,1),idx=lines.indexOf(text);
+    rows[idx].parts=parts;rows[idx].text=text;
+    return parse(lines,{sourceRows:rows,pageFingerprint:id,expectedCompetitionSize:5});
+  };
+  const blank=make('Thaddius 15',[{x:10,text:'Thaddius'},{x:544,text:'15'}],'tracked-week3-no-submission');
+  assert.deepEqual(blank.errors,[]);
+  const thaddeus=blank.config.participants.find(p=>p.id==='thaddeus');
+  assert(thaddeus);assert.equal(thaddeus.tiebreak,null);assert.equal(thaddeus.pickNumbers.length,matchups.length);
+  assert(thaddeus.pickNumbers.every(n=>n===null));assert.deepEqual(validateConfig(blank.config),[]);
+
+  const partial=make('Thaddius 2 15',[{x:10,text:'Thaddius'},{x:160,text:'2'},{x:544,text:'15'}],'tracked-week3-partial');
+  assert(partial.errors.some(e=>e==='Thaddeus: regular weekly row is structurally invalid'),partial.errors.join(' | '));
+  const wrongColumn=make('Thaddius 15',[{x:10,text:'Thaddius'},{x:520,text:'15'}],'tracked-week3-wrong-column');
+  assert(wrongColumn.errors.some(e=>e==='Thaddeus: regular weekly row is structurally invalid'),wrongColumn.errors.join(' | '));
+}
+
 
 {
   const c=parse([...matchups,...tracked,anonA,'SECONDARY RESULTS','Survivor Results 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 51 0'],{expectedCompetitionSize:5});

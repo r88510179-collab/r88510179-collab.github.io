@@ -5,7 +5,7 @@ import vm from 'node:vm';
 const source=readFileSync(new URL('./service-worker.js',import.meta.url),'utf8');
 const index=readFileSync(new URL('./index.html',import.meta.url),'utf8');
 for(const asset of [
-  './weekly-app.js?v=weekly-v11',
+  './weekly-app.js?v=weekly-v12',
   './public-math.js?v=2',
   './survivor-app.js?v=5',
   './survivor-math.js?v=5',
@@ -14,7 +14,7 @@ for(const asset of [
 assert(!source.includes("'./survivor-math.js?v=4'"));
 assert(!source.includes("'./score-feed-proxy.js?v=1'"));
 assert(!source.includes("'./admin/"),'Admin pages are network-dependent and must not be precached');
-assert(index.includes('weekly-app.js?v=weekly-v11'));
+assert(index.includes('weekly-app.js?v=weekly-v12'));
 assert(index.includes('survivor-app.js?v=5'));
 assert(index.includes('score-feed-proxy.js?v=2'));
 
@@ -26,7 +26,7 @@ const httpResponse=status=>{const response={status,ok:status>=200&&status<300,cl
 const cache={addAll:async assets=>{added=Array.from(assets)},put:async(request,response)=>{putCalls.push({request,response})}};
 const caches={
   open:async()=>cache,
-  keys:async()=>['pool-center-shell-v9','pool-center-shell-v10'],
+  keys:async()=>['pool-center-shell-v10','pool-center-shell-v11'],
   delete:async key=>{deleted.push(key);return true},
   match:async key=>{matchCalls.push(key);return cached.get(typeof key==='string'?key:key.url)}
 };
@@ -47,7 +47,7 @@ assert(!added.some(x=>x.startsWith('./admin')));
 
 let activatePromise;
 listeners.activate({waitUntil:p=>{activatePromise=p}});await activatePromise;
-assert.deepEqual(deleted,['pool-center-shell-v9']);
+assert.deepEqual(deleted,['pool-center-shell-v10']);
 
 const adminRequest={method:'GET',mode:'navigate',url:'https://example.test/nfl-pool/admin/survivor.html'};
 let adminResponse;
@@ -74,7 +74,7 @@ async function route(request){
 }
 
 // A. HTTP 503 with the requested resource cached: its last-good copy wins over the error and the shell.
-for(const request of [page('/nfl-pool/?view=survivor'),asset('/nfl-pool/weekly-app.js?v=weekly-v11')]){
+for(const request of [page('/nfl-pool/?view=survivor'),asset('/nfl-pool/weekly-app.js?v=weekly-v12')]){
   const lastGood=httpResponse(200),unavailable=httpResponse(503);
   cached.set(request.url,lastGood);
   network=()=>unavailable;
@@ -114,7 +114,7 @@ for(const request of [page('/nfl-pool/?view=survivor'),asset('/nfl-pool/weekly-a
   cached.set('./index.html',fallback);
 }
 // D. HTTP 200: the network response itself is returned and a clone is cached under the request, as before.
-for(const request of [page('/nfl-pool/?view=home'),asset('/nfl-pool/weekly-app.js?v=weekly-v11')]){
+for(const request of [page('/nfl-pool/?view=home'),asset('/nfl-pool/weekly-app.js?v=weekly-v12')]){
   const fresh=httpResponse(200);
   network=()=>fresh;
   const {result,matched,put}=await route(request);

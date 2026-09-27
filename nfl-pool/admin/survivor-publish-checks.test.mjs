@@ -289,6 +289,16 @@ const guardFor=(cfg,opts={})=>survivorPublishGuard(cfg,{resultsByWeek:verified.r
   assert.match(g.confirmText,/The 1 row counted from a page without picks is a real entrant\.$/);
 }
 
+
+{
+  // A parser-proven single-row grid restart is counted only with explicit admin confirmation.
+  const complete=structuredClone(config);complete.fieldEntries[243].picks[1]='SF';complete.currentWeekEntryCount=161;
+  const g=guardFor(complete,{gridBreaks:[{page:4,upper:'JulesyPoo 1',lower:'Juice 2'}]});
+  assert.equal(g.requiresConfirmation,true);
+  assert(g.reasons.includes('One participant-table grid restart was counted across a single empty visual row: "JulesyPoo 1" → "Juice 2" (page 4). Confirm it is a real continuation of the participant table.'),g.reasons.join(' | '));
+  assert.match(g.confirmText,/The 1 participant-table grid restart listed above is a real continuation\.$/);
+}
+
 // ---- Round-2 regressions.
 {
   // G2-1: a draft Week-W row is never published history; only a locked Week W covers earlier weeks.
