@@ -52,10 +52,11 @@ function validateConfig(c){
     if(tracked&&typeof p?.displayName!=='string')throw new Error(`Invalid entry ${label}`);
     const trackedNoSubmission=tracked&&Array.isArray(p?.pickNumbers)&&p.pickNumbers.length===c.games.length&&p.pickNumbers.every(n=>n===null)&&p?.tiebreak===null;
     if(trackedNoSubmission)return;
-    if(!Array.isArray(p?.pickNumbers)||p.pickNumbers.length!==c.games.length||!Number.isInteger(p?.tiebreak))throw new Error(`Invalid entry ${label}`);
+    const geometryValidated=!tracked&&Number(c.fullFieldValidationVersion)>=3,validTiebreak=Number.isInteger(p?.tiebreak)||(geometryValidated&&p?.tiebreak===null);
+    if(!Array.isArray(p?.pickNumbers)||p.pickNumbers.length!==c.games.length||!validTiebreak)throw new Error(`Invalid entry ${label}`);
     const seen=new Set();let noPicks=0;
     p.pickNumbers.forEach(n=>{if(!tracked&&n===0){noPicks++;return}const x=numbers.get(n);if(!x)throw new Error(`${label}: unknown pick ${n}`);if(seen.has(x.i))throw new Error(`${label}: multiple picks for game ${x.i+1}`);seen.add(x.i)});
-    if(noPicks>1)throw new Error(`${label}: at most one no-pick is allowed`);
+    if(noPicks>(geometryValidated?c.games.length:1))throw new Error(`${label}: too many no-picks`);
     if(seen.size+noPicks!==c.games.length)throw new Error(`${label}: incomplete picks`);
   };
   c.participants.forEach(p=>validateEntry(p,p?.displayName||'tracked',true));

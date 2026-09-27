@@ -232,6 +232,42 @@ function pdfSparseTableEvidence(row,ref){
   return Math.abs(x-ref.numericXs[last])<=10||Math.abs(x-ref.numericXs[last-1])<=10;
 }
 
+
+function pdfGeometryRecoveredParticipantRow(row,ref,matchups){
+  if(!row||row.kind!=='pdf'||!Array.isArray(row.parts)||!ref)return null;
+  const gameCount=matchups.length,firstPickX=ref.numericXs[0],tokens=[],nameItems=[];
+  row.parts.forEach((part,partIndex)=>{
+    const x=Number(part?.x);if(!Number.isFinite(x))return;
+    const text=clean(part?.text);if(!text)return;
+    if(x<firstPickX-8)nameItems.push({x,text,partIndex});
+    for(const token of text.split(' ').filter(Boolean))tokens.push({token,x,partIndex});
+  });
+  if(!nameItems.length||Math.abs(nameItems[0].x-ref.nameX)>14)return null;
+  const sourceName=clean(nameItems.map(item=>item.text).join(' '));
+  if(!sourceName||trackedTargetForName(sourceName))return null;
+  const columns=Array(gameCount+2).fill(null);
+  let lastColumn=-1,mapped=0;
+  for(const t of tokens){
+    if(t.x<firstPickX-8||!/^\d+$/.test(t.token))continue;
+    const distances=ref.numericXs.map(x=>Math.abs(t.x-x)),column=distances.indexOf(Math.min(...distances));
+    if(column<0||distances[column]>8||column<=lastColumn||columns[column]!==null)return null;
+    columns[column]=Number(t.token);lastColumn=column;mapped++;
+  }
+  // Recovery is intentionally narrow: at least a participant-width number of positioned numeric cells and a proven W
+  // column. Rows with only a name + W remain table-continuity evidence and are not turned into anonymous entrants.
+  if(mapped<gameCount||columns[gameCount+1]===null)return null;
+  const pickNumbers=[];
+  for(let i=0;i<gameCount;i++){
+    const n=columns[i],g=matchups[i];
+    if(n===null){pickNumbers.push(0);continue}
+    if(n!==g.awayNumber&&n!==g.homeNumber)return null;
+    pickNumbers.push(n);
+  }
+  const tiebreak=columns[gameCount]===null?null:columns[gameCount];
+  const geometry={nameX:nameItems[0].x,numericXs:ref.numericXs.slice(),nameItems};
+  return{sourceName,pickNumbers,tiebreak,wins:columns[gameCount+1],geometry};
+}
+
 function pdfTableBoundary(sourceRows,matchups){
   const pdfRows=(sourceRows||[]).filter(r=>r?.kind==='pdf').slice().sort((a,b)=>(a.pageNumber??0)-(b.pageNumber??0)||(a.rowIndex??0)-(b.rowIndex??0)||Number(b.y??0)-Number(a.y??0));
   if(!pdfRows.length)return null;
@@ -239,9 +275,19 @@ function pdfTableBoundary(sourceRows,matchups){
     const isMatchup=!!matchupFromLine(row.text),structural=isMatchup?null:structuralParticipantRow(row.text,gameCount),parsed=structural?regularParticipantRow(row.text,matchups):null;
     return{row,structural,parsed,tracked:parsed?trackedTargetForName(parsed.sourceName):null,geometry:structural?pdfParticipantGeometry(row,structural,gameCount):null};
   });
-  const trackedRecords=records.filter(r=>r.tracked);
-  const issues=[];
-  if(trackedRecords.length!==TARGETS.length){issues.push('PDF regular participant table could not be anchored to all tracked entries');return{accepted:new Set(),records,issues};}
+  const trackedRecords=records.filter(r=>r.tracked),issues=[],completeTargetIds=new Set(trackedRecords.map(r=>r.tracked.id));
+  const missingTargets=TARGETS.filter(target=>!completeTargetIds.has(target.id)),trackedNoSubmissionRecords=[];
+  // One tracked entrant may legitimately have no weekly submission. Prove that exact row independently from the three
+  // complete tracked rows before allowing the table boundary to use those complete rows as its geometry anchors.
+  if(trackedRecords.length>=TARGETS.length-1&&missingTargets.length<=1){
+    for(const target of missingTargets){
+      const candidates=records.filter(record=>targetRowIdentity(record.row.text,target)&&pdfTrackedNoSubmissionRow(record.row,target,matchups,sourceRows));
+      if(candidates.length===1){candidates[0].trackedNoSubmission=target;trackedNoSubmissionRecords.push(candidates[0])}
+    }
+  }
+  if(new Set([...trackedRecords.map(r=>r.tracked.id),...trackedNoSubmissionRecords.map(r=>r.trackedNoSubmission.id)]).size!==TARGETS.length){
+    issues.push('PDF regular participant table could not be anchored to all tracked entries');return{accepted:new Set(),records,issues};
+  }
   const geometries=trackedRecords.map(r=>r.geometry);
   if(geometries.some(g=>!g)){issues.push('PDF regular participant table column geometry could not be proven');return{accepted:new Set(),records,issues};}
   const nameXs=geometries.map(g=>g.nameX),nameSpread=Math.max(...nameXs)-Math.min(...nameXs);
@@ -255,7 +301,14 @@ function pdfTableBoundary(sourceRows,matchups){
     if(Math.abs(g.nameX-ref.nameX)>14)return false;
     return g.numericXs.every((x,i)=>Math.abs(x-ref.numericXs[i])<=8);
   };
-  records.forEach(r=>{r.geometryMatch=!!(r.structural&&matchesGeometry(r));r.sparseTableEvidence=!r.structural&&pdfSparseTableEvidence(r.row,ref);});
+  records.forEach(r=>{
+    if(!r.parsed&&!r.trackedNoSubmission){
+      const recovered=pdfGeometryRecoveredParticipantRow(r.row,ref,matchups);
+      if(recovered){r.recovered=recovered;r.structural=recovered;r.geometry=recovered.geometry}
+    }
+    r.geometryMatch=!!(r.structural&&matchesGeometry(r));
+    r.sparseTableEvidence=!r.structural&&pdfSparseTableEvidence(r.row,ref);
+  });
 
   const pageMap=new Map();
   for(const record of records){const p=record.row.pageNumber??0;if(!pageMap.has(p))pageMap.set(p,[]);pageMap.get(p).push(record)}
@@ -403,7 +456,7 @@ function looksLikeDamagedParticipantRow(line,gameCount){
   return participantWidthRow(line,gameCount)&&clean(line).split(' ').some(t=>!/^\d+$/.test(t));
 }
 
-function validatePickNumbers(label,pickNumbers,tiebreak,numberToGame,gameCount,{allowNoPick=false}={}){
+function validatePickNumbers(label,pickNumbers,tiebreak,numberToGame,gameCount,{allowNoPick=false,maxNoPicks=1,allowMissingTiebreak=false}={}){
   const errors=[],seenGames=new Set();let noPicks=0;
   for(const n of pickNumbers||[]){
     if(allowNoPick&&n===0){noPicks++;continue}
@@ -412,9 +465,9 @@ function validatePickNumbers(label,pickNumbers,tiebreak,numberToGame,gameCount,{
     else if(seenGames.has(gi))errors.push(label+': two picks in matchup '+(gi+1));
     else seenGames.add(gi);
   }
-  if(noPicks>1)errors.push(label+': at most one explicit no-pick is allowed');
+  if(noPicks>maxNoPicks)errors.push(label+': too many explicit no-picks');
   if((pickNumbers||[]).length!==gameCount||seenGames.size+noPicks!==gameCount)errors.push(label+': expected exactly one pick or explicit no-pick for each of '+gameCount+' games');
-  if(!Number.isInteger(tiebreak))errors.push(label+': missing tiebreak total');
+  if(!(allowMissingTiebreak&&tiebreak===null)&&!Number.isInteger(tiebreak))errors.push(label+': missing tiebreak total');
   return errors;
 }
 
@@ -471,9 +524,9 @@ function parseWeekGroup(week,weekGroups,filename,season,expectedCompetitionSize)
   }
 
   const temporary=[],seenSourceKeys=new Set(),acceptedAnonymousSourceKeys=new Set();
-  const considerRow=(row,parsed,{allowNoPick=false}={})=>{
+  const considerRow=(row,parsed,{allowNoPick=false,maxNoPicks=1,allowMissingTiebreak=false}={})=>{
     if(!parsed||trackedTargetForName(parsed.sourceName))return;
-    const rowErrors=validatePickNumbers('Anonymous field entry',parsed.pickNumbers,parsed.tiebreak,numberToGame,gameCount,{allowNoPick});
+    const rowErrors=validatePickNumbers('Anonymous field entry',parsed.pickNumbers,parsed.tiebreak,numberToGame,gameCount,{allowNoPick,maxNoPicks,allowMissingTiebreak});
     if(rowErrors.length){fullFieldIssues.push('An anonymous regular-pool entry failed pick validation');return}
     const key=sourceRowKey(row);
     if(seenSourceKeys.has(key)){fullFieldIssues.push('Duplicate source participant row detected');return}
@@ -485,9 +538,9 @@ function parseWeekGroup(week,weekGroups,filename,season,expectedCompetitionSize)
     const accepted=pdfBoundary?.accepted||new Set();
     for(const row of sourceRows){
       if(row?.kind!=='pdf'||!accepted.has(sourceRowKey(row)))continue;
-      const parsed=anonymousParticipantRow(row.text,matchups);
-      considerRow(row,parsed,{allowNoPick:true});
       const boundaryRecord=pdfBoundary?.records?.find(record=>sourceRowKey(record.row)===sourceRowKey(row));
+      const textParsed=anonymousParticipantRow(row.text,matchups),recovered=boundaryRecord?.recovered||null,parsed=textParsed||recovered;
+      considerRow(row,parsed,{allowNoPick:true,maxNoPicks:recovered?gameCount:1,allowMissingTiebreak:!!recovered});
       if(boundaryRecord?.structural&&!trackedTargetForName(boundaryRecord.structural.sourceName)&&!parsed){
         fullFieldIssues.push('A supposed regular-pool participant row is structurally invalid');
       }
@@ -527,7 +580,7 @@ function parseWeekGroup(week,weekGroups,filename,season,expectedCompetitionSize)
   const fullFieldReady=errors.length===0&&fullFieldIssues.length===0;
   const fieldEntries=fullFieldReady?temporary.map((row,i)=>({id:'field-'+String(i+1).padStart(3,'0'),pickNumbers:row.pickNumbers.slice(),tiebreak:row.tiebreak})):[];
   const games=matchups.map((g,index)=>({index,awayNumber:g.awayNumber,homeNumber:g.homeNumber,away:g.away,home:g.home,awayName:g.awayName,homeName:g.homeName}));
-  const config={schemaVersion:1,season,week,label:'Week '+week,tiePoints:0,tiebreakGameIndex:Math.max(0,games.length-1),games,participants,fullFieldReady,fullFieldValidationVersion:2,source:{kind:'weekly-upload',filename}};
+  const config={schemaVersion:1,season,week,label:'Week '+week,tiePoints:0,tiebreakGameIndex:Math.max(0,games.length-1),games,participants,fullFieldReady,fullFieldValidationVersion:3,source:{kind:'weekly-upload',filename}};
   if(fullFieldReady){config.fieldEntries=fieldEntries;config.fullFieldEntryCount=fieldEntries.length;config.competitionSize=participants.length+fieldEntries.length}
   return{week,gameCount,errors,fullFieldIssues:[...new Set(fullFieldIssues)],competitionSize:fullFieldReady?config.competitionSize:participants.length,config};
 }
@@ -560,12 +613,12 @@ export function validateConfig(config){
     if(teamPairs.has(teamKey))errors.push('Duplicate matchup teams '+teamKey);else teamPairs.add(teamKey);
     for(const n of [g.awayNumber,g.homeNumber]){if(!Number.isInteger(n))errors.push('Game '+(i+1)+': invalid number');else if(nums.has(n))errors.push('Duplicate number '+n);else nums.set(n,i)}
   });
-  const validateEntry=(p,label,{allowNoPick=false}={})=>{
-    if(!Number.isInteger(p?.tiebreak))errors.push(label+': invalid tiebreak');
+  const validateEntry=(p,label,{allowNoPick=false,maxNoPicks=1,allowMissingTiebreak=false}={})=>{
+    if(!(allowMissingTiebreak&&p?.tiebreak===null)&&!Number.isInteger(p?.tiebreak))errors.push(label+': invalid tiebreak');
     if(!Array.isArray(p?.pickNumbers)||p.pickNumbers.length!==games.length)errors.push(label+': wrong pick count');
     const seen=new Set();let noPicks=0;
     for(const n of p?.pickNumbers||[]){if(allowNoPick&&n===0){noPicks++;continue}if(!nums.has(n))errors.push(label+': unknown pick '+n);else seen.add(nums.get(n))}
-    if(noPicks>1)errors.push(label+': at most one no-pick is allowed');
+    if(noPicks>maxNoPicks)errors.push(label+': too many no-picks');
     if(seen.size+noPicks!==games.length)errors.push(label+': not exactly one pick/no-pick per game');
   };
   const trackedNoSubmission=p=>Array.isArray(p?.pickNumbers)&&p.pickNumbers.length===games.length&&p.pickNumbers.every(n=>n===null)&&p.tiebreak===null;
@@ -582,7 +635,8 @@ export function validateConfig(config){
         if(keys.length!==allowed.length||keys.some((k,ki)=>k!==allowed[ki]))errors.push(label+': only id, pickNumbers, and tiebreak are allowed');
         if(typeof p.id!=='string'||!p.id)errors.push(label+': missing id');
         else if(ids.has(p.id))errors.push('Duplicate field entry id '+p.id);else ids.add(p.id);
-        validateEntry(p,label,{allowNoPick:true});
+        const geometryValidated=Number(config.fullFieldValidationVersion)>=3;
+        validateEntry(p,label,{allowNoPick:true,maxNoPicks:geometryValidated?games.length:1,allowMissingTiebreak:geometryValidated});
       });
       const expected=participants.length+fieldEntries.length;
       if(config.competitionSize!==expected)errors.push('Competition size mismatch: expected '+expected);

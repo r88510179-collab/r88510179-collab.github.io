@@ -133,6 +133,29 @@ async function view({weekConfig=config,initialScorePayload={events:[game()]}}={}
   assert.match(v.$('pickBody').innerHTML,/NO PICK/);
 }
 
+
+{
+  // Geometry-validated anonymous field rows may contain multiple proven empty pick cells and a missing Pts/tiebreak.
+  const fieldConfig={schemaVersion:1,season:2026,week:3,tiebreakGameIndex:0,fullFieldReady:true,fullFieldValidationVersion:3,competitionSize:4,fullFieldEntryCount:2,
+    games:[
+      {away:'DEN',home:'KC',awayNumber:1,homeNumber:2,date:'2026-09-27'},
+      {away:'MIA',home:'BUF',awayNumber:3,homeNumber:4,date:'2026-09-27'}
+    ],
+    participants:[
+      {id:'dc',displayName:'D.C.',pickNumbers:[1,3],tiebreak:41},
+      {id:'djs',displayName:'DJS',pickNumbers:[2,4],tiebreak:44}
+    ],
+    fieldEntries:[
+      {id:'field-001',pickNumbers:[0,0],tiebreak:42},
+      {id:'field-002',pickNumbers:[1,4],tiebreak:null}
+    ]
+  };
+  const initial={events:[game(),game({away:'MIA',home:'BUF',awayScore:'10',homeScore:'20'})]};
+  const v=await view({weekConfig:fieldConfig,initialScorePayload:initial});
+  assert.equal(v.warning(),'');
+  assert.equal(v.$('entryCount').textContent,'4');
+}
+
 {
   const mixedConfig={schemaVersion:1,season:2026,week:3,tiebreakGameIndex:0,
     games:[

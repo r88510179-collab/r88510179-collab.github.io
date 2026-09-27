@@ -329,6 +329,34 @@ function assertFieldReady(c,competitionSize){
   assert.equal(c.config.fullFieldReady,true);
   assert.equal(c.config.competitionSize,6);
 }
+
+{
+  // WEEK-3 GEOMETRY REGRESSION — exactly the production shapes that textual token counting loses:
+  // - Thaddius has no weekly submission and only a W-column value;
+  // - Tom has two empty pick cells but a valid Pts/W tail;
+  // - Paddy has all picks and W but no Pts/tiebreak;
+  // - an unrelated name + W-only inactive row stays continuity evidence and is NOT counted as an anonymous entrant.
+  const blankValues=Array(17).fill(null);blankValues[16]=15;
+  const tomValues=[1,3,5,7,9,11,13,15,17,19,21,23,25,null,null,42,2];
+  const paddyValues=[1,3,5,7,9,11,13,15,17,19,21,23,25,27,29,null,0];
+  const inactiveValues=Array(17).fill(null);inactiveValues[16]=15;
+  const blankThaddius=geometryLine([[10,'Thaddius']],blankValues);
+  const tom=geometryLine([[10,'Tom Sr']],tomValues);
+  const paddy=geometryLine([[10,'Paddy the Baddy']],paddyValues);
+  const inactive=geometryLine([[10,'Inactive Entry']],inactiveValues);
+  const items=[...matchups,...tracked.slice(0,3),blankThaddius,anonA,tom,inactive,paddy,anonB];
+  const c=parseMixed(items,'week3-geometry-real-shapes');
+  assert.deepEqual(c.errors,[]);
+  assert.deepEqual(c.fullFieldIssues,[]);
+  assert.equal(c.config.fullFieldReady,true);
+  assert.equal(c.config.fullFieldValidationVersion,3);
+  assert.equal(c.config.competitionSize,8);
+  assert.equal(c.config.fieldEntries.length,4);
+  assert(c.config.fieldEntries.some(e=>e.tiebreak===42&&e.pickNumbers.filter(n=>n===0).length===2));
+  assert(c.config.fieldEntries.some(e=>e.tiebreak===null&&e.pickNumbers.every(n=>n!==0)));
+  assert.deepEqual(validateConfig(c.config),[]);
+}
+
 {
   // CONSECUTIVE SPARSE ROWS — sparse evidence cannot walk a trusted run into another aligned mini-table.
   const s1='S1 15',s2='S2 15',s3='S3 15';
