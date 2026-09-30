@@ -11,6 +11,9 @@ let instance=0;
 
 class El{
   constructor(){this.textContent='';this.innerHTML='';this.className='';this.value='';this.hidden=false;this.disabled=false;this.style={};this.listeners={};this.children=[]}
+  // As in the DOM, textContent reads back as a string: an assigned number shows as its decimal text, null as ''.
+  get textContent(){return this.text}
+  set textContent(v){this.text=v==null?'':String(v)}
   addEventListener(t,f){(this.listeners[t]||=[]).push(f)}
   replaceChildren(...nodes){this.children=[...nodes]}
   appendChild(node){this.children.push(node);return node}
@@ -154,6 +157,32 @@ async function view({weekConfig=config,initialScorePayload={events:[game()]}}={}
   const v=await view({weekConfig:fieldConfig,initialScorePayload:initial});
   assert.equal(v.warning(),'');
   assert.equal(v.$('entryCount').textContent,'4');
+}
+
+{
+  // The anonymous no-pick limit follows the config's validation version. Version 3 accepts the empty-cell shapes PDF
+  // geometry recovery produces; earlier versions (2, or none) keep one explicit no-pick and a required tiebreak, so a
+  // legacy config never gains version-3 permissions. A refused config never renders.
+  const games=[['DEN','KC'],['MIA','BUF'],['NYJ','NE']].map(([away,home],i)=>({away,home,awayNumber:2*i+1,homeNumber:2*i+2,date:'2026-09-27'}));
+  const week=(version,entries)=>({schemaVersion:1,season:2026,week:3,tiebreakGameIndex:0,games,
+    ...(version===undefined?{}:{fullFieldValidationVersion:version}),fullFieldReady:true,competitionSize:2+entries.length,fullFieldEntryCount:entries.length,
+    participants:[{id:'dc',displayName:'D.C.',pickNumbers:[1,3,5],tiebreak:41},{id:'djs',displayName:'DJS',pickNumbers:[2,4,6],tiebreak:44}],
+    fieldEntries:entries.map(([pickNumbers,tiebreak],i)=>({id:`field-00${i+1}`,pickNumbers,tiebreak}))});
+  const initial={events:[game(),game({away:'MIA',home:'BUF',awayScore:'10',homeScore:'20'}),game({away:'NYJ',home:'NE',awayScore:'13',homeScore:'9'})]};
+  // The refusal message when the page refuses the config, else what it rendered. The page logs a refused config with
+  // console.error; keep the expected refusals out of the test output.
+  const load=async cfg=>{
+    const log=console.error;console.error=()=>{};
+    try{const v=await view({weekConfig:cfg,initialScorePayload:initial});return v.$('sync').textContent==='CONFIG UNAVAILABLE'?v.$('error').innerHTML:{entryCount:v.$('entryCount').textContent,warning:v.warning()}}
+    finally{console.error=log}
+  };
+  // version 3: two empty picks with a tiebreak, one empty pick without a tiebreak, every pick made without a tiebreak
+  assert.deepEqual(await load(week(3,[[[0,0,5],42],[[1,0,6],null],[[2,4,6],null]])),{entryCount:'5',warning:''});
+  for(const version of [2,undefined]){
+    assert.deepEqual(await load(week(version,[[[0,3,6],42]])),{entryCount:'3',warning:''},`version ${version}: one no-pick`);
+    for(const pickNumbers of [[0,0,5],[0,0,0]])assert.match(await load(week(version,[[pickNumbers,42]])),/Unable to load weekly pool data: field 1: too many no-picks/,`version ${version}: ${pickNumbers}`);
+    assert.match(await load(week(version,[[[1,3,5],null]])),/Unable to load weekly pool data: Invalid entry field 1/,`version ${version}: missing tiebreak`);
+  }
 }
 
 {
