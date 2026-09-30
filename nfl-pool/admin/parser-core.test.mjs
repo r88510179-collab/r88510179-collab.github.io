@@ -220,9 +220,24 @@ function assertFieldReady(c,competitionSize){
   assert.equal(normalized.pickNumbers[0],1);
   assert.equal(Object.keys(normalized).sort().join(','),'id,pickNumbers,tiebreak');
   assert.deepEqual(validateConfig(c.config),[]);
-  const manyZeroes=structuredClone(c.config);
-  manyZeroes.fieldEntries[0].pickNumbers=Array(matchups.length).fill(0);
-  assert(validateConfig(manyZeroes).some(e=>e.includes('at most one no-pick')));
+  // The publication gate bounds a field entry's empty cells by what its parser contract can prove. The version is
+  // self-declared in the config, so validateConfig enforces the bound itself rather than trusting it.
+  const withEntry=(cfg,pickNumbers,tiebreak)=>{const x=structuredClone(cfg);Object.assign(x.fieldEntries[0],{pickNumbers,tiebreak});return validateConfig(x)};
+  const noPicks=k=>[...Array(k).fill(0),...oddPicks.slice(k)];
+  assert.equal(c.config.fullFieldValidationVersion,3);
+  // Version 3 (PDF geometry recovery): at most two empty cells across the pick and Pts columns.
+  for(const [k,tiebreak] of [[1,44],[2,44],[0,null],[1,null]])assert.deepEqual(withEntry(c.config,noPicks(k),tiebreak),[],`v3 ${k} no-picks, tiebreak ${tiebreak}`);
+  for(const [k,tiebreak,error] of [[matchups.length,44,'too many no-picks'],[3,44,'too many no-picks'],[matchups.length,null,'at most one no-pick is allowed'],[2,null,'at most one no-pick is allowed']]){
+    assert(withEntry(c.config,noPicks(k),tiebreak).includes(`Field entry 1: ${error}`),`v3 ${k} no-picks, tiebreak ${tiebreak}`);
+  }
+  // Earlier versions (2, or none): one explicit no-pick and a required tiebreak, whatever v3 allows.
+  for(const version of [2,undefined]){
+    const legacy=structuredClone(c.config);if(version===undefined)delete legacy.fullFieldValidationVersion;else legacy.fullFieldValidationVersion=version;
+    assert.deepEqual(validateConfig(legacy),[],`version ${version}`);
+    assert.deepEqual(withEntry(legacy,noPicks(1),44),[],`version ${version}`);
+    for(const k of [matchups.length,2])assert(withEntry(legacy,noPicks(k),44).includes('Field entry 1: at most one no-pick is allowed'),`version ${version}: ${k} no-picks`);
+    for(const k of [0,1])assert(withEntry(legacy,noPicks(k),null).includes('Field entry 1: invalid tiebreak'),`version ${version}: ${k} no-picks without a tiebreak`);
+  }
 }
 {
   // Tracked entries remain strict; no-pick sentinel is never accepted for the tracked four.
@@ -355,6 +370,32 @@ function assertFieldReady(c,competitionSize){
   assert(c.config.fieldEntries.some(e=>e.tiebreak===42&&e.pickNumbers.filter(n=>n===0).length===2));
   assert(c.config.fieldEntries.some(e=>e.tiebreak===null&&e.pickNumbers.every(n=>n!==0)));
   assert.deepEqual(validateConfig(c.config),[]);
+}
+{
+  // WEEK-3 GEOMETRY BOUNDARY — recovery needs a participant-width count of positioned cells plus the W cell, so it proves
+  // at most two empty cells across the pick and Pts columns, the bound validateConfig enforces for version 3. Beyond it
+  // the row is not recovered and fails closed on structure alone; an all-empty pick row never becomes an entrant.
+  const edge=values=>geometryLine([[10,'Edge Row']],values);
+  const recovered=[
+    ['one empty pick, Pts present',[null,...oddPicks.slice(1),44,1],{pickNumbers:[0,...oddPicks.slice(1)],tiebreak:44}],
+    ['two empty picks, Pts present',[null,null,...oddPicks.slice(2),44,1],{pickNumbers:[0,0,...oddPicks.slice(2)],tiebreak:44}],
+    ['one empty pick, Pts empty',[null,...oddPicks.slice(1),null,1],{pickNumbers:[0,...oddPicks.slice(1)],tiebreak:null}]
+  ];
+  for(const [label,values,entry] of recovered){
+    const c=parseMixed([...matchups,...tracked,anonA,edge(values)],`geometry-bound-${label}`);
+    assertFieldReady(c,6);
+    assert.deepEqual(c.config.fieldEntries[1],{id:'field-002',...entry},label);
+  }
+  const refused=[
+    ['three empty picks, Pts present',[null,null,null,...oddPicks.slice(3),44,1]],
+    ['two empty picks, Pts empty',[null,null,...oddPicks.slice(2),null,1]],
+    ['every pick empty, Pts present',[...Array(matchups.length).fill(null),44,1]]
+  ];
+  for(const [label,values] of refused){
+    const c=parseMixed([...matchups,...tracked,anonA,edge(values)],`geometry-bound-${label}`);
+    assertFieldFailsClosed(c);
+    assert(c.fullFieldIssues.includes('Participant-shaped PDF row adjoining the proven regular participant table could not be validated'),label);
+  }
 }
 
 {
@@ -589,24 +630,27 @@ function assertFieldReady(c,competitionSize){
   assertFieldFailsClosed(parse([...matchups,'12345 1 3 5 7 9 11 13 15 17 19 21 23 25 27 44 0',...tracked,anonA],{pageFingerprint:'p1-review-row-start',expectedCompetitionSize:5}));
 }
 {
-  // STEP 2 P1 — real cell geometry: numeric name in the name column, one empty matchup column, leading table edge.
+  // STEP 2 P1, as amended by Week-3 geometry recovery (validation version 3): real cell geometry with a numeric name and
+  // one empty matchup column is no longer structural damage. The empty cell is a proven no-pick in exactly that game,
+  // at the leading edge, between tracked rows, inside the table beside a numeric-named single no-pick text row, and at
+  // the trailing edge. The row still cannot silently vanish: it is counted, so a count that omits it is a mismatch.
   const damaged=geometryLine([[10,'12345']],[...oddPicks.slice(0,6),null,...oddPicks.slice(7),44,0]);
-  assertFieldFailsClosed(parseMixed([...matchups,damaged,...tracked,anonA],'p1-missing-pick-start',5));
-}
-{
-  // STEP 2 P1 — the same damaged row between tracked rows (already fails closed through run breakage; guarded here).
-  const damaged=geometryLine([[10,'12345']],[...oddPicks.slice(0,6),null,...oddPicks.slice(7),44,0]);
-  assertFieldFailsClosed(parseMixed([...matchups,tracked[0],tracked[1],damaged,tracked[2],tracked[3],anonA],'p1-missing-pick-middle',4));
-}
-{
-  // STEP 2 P1 — inside the physical table, followed by a numeric-named single no-pick row: neither row may silently vanish.
-  const damaged=geometryLine([[10,'12345']],[...oddPicks.slice(0,6),null,...oddPicks.slice(7),44,0]);
-  assertFieldFailsClosed(parseMixed([...matchups,...tracked,anonA,damaged,'67890 1 2 5 7 9 11 13 15 17 19 21 23 25 27 29 47 0'],'p1-missing-pick-inner',5));
-}
-{
-  // STEP 2 P1 — the same damaged row at the trailing table edge.
-  const damaged=geometryLine([[10,'12345']],[...oddPicks.slice(0,6),null,...oddPicks.slice(7),44,0]);
-  assertFieldFailsClosed(parseMixed([...matchups,...tracked,anonA,damaged],'p1-missing-pick-end',5));
+  const proven={pickNumbers:[...oddPicks.slice(0,6),0,...oddPicks.slice(7)],tiebreak:44};
+  const layouts=[
+    ['p1-missing-pick-start',[...matchups,damaged,...tracked,anonA],6,0],
+    ['p1-missing-pick-middle',[...matchups,tracked[0],tracked[1],damaged,tracked[2],tracked[3],anonA],6,0],
+    ['p1-missing-pick-inner',[...matchups,...tracked,anonA,damaged,'67890 1 2 5 7 9 11 13 15 17 19 21 23 25 27 29 47 0'],7,1],
+    ['p1-missing-pick-end',[...matchups,...tracked,anonA,damaged],6,1]
+  ];
+  for(const [id,items,size,index] of layouts){
+    const c=parseMixed(items,id);
+    assertFieldReady(c,size);
+    const {pickNumbers,tiebreak}=c.config.fieldEntries[index];
+    assert.deepEqual({pickNumbers,tiebreak},proven,id);
+    const short=parseMixed(items,id,size-1);
+    assert.equal(short.config.fullFieldReady,false,id);
+    assert.deepEqual(short.fullFieldIssues,[`Parsed competition size ${size} does not match authoritative total pool entries ${size-1}`],id);
+  }
 }
 {
   // STEP 2 P1 — truncated numeric tail: every matchup pick but no tiebreak or wins cells.
@@ -621,8 +665,11 @@ function assertFieldReady(c,competitionSize){
   assertFieldFailsClosed(parse([...matchups,...tracked,anonA,'12345 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29'],{pageFingerprint:'p1-truncated-text',expectedCompetitionSize:5}));
 }
 {
-  // STEP 2 P1 — missing tiebreak cell.
-  assertFieldFailsClosed(parseMixed([...matchups,...tracked,anonA,geometryLine([[10,'12345']],[...oddPicks,null,0])],'p1-missing-tiebreak',5));
+  // STEP 2 P1, as amended by Week-3 geometry recovery: a proven empty Pts cell is a missing tiebreak, not damage. The row
+  // keeps every pick with tiebreak null (never invented). An empty W cell, next, still fails closed.
+  const c=parseMixed([...matchups,...tracked,anonA,geometryLine([[10,'12345']],[...oddPicks,null,0])],'p1-missing-tiebreak');
+  assertFieldReady(c,6);
+  assert.deepEqual(c.config.fieldEntries[1],{id:'field-002',pickNumbers:oddPicks,tiebreak:null});
 }
 {
   // STEP 2 P1 — missing wins cell.

@@ -635,8 +635,12 @@ export function validateConfig(config){
         if(keys.length!==allowed.length||keys.some((k,ki)=>k!==allowed[ki]))errors.push(label+': only id, pickNumbers, and tiebreak are allowed');
         if(typeof p.id!=='string'||!p.id)errors.push(label+': missing id');
         else if(ids.has(p.id))errors.push('Duplicate field entry id '+p.id);else ids.add(p.id);
+        // Version 3 is self-declared by the config: it records that the parser proved empty cells from PDF geometry. That
+        // recovery needs a participant-width count of positioned cells plus the W cell, so it proves at most two empty
+        // cells across the pick and Pts columns: two no-picks with a tiebreak, one without. Earlier versions keep one
+        // no-pick and a required tiebreak.
         const geometryValidated=Number(config.fullFieldValidationVersion)>=3;
-        validateEntry(p,label,{allowNoPick:true,maxNoPicks:geometryValidated?games.length:1,allowMissingTiebreak:geometryValidated});
+        validateEntry(p,label,{allowNoPick:true,maxNoPicks:geometryValidated?(p?.tiebreak===null?1:2):1,allowMissingTiebreak:geometryValidated});
       });
       const expected=participants.length+fieldEntries.length;
       if(config.competitionSize!==expected)errors.push('Competition size mismatch: expected '+expected);
