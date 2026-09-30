@@ -367,4 +367,136 @@ for(const path of ['/nfl-pool/style.css?v=premium-v3','/nfl-pool/pwa.js?v=1','/n
   assert.equal(seen.put[0].request,request);
 }
 
-console.log('service-worker precache graph, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary and Admin isolation regressions passed');
+// Admin boundary (AB). Admin is production write-capable, so the worker never decides that an older copy of an Admin page,
+// module or stylesheet may stand in for its current network representation. Every same-origin GET whose pathname is
+// exactly /nfl-pool/admin or begins /nfl-pool/admin/ is direct network whatever its request mode, file extension or query
+// string: the worker calls fetch(request) once and returns exactly what it yields, an HTTP error included, lets a thrown
+// fetch reject with the original error, and never calls caches.match or cache.put for it, even with a copy of that Admin
+// resource and the ./index.html shell both cached. The boundary is the request's own pathname: the shared public resources
+// an Admin page loads, and paths that merely begin with "admin", keep the existing public routing.
+const adminLoad=(path,mode)=>({method:'GET',mode,url:`https://example.test${path}`,referrer:'https://example.test/nfl-pool/admin/'});
+async function assertDirectNetwork(request,label){
+  cached.set(request.url,httpResponse(200));
+  assert.equal(cached.get('./index.html'),fallback,'the Pool Center shell is cached for this regression');
+  for(const response of [httpResponse(200),httpResponse(404),httpResponse(500),httpResponse(503),opaqueRedirect()]){
+    network=()=>response;
+    const seen=await route(request);
+    assert.equal(seen.result,response,`${outcome(response)} for Admin ${label} must be returned exactly, never a cached copy`);
+    assert.equal(seen.fetched.length,1,`Admin ${label} must be fetched from the network once`);
+    assert.equal(seen.fetched[0],request,`Admin ${label} must be fetched as requested`);
+    assert.deepEqual(seen.matched,[],`Admin ${label} must not call caches.match`);
+    assert.deepEqual(seen.put,[],`Admin ${label} must not call cache.put`);
+  }
+  network=()=>{throw offline};
+  const seen=await route(request);
+  assert.equal(seen.error,offline,`offline Admin ${label} must reject with the original network error, never a cached copy`);
+  assert.equal(seen.result,undefined);
+  assert.equal(seen.fetched.length,1);
+  assert.deepEqual(seen.matched,[],`offline Admin ${label} must not call caches.match`);
+  assert.deepEqual(seen.put,[]);
+  cached.delete(request.url);
+}
+async function assertNetworkFirst(request,label){
+  const lastGood=httpResponse(200),notFound=httpResponse(404),fresh=httpResponse(200);
+  cached.set(request.url,lastGood);
+  for(const response of [httpResponse(404),httpResponse(503)]){
+    network=()=>response;
+    const seen=await route(request);
+    assert.equal(seen.result,lastGood,`${outcome(response)} for ${label} must still serve its cached copy`);
+    assert.deepEqual(seen.matched,[request]);
+    assert.deepEqual(seen.put,[]);
+  }
+  network=()=>{throw offline};
+  let seen=await route(request);
+  assert.equal(seen.result,lastGood,`offline ${label} must still serve its cached copy`);
+  assert.deepEqual(seen.matched,[request]);
+  cached.delete(request.url);
+  network=()=>notFound;
+  seen=await route(request);
+  assert.equal(seen.result,notFound,`HTTP 404 for uncached ${label} must be returned as-is, never the shell`);
+  assert.deepEqual(seen.matched,[request]);
+  network=()=>fresh;
+  seen=await route(request);
+  assert.equal(seen.result,fresh);
+  assert.deepEqual(seen.matched,[]);
+  assert.equal(seen.put.length,1,`a successful ${label} response must still be cached`);
+  assert.equal(seen.put[0].request,request);
+  assert.equal(seen.put[0].response.cloneOf,fresh);
+}
+for(const [url,mode] of [
+  ['/nfl-pool/admin/admin.js?v=10','cors'],                  // module script of admin/index.html (Pick'em Admin)
+  ['/nfl-pool/admin/parser-core.js?v=11','cors'],            // imported by admin.js
+  ['/nfl-pool/admin/survivor-admin.js?v=3','cors'],          // module script of admin/survivor.html (Survivor Admin)
+  ['/nfl-pool/admin/survivor-parser.js?v=3','cors'],         // imported by survivor-admin.js and survivor-publish-checks.js
+  ['/nfl-pool/admin/survivor-publish-checks.js?v=2','cors'], // imported by survivor-admin.js
+  ['/nfl-pool/admin/admin.css?v=premium-v3','no-cors']       // stylesheet of both Admin pages
+]){
+  // AB-A, AB-B, AB-C. The current Admin module or stylesheet URL, in the mode its page requests it: a success is not
+  // cached, an HTTP 404/500/503 is not replaced by the cached copy, and a thrown fetch is not answered from the cache.
+  await assertDirectNetwork(adminLoad(url,mode),url);
+  // AB-D. Only the pathname decides: another version, or no query string at all, routes identically.
+  const pathname=url.slice(0,url.indexOf('?'));
+  for(const other of [`${pathname}?v=999`,pathname])await assertDirectNetwork(adminLoad(other,mode),other);
+  // AB-E. So does every other request mode, a navigation to the file included.
+  for(const other of ['cors','no-cors','same-origin','navigate'].filter(m=>m!==mode))await assertDirectNetwork(adminLoad(url,other),`${url} (${other})`);
+}
+for(const path of ['/nfl-pool/admin','/nfl-pool/admin/','/nfl-pool/admin/index.html','/nfl-pool/admin/survivor.html']){
+  // AB-F. Admin page navigations keep their direct-network behavior, and a non-navigation request for the same Admin
+  // path is direct network too instead of reaching the public static-resource cache.
+  await assertDirectNetwork(page(path),`${path} navigation`);
+  await assertDirectNetwork(adminLoad(path,'cors'),path);
+}
+for(const path of ['/nfl-pool/administrator/','/nfl-pool/admin-old.js','/nfl-pool/admin2/','/nfl-pool/admin.js?v=10','/nfl-pool/assets/nfl-pool/admin/admin.js']){
+  // AB-G. The gate has a path boundary and is anchored at the start of the pathname: siblings that merely begin with
+  // "admin", an Admin-named file outside the directory and a path that nests the Admin directory deeper are not Admin.
+  // As subresources they keep networkFirst; as navigations they stay non-document routes with the exact network result.
+  await assertNetworkFirst(asset(path),path);
+  const request=page(path),notFound=httpResponse(404);
+  cached.set(request.url,httpResponse(200));
+  network=()=>notFound;
+  const seen=await route(request);
+  assert.equal(seen.result,notFound,`${path} navigation is not a Pool Center route: its HTTP 404 must be returned unchanged`);
+  assert.deepEqual(seen.fetched,[request]);
+  assert.deepEqual(seen.matched,[]);
+  assert.deepEqual(seen.put,[]);
+  cached.delete(request.url);
+}
+for(const [path,mode] of [
+  ['/nfl-pool/style.css?v=premium-v3','no-cors'],
+  ['/nfl-pool/slate.css?v=slate-v1','no-cors'],
+  ['/nfl-pool/score-feed-proxy.js?v=2','no-cors'],
+  ['/nfl-pool/pwa.js?v=1','no-cors'],
+  ['/nfl-pool/assets/pool-center-icon.svg','no-cors'],
+  ['/nfl-pool/manifest.webmanifest','cors'],
+  ['/nfl-pool/survivor-math.js?v=4','cors']                  // imported by admin/survivor-publish-checks.js
+]){
+  // AB-H. The boundary is the request's own pathname, never the page that asked for it: the shared public resources the
+  // Admin pages load keep networkFirst with their own cached copy as the only fallback.
+  await assertNetworkFirst(adminLoad(path,mode),`${path} requested by an Admin page`);
+}
+{
+  // AB-I. An Admin path that appears only in the query string does not make a public request Admin: the public asset
+  // keeps networkFirst and the public document keeps the HDC-02 shell fallback.
+  await assertNetworkFirst(asset('/nfl-pool/style.css?v=premium-v3&from=/nfl-pool/admin/'),'a public asset with an Admin path in its query');
+  const request=page('/nfl-pool/?view=home&from=/nfl-pool/admin/'),unavailable=httpResponse(503);
+  network=()=>unavailable;
+  const seen=await route(request);
+  assert.equal(seen.result,fallback,'an Admin path in the query string must not take a public document out of the shell fallback');
+  assert.deepEqual(seen.matched,[request,'./index.html']);
+  assert.deepEqual(seen.put,[]);
+}
+for(const request of [
+  {method:'POST',mode:'cors',url:'https://example.test/nfl-pool/admin/admin.js?v=10'},
+  {method:'GET',mode:'cors',url:'https://cdn.example/nfl-pool/admin/admin.js?v=10'}
+]){
+  // AB-J. The gate runs after the existing GET and same-origin checks: a non-GET request and another origin's Admin-shaped
+  // path are still left to the browser, untouched by the worker.
+  network=()=>okResponse;
+  const seen=await route(request);
+  assert.deepEqual(seen.fetched,[],`${request.method} ${request.url} must not be handled by the worker`);
+  assert.equal(seen.result,undefined);
+  assert.deepEqual(seen.matched,[]);
+  assert.deepEqual(seen.put,[]);
+}
+
+console.log('service-worker precache graph, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation and Admin path boundary regressions passed');
