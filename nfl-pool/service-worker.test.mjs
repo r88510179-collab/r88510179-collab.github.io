@@ -18,14 +18,14 @@ assert(index.includes('weekly-app.js?v=weekly-v13'));
 assert(index.includes('survivor-app.js?v=5'));
 assert(index.includes('score-feed-proxy.js?v=2'));
 
-const listeners={},deleted=[],fetchCalls=[],matchCalls=[],putCalls=[];
+const listeners={},deleted=[],fetchCalls=[],matchCalls=[],putCalls=[],opened=[];
 let added=[],network=()=>okResponse;
 const fallback={kind:'public-shell'},okResponse={ok:true,clone(){return this}};
 const offline=new Error('offline'),cached=new Map([['./index.html',fallback]]);
 const httpResponse=status=>{const response={status,ok:status>=200&&status<300,clone:()=>({status,ok:response.ok,cloneOf:response})};return response};
 const cache={addAll:async assets=>{added=Array.from(assets)},put:async(request,response)=>{putCalls.push({request,response})}};
 const caches={
-  open:async()=>cache,
+  open:async name=>{opened.push(name);return cache},
   keys:async()=>['pool-center-shell-v12','pool-center-shell-v13'],
   delete:async key=>{deleted.push(key);return true},
   match:async key=>{matchCalls.push(key);return cached.get(typeof key==='string'?key:key.url)}
@@ -44,6 +44,15 @@ listeners.install({waitUntil:p=>{installPromise=p}});await installPromise;
 assert(added.includes('./public-math.js?v=2'));
 assert(added.includes('./survivor-math.js?v=5'));
 assert(!added.some(x=>x.startsWith('./admin')));
+// HDC-05 changes only the shell cache name: install still precaches exactly the public shell it did before, in the same
+// order and with the same module versions, and writes it to pool-center-shell-v13.
+assert.deepEqual(added,[
+  './','./index.html','./style.css?v=premium-v3','./slate.css?v=slate-v1','./weekly.css?v=premium-v2',
+  './weekly-app.js?v=weekly-v13','./public-math.js?v=2','./survivor.css?v=3','./survivor-app.js?v=5','./survivor-math.js?v=5',
+  './score-feed-proxy.js?v=2','./pwa.js?v=1','./manifest.webmanifest',
+  './assets/pool-center-icon.svg','./assets/pool-center-icon-192.svg','./assets/pool-center-icon-512.svg'
+],'the precached public shell must be unchanged');
+assert.deepEqual(opened,['pool-center-shell-v13'],'install must write the shell to pool-center-shell-v13');
 
 let activatePromise;
 listeners.activate({waitUntil:p=>{activatePromise=p}});await activatePromise;
@@ -499,5 +508,57 @@ for(const request of [
   assert.deepEqual(seen.matched,[]);
   assert.deepEqual(seen.put,[]);
 }
+for(const [path,mode] of [
+  ['/nfl-pool/admin/sub/path/module.js','cors'],
+  ['/nfl-pool/admin/sub/path/module.js?v=1','cors'],
+  ['/nfl-pool/admin/sub/path/theme.css?v=1','no-cors'],
+  ['/nfl-pool/admin/sub/path/icon.svg','no-cors'],
+  ['/nfl-pool/admin/sub/','cors'],
+  ['/nfl-pool/admin/sub/path/module.js','navigate'],
+  ['/nfl-pool/admin/sub/','navigate']
+]){
+  // AB-K. Every depth below /nfl-pool/admin/ is Admin: a nested module, stylesheet, icon or directory, requested as a
+  // subresource or navigated to, is direct network exactly like a top-level Admin file, with its own stale copy and the
+  // shell both cached.
+  await assertDirectNetwork(adminLoad(path,mode),`${path} (${mode})`);
+}
+async function assertExactNavigation(path){
+  const request=page(path),notFound=httpResponse(404);
+  cached.set(request.url,httpResponse(200));
+  network=()=>notFound;
+  const seen=await route(request);
+  assert.equal(seen.result,notFound,`${path} navigation is not a Pool Center route: its HTTP 404 must be returned unchanged`);
+  assert.deepEqual(seen.fetched,[request]);
+  assert.deepEqual(seen.matched,[]);
+  assert.deepEqual(seen.put,[]);
+  cached.delete(request.url);
+}
+for(const path of ['/nfl-pool/admin.css','/nfl-pool/admin.css?v=premium-v3']){
+  // AB-L. A stylesheet beside the Admin directory whose name merely begins with "admin" is not the Admin stylesheet
+  // (/nfl-pool/admin/admin.css): as a subresource it keeps networkFirst with its own cached copy as the only fallback,
+  // and as a navigation it keeps the exact network result.
+  await assertNetworkFirst(asset(path),path);
+  await assertExactNavigation(path);
+}
+for(const path of ['/nfl-pool/administrator','/nfl-pool/administer','/nfl-pool/admin-old']){
+  // AB-M. Extensionless siblings that merely begin with "admin" are not Admin. An Admin path is always answered with
+  // fetch(request); these are not static resources either, so in every subresource mode the worker still leaves them to
+  // the browser, even with a copy of them cached, and as navigations they keep the exact network result.
+  for(const mode of ['cors','no-cors','same-origin']){
+    const request={...asset(path),mode};
+    cached.set(request.url,httpResponse(200));
+    network=()=>okResponse;
+    const seen=await route(request);
+    assert.deepEqual(seen.fetched,[],`${path} (${mode}) is not Admin and must not be answered by the worker`);
+    assert.equal(seen.result,undefined);
+    assert.deepEqual(seen.matched,[]);
+    assert.deepEqual(seen.put,[]);
+    cached.delete(request.url);
+  }
+  await assertExactNavigation(path);
+}
+// Every cache the HDC-05 worker opened, at install and before each runtime cache.put above, is pool-center-shell-v13.
+assert.equal(opened.length,1+putCalls.length,'install and each runtime cache.put open the shell cache once');
+assert.deepEqual([...new Set(opened)],['pool-center-shell-v13'],'the worker must write only to pool-center-shell-v13');
 
 console.log('service-worker precache graph, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation and Admin path boundary regressions passed');
