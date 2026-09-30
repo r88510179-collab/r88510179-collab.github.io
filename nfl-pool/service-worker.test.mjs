@@ -26,7 +26,7 @@ const httpResponse=status=>{const response={status,ok:status>=200&&status<300,cl
 const cache={addAll:async assets=>{added=Array.from(assets)},put:async(request,response)=>{putCalls.push({request,response})}};
 const caches={
   open:async()=>cache,
-  keys:async()=>['pool-center-shell-v11','pool-center-shell-v12'],
+  keys:async()=>['pool-center-shell-v12','pool-center-shell-v13'],
   delete:async key=>{deleted.push(key);return true},
   match:async key=>{matchCalls.push(key);return cached.get(typeof key==='string'?key:key.url)}
 };
@@ -47,7 +47,8 @@ assert(!added.some(x=>x.startsWith('./admin')));
 
 let activatePromise;
 listeners.activate({waitUntil:p=>{activatePromise=p}});await activatePromise;
-assert.deepEqual(deleted,['pool-center-shell-v11']);
+// HDC-05 rolls the shell cache so a v12 cache that may hold runtime-cached Admin modules is deleted on activation.
+assert.deepEqual(deleted,['pool-center-shell-v12']);
 
 const adminRequest={method:'GET',mode:'navigate',url:'https://example.test/nfl-pool/admin/survivor.html'};
 let adminResponse;
