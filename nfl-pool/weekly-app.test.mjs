@@ -126,14 +126,29 @@ async function view({weekConfig=config,initialScorePayload={events:[game()]}}={}
 
 {
   // A proven tracked no-submission row is a real tracked entry: it loads, shows NO PICK, and scores as no picks.
+  // The tiebreak note lists every tracked guess, NO PICK included, only until the tiebreak game is final; from then on it
+  // shows the final total for everyone. The missing tiebreak is never invented: the standings show "—" with no
+  // difference, so Thaddeus cannot win a tiebreak.
   const noSubmission=structuredClone(config);
   noSubmission.participants.push({id:'thaddeus',displayName:'Thaddeus',pickNumbers:[null],tiebreak:null});
-  const v=await view({weekConfig:noSubmission});
+  const kickoff=game({awayScore:'0',homeScore:'0'});kickoff.status={type:{state:'pre',completed:false,shortDetail:'Sun 4:25 PM'}};
+  const v=await view({weekConfig:noSubmission,initialScorePayload:{events:[kickoff]}});
+  const pickRow=name=>v.$('pickBody').innerHTML.split('</tr>').find(r=>r.includes(`<td class="name">${name}</td>`))||'';
+  assert.equal(v.warning(),'');
+  assert.equal(v.$('tbNote').textContent,'Tiebreak guesses: D.C. 41 · DJS 44 · Thaddeus NO PICK.');
+  assert.match(pickRow('Thaddeus'),/<td class="c pending">.*NO PICK/);
+  assert.doesNotMatch(pickRow('D.C.'),/NO PICK/);
+
+  v.setPayload({events:[game()]});await v.refresh();
   assert.equal(v.warning(),'');
   assert.equal(v.$('leaderName').textContent,'D.C.');
   assert.equal(v.$('leaderRecord').textContent,'1–0');
-  assert.match(v.$('tbNote').textContent,/Thaddeus NO PICK/);
-  assert.match(v.$('pickBody').innerHTML,/NO PICK/);
+  assert.equal(v.$('tbNote').textContent,'Tiebreak final total: 41. Tiebreak differences are active.');
+  const cells=row=>[...row.matchAll(/<td[^>]*>(.*?)<\/td>/g)].map(m=>m[1].replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
+  const standings=v.$('standings').innerHTML.split('</tr>').filter(Boolean).map(cells);
+  // rank, entry, W, L, tiebreak: a no-pick is a miss once the game is decided, and it has no tiebreak difference
+  assert.deepEqual(standings.map(r=>[r[0],r[1],r[3],r[4],r[r.length-1]]),[['1','D.C.','1','0','41 Δ 0'],['2','DJS','0','1','44 Δ 3'],['3','Thaddeus','0','1','—']]);
+  assert.match(pickRow('Thaddeus'),/<td class="c bad">.*NO PICK.*✕/);
 }
 
 
