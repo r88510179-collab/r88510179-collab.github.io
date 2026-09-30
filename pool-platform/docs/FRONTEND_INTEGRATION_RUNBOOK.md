@@ -7,23 +7,35 @@ performed. Nothing below is verified in any browser against live Neon, and no ro
 The frontend-readiness phase that prepared it was code-only: it changed no Neon setting (trusted origins or domains,
 `allow_localhost`, Data API CORS, schema, migrations, RLS, ACLs, functions, data) and configured no hosting.
 
+**F-1 corrective (same-origin Auth proxy).** Since the corrective branch `commercial-v1-f1-auth-proxy-corrective`, the
+browser never talks to the Neon Auth host: it calls four routes under `/api/auth` on its own origin, and the proxy
+(`server/auth-proxy-core.mjs`, mounted by `scripts/serve.mjs`) forwards them (`docs/HOSTING_ARCHITECTURE.md`,
+"Same-origin Neon Auth proxy"). The signed-in gate below waits for an independent review of the exact corrective SHA;
+until then only the signed-out checks in "Auth proxy checks, before any code is sent" may be run.
+
 ## What the readiness phase provides
 
 - `npm run build` (`scripts/build.mjs`) writes `pool-platform/dist/` from an explicit allow-list of 14 files, a
   generated `platform-config.js` and the bundled SDK in `vendor/neon-js.js`. Nothing else under `pool-platform/` and
   nothing outside it can reach `dist/`. A sandbox and a live build differ only in `platform-config.js`, and the same
   inputs always produce the same bytes. `dist/` is git-ignored.
-- The runtime configuration comes only from `POOL_PLATFORM_MODE`, `POOL_PLATFORM_AUTH_URL`, `POOL_PLATFORM_DATA_URL`
-  and `POOL_PLATFORM_DEFAULT_POOL_SLUG`. Without them the build is the synthetic sandbox. A live build fails before it
-  writes anything unless both URLs are canonical `https:` URLs with no credentials, query string or fragment. The
-  tracked `platform-config.js` stays the sandbox and must never hold a live URL.
+- The browser's runtime configuration comes only from `POOL_PLATFORM_MODE`, `POOL_PLATFORM_DATA_URL` and
+  `POOL_PLATFORM_DEFAULT_POOL_SLUG`. Without them the build is the synthetic sandbox. A live build fails before it
+  writes anything unless the Data API URL is a canonical `https:` URL with no credentials, query string or fragment.
+  It never names Neon Auth: the retired `POOL_PLATFORM_AUTH_URL` is refused. The tracked `platform-config.js` stays
+  the sandbox and must never hold a live URL.
+- The Auth proxy's configuration is server-only and read by `scripts/serve.mjs` from the environment:
+  `POOL_PLATFORM_MODE=live` and `POOL_PLATFORM_AUTH_UPSTREAM_URL` (the Neon Auth base URL). Its app origin is the
+  server's own `http://localhost:<port>`; `POOL_PLATFORM_APP_ORIGIN`, when set, must name exactly that. A live build
+  without a valid proxy configuration is refused rather than served.
 - The browser loads `@neondatabase/neon-js` **0.7.0-beta** from its own origin (`vendor/neon-js.js`), bundled from
   `package-lock.json` (the same SDK dependency tree as `validation/live/package-lock.json`). There is no CDN at runtime.
 - The pages run under `script-src 'self'` and `style-src 'self'`: no inline script, no inline style.
 - The service worker is registered from `sw-register.js` with scope `./`, caches only the allow-listed app shell
   (`pool-platform-commercial-v4`) and never stores or answers `platform-config.js`, Auth or Data API traffic,
   `Authorization`-bearing requests or query-string URLs (invites).
-- `npm run serve` (`scripts/serve.mjs`) serves `dist/` at `http://localhost:4173/` only, with the production CSP.
+- `npm run serve` (`scripts/serve.mjs`) serves `dist/` at `http://localhost:4173/` only, with the production CSP, and
+  for a live build mounts the Auth proxy at `/api/auth` (POST is accepted only there).
 
 ## Before the gate (read-only preconditions)
 
@@ -34,10 +46,10 @@ The frontend-readiness phase that prepared it was code-only: it changed no Neon 
 
 2. Commercial Neon only: project `fancy-brook-65396623`, branch `production`, database `neondb`. Never a personal
    project or the personal Pool Center database (`STEP2_RUNBOOK.md`, step 2).
-3. Confirm, read-only, that Neon Auth and the Data API already accept browser requests from `http://localhost:4173`
-   (the localhost allowance, and whether it covers this port). Changing a trusted origin, trusted domain,
-   `allow_localhost` or Data API CORS is outside this gate and needs its own approval. If localhost is not accepted,
-   STOP and record it.
+3. Confirm, read-only, that Neon Auth accepts the proxy's upstream `Origin` `http://localhost:4173` (the localhost
+   allowance) and that the Data API accepts browser requests from `http://localhost:4173`. Changing a trusted
+   origin, trusted domain, `allow_localhost` or Data API CORS is outside this gate and needs its own approval. If
+   localhost is not accepted, STOP and record it.
 4. Synthetic identities and fixtures only (the pilot seed in `STEP2_RUNBOOK.md`): a commissioner account, at least one
    participant account owning two entries, a second participant account for wrong-account checks, and a mailbox for
    each that can receive Email OTP codes. Never a real customer.
@@ -50,25 +62,28 @@ Use shell variables or an untracked file. `pool-platform/.gitignore` ignores `.e
 `pool-platform/.env.local` never reaches git:
 
     POOL_PLATFORM_MODE=live
-    POOL_PLATFORM_AUTH_URL=<Neon Auth URL of the commercial branch, from the Neon console>
     POOL_PLATFORM_DATA_URL=<Data API URL of the commercial branch, from the Neon console>
     POOL_PLATFORM_DEFAULT_POOL_SLUG=<synthetic pilot pool slug>
+    POOL_PLATFORM_AUTH_UPSTREAM_URL=<Neon Auth URL of the commercial branch, from the Neon console>
+    POOL_PLATFORM_APP_ORIGIN=http://localhost:4173
 
-These are the public endpoints the browser calls, nothing else: never a password, a connection string, an API key, a
-Neon management credential or a Vercel credential. Build and check:
+The build reads the first three; the server reads `POOL_PLATFORM_MODE` and the last two, which never reach the
+browser. They are public endpoints, nothing else: never a password, a connection string, an API key, a Neon
+management credential or a Vercel credential. Do not set `POOL_PLATFORM_AUTH_URL`: it is retired, and the build
+refuses it. Build and check:
 
     cd pool-platform
     npm ci
     node --env-file=.env.local scripts/build.mjs
     git status --short        # must show nothing under dist/ and no .env file
 
-The build prints the mode, both URLs, the default pool slug, a SHA-256 for each output file and the
-Content-Security-Policy for this artifact. Record the hashes and the CSP with the gate evidence. The only file that
+The build prints the mode, the Data API URL, the default pool slug, a SHA-256 for each output file and the
+Content-Security-Policy for this artifact (Auth is noted as the same-origin proxy). Record the hashes and the CSP with the gate evidence. The only file that
 differs from a sandbox build of the same commit is `dist/platform-config.js`.
 
 ## Serve it at localhost
 
-    npm run serve             # or: node scripts/serve.mjs --port <n>
+    node --env-file=.env.local scripts/serve.mjs      # add --port <n> for another port (and match POOL_PLATFORM_APP_ORIGIN)
 
 Open exactly `http://localhost:4173/participant.html`, never `http://127.0.0.1:4173`. The server answers any other
 `Host` with 421 and the URL to use, and listens on 127.0.0.1 and ::1 only. In the DevTools console confirm:
@@ -77,7 +92,9 @@ Open exactly `http://localhost:4173/participant.html`, never `http://127.0.0.1:4
     location.origin === 'http://localhost:4173'
 
 and that the mode pill reads `LIVE · secure`. The server log lists paths without query strings, so invite tokens
-never appear in it. Every response carries the build's CSP (`connect-src 'self' <Auth origin> <Data API origin>`).
+never appear in it; Auth proxy lines read `AUTH <method> <route> <status> [reason]` and never hold an email, code,
+cookie or token. Every page response carries the build's CSP (`connect-src 'self' <Data API origin>`: no Neon Auth
+origin), and the server prints `Auth: same-origin proxy at http://localhost:4173/api/auth/* (4 routes)`.
 
 Port 4173 is also the default of some local preview servers: if another app used `http://localhost:4173` on this
 browser profile, start from a fresh state (below) and keep this origin for this procedure only.
@@ -93,8 +110,8 @@ Inspect (DevTools → Application → Service workers, or the console):
     (await (await caches.open('pool-platform-commercial-v4')).keys()).map(q => q.url)
 
 The cache must hold exactly the 14 app-shell URLs (`/`, the three pages, `styles.css`, `manifest.webmanifest`,
-`sw-register.js` and the seven app modules) and never `platform-config.js`, `vendor/neon-js.js`, an Auth or Data API
-URL, or any URL with a query string.
+`sw-register.js` and the seven app modules) and never `platform-config.js`, `vendor/neon-js.js`, an `/api/auth` URL,
+a Data API URL, or any URL with a query string.
 
 Fresh state before each browser/profile run: DevTools → Application → Storage → **Clear site data** for
 `http://localhost:4173`, or in the console:
@@ -102,20 +119,56 @@ Fresh state before each browser/profile run: DevTools → Application → Storag
     for (const reg of await navigator.serviceWorker.getRegistrations()) await reg.unregister();
     for (const key of await caches.keys()) if (key.startsWith('pool-platform-commercial-')) await caches.delete(key);
 
-Then close every tab of the origin and reopen it. Neon Auth's own cookies belong to the Auth host; check
-DevTools → Application → Cookies for what remains, and sign out first when a run needs no prior session.
+Then close every tab of the origin and reopen it. The session cookie is first-party on `localhost`
+(`__Secure-neon-auth.session_token`, path `/api/auth`); check DevTools → Application → Cookies for what remains, and
+sign out first when a run needs no prior session. A cookie on a Neon Auth host is left over from before the proxy;
+clear it.
 
 ## Switch back to the sandbox without editing tracked files
 
 Stop the server, then build with no `POOL_PLATFORM_*` variable set (a new shell, or `env -u` for each) and serve:
 
-    env -u POOL_PLATFORM_MODE -u POOL_PLATFORM_AUTH_URL -u POOL_PLATFORM_DATA_URL -u POOL_PLATFORM_DEFAULT_POOL_SLUG npm run build
+    env -u POOL_PLATFORM_MODE -u POOL_PLATFORM_DATA_URL -u POOL_PLATFORM_DEFAULT_POOL_SLUG -u POOL_PLATFORM_AUTH_UPSTREAM_URL -u POOL_PLATFORM_APP_ORIGIN npm run build
     npm run serve
 
 Reload: the pill reads `SANDBOX · synthetic`. The service worker never stored the live configuration, so none can
 linger; clear site data anyway before the next live run. `git status` stays clean throughout.
 
+## Auth proxy checks, before any code is sent
+
+Signed out, with the live build served as above. No OTP is requested and no sign-in is made. Record statuses and
+booleans only.
+
+1. `participant.html` and `commissioner.html` load; the pill reads `LIVE · secure`; the sign-in card shows.
+2. `platform-config.js` holds no Neon Auth URL (`curl -s http://localhost:4173/platform-config.js`), and the page
+   response's CSP `connect-src` is `'self'` plus the Data API origin only.
+3. DevTools → Network while loading both pages: every request is to `http://localhost:4173`. The only Auth request is
+   `GET /api/auth/get-session`, answered `200` with the body `null`, `Cache-Control: no-store` and no
+   `Access-Control-*` header. No request goes to a `*.neonauth.*` host.
+4. In the console, `await fetch('<Neon Auth URL>/get-session',{credentials:'include'}).catch(e=>'blocked')` returns
+   `'blocked'`, and a `connect-src` CSP report names the Auth URL: the page cannot reach Neon Auth directly.
+5. Refusals, from a terminal (none reaches Neon; each answer has no `Access-Control-*` header):
+   - `curl -si -H 'Host: 127.0.0.1:4173' http://localhost:4173/api/auth/get-session` → 421;
+   - `curl -si -H 'Sec-Fetch-Site: same-site' http://localhost:4173/api/auth/get-session` → 403, and `cross-site` → 403;
+   - `curl -si -X POST -H 'Content-Type: application/json' -H 'Origin: http://localhost:4174' --data '{}' http://localhost:4173/api/auth/sign-out` → 403,
+     and the same with `Origin: null`, or with no `Origin` → 403;
+   - `curl -si -X OPTIONS -H 'Origin: https://cors-probe.invalid' http://localhost:4173/api/auth/get-session` → 405;
+   - `curl -si http://localhost:4173/api/auth/list-sessions` → 404; `curl -si -X PUT http://localhost:4173/api/auth/sign-out` → 405.
+6. The service worker's cache holds no `/api/auth` URL (inspect as in "Service worker" above).
+7. The server log shows only `AUTH <method> <route> <status> <reason>` lines for these, with no value from a request.
+
 ## The gate: controlled browser integration checklist
+
+Only after an independent review of the exact corrective SHA, and with the operator's approval to send codes.
+In addition to the sections below, record for the first sign-in:
+
+- the app-host cookie `__Secure-neon-auth.session_token` has `HttpOnly`, `Secure`, `SameSite=Strict`, path `/api/auth`,
+  no `Partitioned`, and there is no cookie for any Neon Auth host;
+- the page-visible `GET /api/auth/get-session` JSON holds no opaque session token (compare, do not print: no
+  `session.token` field, or only the JWT the SDK copies there from `set-auth-jwt`);
+- the first RPC carries a bearer whose `sub` is the signed-in synthetic identity (sub only);
+- from `http://localhost:4175` (same site) and `http://127.0.0.1:4174` (cross site), a credentialed
+  `fetch('http://localhost:4173/api/auth/get-session')` fails (booleans only).
 
 Run in order on Chromium desktop first. Stop at the first P0 (wrong identity, cross-tenant or cross-participant
 data, an overwritten source lock, a secret in a URL or log) and record it.
@@ -231,9 +284,10 @@ expected; record what Chrome offers.
 
 **C. Safari / WebKit.** Safari on macOS at `http://localhost:4173` and Safari in the iOS Simulator (which shares the
 Mac's `localhost`). A physical iPhone cannot reach the operator machine as `localhost`, so its live sign-in waits for
-the hosted origin. The Auth host differs from the page's site, so its cookies are third-party here: in Web Inspector
-record the `Set-Cookie` attributes on Neon Auth responses (`SameSite=None`, `Secure`, `Partitioned`) and whether the
-session survives a reload and a new tab. If it does not, record it as a finding; do not change Neon settings in the gate.
+the hosted origin. The session cookie is first-party on the app host (`Secure; HttpOnly; SameSite=Strict`, path
+`/api/auth`), but the page is plain `http://localhost` here: record whether Safari keeps a `Secure` (`__Secure-`)
+cookie on it, and whether the session survives a reload and a new tab. If it does not, record it as a finding (local
+https is a separate, unapproved option); do not change Neon settings in the gate.
 
 **Firefox (optional).** Sign in, reload, submit, sign out; record any CSP report.
 
@@ -243,5 +297,6 @@ session survives a reload and a new tab. If it does not, record it as a finding;
 - The one CSP report above comes from zod inside the SDK; it is benign and expected.
 - Offline, a page shows the "could not load its configuration" message instead of the app: the configuration is
   never cached, by design.
-- Neon Auth sessions are cookies on the Auth host, which is cross-site from `localhost` and from any future
-  commercial domain; Safari's third-party cookie handling is the main unknown.
+- Sessions are a first-party cookie on the app host, set by the same-origin Auth proxy; browsers hold no cookie for
+  the Neon Auth host. On `http://localhost`, Chromium and Firefox accept `Secure` cookies; Safari's behaviour there is
+  the main unknown. An already-issued JWT stays valid at the Data API until it expires (up to about 15 minutes).

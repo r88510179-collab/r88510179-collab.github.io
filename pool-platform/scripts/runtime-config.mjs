@@ -1,14 +1,17 @@
 // The browser's runtime configuration for the commercial frontend, taken from POOL_PLATFORM_* environment variables at
-// build time. Only public values ever reach the browser: the mode, the Neon Auth URL, the Data API URL and a default
-// pool slug. There is no variable for anything else (password, connection string, API key), so nothing else can be
-// written out, and a sandbox build never names a backend.
+// build time. Only public values ever reach the browser: the mode, the Data API URL and a default pool slug. There is
+// no variable for anything else (password, connection string, API key), so nothing else can be written out, and a
+// sandbox build never names a backend. The browser reaches Neon Auth only through the same-origin proxy at /api/auth
+// (server/auth-proxy-core.mjs), whose upstream URL is server-only configuration and never part of this file's output.
 
 export const ENV=Object.freeze({
   mode:'POOL_PLATFORM_MODE',
-  authUrl:'POOL_PLATFORM_AUTH_URL',
   dataUrl:'POOL_PLATFORM_DATA_URL',
   defaultPoolSlug:'POOL_PLATFORM_DEFAULT_POOL_SLUG'
 });
+// The browser build once named Neon Auth directly. It is refused now, so a stale value can never be mistaken for one
+// in effect: the proxy's upstream is POOL_PLATFORM_AUTH_UPSTREAM_URL, read only by the server.
+export const RETIRED_AUTH_URL='POOL_PLATFORM_AUTH_URL';
 export const SANDBOX_DEFAULT_POOL_SLUG='demo-football-pool';
 // The shape the database requires of tenant slugs: 3 to 64 lowercase letters, digits and inner hyphens.
 const POOL_SLUG=/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/;
@@ -41,17 +44,17 @@ export function poolSlug(variable,raw,fallback){
 }
 
 export function runtimeConfigFromEnv(env={}){
+  if(env[RETIRED_AUTH_URL]!==undefined&&env[RETIRED_AUTH_URL]!==''){
+    throw new ConfigError(`${RETIRED_AUTH_URL} is no longer used: the browser reaches Neon Auth only through the same-origin proxy. Remove it; the proxy's upstream is POOL_PLATFORM_AUTH_UPSTREAM_URL, read only by the server.`);
+  }
   const mode=env[ENV.mode]||'sandbox';
   if(mode==='sandbox'){
-    for(const variable of [ENV.authUrl,ENV.dataUrl]){
-      if(env[variable])throw new ConfigError(`${variable} is set but ${ENV.mode} is not live: a sandbox build never names a backend.`);
-    }
-    return Object.freeze({mode,authUrl:'',dataUrl:'',defaultPoolSlug:poolSlug(ENV.defaultPoolSlug,env[ENV.defaultPoolSlug],SANDBOX_DEFAULT_POOL_SLUG)});
+    if(env[ENV.dataUrl])throw new ConfigError(`${ENV.dataUrl} is set but ${ENV.mode} is not live: a sandbox build never names a backend.`);
+    return Object.freeze({mode,dataUrl:'',defaultPoolSlug:poolSlug(ENV.defaultPoolSlug,env[ENV.defaultPoolSlug],SANDBOX_DEFAULT_POOL_SLUG)});
   }
   if(mode!=='live')throw new ConfigError(`${ENV.mode} must be sandbox or live.`);
   return Object.freeze({
     mode,
-    authUrl:endpointUrl(ENV.authUrl,env[ENV.authUrl]),
     dataUrl:endpointUrl(ENV.dataUrl,env[ENV.dataUrl]),
     defaultPoolSlug:poolSlug(ENV.defaultPoolSlug,env[ENV.defaultPoolSlug],'')
   });
@@ -62,8 +65,8 @@ export function runtimeConfigFromEnv(env={}){
 // string, add code, or break out of a <script> element even if the file were ever inlined. Same input, same bytes.
 const UNSAFE_IN_SCRIPT=/[<>&\u2028\u2029]/g;
 export function serializeRuntimeConfig(config){
-  const {mode,authUrl,dataUrl,defaultPoolSlug}=config??{};
-  const values={mode,authUrl,dataUrl,defaultPoolSlug};
+  const {mode,dataUrl,defaultPoolSlug}=config??{};
+  const values={mode,dataUrl,defaultPoolSlug};
   for(const [key,value] of Object.entries(values)){
     if(typeof value!=='string')throw new ConfigError(`runtime configuration ${key} must be a string.`);
   }
@@ -79,16 +82,17 @@ export function parseRuntimeConfig(source){
   try{parsed=match&&JSON.parse(match[1])}catch{parsed=null}
   if(!parsed||typeof parsed!=='object')throw new ConfigError('platform-config.js was not written by scripts/build.mjs: rebuild it.');
   const config=runtimeConfigFromEnv({
-    [ENV.mode]:parsed.mode,[ENV.authUrl]:parsed.authUrl,[ENV.dataUrl]:parsed.dataUrl,[ENV.defaultPoolSlug]:parsed.defaultPoolSlug
+    [ENV.mode]:parsed.mode,[ENV.dataUrl]:parsed.dataUrl,[ENV.defaultPoolSlug]:parsed.defaultPoolSlug
   });
   if(serializeRuntimeConfig(config)!==source)throw new ConfigError('platform-config.js differs from what scripts/build.mjs writes for its values: rebuild it.');
   return config;
 }
 
-// The Content-Security-Policy the commercial pages are built to run under. connect-src names exactly this build's
-// Auth and Data API origins (none for a sandbox), derived from its configuration, never hard-coded.
+// The Content-Security-Policy the commercial pages are built to run under. connect-src names exactly this build's Data
+// API origin (none for a sandbox), derived from its configuration, never hard-coded. It never names Neon Auth: Auth is
+// same-origin (/api/auth), so the browser itself refuses any direct request to the Auth host.
 export function contentSecurityPolicy(config){
-  const origins=[...new Set([config.authUrl,config.dataUrl].filter(Boolean).map(url=>new URL(url).origin))];
+  const origins=[config.dataUrl].filter(Boolean).map(url=>new URL(url).origin);
   return [
     "default-src 'self'","script-src 'self'","style-src 'self'","img-src 'self'","font-src 'none'",
     ["connect-src 'self'",...origins].join(' '),"worker-src 'self'","manifest-src 'self'","object-src 'none'",

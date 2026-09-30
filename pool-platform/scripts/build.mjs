@@ -4,8 +4,8 @@
 //   3. vendor/neon-js.js, the pinned @neondatabase/neon-js bundled from package-lock.json, so the browser loads the
 //      SDK from its own origin and never from a CDN.
 // Nothing else under pool-platform/ (tests, docs, migrations, validation, scripts, node_modules, the tracked
-// platform-config.js) and nothing outside it can reach the output. A sandbox and a live build differ only in
-// platform-config.js, and the same inputs always produce the same bytes.
+// platform-config.js, the server-side Auth proxy in server/ and api/) and nothing outside it can reach the output. A
+// sandbox and a live build differ only in platform-config.js, and the same inputs always produce the same bytes.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -146,7 +146,7 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1]
   try{
     const {config,outDir,csp,files}=await buildCommercialFrontend(options);
     console.log(`Built the ${config.mode} commercial frontend in ${outDir}`);
-    if(config.mode==='live')console.log(`  Auth URL: ${config.authUrl}\n  Data API URL: ${config.dataUrl}`);
+    if(config.mode==='live')console.log(`  Data API URL: ${config.dataUrl}\n  Auth: same-origin proxy at /api/auth (its upstream is server-only configuration)`);
     console.log(`  Default pool slug: ${config.defaultPoolSlug||'(none)'}`);
     for(const file of files)console.log(`  ${file.sha256}  ${String(file.bytes).padStart(7)}  ${file.name}`);
     console.log(`Content-Security-Policy for this build: ${csp}`);

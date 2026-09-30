@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test,{afterEach} from 'node:test';
+import {pathToFileURL} from 'node:url';
 import {authErrorMessage} from './auth-core.js';
-import {PlatformClient,SIGN_IN_NOT_CONFIRMED} from './platform-client.js';
+import {AUTH_PROXY_PATH,PlatformClient,SIGN_IN_NOT_CONFIRMED} from './platform-client.js';
 
 // Shape-only fixture (base64url header.payload.signature); not a real credential.
 const JWT='eyJhbGciOiJFZERTQSIsImtpZCI6InRlc3QifQ.eyJzdWIiOiJ0ZXN0LXVzZXIiLCJyb2xlIjoiYXV0aGVudGljYXRlZCJ9.c2hhcGUtb25seS1zaWduYXR1cmU';
@@ -23,7 +26,7 @@ function live(replies,session=SESSION){
     const [status,body,raw]=reply;
     return new Response(raw?body:JSON.stringify(body),{status,headers:{'content-type':raw?'text/plain':'application/json'}});
   };
-  const client=new PlatformClient({mode:'live',authUrl:'https://auth.example.test/neondb/auth',dataUrl:DATA_URL});
+  const client=new PlatformClient({mode:'live',dataUrl:DATA_URL});
   client.neon={auth:{getSession:async()=>session}};
   return {client,requests};
 }
@@ -31,6 +34,26 @@ const raised=message=>[400,{code:'P0001',message,details:null,hint:null}];
 const AUTH_REQUIRED=raised('auth_required');
 const PICKS={picks:{g1:'away',g2:'home'},tiebreak:10};
 const submitEntry=client=>client.submitEntry({weekId:'week-1',entryId:'entry-1',source:'participant',payload:PICKS});
+
+test('the client is live with a Data API URL alone, and hands the SDK only the same-origin Auth proxy, never a configured Auth URL',async t=>{
+  assert.equal(new PlatformClient({mode:'live',dataUrl:DATA_URL}).live,true);
+  for(const config of [{mode:'sandbox',dataUrl:''},{mode:'live',dataUrl:''},{mode:'live'},null,{mode:'live',authUrl:'https://auth.example.test/neondb/auth',dataUrl:''}]){
+    assert.equal(new PlatformClient(config).live,false,JSON.stringify(config));
+  }
+  // The real module beside a stand-in SDK (vendor/neon-js.js exists only in a build) that records what it is given.
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pool-platform-client-'));
+  t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  for(const name of ['platform-client.js','auth-core.js'])fs.copyFileSync(new URL(`./${name}`,import.meta.url),path.join(dir,name));
+  fs.mkdirSync(path.join(dir,'vendor'));
+  fs.writeFileSync(path.join(dir,'vendor','neon-js.js'),'export function createClient(options){globalThis.__sdkOptions=options;return{auth:{}}}\n');
+  const realLocation=Object.getOwnPropertyDescriptor(globalThis,'location');
+  Object.defineProperty(globalThis,'location',{value:{origin:'http://localhost:4173'},configurable:true});
+  t.after(()=>{if(realLocation)Object.defineProperty(globalThis,'location',realLocation);else delete globalThis.location;delete globalThis.__sdkOptions});
+  const {PlatformClient:Isolated}=await import(pathToFileURL(path.join(dir,'platform-client.js')).href);
+  await new Isolated({mode:'live',authUrl:'https://ep-x.neonauth.c-0.aws.neon.test/neondb/auth',dataUrl:DATA_URL}).init();
+  assert.deepEqual(globalThis.__sdkOptions,{auth:{url:'http://localhost:4173/api/auth'},dataApi:{url:DATA_URL}},'a stale authUrl in a configuration is ignored');
+  assert.equal(AUTH_PROXY_PATH,'/api/auth');
+});
 
 test('auth_required then success: the same request is sent exactly twice, about 200 ms apart, and the result returned',async()=>{
   const {client,requests}=live([AUTH_REQUIRED,[200,{code:'created',revision:1}]]);

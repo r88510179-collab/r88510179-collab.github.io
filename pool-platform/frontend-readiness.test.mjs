@@ -12,10 +12,12 @@ import {PLATFORM_CONFIG} from './platform-config.js';
 import {APP_DIR,OUTPUT_FILES,STATIC_FILES,buildCommercialFrontend,bundleNeonSdk,listFiles,verifySdkBundle} from './scripts/build.mjs';
 import {ConfigError,contentSecurityPolicy,parseRuntimeConfig,runtimeConfigFromEnv,serializeRuntimeConfig} from './scripts/runtime-config.mjs';
 import {startServer} from './scripts/serve.mjs';
+import {DELETE_SESSION_COOKIE,SESSION_COOKIE} from './server/auth-proxy-core.mjs';
 
 // Commercial frontend readiness: the allow-listed build, the runtime configuration, the self-hosted Neon SDK, CSP
-// readiness and the service-worker registration. Deterministic and offline: builds use a stub in place of the SDK
-// bundle, except the block at the end, which bundles the real SDK when pool-platform's npm ci has been run.
+// readiness, the service-worker registration and the local server with its same-origin Auth proxy. Deterministic and
+// offline: builds use a stub in place of the SDK bundle, except the block at the end, which bundles the real SDK when
+// pool-platform's npm ci has been run, and the proxy's upstream is an in-memory stand-in.
 const HERE=path.dirname(fileURLToPath(import.meta.url));
 const read=name=>fs.readFileSync(path.join(HERE,name),'utf8');
 const sha256=body=>crypto.createHash('sha256').update(body).digest('hex');
@@ -24,7 +26,12 @@ const PAGES=STATIC_FILES.filter(name=>name.endsWith('.html'));
 const SCRIPTS=STATIC_FILES.filter(name=>name.endsWith('.js'));
 const AUTH='https://ep-example-000000.neonauth.c-0.us-east-2.aws.neon.test/neondb/auth';
 const DATA='https://ep-example-000000.apirest.c-0.us-east-2.aws.neon.test/neondb/rest/v1';
-const LIVE={POOL_PLATFORM_MODE:'live',POOL_PLATFORM_AUTH_URL:AUTH,POOL_PLATFORM_DATA_URL:DATA,POOL_PLATFORM_DEFAULT_POOL_SLUG:'it-pool'};
+const LIVE={POOL_PLATFORM_MODE:'live',POOL_PLATFORM_DATA_URL:DATA,POOL_PLATFORM_DEFAULT_POOL_SLUG:'it-pool'};
+// The server-only proxy configuration the local server needs for a live build (its app origin is its own).
+const PROXY={POOL_PLATFORM_MODE:'live',POOL_PLATFORM_AUTH_UPSTREAM_URL:AUTH};
+// Any URL whose host is a Neon Auth host. The SDK bundle holds the bare label "neonauth" (it derives endpoint URLs
+// from a base URL) but never a URL; no browser file may hold one.
+const AUTH_HOST_URL=/[a-z][a-z0-9+.-]*:\/\/[^\s"'`<>]*neonauth/i;
 const STUB_SDK='export function createClient(){throw new Error("stub SDK")}\n';
 const stubSdk=async()=>STUB_SDK;
 const LS=String.fromCharCode(0x2028),PS=String.fromCharCode(0x2029),NL=String.fromCharCode(10),TAB=String.fromCharCode(9);
@@ -50,7 +57,7 @@ function evaluateConfig(source){
 }
 
 test('A: the tracked platform-config.js is a sandbox naming no backend, and no deployable source holds an absolute URL or a Neon endpoint',()=>{
-  assert.deepEqual({...PLATFORM_CONFIG},{mode:'sandbox',authUrl:'',dataUrl:'',defaultPoolSlug:'demo-football-pool'});
+  assert.deepEqual({...PLATFORM_CONFIG},{mode:'sandbox',dataUrl:'',defaultPoolSlug:'demo-football-pool'});
   assert.ok(Object.isFrozen(PLATFORM_CONFIG));
   for(const name of ['platform-config.js',...STATIC_FILES]){
     const text=read(name);
@@ -62,11 +69,19 @@ test('A: the tracked platform-config.js is a sandbox naming no backend, and no d
   for(const pattern of ['dist/','node_modules/','.env','.env.*'])assert.ok(ignored.includes(pattern),pattern);
 });
 
-test('B: a live build without both endpoint URLs, or with a malformed one, fails closed before writing anything',async t=>{
-  for(const env of [{POOL_PLATFORM_MODE:'live'},{...LIVE,POOL_PLATFORM_AUTH_URL:''},{...LIVE,POOL_PLATFORM_DATA_URL:''},
-    {...LIVE,POOL_PLATFORM_AUTH_URL:undefined},{...LIVE,POOL_PLATFORM_DATA_URL:undefined}]){
+test('B: a live build without the Data API URL, with a malformed one, or naming Neon Auth, fails closed before writing anything',async t=>{
+  for(const env of [{POOL_PLATFORM_MODE:'live'},{...LIVE,POOL_PLATFORM_DATA_URL:''},{...LIVE,POOL_PLATFORM_DATA_URL:undefined}]){
     assert.throws(()=>runtimeConfigFromEnv(env),ConfigError,JSON.stringify(env));
   }
+  // The browser build no longer names Neon Auth at all: the retired variable is refused in every mode, so a stale
+  // value can never look like one in effect. The proxy's upstream is server-only (POOL_PLATFORM_AUTH_UPSTREAM_URL).
+  for(const env of [{...LIVE,POOL_PLATFORM_AUTH_URL:AUTH},{POOL_PLATFORM_AUTH_URL:AUTH},{POOL_PLATFORM_MODE:'sandbox',POOL_PLATFORM_AUTH_URL:'https://secret.example.test/a'}]){
+    const error=(()=>{try{runtimeConfigFromEnv(env)}catch(e){return e}})();
+    assert.ok(error instanceof ConfigError,JSON.stringify(env));
+    assert.match(error.message,/POOL_PLATFORM_AUTH_URL is no longer used/);
+    assert.doesNotMatch(error.message,/secret|neonauth\./,'the rejected value is never repeated');
+  }
+  assert.equal(runtimeConfigFromEnv({...LIVE,POOL_PLATFORM_AUTH_URL:''}).mode,'live','an empty leftover is not a value');
   const malformed=[
     'http://auth.example.test/neondb/auth','javascript:alert(1)','javascript:void0','javascript://auth.example.test/%0Aalert(1)',
     'data:text/javascript,alert(1)','data:x','blob:https://auth.example.test/x','file:///etc/passwd','ftp://auth.example.test/x',
@@ -81,7 +96,7 @@ test('B: a live build without both endpoint URLs, or with a malformed one, fails
     `https://auth.example.test/x${LS}`,'https://[::1]/x','HTTPS://auth.example.test/x'
   ];
   for(const value of malformed){
-    for(const variable of ['POOL_PLATFORM_AUTH_URL','POOL_PLATFORM_DATA_URL']){
+    for(const variable of ['POOL_PLATFORM_DATA_URL']){
       const error=(()=>{try{runtimeConfigFromEnv({...LIVE,[variable]:value})}catch(e){return e}})();
       assert.ok(error instanceof ConfigError,`${variable}=${JSON.stringify(value)} was accepted`);
       assert.match(error.message,new RegExp(variable));
@@ -91,26 +106,26 @@ test('B: a live build without both endpoint URLs, or with a malformed one, fails
   // The configuration is checked first: nothing is bundled and no output directory appears.
   const out=path.join(scratch(t),'dist');
   let bundled=false;
-  await assert.rejects(buildCommercialFrontend({outDir:out,env:{POOL_PLATFORM_MODE:'live',POOL_PLATFORM_AUTH_URL:AUTH},bundleSdk:async()=>{bundled=true;return STUB_SDK}}),ConfigError);
+  await assert.rejects(buildCommercialFrontend({outDir:out,env:{POOL_PLATFORM_MODE:'live'},bundleSdk:async()=>{bundled=true;return STUB_SDK}}),ConfigError);
+  await assert.rejects(buildCommercialFrontend({outDir:out,env:{...LIVE,POOL_PLATFORM_AUTH_URL:AUTH},bundleSdk:async()=>{bundled=true;return STUB_SDK}}),/no longer used/);
   assert.equal(bundled,false);
   assert.equal(fs.existsSync(out),false);
 });
 
-test('C: canonical https Auth and Data API URLs are accepted and written exactly; the mode and slug are checked',()=>{
-  assert.deepEqual({...runtimeConfigFromEnv(LIVE)},{mode:'live',authUrl:AUTH,dataUrl:DATA,defaultPoolSlug:'it-pool'});
-  for(const url of [AUTH,DATA,'https://auth.example.test/neondb/auth','https://data.example.test/neondb/rest/v1/','https://data.example.test:8443/rest/v1','https://auth.example.test/']){
-    assert.equal(runtimeConfigFromEnv({...LIVE,POOL_PLATFORM_AUTH_URL:url}).authUrl,url);
+test('C: a canonical https Data API URL is accepted and written exactly; the mode and slug are checked; server-only proxy settings are never read',()=>{
+  assert.deepEqual({...runtimeConfigFromEnv(LIVE)},{mode:'live',dataUrl:DATA,defaultPoolSlug:'it-pool'});
+  for(const url of [DATA,'https://data.example.test/neondb/rest/v1/','https://data.example.test:8443/rest/v1','https://data.example.test/']){
     assert.equal(runtimeConfigFromEnv({...LIVE,POOL_PLATFORM_DATA_URL:url}).dataUrl,url);
   }
+  // One .env.local may hold both the build's and the server's settings: the build ignores the server's.
+  assert.deepEqual({...runtimeConfigFromEnv({...LIVE,...PROXY,POOL_PLATFORM_APP_ORIGIN:'http://localhost:4173'})},{mode:'live',dataUrl:DATA,defaultPoolSlug:'it-pool'});
   assert.equal(runtimeConfigFromEnv({...LIVE,POOL_PLATFORM_DEFAULT_POOL_SLUG:undefined}).defaultPoolSlug,'','a live build may name no default pool');
   // No configuration at all is the sandbox, which names no backend and refuses one.
   for(const env of [{},{POOL_PLATFORM_MODE:''},{POOL_PLATFORM_MODE:'sandbox'}]){
-    assert.deepEqual({...runtimeConfigFromEnv(env)},{mode:'sandbox',authUrl:'',dataUrl:'',defaultPoolSlug:'demo-football-pool'});
+    assert.deepEqual({...runtimeConfigFromEnv(env)},{mode:'sandbox',dataUrl:'',defaultPoolSlug:'demo-football-pool'});
   }
   assert.equal(runtimeConfigFromEnv({POOL_PLATFORM_DEFAULT_POOL_SLUG:'second-demo-pickem'}).defaultPoolSlug,'second-demo-pickem');
-  for(const variable of ['POOL_PLATFORM_AUTH_URL','POOL_PLATFORM_DATA_URL']){
-    assert.throws(()=>runtimeConfigFromEnv({[variable]:AUTH}),/is set but POOL_PLATFORM_MODE is not live/);
-  }
+  assert.throws(()=>runtimeConfigFromEnv({POOL_PLATFORM_DATA_URL:DATA}),/is set but POOL_PLATFORM_MODE is not live/);
   for(const mode of ['LIVE','Live',' live','production','true','1'])assert.throws(()=>runtimeConfigFromEnv({...LIVE,POOL_PLATFORM_MODE:mode}),ConfigError,mode);
   for(const slug of ['Demo','ab','-demo','demo-','demo_pool','demo/pool','../demo','demo pool',"demo'",'a'.repeat(65),`demo${NL}`]){
     assert.throws(()=>runtimeConfigFromEnv({...LIVE,POOL_PLATFORM_DEFAULT_POOL_SLUG:slug}),ConfigError,slug);
@@ -123,7 +138,7 @@ test('D: the generated configuration is inert data: hostile values stay strings,
     `${LS}globalThis.pwned=1${PS}`,`${NL}globalThis.pwned=1`,'"});globalThis.pwned=1;({"',"');globalThis.pwned=1;('",'<!--','-->','&amp;<>'];
   const unsafe=new RegExp(`[<>&${LS}${PS}]`);
   for(const value of hostile){
-    const config={mode:value,authUrl:value,dataUrl:value,defaultPoolSlug:value};
+    const config={mode:value,dataUrl:value,defaultPoolSlug:value};
     const source=serializeRuntimeConfig(config);
     assert.doesNotMatch(source.split('\n')[1],unsafe,JSON.stringify(value));
     const {values,frozen,globals}=evaluateConfig(source);
@@ -132,11 +147,12 @@ test('D: the generated configuration is inert data: hostile values stay strings,
     assert.deepEqual(globals,['PLATFORM_CONFIG'],'nothing but PLATFORM_CONFIG is defined');
     assert.equal(serializeRuntimeConfig({...config}),source,'same input, same bytes');
   }
-  // Only the four keys, in a fixed order, and only strings.
-  const extra=serializeRuntimeConfig({defaultPoolSlug:'d',dataUrl:'',authUrl:'',mode:'sandbox',password:'secret',toString:'x'});
-  assert.match(extra,/Object\.freeze\(\{"mode":"sandbox","authUrl":"","dataUrl":"","defaultPoolSlug":"d"\}\);/);
+  // Only the three keys, in a fixed order, and only strings: an Auth URL (or anything else) is never written.
+  const extra=serializeRuntimeConfig({defaultPoolSlug:'d',dataUrl:'',authUrl:AUTH,mode:'sandbox',password:'secret',toString:'x'});
+  assert.match(extra,/Object\.freeze\(\{"mode":"sandbox","dataUrl":"","defaultPoolSlug":"d"\}\);/);
+  assert.doesNotMatch(extra,/neonauth|authUrl/);
   for(const bad of [null,1,true,{},[],undefined]){
-    assert.throws(()=>serializeRuntimeConfig({mode:'sandbox',authUrl:bad,dataUrl:'',defaultPoolSlug:'d'}),ConfigError);
+    assert.throws(()=>serializeRuntimeConfig({mode:'sandbox',dataUrl:bad,defaultPoolSlug:'d'}),ConfigError);
   }
   // A build's own output reads back exactly; a file the build could not have written is refused rather than trusted:
   // extra code, another shape, a value no build accepts (a sandbox that names a backend, an http: URL).
@@ -144,15 +160,16 @@ test('D: the generated configuration is inert data: hostile values stay strings,
     const config=runtimeConfigFromEnv(env),source=serializeRuntimeConfig(config);
     assert.deepEqual({...parseRuntimeConfig(source)},{...config});
     assert.deepEqual(evaluateConfig(source).values,{...config});
-    for(const edited of [`${source}globalThis.pwned=1;\n`,source.replace('Object.freeze(','('),source.replace('\n',' '),source.replace(/"mode":"\w+"/,'"mode":"sandbox"').replace(/"authUrl":""/,'"authUrl":"https://auth.example.test/x"'),
-      source.replace(/"authUrl":"[^"]*"/,'"authUrl":"http://auth.example.test/x"').replace(/"mode":"\w+"/,'"mode":"live"'),read('platform-config.js')]){
+    for(const edited of [`${source}globalThis.pwned=1;\n`,source.replace('Object.freeze(','('),source.replace('\n',' '),source.replace(/"mode":"\w+"/,'"mode":"sandbox"').replace(/"dataUrl":"[^"]*"/,'"dataUrl":"https://data.example.test/x"'),
+      source.replace(/"dataUrl":"[^"]*"/,'"dataUrl":"http://data.example.test/x"').replace(/"mode":"\w+"/,'"mode":"live"'),
+      source.replace('{"mode"',`{"authUrl":"${AUTH}","mode"`),read('platform-config.js')]){
       assert.notEqual(edited,source);
       assert.throws(()=>parseRuntimeConfig(edited),ConfigError,edited);
     }
   }
   // Values are read, not assumed: another build's well-formed output reads as that build's values.
-  const other=serializeRuntimeConfig(runtimeConfigFromEnv({...LIVE,POOL_PLATFORM_AUTH_URL:'https://auth.example.test/neondb/auth'}));
-  assert.equal(parseRuntimeConfig(other).authUrl,'https://auth.example.test/neondb/auth');
+  const other=serializeRuntimeConfig(runtimeConfigFromEnv({...LIVE,POOL_PLATFORM_DATA_URL:'https://data.example.test/neondb/rest/v1'}));
+  assert.equal(parseRuntimeConfig(other).dataUrl,'https://data.example.test/neondb/rest/v1');
 });
 
 test('E: PlatformClient imports the SDK from the same-origin vendor module; no deployable script imports from a CDN or another origin',()=>{
@@ -240,10 +257,11 @@ test('I: nothing beside the allow-list is copied (private Pool Center files, sec
   for(const name of STATIC_FILES)plant(path.join(app,name),fs.readFileSync(path.join(HERE,name)));
   const DECOY='DECOY-9f2c41';
   for(const name of ['.env','.env.local','secrets.json','nfl-pool.html','private.js','docs/NOTES.md','migrations/999_x.sql','validation/live/secrets.json',
-    'node_modules/x/index.js','scripts/build.mjs','vendor/other.js','package.json','README.md','ui-contract.test.mjs']){
+    'node_modules/x/index.js','scripts/build.mjs','vendor/other.js','package.json','README.md','ui-contract.test.mjs',
+    'server/auth-proxy-core.mjs','api/auth.mjs','vercel.json','auth-proxy-core.test.mjs']){
     plant(path.join(app,name),`${DECOY} ${name}`);
   }
-  plant(path.join(app,'platform-config.js'),`export const PLATFORM_CONFIG=Object.freeze({mode:'live',authUrl:'https://${DECOY}.example.test/a',dataUrl:'https://${DECOY}.example.test/d'});`);
+  plant(path.join(app,'platform-config.js'),`export const PLATFORM_CONFIG=Object.freeze({mode:'live',dataUrl:'https://${DECOY}.example.test/d'});`);
   plant(path.join(root,'nfl-pool','index.html'),`${DECOY} private Pool Center`);
   plant(path.join(root,'index.html'),`${DECOY} repository root`);
   const out=path.join(root,'out');
@@ -337,7 +355,7 @@ test('R: a sandbox and a live build differ only in platform-config.js, and a san
   const differing=OUTPUT_FILES.filter(name=>!fs.readFileSync(path.join(sandbox,name)).equals(fs.readFileSync(path.join(live,name))));
   assert.deepEqual(differing,['platform-config.js']);
   assert.equal(evaluateConfig(fs.readFileSync(path.join(sandbox,'platform-config.js'),'utf8')).values.mode,'sandbox');
-  assert.deepEqual(evaluateConfig(fs.readFileSync(path.join(live,'platform-config.js'),'utf8')).values,{mode:'live',authUrl:AUTH,dataUrl:DATA,defaultPoolSlug:'it-pool'});
+  assert.deepEqual(evaluateConfig(fs.readFileSync(path.join(live,'platform-config.js'),'utf8')).values,{mode:'live',dataUrl:DATA,defaultPoolSlug:'it-pool'});
   // Sandbox pages never load the SDK: PlatformClient.init() returns before its import unless the mode is live.
   assert.match(read('platform-client.js'),/async init\(\)\{\n    if\(!this\.live\)return this;\n[^\n]*\n    const \{createClient\}=await import\('\.\/vendor\/neon-js\.js'\);/);
 });
@@ -352,12 +370,12 @@ test('S: each page reads platform-config.js from the network as it loads and, wi
 });
 
 // The local server behind the localhost browser checks.
-function get(port,pathname,{host=`localhost:${port}`,method='GET',address='127.0.0.1'}={}){
+function get(port,pathname,{host=`localhost:${port}`,method='GET',address='127.0.0.1',headers={},body}={}){
   return new Promise((resolve,reject)=>{
-    const request=http.request({host:address,port,path:pathname,method,headers:{host}},response=>{
+    const request=http.request({host:address,port,path:pathname,method,headers:{host,...headers}},response=>{
       const chunks=[];response.on('data',c=>chunks.push(c));response.on('end',()=>resolve({status:response.statusCode,headers:response.headers,body:Buffer.concat(chunks).toString('utf8')}));
     });
-    request.on('error',reject);request.end();
+    request.on('error',reject);request.end(body);
   });
 }
 
@@ -396,6 +414,12 @@ test('the local server answers only http://localhost:<port>, only built files, w
   }
   assert.equal((await get(port,'/',{method:'POST'})).status,405);
   assert.equal((await get(port,'/',{method:'HEAD'})).body,'');
+  // A sandbox build has no Auth proxy: every /api/auth path is a 404 with the proxy's headers, and nothing is proxied.
+  for(const [pathname,method] of [['/api/auth/get-session','GET'],['/api/auth/sign-out','POST'],['/api/auth/email-otp/send-verification-otp','POST'],['/api/auth','GET']]){
+    const response=await get(port,pathname,{method,headers:{origin:`http://localhost:${port}`,'content-type':'application/json'},body:method==='POST'?'{}':undefined});
+    assert.equal(response.status,404,pathname);
+    assert.equal(response.headers['cache-control'],'no-store');
+  }
   // Only files the build wrote, never a path outside it, a directory, or an unknown type.
   fs.writeFileSync(path.join(dir,'secret.js'),'secret');
   fs.symlinkSync(path.join(dir,'secret.js'),path.join(dist,'linked.js'));
@@ -408,20 +432,119 @@ test('the local server answers only http://localhost:<port>, only built files, w
   if(v6)assert.equal(v6.status,200);
 });
 
-test('the local server derives connect-src from the built configuration and refuses a directory that is not a build',async t=>{
+test('the local server derives connect-src from the built configuration, never naming Neon Auth, and refuses a directory that is not a build',async t=>{
   const dir=scratch(t),dist=path.join(dir,'dist');
   await buildCommercialFrontend({outDir:dist,env:LIVE,bundleSdk:stubSdk});
-  const server=await startServer({dir:dist,port:0,log:()=>{}});
+  const server=await startServer({dir:dist,port:0,log:()=>{},env:PROXY});
   t.after(()=>server.close());
   assert.equal(server.config.mode,'live');
-  assert.match(server.csp,/connect-src 'self' https:\/\/ep-example-000000\.neonauth\.c-0\.us-east-2\.aws\.neon\.test https:\/\/ep-example-000000\.apirest\.c-0\.us-east-2\.aws\.neon\.test;/);
+  assert.equal(server.proxy,true);
+  assert.match(server.csp,/connect-src 'self' https:\/\/ep-example-000000\.apirest\.c-0\.us-east-2\.aws\.neon\.test;/);
+  assert.doesNotMatch(server.csp,/neonauth/,'the page can never reach Neon Auth directly');
   for(const directive of ["default-src 'self'","script-src 'self'","style-src 'self'","img-src 'self'","font-src 'none'","worker-src 'self'","manifest-src 'self'","object-src 'none'","frame-src 'none'","frame-ancestors 'none'","base-uri 'none'","form-action 'self'"]){
     assert.ok(server.csp.split('; ').includes(directive),directive);
   }
   assert.doesNotMatch(server.csp,/unsafe-inline|unsafe-eval|\*|data:|https:(?!\/\/)/);
   fs.appendFileSync(path.join(dist,'platform-config.js'),'globalThis.pwned=1;\n');
-  await assert.rejects(startServer({dir:dist,port:0,log:()=>{}}),/not a commercial build/);
-  await assert.rejects(startServer({dir:path.join(dir,'missing'),port:0,log:()=>{}}),/run npm run build first/);
+  await assert.rejects(startServer({dir:dist,port:0,log:()=>{},env:PROXY}),/not a commercial build/);
+  await assert.rejects(startServer({dir:path.join(dir,'missing'),port:0,log:()=>{},env:PROXY}),/run npm run build first/);
+});
+
+test('a live build is served only with the Auth proxy configured: without it, or with a mismatched app origin, the server refuses to start',async t=>{
+  const dir=scratch(t),dist=path.join(dir,'dist');
+  await buildCommercialFrontend({outDir:dist,env:LIVE,bundleSdk:stubSdk});
+  for(const env of [{},{POOL_PLATFORM_MODE:'live'},{POOL_PLATFORM_AUTH_UPSTREAM_URL:AUTH},{...PROXY,POOL_PLATFORM_MODE:'sandbox'},
+    {...PROXY,POOL_PLATFORM_AUTH_UPSTREAM_URL:'https://evil.example.test/neondb/auth'},{...PROXY,POOL_PLATFORM_AUTH_UPSTREAM_URL:'http://ep-x.neonauth.c-0.aws.neon.test/neondb/auth'}]){
+    await assert.rejects(startServer({dir:dist,port:0,log:()=>{},env}),/a live build needs the same-origin Auth proxy/,JSON.stringify(env));
+  }
+  await assert.rejects(startServer({dir:dist,port:0,log:()=>{},env:{...PROXY,POOL_PLATFORM_APP_ORIGIN:'http://localhost:1'}}),/POOL_PLATFORM_APP_ORIGIN must be exactly http:\/\/localhost:\d+/);
+});
+
+test('the local server mounts the Auth proxy at /api/auth for a live build: four routes, exact Host and Origin, fixed upstream, and a log with no secret',async t=>{
+  const dir=scratch(t),dist=path.join(dir,'dist');
+  await buildCommercialFrontend({outDir:dist,env:LIVE,bundleSdk:stubSdk});
+  const TOKEN='SynthSessTokenAbcdefghijklmn0123',SIGNED=`${TOKEN}.c3ludGhldGlj`;
+  const JWT='eyJhbGciOiJFZERTQSJ9.eyJzdWIiOiJ1c2VyLTEifQ.c2hhcGUtb25seQ';
+  const calls=[],lines=[];
+  const upstreamFetch=async(url,init)=>{
+    calls.push({url,method:init.method,headers:Object.fromEntries(new Headers(init.headers)),body:init.body??null});
+    const headers=new Headers({'content-type':'application/json','access-control-allow-origin':'https://evil.example.test','access-control-allow-credentials':'true','set-auth-jwt':JWT,'set-auth-token':TOKEN});
+    headers.append('set-cookie',`${SESSION_COOKIE}=${SIGNED}; Max-Age=604800; Path=/; HttpOnly; Secure; SameSite=None; Partitioned`);
+    if(url.endsWith('/get-session'))return new Response(JSON.stringify({session:{id:'s',token:TOKEN},user:{id:'user-1'}}),{status:200,headers});
+    if(url.endsWith('/sign-out'))return new Response('{"success":true}',{status:200,headers:{'content-type':'application/json'}});
+    return new Response('{"success":true}',{status:200,headers});
+  };
+  const server=await startServer({dir:dist,port:0,log:line=>lines.push(line),env:PROXY,upstreamFetch});
+  t.after(()=>server.close());
+  const {port}=server,origin=`http://localhost:${port}`,site={'sec-fetch-site':'same-origin','sec-fetch-mode':'cors'};
+  // Signed out: answered locally, nothing proxied.
+  const signedOut=await get(port,'/api/auth/get-session',{headers:site});
+  assert.deepEqual([signedOut.status,signedOut.body],[200,'null']);
+  assert.equal(signedOut.headers['cache-control'],'no-store');
+  assert.equal(signedOut.headers['cross-origin-resource-policy'],'same-origin');
+  assert.equal(signedOut.headers['content-security-policy'],"default-src 'none'; frame-ancestors 'none'");
+  assert.deepEqual(calls,[]);
+  // Signed in: only the session cookie travels, to the fixed upstream, with this server's origin.
+  const signedIn=await get(port,'/api/auth/get-session',{headers:{...site,cookie:`theme=dark; ${SESSION_COOKIE}=${SIGNED}`}});
+  assert.equal(signedIn.status,200);
+  assert.deepEqual(JSON.parse(signedIn.body),{session:{id:'s'},user:{id:'user-1'}});
+  assert.equal(signedIn.headers['set-auth-jwt'],JWT);
+  assert.equal(signedIn.headers['set-auth-token'],undefined);
+  assert.deepEqual(Object.keys(signedIn.headers).filter(h=>h.startsWith('access-control-')),[]);
+  assert.deepEqual(signedIn.headers['set-cookie'],[`${SESSION_COOKIE}=${SIGNED}; Path=/api/auth; Max-Age=604800; HttpOnly; Secure; SameSite=Strict`]);
+  assert.deepEqual(calls.map(c=>[c.url,c.headers.origin,c.headers.cookie]),[[`${AUTH}/get-session`,origin,`${SESSION_COOKIE}=${SIGNED}`]]);
+  const sent=await get(port,'/api/auth/email-otp/send-verification-otp',{method:'POST',headers:{...site,origin,'content-type':'application/json'},body:'{"email":"Player@Example.test","type":"sign-in"}'});
+  assert.deepEqual([sent.status,JSON.parse(sent.body)],[200,{success:true}]);
+  assert.equal(calls.at(-1).body,'{"email":"player@example.test","type":"sign-in"}');
+  const out=await get(port,'/api/auth/sign-out',{method:'POST',headers:{...site,origin,'content-type':'application/json',cookie:`${SESSION_COOKIE}=${SIGNED}`},body:'{}'});
+  assert.deepEqual([out.status,out.headers['set-cookie']],[200,[DELETE_SESSION_COOKIE]]);
+  const upstreamCalls=calls.length;
+  // Refusals, none of which reach the upstream.
+  for(const [pathname,options,status] of [
+    ['/api/auth/get-session',{host:`127.0.0.1:${port}`,headers:site},421],
+    ['/api/auth/get-session',{headers:{'sec-fetch-site':'same-site',cookie:`${SESSION_COOKIE}=${SIGNED}`}},403],
+    ['/api/auth/get-session',{headers:{'sec-fetch-site':'cross-site',cookie:`${SESSION_COOKIE}=${SIGNED}`}},403],
+    ['/api/auth/sign-out',{method:'POST',headers:{origin:'http://localhost:4174','content-type':'application/json'},body:'{}'},403],
+    ['/api/auth/sign-out',{method:'POST',headers:{origin:'null','content-type':'application/json'},body:'{}'},403],
+    ['/api/auth/sign-out',{method:'POST',headers:{'content-type':'application/json'},body:'{}'},403],
+    ['/api/auth/email-otp/send-verification-otp',{method:'POST',headers:{origin,'content-type':'text/plain'},body:'{}'},415],
+    ['/api/auth/email-otp/send-verification-otp',{method:'POST',headers:{origin,'content-type':'application/json'},body:'{"email":"a@b.test","type":"forget-password"}'},400],
+    ['/api/auth/email-otp/send-verification-otp',{method:'POST',headers:{origin,'content-type':'application/json'},body:'x'.repeat(5000)},413],
+    ['/api/auth/get-session',{method:'OPTIONS',headers:{origin:'https://evil.example.test','access-control-request-method':'GET'}},405],
+    ['/api/auth/get-session',{method:'POST',headers:{origin,'content-type':'application/json'},body:'{}'},405],
+    ['/api/auth/list-sessions',{headers:site},404],['/api/auth/token',{headers:site},404],['/api/auth/../index.html',{headers:site},404],
+    ['/api/auth/get-session?disableCookieCache=true',{headers:site},400]
+  ]){
+    const response=await get(port,pathname,options);
+    assert.equal(response.status,status,`${options.method??'GET'} ${pathname}`);
+    assert.deepEqual(Object.keys(response.headers).filter(h=>h.startsWith('access-control-')),[],pathname);
+  }
+  assert.equal(calls.length,upstreamCalls,'no refused request reached the upstream');
+  // Dot segments resolve before routing: out of /api/auth is a static page, never a proxied one.
+  const page=await get(port,'/api/auth/../../index.html');
+  assert.deepEqual([page.status,page.headers['content-security-policy']],[200,server.csp]);
+  assert.equal((await get(port,'/',{method:'POST'})).status,405,'static paths still take GET and HEAD only');
+  // The log names the route, method and status; never a cookie, token, JWT, email or body.
+  assert.ok(lines.includes('AUTH GET get-session 200'));
+  assert.ok(lines.some(line=>/^AUTH POST sign-out 403 origin$/.test(line)));
+  const log=lines.join('\n').toLowerCase();
+  for(const secret of [TOKEN,SIGNED,JWT,'player@example','a@b.test','theme=dark','forget-password','disablecookiecache'])assert.equal(log.includes(secret.toLowerCase()),false,secret);
+});
+
+test('no browser file names Neon Auth: no Auth URL or upstream value in any built file, and no proxy code in dist/',async t=>{
+  const dir=scratch(t),dist=path.join(dir,'dist');
+  await buildCommercialFrontend({outDir:dist,env:{...LIVE,...PROXY,POOL_PLATFORM_APP_ORIGIN:'http://localhost:4173'},bundleSdk:stubSdk});
+  assert.deepEqual(listFiles(dist),OUTPUT_FILES);
+  for(const file of listFiles(dist)){
+    const text=fs.readFileSync(path.join(dist,file),'utf8');
+    assert.doesNotMatch(text,AUTH_HOST_URL,file);
+    for(const value of [AUTH,new URL(AUTH).host,'AUTH_UPSTREAM','APP_ORIGIN','createAuthProxy','proxyConfigFromEnv','handleAuthRequest','SESSION_COOKIE'])assert.equal(text.includes(value),false,`${file} holds ${value}`);
+  }
+  assert.ok(!OUTPUT_FILES.some(name=>/^(server|api)\/|vercel\.json|auth-proxy/.test(name)));
+  for(const name of STATIC_FILES)assert.doesNotMatch(read(name),AUTH_HOST_URL,name);
+  assert.match(read('platform-client.js'),/\n    this\.neon=createClient\(\{auth:\{url:new URL\(AUTH_PROXY_PATH,location\.origin\)\.href\},dataApi:\{url:this\.config\.dataUrl\}\}\);\n/,
+    'the SDK is pointed at the same-origin proxy, never at a configured Auth URL');
+  assert.match(read('platform-client.js'),/^export const AUTH_PROXY_PATH='\/api\/auth';$/m);
 });
 
 describe('the real Neon SDK bundle',{skip:ESBUILD?false:'run npm ci in pool-platform to bundle the real SDK'},()=>{
@@ -445,6 +568,15 @@ describe('the real Neon SDK bundle',{skip:ESBUILD?false:'run npm ci in pool-plat
     // Every process access left is behind a typeof process check; the Chromium run shows none of them throws.
     assert.doesNotMatch(code,/useSyncExternalStore|react\.production|BetterAuthReactAdapterImpl|pg-native|pg-cloudflare|prettier|\bmeow\b/);
     assert.doesNotMatch(code,/\brequire\(\s*["'](?:node:)?(?:fs|path|os|net|tls|dns|crypto|child_process|http|https|stream|zlib|util)["']\s*\)|from\s*["']node:/);
+  });
+
+  test('the real bundle names no Neon Auth URL: only the SDK\'s own bare "neonauth" label, used to derive URLs from a base URL it is never given',async t=>{
+    const dir=scratch(t);
+    await buildCommercialFrontend({outDir:dir,env:LIVE});
+    const code=fs.readFileSync(path.join(dir,'vendor/neon-js.js'),'utf8');
+    assert.doesNotMatch(code,AUTH_HOST_URL);
+    assert.equal(code.match(/neonauth/g).length,1);
+    for(const file of listFiles(dir))assert.doesNotMatch(fs.readFileSync(path.join(dir,file),'utf8'),AUTH_HOST_URL,file);
   });
 
   test('a real build is reproducible, and sandbox and live builds differ only in platform-config.js',async t=>{

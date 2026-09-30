@@ -14,26 +14,111 @@ there: its `platform-config.js` is the sandbox, no live URL is committed, and `d
 
 ## Target
 
-- **A dedicated Vercel project** (static output only; no serverless functions, no middleware).
+- **A dedicated Vercel project**: static output plus **exactly one narrowly scoped function**, the same-origin Neon
+  Auth proxy (`api/auth.mjs`, below). No other function and no middleware.
 - **Project root limited to `pool-platform/`**: Install Command `npm ci` (from `package-lock.json`), Build Command
   `npm run build`, Output Directory `dist`, Node 22 (the version the lockfile and build were verified with).
-- **Only the build output is published**: the 14 allow-listed files, the generated `platform-config.js` and
-  `vendor/neon-js.js`. Tests, docs, migrations, validation, scripts, `node_modules` and anything outside
-  `pool-platform/` (the Pool Center included) cannot reach it; `frontend-readiness.test.mjs` checks this.
-- **A final custom commercial domain, chosen before any Neon production-origin change.** Neon Auth trusted
-  domains/origins and Data API CORS are then configured for exactly that origin (no wildcard), in its own approved
-  step. The `*.vercel.app` hostnames are not used for live sign-in unless separately approved.
+- **Only the build output is published as static files**: the 14 allow-listed files, the generated
+  `platform-config.js` and `vendor/neon-js.js`. Tests, docs, migrations, validation, scripts, `node_modules` and
+  anything outside `pool-platform/` (the Pool Center included) cannot reach it; `frontend-readiness.test.mjs` checks
+  this. The proxy (`api/auth.mjs`, `server/auth-proxy-core.mjs` and the two modules it imports, `auth-core.js` and
+  `scripts/runtime-config.mjs`) runs only as the function; none of its code or configuration is in `dist/`.
+- **A final custom commercial domain, chosen before any Neon production-origin change.** Data API CORS is then
+  configured for exactly that origin (no wildcard), and whether Neon Auth also needs it as a trusted domain is
+  settled by the open Neon questions below, each in its own approved step. The `*.vercel.app` hostnames are not used
+  for live sign-in unless separately approved.
+
+## Same-origin Neon Auth proxy (finding F-1)
+
+Neon Auth answers credentialed CORS for any `Origin` (including `null`), and neither trusted domains nor
+`allow_localhost` changes that (diagnostic of 2026-09-30, fully rolled back). A browser holding a Neon Auth cookie can
+therefore have its session read by other pages on the same site. The corrective is that **the browser never talks to
+the Neon Auth host**:
+
+- The pages call exactly four routes on their own origin, and `server/auth-proxy-core.mjs` forwards each to one fixed
+  upstream endpoint:
+
+  | Route (same origin) | Method | Upstream (fixed) |
+  | --- | --- | --- |
+  | `/api/auth/get-session` | GET | `<upstream>/get-session` |
+  | `/api/auth/email-otp/send-verification-otp` | POST | `<upstream>/email-otp/send-verification-otp` |
+  | `/api/auth/sign-in/email-otp` | POST | `<upstream>/sign-in/email-otp` |
+  | `/api/auth/sign-out` | POST | `<upstream>/sign-out` |
+
+  Every other path under `/api/auth` is 404 and a wrong method 405. `vercel.json` rewrites the four paths to the one
+  function (`/api/auth?route=<id>`), and the adapter maps them back to the route's own path.
+- **Cookies.** The session cookie is re-issued on the app host as `__Secure-neon-auth.session_token; HttpOnly;
+  Secure; SameSite=Strict; Path=/api/auth` (no `Domain`, never `Partitioned`). Only that cookie is sent upstream;
+  every other upstream cookie is dropped. Sign-out always deletes it. Browsers hold no cookie for the Neon Auth host.
+- **Tokens.** Every `token` field is removed from response bodies, and an answer that still contains the session
+  token is refused (502), so page JavaScript never sees the opaque session token. `set-auth-token` is dropped.
+  `set-auth-jwt` is passed on unchanged: the Data API bearer path (`set-auth-jwt` → SDK memory →
+  `Authorization: Bearer <JWT>` → RPC) is exactly as before.
+- **Checks.** `Host` must be exactly the app host (421). Every POST must carry exactly the app origin (missing,
+  `null`, another scheme, port or host: 403). `Sec-Fetch-Site`, when sent, must be `same-origin` and
+  `Sec-Fetch-Mode` `cors` or `same-origin` (403). State-changing routes accept only `application/json`, at most
+  2048 bytes, and a fixed schema; the OTP type is always `sign-in`. No query string is accepted.
+- **Upstream.** The upstream protocol, host, base path and endpoint path come only from server configuration.
+  Upstream always sees the app's own origin as `Origin`, never the browser's, and only `accept`, `content-type`,
+  `user-agent`, `origin` and the session cookie. Upstream failures become a generic 502.
+- **Responses** never carry `Access-Control-*` headers, and always carry `Cache-Control: no-store`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cross-Origin-Resource-Policy: same-origin`
+  and `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`.
+- **Logs** hold route, method, status, duration and a fixed reason code only: never an OTP, email, body, cookie,
+  session token, JWT or `Authorization` value.
+- **CSRF** is covered by the `SameSite=Strict` cookie, the exact `Origin` check on every POST, `Sec-Fetch-Site`,
+  JSON-only state-changing requests, and the absence of any CORS header (an `OPTIONS` preflight is 405). No
+  synchronizer token is used.
+
+### Server-only configuration (never a build variable, never in the browser, no secret)
+
+| Variable | Value | Notes |
+| --- | --- | --- |
+| `POOL_PLATFORM_MODE` | `live` | Anything else disables the proxy: every request is 404. |
+| `POOL_PLATFORM_AUTH_UPSTREAM_URL` | the Neon Auth base URL of the commercial branch | `https`, canonical, a `*.neonauth.*` host and a `/<database>/auth` path. |
+| `POOL_PLATFORM_APP_ORIGIN` | the final `https://` commercial origin | Exactly an origin: compared with `Origin` and sent upstream as `Origin`. |
+
+Missing or malformed values fail closed (404 everywhere). The design needs no secret, no Neon API key, no database
+credential and no cookie-signing secret. `POOL_PLATFORM_AUTH_URL` is retired: the build refuses it.
+
+### Rate limiting
+
+The core has a rate-limit hook, asked before an OTP is sent or verified with the route, the client IP and a keyed
+hash of the normalized email (never the email itself). **No store is bundled**, so no hook is installed today. At the
+hosting gate, Vercel Firewall rate-limit rules on `POST /api/auth/email-otp/send-verification-otp` and
+`POST /api/auth/sign-in/email-otp`, keyed per client IP, are the edge control; a per-email limit needs a shared
+store and its own approval. The proxy never forwards a client IP upstream.
+
+### Open Neon dependencies (unanswered; nothing below is assumed)
+
+- **H.** Which `Origin` Neon Auth's origin check expects on proxied, cookie-bearing POSTs (sign-in, sign-out), and
+  whether the app origin must be a trusted domain.
+- **I. HOSTING BLOCKER.** How Email OTP send/verify limits are keyed. Server-to-server calls from the function come
+  from shared egress IPs, and Better Auth keys its IP limiter on `x-forwarded-for`. If Neon keys OTP limits by source
+  IP and ignores a forwarded client IP, every user of the app shares one bucket (Better Auth's default is 3 per
+  60 s). This must be answered by Neon or measured in a controlled test before the proxy is relied on in hosting.
+- **K.** Whether trusted domains populate Better Auth's `trustedOrigins`.
+- **L.** The canonical, stable session cookie name (Neon's docs say `__Secure-neonauth.session_token`; the SDK and the
+  browser show `__Secure-neon-auth.session_token`, which the proxy uses, in one constant).
+- **M.** The supported `SameSite` for a proxied cookie (Neon's server docs say `strict`, its SDK code defaults to
+  `lax`; the proxy sets `Strict`).
+- **N.** Compatibility of the hosted Better Auth 1.4.18 (per Neon's docs) with the pinned SDK tree's better-auth
+  1.6.23.
+- Whether server-to-server `get-session` returns `set-auth-jwt` (it must, for the Data API path; the proxy fails
+  closed if it does not).
+- Whether `/sign-out` revokes the Neon session immediately. An already-issued JWT stays valid at the Data API until
+  it expires, up to about 15 minutes.
 
 ## Configuration per environment
 
-The build reads only `POOL_PLATFORM_MODE`, `POOL_PLATFORM_AUTH_URL`, `POOL_PLATFORM_DATA_URL` and
-`POOL_PLATFORM_DEFAULT_POOL_SLUG`, and fails closed on anything malformed (`scripts/runtime-config.mjs`).
+The build reads only `POOL_PLATFORM_MODE`, `POOL_PLATFORM_DATA_URL` and `POOL_PLATFORM_DEFAULT_POOL_SLUG`, and fails
+closed on anything malformed (`scripts/runtime-config.mjs`). The function reads only the server-only variables above.
 
-| Environment | POOL_PLATFORM_* | Result |
-| --- | --- | --- |
-| Production | `MODE=live`, the commercial Auth and Data API URLs, the pilot slug | Live build |
-| Preview | none | Sandbox build (synthetic data, no backend named) |
-| Development | none (local runs use `.env.local`, git-ignored) | Sandbox unless the operator builds live locally |
+| Environment | Build (POOL_PLATFORM_*) | Function (server-only) | Result |
+| --- | --- | --- | --- |
+| Production | `MODE=live`, the commercial Data API URL, the pilot slug | `MODE=live`, the Auth upstream URL, the production origin | Live build and proxy |
+| Preview | none | none | Sandbox build; the proxy answers 404 to everything |
+| Development | none (local runs use `.env.local`, git-ignored) | none | Sandbox unless the operator builds and serves live locally |
 
 Preview deployments stay sandbox-only unless a separate staging backend **and** staging origin are deliberately
 approved. They are public values, but they are still set in the host's environment settings, never committed.
@@ -45,21 +130,23 @@ No password, connection string, API key, Neon management credential or Vercel cr
   `scripts/runtime-config.mjs`), i.e.
 
       default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'none';
-      connect-src 'self' <EXACT_AUTH_ORIGIN> <EXACT_DATA_API_ORIGIN>; worker-src 'self'; manifest-src 'self';
+      connect-src 'self' <EXACT_DATA_API_ORIGIN>; worker-src 'self'; manifest-src 'self';
       object-src 'none'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
 
-  It must be a response header (`frame-ancestors` has no effect in a `<meta>` tag). Never `'unsafe-inline'`,
-  `'unsafe-eval'`, a wildcard or a CDN. One report is expected when the SDK loads: `script-src` refusing `eval` from
-  `vendor/neon-js.js` (zod's feature probe, which then stays on its non-eval path). Whether the first hosted run uses
-  `Content-Security-Policy-Report-Only` before enforcing is a decision for the hosting gate.
+  `connect-src` never names Neon Auth: Auth is same-origin, so the browser itself refuses any direct request to the
+  Auth host. It must be a response header (`frame-ancestors` has no effect in a `<meta>` tag). Never
+  `'unsafe-inline'`, `'unsafe-eval'`, a wildcard or a CDN. One report is expected when the SDK loads: `script-src`
+  refusing `eval` from `vendor/neon-js.js` (zod's feature probe, which then stays on its non-eval path). Whether the
+  first hosted run uses `Content-Security-Policy-Report-Only` before enforcing is a decision for the hosting gate.
+  The proxy sets its own headers (above) on its responses.
 - `Cache-Control: no-cache` (revalidate every time) for the pages, `platform-config.js`, `service-worker.js` and
   `sw-register.js`; file names carry no content hash, so the other files revalidate too. Confirm the host's defaults
   at the hosting gate rather than assuming them.
 - `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and HSTS on the custom domain.
 - Never `Service-Worker-Allowed`: the worker's scope stays the commercial root.
 
-`scripts/serve.mjs` already sends the CSP, `nosniff`, `no-referrer` and `no-cache` locally, so the localhost gate runs
-under the same policy.
+`scripts/serve.mjs` already sends the CSP, `nosniff`, `no-referrer` and `no-cache` locally and mounts the same proxy
+core at `/api/auth`, so the localhost gate runs under the same policy and the same Auth path.
 
 ## Deployments, promotion and rollback
 
@@ -76,8 +163,13 @@ under the same policy.
 
 ## Order of the later hosting gate (each step separately approved)
 
-1. Choose the final commercial domain.
-2. Create the Vercel project with root `pool-platform/`, sandbox only, and verify a preview.
-3. Add the Neon Auth trusted origin and Data API CORS entry for exactly the production origin.
-4. Set the production `POOL_PLATFORM_*` values, deploy, verify hashes, headers and CSP, then promote.
-5. Repeat the browser and device matrix of `FRONTEND_INTEGRATION_RUNBOOK.md` against the hosted origin.
+1. Resolve, or settle by a controlled test, Neon questions I (the hosting blocker), H and K; record L, M and N.
+2. Choose the final commercial domain.
+3. Create the Vercel project with root `pool-platform/`, sandbox only (the proxy disabled), and verify a preview,
+   including how the `vercel.json` rewrites present the request URL, `Host` and `x-real-ip` to the function.
+4. Add the Data API CORS entry (and, if question H/K requires it, the Neon Auth trusted domain) for exactly the
+   production origin.
+5. Set the production build variables and the function's server-only variables, and the Vercel Firewall
+   rate-limit rules; deploy, verify hashes, headers, CSP and the proxy's refusals, then promote.
+6. Repeat the browser and device matrix of `FRONTEND_INTEGRATION_RUNBOOK.md`, including its Auth proxy checks,
+   against the hosted origin.

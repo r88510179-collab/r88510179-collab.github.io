@@ -1,0 +1,12 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    { "source": "/api/auth/get-session", "destination": "/api/auth?route=get-session" },
+    { "source": "/api/auth/email-otp/send-verification-otp", "destination": "/api/auth?route=send-otp" },
+    { "source": "/api/auth/sign-in/email-otp", "destination": "/api/auth?route=verify-otp" },
+    { "source": "/api/auth/sign-out", "destination": "/api/auth?route=sign-out" }
+  ],
+  "functions": {
+    "api/auth.mjs": { "maxDuration": 15 }
+  }
+}

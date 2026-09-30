@@ -10,6 +10,7 @@ import {CONFIG_UNAVAILABLE,SIGN_IN_NOT_CONFIRMED} from './platform-client.js';
 import {buildCommercialFrontend} from './scripts/build.mjs';
 import {contentSecurityPolicy} from './scripts/runtime-config.mjs';
 import {startServer} from './scripts/serve.mjs';
+import {ROUTES} from './server/auth-proxy-core.mjs';
 
 const read=name=>fs.readFileSync(new URL('./'+name,import.meta.url),'utf8');
 const participant=read('participant.html')+read('participant.js');
@@ -255,7 +256,11 @@ test('cross-origin, auth, Data API, non-GET, Authorization-bearing and query req
     request(`${ORIGIN}/pool-platform/auth-core.js`,{method:'POST'}),
     request(`${ORIGIN}/pool-platform/auth-core.js`,{headers:{Authorization:'Bearer a.b.c'}}),
     request(`${ORIGIN}/pool-platform/auth-core.js?v=2`),
-    request(`${ORIGIN}/nfl-pool/app.js`)
+    request(`${ORIGIN}/nfl-pool/app.js`),
+    // The same-origin Auth proxy, as the SDK calls it (fetch, never a navigation), with and without credentials.
+    ...Object.keys(ROUTES).flatMap(route=>[request(`${ORIGIN}${route}`,{method:ROUTES[route].method}),request(`${ORIGIN}${route}`,{method:ROUTES[route].method,mode:'same-origin'}),
+      request(`${ORIGIN}${route}`,{method:ROUTES[route].method,headers:{cookie:'__Secure-neon-auth.session_token=x',authorization:'Bearer a.b.c'}})]),
+    request(`${ORIGIN}/api/auth/get-session`,{mode:'no-cors'}),request(`${ORIGIN}/pool-platform/api/auth/get-session`),request(`${ORIGIN}/api/auth/unknown`)
   ];
   for(const r of untouched){
     const result=await worker.dispatch('fetch',{request:r});
@@ -263,6 +268,25 @@ test('cross-origin, auth, Data API, non-GET, Authorization-bearing and query req
   }
   assert.deepEqual(worker.log.fetched,[]);
   assert.deepEqual(worker.log.puts,[]);
+});
+
+test('the Auth proxy is never cached or answered by the worker: its fetches go straight to the network, and a navigation to it is passed through, never stored, and offline gets the landing page',async()=>{
+  assert.doesNotMatch(sw,/api\/auth|get-session|sign-out/,'no Auth route is ever listed');
+  const AUTH_ANSWER='{"session":{"id":"s"}}';
+  for(const [network,navigated] of [[async()=>fakeResponse({body:AUTH_ANSWER}),AUTH_ANSWER],[async()=>{throw new TypeError('offline')},'precached /pool-platform/index.html']]){
+    const worker=await installedWorker({network});
+    for(const [route,{method}] of Object.entries(ROUTES)){
+      for(const mode of ['cors','same-origin','no-cors']){
+        assert.equal((await worker.dispatch('fetch',{request:request(`${ORIGIN}${route}`,{method,mode})})).responded,false,`${method} ${route} ${mode}`);
+      }
+      // Typed into the address bar or followed as a link it is a navigation. The worker hands it to the network (the
+      // proxy refuses navigations) and stores nothing; offline it serves the landing page, never an Auth answer.
+      const navigation=await worker.dispatch('fetch',{request:request(`${ORIGIN}${route}`,{mode:'navigate'})});
+      assert.equal(navigation.response?.body,navigated,`navigation to ${route}`);
+    }
+    assert.deepEqual(worker.log.puts,[]);
+    for(const store of worker.stores.values())assert.ok(![...store.keys()].some(key=>key.includes('/api/auth')));
+  }
 });
 
 test('listed static modules are served network-first and refreshed only from clean same-origin responses',async()=>{
@@ -324,8 +348,8 @@ test('a request carrying Authorization is never stored, in any header case and f
 // Every page is served with the production Content-Security-Policy, and clean() fails on any violation reported.
 const BROWSER=process.env.POOL_PLATFORM_TEST_BROWSER||'';
 const SDK_PATH=/import\('\.\/(vendor\/[^']+)'\)/.exec(read('platform-client.js'))?.[1];
-// The stand-in Data API is same-origin and the fake SDK never calls the Auth URL, so connect-src 'self' suffices.
-const PAGE_CSP=contentSecurityPolicy({authUrl:'',dataUrl:''});
+// The stand-in Data API is same-origin and the fake SDK makes no Auth request, so connect-src 'self' suffices.
+const PAGE_CSP=contentSecurityPolicy({dataUrl:''});
 const ESBUILD=(()=>{try{return !!createRequire(import.meta.url).resolve('esbuild')}catch{return false}})();
 const FAKE_SDK=`const b64=s=>btoa(s).replace(/[+]/g,'-').replace(/[/]/g,'_').replace(/=+$/,'');
 const auth=()=>window.__fakeAuth;
@@ -482,7 +506,7 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     if(world){
       await page.addInitScript(email=>{window.__fakeAuth={email}},signedInAs);
       await page.route(`${base}/platform-config.js`,route=>route.fulfill({contentType:'text/javascript',
-        body:`export const PLATFORM_CONFIG=Object.freeze({mode:'live',authUrl:'https://auth.pool.test/auth',dataUrl:'${base}/data-api',defaultPoolSlug:${JSON.stringify(poolSlug)}});`}));
+        body:`export const PLATFORM_CONFIG=Object.freeze({mode:'live',dataUrl:'${base}/data-api',defaultPoolSlug:${JSON.stringify(poolSlug)}});`}));
       await page.route(`${base}/${SDK_PATH}`,route=>route.fulfill({contentType:'text/javascript',body:FAKE_SDK}));
       await page.route(`${base}/data-api/rpc/*`,dataApi(world));
     }
@@ -1046,27 +1070,31 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     }finally{if(own.listening)await stop()}
   });
 
-  test('real bundled SDK: a live build served by scripts/serve.mjs at localhost signs in far enough to send a code under the production CSP',{skip:ESBUILD?false:'run npm ci in pool-platform to bundle the real SDK'},async()=>{
+  test('real bundled SDK: a live build served by scripts/serve.mjs at localhost signs in far enough to send a code, through the same-origin Auth proxy only, under the production CSP',{skip:ESBUILD?false:'run npm ci in pool-platform to bundle the real SDK'},async()=>{
     const work=fs.mkdtempSync(path.join(os.tmpdir(),'pool-platform-live-')),dist=path.join(work,'dist');
-    const AUTH='https://auth.pool.test/neondb/auth',DATA='https://data.pool.test/neondb/rest/v1';
+    const UPSTREAM='https://ep-example-000000.neonauth.c-0.us-east-2.aws.neon.test/neondb/auth',DATA='https://data.pool.test/neondb/rest/v1';
+    // Stand-in Neon Auth behind the proxy: no session yet, and an Email OTP send that succeeds.
+    const upstream=[];
+    const upstreamFetch=async(url,init)=>{
+      upstream.push({url,method:init.method,headers:Object.fromEntries(new Headers(init.headers)),body:init.body??null});
+      const headers={'content-type':'application/json','access-control-allow-origin':'https://evil.example.test','access-control-allow-credentials':'true'};
+      if(url===`${UPSTREAM}/email-otp/send-verification-otp`)return new Response('{"success":true}',{status:200,headers});
+      return new Response('null',{status:200,headers});
+    };
     try{
-      await buildCommercialFrontend({outDir:dist,env:{POOL_PLATFORM_MODE:'live',POOL_PLATFORM_AUTH_URL:AUTH,POOL_PLATFORM_DATA_URL:DATA,POOL_PLATFORM_DEFAULT_POOL_SLUG:'it-pool'}});
-      const local=await startServer({dir:dist,port:0,log:()=>{}});
+      await buildCommercialFrontend({outDir:dist,env:{POOL_PLATFORM_MODE:'live',POOL_PLATFORM_DATA_URL:DATA,POOL_PLATFORM_DEFAULT_POOL_SLUG:'it-pool'}});
+      const local=await startServer({dir:dist,port:0,log:()=>{},env:{POOL_PLATFORM_MODE:'live',POOL_PLATFORM_AUTH_UPSTREAM_URL:UPSTREAM},upstreamFetch});
+      const other=await serveDirectory(new URL('./',import.meta.url));
       try{
-        assert.match(local.csp,/connect-src 'self' https:\/\/auth\.pool\.test https:\/\/data\.pool\.test;/);
+        assert.match(local.csp,/connect-src 'self' https:\/\/data\.pool\.test;/);
+        assert.doesNotMatch(local.csp,/neonauth/);
         const context=await browser.newContext({serviceWorkers:'block'});contexts.push(context);
-        const page=await context.newPage(),errors=[],auth=[],data=[];
+        const page=await context.newPage(),errors=[],requests=[],escaped=[],data=[];
         page.on('pageerror',error=>errors.push(error.message));
+        page.on('request',request=>requests.push({method:request.method(),url:request.url(),headers:request.headers()}));
         await recordCsp(page);
-        // Stand-in Neon Auth: no session yet, and an Email OTP send that succeeds. No Data API call may happen.
-        await context.route('https://auth.pool.test/**',route=>{
-          const request=route.request(),pathname=new URL(request.url()).pathname;
-          auth.push({method:request.method(),pathname,headers:request.headers(),body:request.postData()});
-          const headers={'access-control-allow-origin':new URL(local.url).origin,'access-control-allow-credentials':'true','content-type':'application/json'};
-          if(pathname==='/neondb/auth/get-session')return route.fulfill({status:200,headers,body:'null'});
-          if(pathname==='/neondb/auth/email-otp/send-verification-otp')return route.fulfill({status:200,headers,body:'{"success":true}'});
-          return route.fulfill({status:404,headers,body:'{}'});
-        });
+        // Anything that reached the network for a Neon Auth host or the Data API would be recorded here.
+        await context.route(/neonauth/,route=>{escaped.push(route.request().url());return route.abort()});
         await context.route('https://data.pool.test/**',route=>{data.push(route.request().url());return route.abort()});
         await page.goto(`${local.url}participant.html`);
         await page.locator('#authCard').waitFor({state:'visible'});
@@ -1075,24 +1103,56 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
         await page.fill('#email','Player@Example.test');await page.click('#sendCode');
         await page.locator('#otpWrap').waitFor({state:'visible'});
         assert.equal(await page.textContent('#authError'),'');
-        assert.deepEqual(auth.map(r=>`${r.method} ${r.pathname}`),['GET /neondb/auth/get-session','POST /neondb/auth/email-otp/send-verification-otp']);
-        assert.deepEqual(JSON.parse(auth[1].body),{email:'player@example.test',type:'sign-in'});
+        const origin=new URL(local.url).origin;
+        // Every request the page made stayed on its own origin; the Auth ones went only to the proxy's routes.
+        assert.ok(requests.every(r=>new URL(r.url).origin===origin),JSON.stringify(requests.map(r=>r.url)));
+        const auth=requests.filter(r=>new URL(r.url).pathname.startsWith('/api/auth'));
+        assert.deepEqual(auth.map(r=>`${r.method} ${new URL(r.url).pathname}`),['GET /api/auth/get-session','POST /api/auth/email-otp/send-verification-otp']);
         const info=JSON.parse(auth[0].headers['x-neon-client-info']);
         assert.deepEqual([info.sdk,info.version,info.runtime],['@neondatabase/neon-js','0.7.0-beta','browser'],'the exact pinned SDK is what runs');
+        // Chromium's own request headers passed the proxy's checks; Neon saw only the normalized body and this origin.
+        assert.deepEqual(upstream.map(c=>[c.url,c.method,c.body,c.headers.origin,c.headers.cookie,c.headers['x-neon-client-info']]),
+          [[`${UPSTREAM}/email-otp/send-verification-otp`,'POST','{"email":"player@example.test","type":"sign-in"}',origin,undefined,undefined]]);
+        // The page cannot reach Neon Auth even when told to: the CSP refuses it before any request is made.
+        const direct=await page.evaluate(async url=>{try{await fetch(url,{credentials:'include'});return 'reached'}catch{return 'blocked'}},`${UPSTREAM}/get-session`);
+        assert.equal(direct,'blocked');
+        assert.deepEqual(escaped,[],'no request to a Neon Auth host reached the network');
         assert.deepEqual(data,[]);
         assert.deepEqual(errors,[]);
         // The one report the SDK may cause: zod's eval feature probe (allowsEval: try { new F(""); } catch), which
-        // finds eval blocked and keeps zod on its non-eval path. No other directive may be violated.
+        // finds eval blocked and keeps zod on its non-eval path. The deliberate direct fetch above adds exactly one
+        // connect-src report. No other directive may be violated.
         const bundle=fs.readFileSync(path.join(dist,'vendor/neon-js.js'),'utf8').split('\n');
         const violations=await page.evaluate(()=>window.__csp);
-        assert.ok(violations.length<=1,JSON.stringify(violations));
+        const connect=violations.filter(v=>v.startsWith('connect-src '));
+        assert.deepEqual(connect.map(v=>v.split(' ')[1]),[`${UPSTREAM}/get-session`]);
+        const rest=violations.filter(v=>!v.startsWith('connect-src '));
+        assert.ok(rest.length<=1,JSON.stringify(rest));
         const probe=new RegExp(`^script-src eval ${`${local.url}vendor/neon-js.js`.replace(/[.*+?^${}()|[\]\\/]/g,'\\$&')}:(\\d+)$`);
-        for(const violation of violations){
+        for(const violation of rest){
           const at=probe.exec(violation);
           assert.ok(at,violation);
           assert.equal(bundle[Number(at[1])-1].trim(),'new F("");',violation);
         }
-      }finally{await local.close()}
+        // Other origins cannot read the proxy: a cross-site page (127.0.0.1) and a same-site one on another port
+        // (localhost:<other>) both get a network error, because no response carries CORS headers.
+        const before=upstream.length;
+        for(const foreign of [`http://127.0.0.1:${other.address().port}/index.html`,`http://localhost:${other.address().port}/index.html`]){
+          const probePage=await context.newPage();
+          await probePage.goto(foreign);
+          const outcome=await probePage.evaluate(async target=>{
+            const results={};
+            for(const [name,init] of [['get',{credentials:'include'}],['post',{method:'POST',credentials:'include',headers:{'content-type':'application/json'},body:'{}'}],
+              ['simple-post',{method:'POST',credentials:'include',headers:{'content-type':'text/plain'},body:'{}'}]]){
+              try{const r=await fetch(`${target}api/auth/${name==='get'?'get-session':'sign-out'}`,init);results[name]=`read ${r.status}`}catch{results[name]='blocked'}
+            }
+            return results;
+          },local.url);
+          assert.deepEqual(outcome,{get:'blocked',post:'blocked','simple-post':'blocked'},foreign);
+          await probePage.close();
+        }
+        assert.equal(upstream.length,before,'nothing from another origin reached Neon');
+      }finally{await local.close();await new Promise(resolve=>{other.close(()=>resolve());other.closeAllConnections()})}
     }finally{fs.rmSync(work,{recursive:true,force:true})}
   });
 });

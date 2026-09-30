@@ -11,6 +11,9 @@ const AUTH_RETRY_DELAY_MS=200;
 export const SIGN_IN_NOT_CONFIRMED='Your sign-in could not be confirmed. Try again, or sign out and sign in again.';
 // Shown when a page cannot load platform-config.js, which the service worker never caches (offline, or missing).
 export const CONFIG_UNAVAILABLE='This page could not load its configuration. Check your connection, then reload.';
+// Neon Auth is reached only through the same-origin proxy (server/auth-proxy-core.mjs). The browser never names or
+// calls the Neon Auth host, and the page CSP's connect-src does not list it, so it could not even if asked to.
+export const AUTH_PROXY_PATH='/api/auth';
 
 async function postRpc(url,token,args){
   const response=await fetch(url,{
@@ -37,14 +40,14 @@ export class PlatformClient{
   }
 
   get live(){
-    return this.config?.mode==='live'&&!!this.config?.authUrl&&!!this.config?.dataUrl;
+    return this.config?.mode==='live'&&!!this.config?.dataUrl;
   }
 
   async init(){
     if(!this.live)return this;
     // The pinned @neondatabase/neon-js 0.7.0-beta, bundled by scripts/build.mjs into a module on this same origin.
     const {createClient}=await import('./vendor/neon-js.js');
-    this.neon=createClient({auth:{url:this.config.authUrl},dataApi:{url:this.config.dataUrl}});
+    this.neon=createClient({auth:{url:new URL(AUTH_PROXY_PATH,location.origin).href},dataApi:{url:this.config.dataUrl}});
     return this;
   }
 
