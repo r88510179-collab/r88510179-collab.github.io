@@ -19,6 +19,7 @@ const SHELL=[
   './assets/pool-center-icon-512.svg'
 ];
 const DOCUMENT_PATHS=['/nfl-pool/','/nfl-pool/index.html'];
+const ADMIN_PATH='/nfl-pool/admin';
 self.addEventListener('install',event=>{
   event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)).then(()=>self.skipWaiting()));
 });
@@ -51,8 +52,8 @@ self.addEventListener('fetch',event=>{
   if(request.method!=='GET')return;
   const url=new URL(request.url);
   if(url.origin!==self.location.origin)return;
+  if(url.pathname===ADMIN_PATH||url.pathname.startsWith(ADMIN_PATH+'/')){event.respondWith(fetch(request));return}
   if(request.mode==='navigate'){
-    if(/\/nfl-pool\/admin(?:\/|$)/.test(url.pathname)){event.respondWith(fetch(request));return}
     if(!DOCUMENT_PATHS.includes(url.pathname)){event.respondWith(fetch(request));return}
     event.respondWith(networkFirst(request,'./index.html'));
     return;
