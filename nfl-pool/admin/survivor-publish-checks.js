@@ -211,7 +211,7 @@ export function survivorPublishGuard(config,{resultsByWeek=[],currentGames=null,
   }
   if(gridBreaks?.length){
     const shown=gridBreaks.slice(0,4).map(r=>`"${r.upper}" → "${r.lower}"${r.page!=null?` (page ${r.page})`:''}`).join(', ')+(gridBreaks.length>4?`, +${gridBreaks.length-4} more`:'');
-    reasons.push(`${plural(gridBreaks.length,'participant-table grid restart was','participant-table grid restarts were')} counted across a single empty visual row: ${shown}. Confirm ${gridBreaks.length===1?'it is':'they are'} real continuations of the participant table.`);
+    reasons.push(`${plural(gridBreaks.length,'participant-table grid restart was','participant-table grid restarts were')} counted across a single empty visual row: ${shown}. Confirm ${gridBreaks.length===1?'it is a real continuation':'they are real continuations'} of the participant table.`);
   }
   if(symbolRows?.length){
     const shown=symbolRows.slice(0,6).map(r=>`"${r.label}"${r.page!=null?` (page ${r.page})`:''}`).join(', ')+(symbolRows.length>6?`, +${symbolRows.length-6} more`:'');

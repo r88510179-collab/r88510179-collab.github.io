@@ -297,6 +297,11 @@ const guardFor=(cfg,opts={})=>survivorPublishGuard(cfg,{resultsByWeek:verified.r
   assert.equal(g.requiresConfirmation,true);
   assert(g.reasons.includes('1 participant-table grid restart was counted across a single empty visual row: "JulesyPoo 1" → "Juice 2" (page 4). Confirm it is a real continuation of the participant table.'),g.reasons.join(' | '));
   assert.match(g.confirmText,/The 1 participant-table grid restart listed above is a real continuation\.$/);
+  // The parser reports at most one restart per page, so a multi-page sheet can carry several: the wording is plural.
+  const two=guardFor(complete,{gridBreaks:[{page:4,upper:'JulesyPoo 1',lower:'Juice 2'},{page:5,upper:'Kiki 3',lower:'Lulu 4'}]});
+  assert.equal(two.requiresConfirmation,true);
+  assert(two.reasons.includes('2 participant-table grid restarts were counted across a single empty visual row: "JulesyPoo 1" → "Juice 2" (page 4), "Kiki 3" → "Lulu 4" (page 5). Confirm they are real continuations of the participant table.'),two.reasons.join(' | '));
+  assert.match(two.confirmText,/The 2 participant-table grid restarts listed above are real continuations\.$/);
 }
 
 // ---- Round-2 regressions.
