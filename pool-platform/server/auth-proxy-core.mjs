@@ -1,9 +1,9 @@
 // The same-origin Neon Auth proxy (finding F-1). Neon Auth answers credentialed CORS for any Origin, so a browser that
 // holds a Neon Auth cookie can have its session read by other pages on the same site. Here the browser never talks to
 // the Neon Auth host: it calls exactly four routes on the app's own origin, and this handler forwards each one to a
-// single fixed upstream endpoint. The browser then holds no cookie for the Auth host (the session cookie is a
-// first-party HttpOnly cookie on the app host, SameSite=Strict, sent only to /api/auth), and every response carries
-// no CORS headers, so no other origin can read it.
+// single fixed upstream endpoint. The browser then holds no cookie for the Auth host and no cookie under Neon's name:
+// its session cookie is the app's own (__Host-pool-platform-session: HttpOnly, Secure, SameSite=Strict, bound to the
+// app host), and every response carries no CORS headers, so no other origin can read it.
 //
 // Web standards only (Request in, Response out), so the same code runs in scripts/serve.mjs for the localhost gate
 // and in api/auth.mjs on the host. It never makes an authorization decision: Neon validates the session and the Data
@@ -11,7 +11,8 @@
 //   - only the four routes below exist; the upstream protocol, host, base path and endpoint path are fixed server-side;
 //   - Host is exactly the app's; POSTs carry exactly the app's Origin; Sec-Fetch-Site, when sent, is same-origin;
 //     state-changing requests are application/json, small, and match a fixed schema (the OTP type is always sign-in);
-//   - upstream sees the app's Origin (never the browser's), and only the session cookie (never any other cookie);
+//   - upstream sees the app's Origin (never the browser's), and only the session, under Neon's own cookie name (never
+//     any other cookie); a request holding the app's session cookie more than once is refused, and neither is used;
 //   - JavaScript never sees the opaque session token: every "token" field is removed from response bodies, a body
 //     that still contains the token is refused, and set-auth-token is dropped; set-auth-jwt, the Data API bearer,
 //     is passed on unchanged;
@@ -28,7 +29,14 @@ export const PROXY_ENV=Object.freeze({
   appOrigin:'POOL_PLATFORM_APP_ORIGIN'
 });
 export const PROXY_PREFIX='/api/auth';
-export const SESSION_COOKIE='__Secure-neon-auth.session_token';
+// The browser's session cookie is the app's own, never Neon's, so the browser's cookie contract does not depend on what
+// Neon calls its cookie. The __Host- prefix makes browsers accept it only with Secure, Path=/ and no Domain: it is
+// bound to the app host, and no other host (a sibling subdomain included) can set or overwrite it.
+export const APP_SESSION_COOKIE='__Host-pool-platform-session';
+// Neon Auth's session cookie, under the name Neon issues and reads today (whether that name is canonical and stable is
+// Neon question L, docs/HOSTING_ARCHITECTURE.md). It exists only between this proxy and the upstream: the session value
+// is sent to Neon under this name and comes back under it, and is mapped to and from APP_SESSION_COOKIE here.
+export const UPSTREAM_SESSION_COOKIE='__Secure-neon-auth.session_token';
 export const BODY_LIMIT=2048;
 export const UPSTREAM_TIMEOUT_MS=10000;
 const UPSTREAM_BODY_LIMIT=65536;
@@ -58,6 +66,7 @@ const KNOWN_METHODS=new Set(['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS
 
 const REFUSALS=Object.freeze({
   400:['INVALID_REQUEST','The request was refused.'],
+  401:['UNAUTHORIZED','Sign-in could not be confirmed. Clear this site\'s cookies, then sign in again.'],
   403:['FORBIDDEN','The request was refused.'],
   404:['NOT_FOUND','Not found.'],
   405:['METHOD_NOT_ALLOWED','Method not allowed.'],
@@ -69,13 +78,17 @@ const REFUSALS=Object.freeze({
   503:['AUTH_UNAVAILABLE','Sign-in is temporarily unavailable. Try again.']
 });
 
-// The Neon Auth base URL: canonical https (as endpointUrl() requires of every endpoint), a Neon Auth host
-// (ep-<id>.neonauth.<region>...) and a /<database>/auth path with no trailing slash, so appending a fixed endpoint
-// path can only ever produce <base>/<endpoint>.
+// A Neon Auth host, matched label by label: ep-<endpoint>.neonauth.<region labels>.neon.tech. It must end in Neon's own
+// domain, so a "neonauth" label under any other domain, or neon.tech followed by more labels, is refused.
+const NEON_AUTH_HOST=/^ep-[a-z0-9]+(?:-[a-z0-9]+)*\.neonauth(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)+\.neon\.tech$/;
+
+// The Neon Auth base URL: canonical https (as endpointUrl() requires of every endpoint), a Neon Auth host and a
+// /<database>/auth path with no trailing slash, so appending a fixed endpoint path can only ever produce
+// <base>/<endpoint>.
 export function authUpstreamUrl(raw){
   const href=endpointUrl(PROXY_ENV.upstreamUrl,raw),url=new URL(href);
-  if(url.hostname.split('.')[1]!=='neonauth'||!/^\/[a-z0-9_-]+\/auth$/i.test(url.pathname)){
-    throw new ConfigError(`${PROXY_ENV.upstreamUrl} must be a Neon Auth base URL of the form https://<endpoint>.neonauth.<region>/<database>/auth.`);
+  if(!NEON_AUTH_HOST.test(url.hostname)||!/^\/[a-z0-9_-]+\/auth$/i.test(url.pathname)){
+    throw new ConfigError(`${PROXY_ENV.upstreamUrl} must be a Neon Auth base URL of the form https://ep-<endpoint>.neonauth.<region>.neon.tech/<database>/auth.`);
   }
   return href;
 }
@@ -119,22 +132,26 @@ export function refusal(status,extra=[]){
   return jsonResponse(status,{code,message},extra);
 }
 
-// The session cookie from a Cookie header: the first one, as browsers send the most specific path first. A value that
-// is not a plain cookie value is treated as absent.
+// The app session cookie from a Cookie header: {value} (null when absent, or when not a plain cookie value), or
+// {conflict:true} when the header holds it more than once. A browser sends one cookie per name, host, path and
+// partition, so a second one was set from somewhere else (another partition or port of this host, or a browser that
+// does not enforce the __Host- prefix). Which one is genuine cannot be told, so neither is ever used: never the first,
+// never the last.
 export function sessionCookieValue(header){
+  const values=[];
   for(const part of String(header??'').split(';')){
     const at=part.indexOf('=');
-    if(at<0||part.slice(0,at).trim()!==SESSION_COOKIE)continue;
-    const value=part.slice(at+1).trim();
-    return COOKIE_VALUE.test(value)?value:null;
+    if(at>=0&&part.slice(0,at).trim()===APP_SESSION_COOKIE)values.push(part.slice(at+1).trim());
   }
-  return null;
+  if(values.length>1)return{value:null,conflict:true};
+  return{value:values.length===1&&COOKIE_VALUE.test(values[0])?values[0]:null,conflict:false};
 }
 
-// Re-issued on the app host only: HttpOnly, Secure, SameSite=Strict, sent only to the proxy, no Domain (host-only),
-// never Partitioned. maxAge null keeps the upstream's browser-session lifetime; 0 deletes the cookie.
+// The one cookie the browser holds, set only on the app host: HttpOnly, Secure, SameSite=Strict, Path=/ and no Domain
+// (exactly what __Host- requires), never Partitioned. maxAge null keeps the upstream's browser-session lifetime; 0
+// deletes the cookie, so sign-out deletes it with the very attributes it was set with.
 export function sessionCookie(value,maxAge){
-  return [`${SESSION_COOKIE}=${value}`,`Path=${PROXY_PREFIX}`,...(maxAge===null?[]:[`Max-Age=${maxAge}`]),'HttpOnly','Secure','SameSite=Strict'].join('; ');
+  return [`${APP_SESSION_COOKIE}=${value}`,'Path=/',...(maxAge===null?[]:[`Max-Age=${maxAge}`]),'HttpOnly','Secure','SameSite=Strict'].join('; ');
 }
 export const DELETE_SESSION_COOKIE=sessionCookie('',0);
 
@@ -245,6 +262,11 @@ export function createAuthProxy({config,fetch:upstreamFetch=globalThis.fetch,log
     if(mode!==null&&mode!=='cors'&&mode!=='same-origin')return finish(refusal(403),'fetch-mode');
     const origin=request.headers.get('origin');
     if(route.method==='POST'?origin!==appOrigin:origin!==null&&origin!==appOrigin)return finish(refusal(403),'origin');
+    // The app session cookie more than once: refused on every route before anything else happens. Neither value reaches
+    // Neon, and no cookie is set or deleted: deleting this host's own cookie could leave the other one as the only
+    // session cookie, to be sent with the next request.
+    const cookie=sessionCookieValue(request.headers.get('cookie'));
+    if(cookie.conflict)return finish(refusal(401),'cookie-conflict');
 
     let sent;
     if(route.method==='POST'){
@@ -263,7 +285,7 @@ export function createAuthProxy({config,fetch:upstreamFetch=globalThis.fetch,log
       }
     }
 
-    const session=sessionCookieValue(request.headers.get('cookie'));
+    const session=cookie.value;
     // No session cookie: there is nothing to look up, and Neon's answer would be the same null.
     if(route.id==='get-session'&&!session)return finish(jsonResponse(200,null));
 
@@ -271,7 +293,8 @@ export function createAuthProxy({config,fetch:upstreamFetch=globalThis.fetch,log
     const agent=request.headers.get('user-agent');
     if(agent)headers.set('user-agent',agent.slice(0,512));
     if(sent)headers.set('content-type','application/json');
-    if(session&&(route.id==='get-session'||route.id==='sign-out'))headers.set('cookie',`${SESSION_COOKIE}=${session}`);
+    // Upstream gets one cookie, built here: the app session value under Neon's cookie name. No browser cookie is passed.
+    if(session&&(route.id==='get-session'||route.id==='sign-out'))headers.set('cookie',`${UPSTREAM_SESSION_COOKIE}=${session}`);
     // Signing out always deletes the app-host cookie, whatever Neon answers.
     const always=route.id==='sign-out'?[['set-cookie',DELETE_SESSION_COOKIE]]:[];
 
@@ -297,17 +320,20 @@ export function createAuthProxy({config,fetch:upstreamFetch=globalThis.fetch,log
       try{data=JSON.parse(text)}catch{return finish(refusal(502,always),'upstream-body')}
     }
 
-    // Cookies: only the session cookie is ever re-issued, only by the routes that establish or refresh a session, and
-    // only on success; Neon ending a session (an empty value) is passed on whatever the status.
+    // Cookies: only Neon's session cookie is ever passed on, and only as the app's own cookie (its value and lifetime;
+    // every upstream attribute is replaced), by the routes that establish or refresh a session, and only on success;
+    // Neon ending a session (an empty value) is passed on whatever the status. No upstream cookie name reaches the
+    // browser.
     const now=Date.now(),cookies=[...always],secrets=secretsOf(session);
     let dropped=0;
     for(const line of upstream.headers.getSetCookie()){
-      const cookie=parseSetCookie(line,now);
-      if(cookie?.name===SESSION_COOKIE)secrets.push(...secretsOf(cookie.value));
-      const reissue=cookie?.name===SESSION_COOKIE&&(route.id==='get-session'||route.id==='verify-otp')&&
-        (cookie.value===''||upstream.status<400&&COOKIE_VALUE.test(cookie.value));
-      if(reissue)cookies.push(['set-cookie',cookie.value===''?DELETE_SESSION_COOKIE:sessionCookie(cookie.value,cookie.maxAge)]);
-      else if(!(route.id==='sign-out'&&cookie?.name===SESSION_COOKIE))dropped++;
+      const upstreamCookie=parseSetCookie(line,now);
+      const neonSession=upstreamCookie?.name===UPSTREAM_SESSION_COOKIE;
+      if(neonSession)secrets.push(...secretsOf(upstreamCookie.value));
+      const reissue=neonSession&&(route.id==='get-session'||route.id==='verify-otp')&&
+        (upstreamCookie.value===''||upstream.status<400&&COOKIE_VALUE.test(upstreamCookie.value));
+      if(reissue)cookies.push(['set-cookie',upstreamCookie.value===''?DELETE_SESSION_COOKIE:sessionCookie(upstreamCookie.value,upstreamCookie.maxAge)]);
+      else if(!(route.id==='sign-out'&&neonSession))dropped++;
     }
 
     let body;

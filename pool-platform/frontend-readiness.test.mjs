@@ -12,7 +12,7 @@ import {PLATFORM_CONFIG} from './platform-config.js';
 import {APP_DIR,OUTPUT_FILES,STATIC_FILES,buildCommercialFrontend,bundleNeonSdk,listFiles,verifySdkBundle} from './scripts/build.mjs';
 import {ConfigError,contentSecurityPolicy,parseRuntimeConfig,runtimeConfigFromEnv,serializeRuntimeConfig} from './scripts/runtime-config.mjs';
 import {startServer} from './scripts/serve.mjs';
-import {DELETE_SESSION_COOKIE,SESSION_COOKIE} from './server/auth-proxy-core.mjs';
+import {APP_SESSION_COOKIE,DELETE_SESSION_COOKIE,UPSTREAM_SESSION_COOKIE} from './server/auth-proxy-core.mjs';
 
 // Commercial frontend readiness: the allow-listed build, the runtime configuration, the self-hosted Neon SDK, CSP
 // readiness, the service-worker registration and the local server with its same-origin Auth proxy. Deterministic and
@@ -24,7 +24,9 @@ const sha256=body=>crypto.createHash('sha256').update(body).digest('hex');
 const ESBUILD=(()=>{try{return !!createRequire(import.meta.url).resolve('esbuild')}catch{return false}})();
 const PAGES=STATIC_FILES.filter(name=>name.endsWith('.html'));
 const SCRIPTS=STATIC_FILES.filter(name=>name.endsWith('.js'));
-const AUTH='https://ep-example-000000.neonauth.c-0.us-east-2.aws.neon.test/neondb/auth';
+// The proxy accepts only a Neon Auth host under neon.tech. This one is synthetic and never resolved: every test that
+// reaches the proxy injects its upstream.
+const AUTH='https://ep-example-000000.neonauth.c-0.us-east-2.aws.neon.tech/neondb/auth';
 const DATA='https://ep-example-000000.apirest.c-0.us-east-2.aws.neon.test/neondb/rest/v1';
 const LIVE={POOL_PLATFORM_MODE:'live',POOL_PLATFORM_DATA_URL:DATA,POOL_PLATFORM_DEFAULT_POOL_SLUG:'it-pool'};
 // The server-only proxy configuration the local server needs for a live build (its app origin is its own).
@@ -453,9 +455,18 @@ test('the local server derives connect-src from the built configuration, never n
 test('a live build is served only with the Auth proxy configured: without it, or with a mismatched app origin, the server refuses to start',async t=>{
   const dir=scratch(t),dist=path.join(dir,'dist');
   await buildCommercialFrontend({outDir:dist,env:LIVE,bundleSdk:stubSdk});
+  // A server that starts when it should not is closed before the assertion fails, so a regression fails the run
+  // instead of holding it open.
+  const refusal=async env=>{
+    let server;
+    try{server=await startServer({dir:dist,port:0,log:()=>{},env})}catch(error){return error.message}
+    await server.close();
+    return 'started';
+  };
   for(const env of [{},{POOL_PLATFORM_MODE:'live'},{POOL_PLATFORM_AUTH_UPSTREAM_URL:AUTH},{...PROXY,POOL_PLATFORM_MODE:'sandbox'},
-    {...PROXY,POOL_PLATFORM_AUTH_UPSTREAM_URL:'https://evil.example.test/neondb/auth'},{...PROXY,POOL_PLATFORM_AUTH_UPSTREAM_URL:'http://ep-x.neonauth.c-0.aws.neon.test/neondb/auth'}]){
-    await assert.rejects(startServer({dir:dist,port:0,log:()=>{},env}),/a live build needs the same-origin Auth proxy/,JSON.stringify(env));
+    {...PROXY,POOL_PLATFORM_AUTH_UPSTREAM_URL:'https://evil.example.test/neondb/auth'},{...PROXY,POOL_PLATFORM_AUTH_UPSTREAM_URL:'http://ep-x.neonauth.c-0.aws.neon.tech/neondb/auth'},
+    {...PROXY,POOL_PLATFORM_AUTH_UPSTREAM_URL:'https://x.neonauth.attacker.example/neondb/auth'}]){
+    assert.match(await refusal(env),/a live build needs the same-origin Auth proxy/,JSON.stringify(env));
   }
   await assert.rejects(startServer({dir:dist,port:0,log:()=>{},env:{...PROXY,POOL_PLATFORM_APP_ORIGIN:'http://localhost:1'}}),/POOL_PLATFORM_APP_ORIGIN must be exactly http:\/\/localhost:\d+/);
 });
@@ -469,7 +480,7 @@ test('the local server mounts the Auth proxy at /api/auth for a live build: four
   const upstreamFetch=async(url,init)=>{
     calls.push({url,method:init.method,headers:Object.fromEntries(new Headers(init.headers)),body:init.body??null});
     const headers=new Headers({'content-type':'application/json','access-control-allow-origin':'https://evil.example.test','access-control-allow-credentials':'true','set-auth-jwt':JWT,'set-auth-token':TOKEN});
-    headers.append('set-cookie',`${SESSION_COOKIE}=${SIGNED}; Max-Age=604800; Path=/; HttpOnly; Secure; SameSite=None; Partitioned`);
+    headers.append('set-cookie',`${UPSTREAM_SESSION_COOKIE}=${SIGNED}; Max-Age=604800; Path=/; HttpOnly; Secure; SameSite=None; Partitioned`);
     if(url.endsWith('/get-session'))return new Response(JSON.stringify({session:{id:'s',token:TOKEN},user:{id:'user-1'}}),{status:200,headers});
     if(url.endsWith('/sign-out'))return new Response('{"success":true}',{status:200,headers:{'content-type':'application/json'}});
     return new Response('{"success":true}',{status:200,headers});
@@ -484,26 +495,32 @@ test('the local server mounts the Auth proxy at /api/auth for a live build: four
   assert.equal(signedOut.headers['cross-origin-resource-policy'],'same-origin');
   assert.equal(signedOut.headers['content-security-policy'],"default-src 'none'; frame-ancestors 'none'");
   assert.deepEqual(calls,[]);
-  // Signed in: only the session cookie travels, to the fixed upstream, with this server's origin.
-  const signedIn=await get(port,'/api/auth/get-session',{headers:{...site,cookie:`theme=dark; ${SESSION_COOKIE}=${SIGNED}`}});
+  // Signed in: only the app cookie's value travels, under Neon's cookie name, to the fixed upstream, with this server's
+  // origin; the browser gets the app's own cookie back, never Neon's.
+  const signedIn=await get(port,'/api/auth/get-session',{headers:{...site,cookie:`theme=dark; ${UPSTREAM_SESSION_COOKIE}=planted; ${APP_SESSION_COOKIE}=${SIGNED}`}});
   assert.equal(signedIn.status,200);
   assert.deepEqual(JSON.parse(signedIn.body),{session:{id:'s'},user:{id:'user-1'}});
   assert.equal(signedIn.headers['set-auth-jwt'],JWT);
   assert.equal(signedIn.headers['set-auth-token'],undefined);
   assert.deepEqual(Object.keys(signedIn.headers).filter(h=>h.startsWith('access-control-')),[]);
-  assert.deepEqual(signedIn.headers['set-cookie'],[`${SESSION_COOKIE}=${SIGNED}; Path=/api/auth; Max-Age=604800; HttpOnly; Secure; SameSite=Strict`]);
-  assert.deepEqual(calls.map(c=>[c.url,c.headers.origin,c.headers.cookie]),[[`${AUTH}/get-session`,origin,`${SESSION_COOKIE}=${SIGNED}`]]);
+  assert.deepEqual(signedIn.headers['set-cookie'],[`${APP_SESSION_COOKIE}=${SIGNED}; Path=/; Max-Age=604800; HttpOnly; Secure; SameSite=Strict`]);
+  assert.deepEqual(calls.map(c=>[c.url,c.headers.origin,c.headers.cookie]),[[`${AUTH}/get-session`,origin,`${UPSTREAM_SESSION_COOKIE}=${SIGNED}`]]);
   const sent=await get(port,'/api/auth/email-otp/send-verification-otp',{method:'POST',headers:{...site,origin,'content-type':'application/json'},body:'{"email":"Player@Example.test","type":"sign-in"}'});
   assert.deepEqual([sent.status,JSON.parse(sent.body)],[200,{success:true}]);
   assert.equal(calls.at(-1).body,'{"email":"player@example.test","type":"sign-in"}');
-  const out=await get(port,'/api/auth/sign-out',{method:'POST',headers:{...site,origin,'content-type':'application/json',cookie:`${SESSION_COOKIE}=${SIGNED}`},body:'{}'});
+  const out=await get(port,'/api/auth/sign-out',{method:'POST',headers:{...site,origin,'content-type':'application/json',cookie:`${APP_SESSION_COOKIE}=${SIGNED}`},body:'{}'});
   assert.deepEqual([out.status,out.headers['set-cookie']],[200,[DELETE_SESSION_COOKIE]]);
+  assert.equal(calls.at(-1).headers.cookie,`${UPSTREAM_SESSION_COOKIE}=${SIGNED}`);
   const upstreamCalls=calls.length;
   // Refusals, none of which reach the upstream.
   for(const [pathname,options,status] of [
     ['/api/auth/get-session',{host:`127.0.0.1:${port}`,headers:site},421],
-    ['/api/auth/get-session',{headers:{'sec-fetch-site':'same-site',cookie:`${SESSION_COOKIE}=${SIGNED}`}},403],
-    ['/api/auth/get-session',{headers:{'sec-fetch-site':'cross-site',cookie:`${SESSION_COOKIE}=${SIGNED}`}},403],
+    ['/api/auth/get-session',{headers:{'sec-fetch-site':'same-site',cookie:`${APP_SESSION_COOKIE}=${SIGNED}`}},403],
+    ['/api/auth/get-session',{headers:{'sec-fetch-site':'cross-site',cookie:`${APP_SESSION_COOKIE}=${SIGNED}`}},403],
+    // The app cookie twice, in one Cookie header or in two header lines (Node joins those with "; "): 401, nothing set.
+    ['/api/auth/get-session',{headers:{...site,cookie:`${APP_SESSION_COOKIE}=${SIGNED}; ${APP_SESSION_COOKIE}=planted`}},401],
+    ['/api/auth/get-session',{headers:{...site,cookie:[`${APP_SESSION_COOKIE}=${SIGNED}`,`${APP_SESSION_COOKIE}=planted`]}},401],
+    ['/api/auth/sign-out',{method:'POST',headers:{...site,origin,'content-type':'application/json',cookie:`${APP_SESSION_COOKIE}=planted; ${APP_SESSION_COOKIE}=${SIGNED}`},body:'{}'},401],
     ['/api/auth/sign-out',{method:'POST',headers:{origin:'http://localhost:4174','content-type':'application/json'},body:'{}'},403],
     ['/api/auth/sign-out',{method:'POST',headers:{origin:'null','content-type':'application/json'},body:'{}'},403],
     ['/api/auth/sign-out',{method:'POST',headers:{'content-type':'application/json'},body:'{}'},403],
@@ -518,8 +535,10 @@ test('the local server mounts the Auth proxy at /api/auth for a live build: four
     const response=await get(port,pathname,options);
     assert.equal(response.status,status,`${options.method??'GET'} ${pathname}`);
     assert.deepEqual(Object.keys(response.headers).filter(h=>h.startsWith('access-control-')),[],pathname);
+    assert.equal(response.headers['set-cookie'],undefined,`${pathname}: a refusal sets and deletes no cookie`);
   }
   assert.equal(calls.length,upstreamCalls,'no refused request reached the upstream');
+  assert.equal(lines.filter(line=>/^AUTH (?:GET get-session|POST sign-out) 401 cookie-conflict$/.test(line)).length,3);
   // Dot segments resolve before routing: out of /api/auth is a static page, never a proxied one.
   const page=await get(port,'/api/auth/../../index.html');
   assert.deepEqual([page.status,page.headers['content-security-policy']],[200,server.csp]);
@@ -528,7 +547,7 @@ test('the local server mounts the Auth proxy at /api/auth for a live build: four
   assert.ok(lines.includes('AUTH GET get-session 200'));
   assert.ok(lines.some(line=>/^AUTH POST sign-out 403 origin$/.test(line)));
   const log=lines.join('\n').toLowerCase();
-  for(const secret of [TOKEN,SIGNED,JWT,'player@example','a@b.test','theme=dark','forget-password','disablecookiecache'])assert.equal(log.includes(secret.toLowerCase()),false,secret);
+  for(const secret of [TOKEN,SIGNED,JWT,'player@example','a@b.test','theme=dark','forget-password','disablecookiecache','planted'])assert.equal(log.includes(secret.toLowerCase()),false,secret);
 });
 
 test('no browser file names Neon Auth: no Auth URL or upstream value in any built file, and no proxy code in dist/',async t=>{

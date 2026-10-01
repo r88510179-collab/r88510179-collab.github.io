@@ -1,29 +1,32 @@
 import assert from 'node:assert/strict';
+import {spawnSync} from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import {createRequire} from 'node:module';
 import test,{describe} from 'node:test';
+import {fileURLToPath} from 'node:url';
 import {extractAccessToken} from './auth-core.js';
 import {AUTH_PROXY_PATH} from './platform-client.js';
 import {
-  BODY_LIMIT,DELETE_SESSION_COOKIE,PROXY_PREFIX,ROUTES,SECURITY_HEADERS,SESSION_COOKIE,createAuthProxy,emailKey,
-  proxyConfigFromEnv,sessionCookie,sessionCookieValue,stripTokens
+  APP_SESSION_COOKIE,BODY_LIMIT,DELETE_SESSION_COOKIE,PROXY_PREFIX,ROUTES,SECURITY_HEADERS,UPSTREAM_SESSION_COOKIE,createAuthProxy,
+  emailKey,proxyConfigFromEnv,sessionCookie,sessionCookieValue,stripTokens
 } from './server/auth-proxy-core.mjs';
 import vercelDefault,{canonicalAuthRequest,createVercelHandler} from './api/auth.mjs';
 
 // The same-origin Neon Auth proxy (F-1). Deterministic and offline: upstream Neon Auth is an in-memory stand-in that
 // answers the way Neon's Better Auth does (Set-Cookie with the partitioned session cookie, the opaque session token in
 // the body, set-auth-jwt, reflected CORS headers), so every rewrite and removal is exercised. All values are synthetic
-// shapes, never credentials.
-const UPSTREAM='https://ep-example-000000.neonauth.c-0.us-east-2.aws.neon.test/neondb/auth';
+// shapes, never credentials, and no request ever leaves the process: the upstream host below is never resolved.
+const UPSTREAM='https://ep-example-000000.neonauth.c-0.us-east-2.aws.neon.tech/neondb/auth';
 const APP='https://pools.example.test',HOST='pools.example.test';
 const ENV={POOL_PLATFORM_MODE:'live',POOL_PLATFORM_AUTH_UPSTREAM_URL:UPSTREAM,POOL_PLATFORM_APP_ORIGIN:APP};
 const CONFIG=proxyConfigFromEnv(ENV);
 const TOKEN='SynthSessTokenAbcdefghijklmn0123';
 const SIGNED=`${TOKEN}.c3ludGhldGljLXNpZ25hdHVyZQ%3D%3D`;
 const JWT='eyJhbGciOiJFZERTQSIsImtpZCI6InRlc3QifQ.eyJzdWIiOiJ1c2VyLTEiLCJyb2xlIjoiYXV0aGVudGljYXRlZCJ9.c2hhcGUtb25seS1zaWduYXR1cmU';
-const SESSION_SET=`${SESSION_COOKIE}=${SIGNED}; Max-Age=604800; Path=/; HttpOnly; Secure; SameSite=None; Partitioned`;
-const REISSUED=`${SESSION_COOKIE}=${SIGNED}; Path=/api/auth; Max-Age=604800; HttpOnly; Secure; SameSite=Strict`;
+// Neon sets its own session cookie; the browser gets the app's, with the same value and lifetime only.
+const SESSION_SET=`${UPSTREAM_SESSION_COOKIE}=${SIGNED}; Max-Age=604800; Path=/; HttpOnly; Secure; SameSite=None; Partitioned`;
+const REISSUED=`${APP_SESSION_COOKIE}=${SIGNED}; Path=/; Max-Age=604800; HttpOnly; Secure; SameSite=Strict`;
 const REFLECTED={'access-control-allow-origin':'https://evil.example.test','access-control-allow-credentials':'true','access-control-expose-headers':'set-auth-jwt','vary':'Origin'};
 const USER={id:'user-1',email:'player@example.test',emailVerified:true,name:'Player'};
 const SESSION={id:'sess-1',userId:'user-1',token:TOKEN,expiresAt:'2030-01-01T00:00:00.000Z',ipAddress:'',userAgent:'UA'};
@@ -34,7 +37,7 @@ const NEON={
   'get-session':{body:{session:SESSION,user:USER},cookies:[SESSION_SET,'__Secure-neon-auth.session_data=abc; Path=/; Secure'],headers:{...REFLECTED,'set-auth-jwt':JWT,'set-auth-token':TOKEN}},
   'email-otp/send-verification-otp':{body:{success:true},headers:REFLECTED},
   'sign-in/email-otp':{body:{token:TOKEN,user:USER},cookies:[SESSION_SET,'__Secure-neon-auth.session_data=abc; Path=/; Secure'],headers:{...REFLECTED,'set-auth-token':TOKEN}},
-  'sign-out':{body:{success:true},cookies:[`${SESSION_COOKIE}=; Max-Age=0; Path=/; Secure; SameSite=None; Partitioned`],headers:REFLECTED}
+  'sign-out':{body:{success:true},cookies:[`${UPSTREAM_SESSION_COOKIE}=; Max-Age=0; Path=/; Secure; SameSite=None; Partitioned`],headers:REFLECTED}
 };
 
 function upstream(replies=NEON){
@@ -59,7 +62,7 @@ const headersOf=values=>{const h=new Headers();for(const [k,v] of Object.entries
 const browser={'sec-fetch-site':'same-origin','sec-fetch-mode':'cors'};
 const req=(path,{method='GET',headers={},body,base=APP}={})=>new Request(`${base}${path}`,{method,headers:headersOf({host:HOST,...headers}),...(body!==undefined?{body}:{})});
 const post=(path,body,headers={})=>req(path,{method:'POST',headers:{...browser,origin:APP,'content-type':'application/json',...headers},body:typeof body==='string'||body instanceof Uint8Array?body:JSON.stringify(body)});
-const getSession=(headers={})=>req(P.session,{headers:{...browser,cookie:`${SESSION_COOKIE}=${SIGNED}`,...headers}});
+const getSession=(headers={})=>req(P.session,{headers:{...browser,cookie:`${APP_SESSION_COOKIE}=${SIGNED}`,...headers}});
 const SEND={email:'player@example.test',type:'sign-in'},VERIFY={email:'player@example.test',otp:'123456'};
 const json=async response=>JSON.parse(await response.text());
 const accessControl=response=>[...response.headers.keys()].filter(name=>name.startsWith('access-control-'));
@@ -71,10 +74,10 @@ test('configuration fails closed: outside live mode, or with any missing or malf
     {},{...ENV,POOL_PLATFORM_MODE:undefined},{...ENV,POOL_PLATFORM_MODE:'sandbox'},{...ENV,POOL_PLATFORM_MODE:'LIVE'},{...ENV,POOL_PLATFORM_MODE:' live'},
     {...ENV,POOL_PLATFORM_AUTH_UPSTREAM_URL:undefined},{...ENV,POOL_PLATFORM_AUTH_UPSTREAM_URL:''},{...ENV,POOL_PLATFORM_APP_ORIGIN:undefined},{...ENV,POOL_PLATFORM_APP_ORIGIN:''}
   ];
-  const upstreams=['http://ep-x.neonauth.c-0.us-east-2.aws.neon.test/neondb/auth','https://evil.example.test/neondb/auth','https://ep-x.apirest.c-0.aws.neon.test/neondb/auth',
-    'https://neonauth.example.test/neondb/auth','https://ep-x.neonauth.c-0.aws.neon.test/neondb/auth/','https://ep-x.neonauth.c-0.aws.neon.test/auth',
-    'https://ep-x.neonauth.c-0.aws.neon.test/neondb/other','https://ep-x.neonauth.c-0.aws.neon.test/neondb/auth/get-session','https://ep-x.neonauth.c-0.aws.neon.test/neondb/auth?secret=1',
-    'https://secret@ep-x.neonauth.c-0.aws.neon.test/neondb/auth','https://ep-x.neonauth.c-0.aws.neon.test/neondb/auth#secret','https://ep-x.neonauth.c-0.aws.neon.test/a/../neondb/auth'];
+  const upstreams=['http://ep-x.neonauth.c-0.us-east-2.aws.neon.tech/neondb/auth','https://evil.example.test/neondb/auth','https://ep-x.apirest.c-0.aws.neon.tech/neondb/auth',
+    'https://neonauth.example.test/neondb/auth','https://ep-x.neonauth.c-0.aws.neon.tech/neondb/auth/','https://ep-x.neonauth.c-0.aws.neon.tech/auth',
+    'https://ep-x.neonauth.c-0.aws.neon.tech/neondb/other','https://ep-x.neonauth.c-0.aws.neon.tech/neondb/auth/get-session','https://ep-x.neonauth.c-0.aws.neon.tech/neondb/auth?secret=1',
+    'https://secret@ep-x.neonauth.c-0.aws.neon.tech/neondb/auth','https://ep-x.neonauth.c-0.aws.neon.tech/neondb/auth#secret','https://ep-x.neonauth.c-0.aws.neon.tech/a/../neondb/auth'];
   const origins=['https://pools.example.test/','https://pools.example.test/app','https://POOLS.example.test','http://pools.example.test','http://127.0.0.1:4173',
     'https://pools.example.test:443','null','pools.example.test','https://secret@pools.example.test','https://pools.example.test?secret'];
   for(const env of [...disabled,...upstreams.map(u=>({...ENV,POOL_PLATFORM_AUTH_UPSTREAM_URL:u})),...origins.map(o=>({...ENV,POOL_PLATFORM_APP_ORIGIN:o}))]){
@@ -92,6 +95,45 @@ test('configuration fails closed: outside live mode, or with any missing or malf
     assert.deepEqual(up.calls,[]);
   }
   assert.equal((await createAuthProxy()(getSession())).status,404,'no configuration at all is disabled');
+});
+
+test('the upstream host must be a Neon Auth host ending in neon.tech, matched label by label: other domains, lookalikes and suffix tricks are refused',async()=>{
+  // The approved commercial host, and the same structure with other endpoints, regions and databases.
+  for(const url of ['https://ep-still-recipe-b5g7680z.neonauth.c-7.us-east-2.aws.neon.tech/neondb/auth',UPSTREAM,
+    'https://ep-example-111111.neonauth.c-2.eu-central-1.aws.neon.tech/app_db/auth']){
+    assert.deepEqual({...proxyConfigFromEnv({...ENV,POOL_PLATFORM_AUTH_UPSTREAM_URL:url})},{enabled:true,upstreamUrl:url,appOrigin:APP},url);
+  }
+  const refused=[
+    'http://ep-still-recipe-b5g7680z.neonauth.c-7.us-east-2.aws.neon.tech/neondb/auth', // not https
+    'https://x.neonauth.attacker.example/neondb/auth', // "neonauth" in second place, under any domain
+    'https://ep-x.neonauth.attacker.example/neondb/auth','https://attacker.example/neondb/auth','https://neonauth.attacker.example/neondb/auth',
+    // suffix confusion: neon.tech, then more labels
+    'https://neon.tech.attacker.example/neondb/auth','https://ep-x.neonauth.neon.tech.attacker.example/neondb/auth',
+    'https://ep-x.neonauth.c-7.us-east-2.aws.neon.tech.attacker.example/neondb/auth','https://ep-x.neonauth.c-7.us-east-2.aws.neon.tech.neon.example/neondb/auth',
+    // lookalikes of neon.tech and of the Neon Auth labels
+    'https://ep-x.neonauth.c-7.us-east-2.aws.neon.techx/neondb/auth','https://ep-x.neonauth.c-7.us-east-2.aws.xneon.tech/neondb/auth',
+    'https://ep-x.neonauth.c-7.us-east-2.aws.neon-tech.example/neondb/auth','https://ep-x.neonauth.c-7.us-east-2.aws.neontech/neondb/auth',
+    'https://ep-x.neonauth.c-7.us-east-2.aws.neon.xn--tch-rdd/neondb/auth','https://ep-x.neonauthx.c-7.us-east-2.aws.neon.tech/neondb/auth',
+    'https://ep-x.neon-auth.c-7.us-east-2.aws.neon.tech/neondb/auth','https://ep-x.xneonauth.c-7.us-east-2.aws.neon.tech/neondb/auth',
+    'https://ep-x.apirest.c-7.us-east-2.aws.neon.tech/neondb/auth', // the Data API host
+    // the structure: an ep- endpoint label first, then neonauth, then at least one region label
+    'https://ep-x.neonauth.neon.tech/neondb/auth','https://neonauth.c-7.us-east-2.aws.neon.tech/neondb/auth','https://x.ep-x.neonauth.c-7.us-east-2.aws.neon.tech/neondb/auth',
+    'https://ep-.neonauth.c-7.us-east-2.aws.neon.tech/neondb/auth','https://ep--x.neonauth.c-7.us-east-2.aws.neon.tech/neondb/auth','https://x-ep.neonauth.c-7.us-east-2.aws.neon.tech/neondb/auth',
+    'https://ep-x.neonauth..c-7.us-east-2.aws.neon.tech/neondb/auth','https://ep-x.neonauth.c-7.us-east-2.aws.neon.tech./neondb/auth',
+    'https://ep-x.neonauth.-c.aws.neon.tech/neondb/auth','https://127.0.0.1/neondb/auth','https://[::1]/neondb/auth',
+    // not canonical, or not only a host
+    'https://EP-X.NEONAUTH.C-7.US-EAST-2.AWS.NEON.TECH/neondb/auth','https://ep-x.neonauth.c-7.us-east-2.aws.neon.tech:443/neondb/auth',
+    'https://ep-x.neonauth.c-7.us-east-2.aws.neon.tech@attacker.example/neondb/auth','https://ep-x.neonauth.c-7.us-east-2.aws.neon.tech%2eattacker.example/neondb/auth',
+    'https://attacker.example/ep-x.neonauth.c-7.us-east-2.aws.neon.tech/auth'
+  ];
+  for(const url of refused){
+    const config=proxyConfigFromEnv({...ENV,POOL_PLATFORM_AUTH_UPSTREAM_URL:url});
+    assert.equal(config.enabled,false,url);
+    assert.doesNotMatch(config.reason,/attacker|still-recipe|ep-x/,'the rejected value is never repeated');
+    const up=upstream();
+    assert.equal((await createAuthProxy({config,fetch:up.fetch})(getSession())).status,404,url);
+    assert.deepEqual(up.calls,[]);
+  }
 });
 
 test('only the four routes exist: every other path under /api/auth is 404, a wrong method is 405, and neither reaches Neon',async()=>{
@@ -195,7 +237,7 @@ test('state-changing routes accept only application/json, a small body, the exac
 test('request OTP: Neon gets only the normalized body, the app Origin and no cookie; the answer is {success} with no cookie or JWT',async()=>{
   const {handle,up}=proxyWith();
   const response=await handle(post(P.send,{email:'  Player@Example.TEST ',type:'sign-in'},{
-    cookie:`${SESSION_COOKIE}=${SIGNED}; theme=dark`,authorization:'Bearer should-not-travel','x-neon-client-info':'{"sdk":"x"}',referer:`${APP}/participant.html`,
+    cookie:`${APP_SESSION_COOKIE}=${SIGNED}; theme=dark; ${UPSTREAM_SESSION_COOKIE}=${SIGNED}`,authorization:'Bearer should-not-travel','x-neon-client-info':'{"sdk":"x"}',referer:`${APP}/participant.html`,
     'x-forwarded-for':'203.0.113.9','x-forwarded-host':'evil.example.test','user-agent':`UA/${'x'.repeat(600)}`
   }));
   assert.equal(response.status,200);
@@ -235,21 +277,23 @@ test('verify OTP: the session cookie is re-issued exactly for the app host, ever
   assert.equal((await odd.handle(post(P.verify,VERIFY))).headers.get('set-auth-jwt'),null);
 });
 
-test('get session: no cookie answers null without asking Neon; otherwise only the session cookie travels, the token is removed and set-auth-jwt kept',async()=>{
+test('get session: no app cookie answers null without asking Neon; otherwise only its value travels, under Neon\'s name, the token is removed and set-auth-jwt kept',async()=>{
   const {handle,up}=proxyWith();
-  for(const cookie of [null,'theme=dark','__Secure-neon-auth.session_data=abc',`${SESSION_COOKIE}=`,`${SESSION_COOKIE}=bad value`,`${SESSION_COOKIE}=a"b`]){
+  // Neon's own cookie name, a case variant or a longer name is not the app's cookie: the browser contract is one name.
+  for(const cookie of [null,'theme=dark','__Secure-neon-auth.session_data=abc',`${UPSTREAM_SESSION_COOKIE}=${SIGNED}`,`__host-pool-platform-session=${SIGNED}`,
+    `${APP_SESSION_COOKIE}x=${SIGNED}`,`${APP_SESSION_COOKIE}=`,`${APP_SESSION_COOKIE}=bad value`,`${APP_SESSION_COOKIE}=a"b`]){
     const response=await handle(getSession({cookie}));
     assert.equal(response.status,200,String(cookie));
     assert.equal(await response.text(),'null');
   }
   assert.deepEqual(up.calls,[]);
-  const response=await handle(getSession({cookie:`theme=dark; ${SESSION_COOKIE}=${SIGNED}; __Secure-neon-auth.session_data=abc; other=1`}));
+  const response=await handle(getSession({cookie:`theme=dark; ${UPSTREAM_SESSION_COOKIE}=PlantedUnderNeonsName0123456789; ${APP_SESSION_COOKIE}=${SIGNED}; __Secure-neon-auth.session_data=abc; other=1`}));
   assert.equal(response.status,200);
   assert.equal(up.calls.length,1);
   assert.equal(up.calls[0].url,`${UPSTREAM}/get-session`);
   assert.equal(up.calls[0].method,'GET');
   assert.equal(up.calls[0].body,null);
-  assert.equal(up.calls[0].headers.cookie,`${SESSION_COOKIE}=${SIGNED}`,'only the session cookie is forwarded');
+  assert.equal(up.calls[0].headers.cookie,`${UPSTREAM_SESSION_COOKIE}=${SIGNED}`,'one cookie, built from the app cookie\'s value; no browser cookie is passed on');
   assert.equal(up.calls[0].headers.origin,APP);
   const body=await json(response);
   const {token:_,...sessionWithoutToken}=SESSION;
@@ -260,27 +304,33 @@ test('get session: no cookie answers null without asking Neon; otherwise only th
   assert.deepEqual(accessControl(response),[]);
   assert.deepEqual(response.headers.getSetCookie(),[REISSUED],'a refreshed session cookie is re-issued; session_data is dropped');
   // Neon ending the session (Max-Age=0 or an Expires in the past) deletes the app-host cookie the same way.
-  for(const ended of [`${SESSION_COOKIE}=; Max-Age=0; Path=/`,`${SESSION_COOKIE}=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/`]){
+  for(const ended of [`${UPSTREAM_SESSION_COOKIE}=; Max-Age=0; Path=/`,`${UPSTREAM_SESSION_COOKIE}=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/`]){
     const gone=proxyWith({'get-session':{body:null,cookies:[ended]}});
     assert.deepEqual((await gone.handle(getSession())).headers.getSetCookie(),[DELETE_SESSION_COOKIE],ended);
   }
   // An upstream cookie value that is not a plain cookie value is never re-issued.
-  const injected=proxyWith({'get-session':{body:null,cookies:[`${SESSION_COOKIE}=x"y; Path=/`]}});
+  const injected=proxyWith({'get-session':{body:null,cookies:[`${UPSTREAM_SESSION_COOKIE}=x"y; Path=/`]}});
   assert.deepEqual((await injected.handle(getSession())).headers.getSetCookie(),[]);
 });
 
-test('sign out: only the session cookie travels, and exactly one deletion cookie is always sent, whatever Neon answers',async()=>{
-  assert.equal(DELETE_SESSION_COOKIE,`${SESSION_COOKIE}=; Path=/api/auth; Max-Age=0; HttpOnly; Secure; SameSite=Strict`);
+test('sign out: only the session travels, under Neon\'s name, and exactly one deletion of the app cookie is always sent, whatever Neon answers',async()=>{
+  assert.equal(DELETE_SESSION_COOKIE,`${APP_SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict`);
   assert.equal(sessionCookie(SIGNED,604800),REISSUED);
-  assert.equal(sessionCookie(SIGNED,null),`${SESSION_COOKIE}=${SIGNED}; Path=/api/auth; HttpOnly; Secure; SameSite=Strict`);
+  assert.equal(sessionCookie(SIGNED,null),`${APP_SESSION_COOKIE}=${SIGNED}; Path=/; HttpOnly; Secure; SameSite=Strict`);
+  // The deletion names the cookie exactly as it was set: same name, Path=/, no Domain, Secure, HttpOnly, SameSite=Strict.
+  const attributesOf=line=>line.split('; ').slice(1).filter(a=>!/^max-age=/i.test(a)).sort();
+  assert.equal(DELETE_SESSION_COOKIE.split('=')[0],REISSUED.split('=')[0]);
+  assert.deepEqual(attributesOf(DELETE_SESSION_COOKIE),attributesOf(REISSUED));
+  assert.deepEqual(attributesOf(DELETE_SESSION_COOKIE),['HttpOnly','Path=/','SameSite=Strict','Secure']);
+  assert.match(DELETE_SESSION_COOKIE,/; Max-Age=0;/);
   const {handle,up}=proxyWith();
-  const response=await handle(post(P.out,{},{cookie:`other=1; ${SESSION_COOKIE}=${SIGNED}`}));
+  const response=await handle(post(P.out,{},{cookie:`other=1; ${APP_SESSION_COOKIE}=${SIGNED}`}));
   assert.equal(response.status,200);
   assert.deepEqual(await json(response),{success:true});
   assert.deepEqual(response.headers.getSetCookie(),[DELETE_SESSION_COOKIE]);
   assert.equal(up.calls[0].url,`${UPSTREAM}/sign-out`);
   assert.equal(up.calls[0].body,'{}');
-  assert.equal(up.calls[0].headers.cookie,`${SESSION_COOKIE}=${SIGNED}`);
+  assert.equal(up.calls[0].headers.cookie,`${UPSTREAM_SESSION_COOKIE}=${SIGNED}`);
   for(const failure of [new TypeError('network down'),{status:500,body:{message:'boom'}},{status:401,body:{code:'UNAUTHORIZED',message:'no session'}},{status:302,body:{},headers:{location:'https://evil.example.test'}}]){
     const failing=proxyWith({'sign-out':failure});
     const answer=await failing.handle(post(P.out,{}));
@@ -289,6 +339,84 @@ test('sign out: only the session cookie travels, and exactly one deletion cookie
   const noSession=proxyWith();
   await noSession.handle(post(P.out,{}));
   assert.equal(noSession.up.calls[0].headers.cookie,undefined);
+});
+
+test('the browser\'s only session cookie is the app\'s own __Host- cookie: Neon\'s cookie name, Domain, Partitioned, SameSite and Path never reach the browser',async()=>{
+  assert.notEqual(APP_SESSION_COOKIE,UPSTREAM_SESSION_COOKIE);
+  // What __Host- requires (Secure, Path=/, no Domain), plus HttpOnly and SameSite=Strict, and never Partitioned.
+  for(const line of [REISSUED,DELETE_SESSION_COOKIE,sessionCookie(SIGNED,null)]){
+    const [pair,...attributes]=line.split('; ');
+    assert.equal(pair.slice(0,pair.indexOf('=')),APP_SESSION_COOKIE,line);
+    assert.ok(APP_SESSION_COOKIE.startsWith('__Host-'));
+    for(const required of ['Path=/','Secure','HttpOnly','SameSite=Strict'])assert.ok(attributes.includes(required),`${line}: ${required}`);
+    assert.deepEqual(attributes.filter(a=>/^path=/i.test(a)),['Path=/'],line);
+    assert.equal(attributes.some(a=>/^(?:domain|partitioned|samesite=(?:none|lax))\b/i.test(a)),false,line);
+  }
+  // Whatever attributes Neon sets, only the value and lifetime survive, under the app's name, on both routes that
+  // establish or refresh a session.
+  const variants=[
+    `${UPSTREAM_SESSION_COOKIE}=${SIGNED}; Max-Age=604800; Domain=neon.tech; Path=/neondb/auth; Secure; HttpOnly; SameSite=None; Partitioned`,
+    `${UPSTREAM_SESSION_COOKIE}=${SIGNED}; max-age=604800; domain=.ep-example-000000.neonauth.c-0.us-east-2.aws.neon.tech; path=/; samesite=lax; partitioned; priority=high`
+  ];
+  for(const variant of variants){
+    for(const [upstreamPath,request] of [['get-session',()=>getSession()],['sign-in/email-otp',()=>post(P.verify,VERIFY)]]){
+      const {handle}=proxyWith({...NEON,[upstreamPath]:{...NEON[upstreamPath],cookies:[variant]}});
+      assert.deepEqual((await handle(request())).headers.getSetCookie(),[REISSUED],`${upstreamPath} ${variant}`);
+    }
+  }
+  // An upstream Set-Cookie that names the app's cookie (or anything else) is never passed on.
+  const planted=proxyWith({...NEON,'get-session':{...NEON['get-session'],cookies:[`${APP_SESSION_COOKIE}=PlantedByUpstream0123456789; Path=/; Secure; HttpOnly`,'theme=dark; Path=/']}});
+  const plantedAnswer=await planted.handle(getSession());
+  assert.deepEqual(plantedAnswer.headers.getSetCookie(),[]);
+  assert.equal(planted.logs[0].reason,'dropped-cookies:2');
+  // On every route, every Set-Cookie the browser receives is the app's cookie, and none names Neon's.
+  const {handle}=proxyWith();
+  const answers=[await handle(getSession()),await handle(post(P.send,SEND)),await handle(post(P.verify,VERIFY)),await handle(post(P.out,{},{cookie:`${APP_SESSION_COOKIE}=${SIGNED}`}))];
+  assert.deepEqual(answers.map(r=>r.headers.getSetCookie().length),[1,0,1,1]);
+  for(const line of answers.flatMap(r=>r.headers.getSetCookie())){
+    assert.ok(line.startsWith(`${APP_SESSION_COOKIE}=`),line);
+    assert.equal(line.includes(UPSTREAM_SESSION_COOKIE)||line.includes('neon-auth'),false,line);
+  }
+});
+
+test('the app session cookie more than once in a request fails closed on every route: 401, neither value reaches Neon, nothing is set or deleted',async()=>{
+  const OTHER='PlantedSessTokenZyxwvutsrq98765.cGxhbnRlZC1zaWduYXR1cmU%3D';
+  // None, exactly one, and more than one.
+  assert.deepEqual(sessionCookieValue(null),{value:null,conflict:false});
+  assert.deepEqual(sessionCookieValue(`theme=dark; ${UPSTREAM_SESSION_COOKIE}=${SIGNED}`),{value:null,conflict:false},'Neon\'s name is not the app\'s cookie');
+  assert.deepEqual(sessionCookieValue(`theme=dark; ${APP_SESSION_COOKIE}=${SIGNED}`),{value:SIGNED,conflict:false});
+  assert.deepEqual(sessionCookieValue(`${APP_SESSION_COOKIE}=bad value`),{value:null,conflict:false},'one malformed value is treated as absent');
+  const duplicates=[
+    `${APP_SESSION_COOKIE}=${SIGNED}; ${APP_SESSION_COOKIE}=${OTHER}`,`${APP_SESSION_COOKIE}=${OTHER}; ${APP_SESSION_COOKIE}=${SIGNED}`,
+    `${APP_SESSION_COOKIE}=${SIGNED}; theme=dark; ${APP_SESSION_COOKIE}=${SIGNED}`,`${APP_SESSION_COOKIE}=${SIGNED}; ${APP_SESSION_COOKIE}=`,
+    `${APP_SESSION_COOKIE}=bad value; ${APP_SESSION_COOKIE}=${SIGNED}`,` ${APP_SESSION_COOKIE} = ${SIGNED};${APP_SESSION_COOKIE}=${OTHER}`,
+    `${APP_SESSION_COOKIE}=${OTHER}; ${UPSTREAM_SESSION_COOKIE}=${SIGNED}; ${APP_SESSION_COOKIE}=${OTHER}`
+  ];
+  for(const header of duplicates)assert.deepEqual(sessionCookieValue(header),{value:null,conflict:true},header);
+  for(const header of duplicates){
+    const seen=[];
+    const {handle,up,logs}=proxyWith(NEON,{rateLimit:async args=>{seen.push(args);return true}});
+    for(const request of [getSession({cookie:header}),post(P.send,SEND,{cookie:header}),post(P.verify,VERIFY,{cookie:header}),post(P.out,{},{cookie:header})]){
+      const response=await handle(request);
+      assert.equal(response.status,401,header);
+      const text=await response.text();
+      assert.deepEqual(JSON.parse(text),{code:'UNAUTHORIZED',message:'Sign-in could not be confirmed. Clear this site\'s cookies, then sign in again.'});
+      for(const secret of [SIGNED,OTHER,TOKEN,'Planted','neon-auth',APP_SESSION_COOKIE])assert.equal(text.includes(secret),false,secret);
+      assert.deepEqual(response.headers.getSetCookie(),[],'no cookie is set, and none deleted (not even by sign-out)');
+      assert.equal(response.headers.get('set-auth-jwt'),null);
+      assert.deepEqual(accessControl(response),[]);
+      for(const [name,value] of Object.entries(SECURITY_HEADERS))assert.equal(response.headers.get(name),value,name);
+    }
+    assert.deepEqual(up.calls,[],'neither value reaches Neon');
+    assert.deepEqual(seen,[],'refused before the rate-limit hook is asked');
+    assert.deepEqual(logs.map(l=>`${l.route} ${l.status} ${l.reason}`),['get-session 401 cookie-conflict','send-otp 401 cookie-conflict','verify-otp 401 cookie-conflict','sign-out 401 cookie-conflict']);
+  }
+  // Exactly one still works, and none is still signed out without asking Neon.
+  const {handle,up}=proxyWith();
+  assert.equal(await (await handle(getSession({cookie:'theme=dark'}))).text(),'null');
+  assert.deepEqual(up.calls,[]);
+  assert.deepEqual((await handle(getSession({cookie:`theme=dark; ${APP_SESSION_COOKIE}=${SIGNED}`}))).headers.getSetCookie(),[REISSUED]);
+  assert.deepEqual(up.calls.map(c=>c.headers.cookie),[`${UPSTREAM_SESSION_COOKIE}=${SIGNED}`]);
 });
 
 test('the opaque session token never reaches a body JavaScript can read, however Neon nests or renames it',async()=>{
@@ -305,7 +433,6 @@ test('the opaque session token never reaches a body JavaScript can read, however
   }
   const verify=proxyWith({'sign-in/email-otp':{body:{user:{...USER,ref:TOKEN}},cookies:[SESSION_SET]}});
   assert.equal((await verify.handle(post(P.verify,VERIFY))).status,502,'the token of a cookie being issued is caught too');
-  assert.equal(sessionCookieValue(`a=1; ${SESSION_COOKIE}=${SIGNED}; ${SESSION_COOKIE}=second`),SIGNED,'the first, most specific cookie is used');
 });
 
 test('every response carries no-store and the security headers, and never an Access-Control-* header',async()=>{
@@ -316,9 +443,10 @@ test('every response carries no-store and the security headers, and never an Acc
     await handle(req('/api/auth/nope',{headers:browser})),await handle(req(P.session,{method:'OPTIONS',headers:{...browser,origin:'https://evil.example.test','access-control-request-method':'GET'}})),
     await handle(getSession({host:'evil.example.test'})),await handle(post(P.send,SEND,{origin:'https://evil.example.test'})),await handle(post(P.send,SEND,{'content-type':'text/plain'})),
     await handle(post(P.send,'x'.repeat(BODY_LIMIT+1))),await handle(post(P.send,{})),await disabled(getSession()),
-    await proxyWith({'get-session':new TypeError('down')}).handle(getSession()),await proxyWith({},{rateLimit:async()=>false}).handle(post(P.send,SEND))
+    await proxyWith({'get-session':new TypeError('down')}).handle(getSession()),await proxyWith({},{rateLimit:async()=>false}).handle(post(P.send,SEND)),
+    await handle(getSession({cookie:`${APP_SESSION_COOKIE}=${SIGNED}; ${APP_SESSION_COOKIE}=${SIGNED}`}))
   ];
-  assert.deepEqual(responses.map(r=>r.status),[200,200,200,200,200,404,405,421,403,415,413,400,404,502,429]);
+  assert.deepEqual(responses.map(r=>r.status),[200,200,200,200,200,404,405,421,403,415,413,400,404,502,429,401]);
   for(const response of responses){
     for(const [name,value] of Object.entries(SECURITY_HEADERS))assert.equal(response.headers.get(name),value,`${response.status} ${name}`);
     assert.equal(response.headers.get('content-type'),'application/json; charset=utf-8');
@@ -331,25 +459,48 @@ test('every response carries no-store and the security headers, and never an Acc
 
 test('the upstream URL and Origin are fixed server-side: nothing in a request changes the protocol, host, base path, endpoint or Origin',async()=>{
   const {handle,up}=proxyWith();
+  const ATTACKER='https://x.neonauth.attacker.example/neondb/auth';
   const attempts=[
     getSession({'x-forwarded-host':'evil.example.test','x-forwarded-proto':'http',forwarded:'host=evil.example.test'}),
-    req(P.session,{base:'https://evil.example.test',headers:{...browser,cookie:`${SESSION_COOKIE}=${SIGNED}`}}),
-    req('/api/auth/x/../get-session',{headers:{...browser,cookie:`${SESSION_COOKIE}=${SIGNED}`}}),
+    req(P.session,{base:'https://evil.example.test',headers:{...browser,cookie:`${APP_SESSION_COOKIE}=${SIGNED}`}}),
+    req('/api/auth/x/../get-session',{headers:{...browser,cookie:`${APP_SESSION_COOKIE}=${SIGNED}`}}),
     post(P.send,SEND,{'x-original-url':'/api/auth/sign-out','x-rewrite-url':'/admin'}),
     post(P.verify,VERIFY,{origin:APP,referer:'https://evil.example.test/'}),
-    post(P.out,{},{cookie:`${SESSION_COOKIE}=${SIGNED}`})
+    post(P.out,{},{cookie:`${APP_SESSION_COOKIE}=${SIGNED}`}),
+    // Request data naming another Neon Auth upstream is never read for one.
+    getSession({'x-forwarded-host':'x.neonauth.attacker.example','x-neon-auth-url':ATTACKER,'x-upstream':ATTACKER,referer:ATTACKER}),
+    req(P.session,{base:'https://x.neonauth.attacker.example',headers:{...browser,cookie:`${APP_SESSION_COOKIE}=${SIGNED}`}})
   ];
   for(const request of attempts)await handle(request);
+  // Refused outright, before any upstream call: a Host, query or body field naming another upstream.
+  assert.equal((await handle(getSession({host:'x.neonauth.attacker.example'}))).status,421);
+  assert.equal((await handle(req(`${P.session}?upstream=${encodeURIComponent(ATTACKER)}`,{headers:browser}))).status,400);
+  assert.equal((await handle(post(P.send,{...SEND,upstream:ATTACKER}))).status,400);
   assert.deepEqual(up.calls.map(c=>c.url),[`${UPSTREAM}/get-session`,`${UPSTREAM}/get-session`,`${UPSTREAM}/get-session`,
-    `${UPSTREAM}/email-otp/send-verification-otp`,`${UPSTREAM}/sign-in/email-otp`,`${UPSTREAM}/sign-out`]);
+    `${UPSTREAM}/email-otp/send-verification-otp`,`${UPSTREAM}/sign-in/email-otp`,`${UPSTREAM}/sign-out`,`${UPSTREAM}/get-session`,`${UPSTREAM}/get-session`]);
   for(const call of up.calls){
     assert.equal(call.headers.origin,APP);
-    for(const name of ['host','referer','x-forwarded-host','x-forwarded-for','x-forwarded-proto','forwarded','x-original-url','authorization'])assert.equal(call.headers[name],undefined,name);
+    for(const name of ['host','referer','x-forwarded-host','x-forwarded-for','x-forwarded-proto','forwarded','x-original-url','authorization','x-neon-auth-url','x-upstream'])assert.equal(call.headers[name],undefined,name);
   }
 });
 
+// A hung upstream holds an open connection, and an open connection keeps Node's event loop alive. The proxy's own
+// AbortSignal.timeout() timer does not (Node unrefs it), so a stand-in that merely waits for the abort leaves Node
+// nothing to wait for, and the runner cancels the waiting test and every test after it. This stand-in therefore holds
+// a ref'd handle, as a socket would, until the proxy aborts the call. Were the proxy never to abort, the handle would
+// answer with a session after HUNG_FOR_MS, and the 502 expected of a timeout would fail the test.
+const HUNG_FOR_MS=5000;
+function hungUpstream(){
+  const signals=[];
+  const fetch=(url,init)=>new Promise((resolve,reject)=>{
+    signals.push(init.signal);
+    const connection=setTimeout(()=>resolve(new Response(JSON.stringify({session:SESSION,user:USER}),{status:200,headers:{'content-type':'application/json'}})),HUNG_FOR_MS);
+    init.signal.addEventListener('abort',()=>{clearTimeout(connection);reject(init.signal.reason)},{once:true});
+  });
+  return{fetch,signals};
+}
+
 test('upstream failures become a generic 502 that carries nothing of Neon\'s answer; Neon\'s own 4xx passes only code and message',async()=>{
-  const hang=init=>new Promise((_,reject)=>init.signal.addEventListener('abort',()=>reject(init.signal.reason)));
   const failures=[new TypeError('ECONNREFUSED internal-host:5432'),{status:500,body:{message:'internal detail'}},{status:503,raw:'<html>internal detail</html>',type:'text/html'},
     {status:302,body:{},headers:{location:'https://evil.example.test'}},{status:200,raw:'<html>internal detail</html>',type:'text/html'},{status:200,raw:'{"broken',type:'application/json'},
     {status:200,raw:`{"pad":"${'x'.repeat(70000)}"}`}];
@@ -361,8 +512,20 @@ test('upstream failures become a generic 502 that carries nothing of Neon\'s ans
     assert.doesNotMatch(text,/internal|ECONNREFUSED|evil/);
     assert.deepEqual(JSON.parse(text),{code:'AUTH_UPSTREAM_ERROR',message:'The sign-in service could not be reached. Try again.'});
   }
-  const slow=createAuthProxy({config:CONFIG,fetch:(url,init)=>hang(init),timeoutMs:20});
-  assert.equal((await slow(getSession())).status,502,'a hung upstream times out');
+  // A hung upstream: the proxy's own timeout ends the call, on every route that calls Neon (sign-out still deletes).
+  for(const [request,deletes] of [[()=>getSession(),[]],[()=>post(P.send,SEND),[]],[()=>post(P.verify,VERIFY),[]],
+    [()=>post(P.out,{},{cookie:`${APP_SESSION_COOKIE}=${SIGNED}`}),[DELETE_SESSION_COOKIE]]]){
+    const hung=hungUpstream(),logs=[];
+    const slow=createAuthProxy({config:CONFIG,fetch:hung.fetch,log:entry=>logs.push(entry),timeoutMs:20});
+    const timedOut=await slow(request());
+    assert.equal(timedOut.status,502,'a hung upstream times out');
+    assert.deepEqual(await json(timedOut),{code:'AUTH_UPSTREAM_ERROR',message:'The sign-in service could not be reached. Try again.'});
+    assert.deepEqual(timedOut.headers.getSetCookie(),deletes);
+    assert.equal(hung.signals.length,1);
+    assert.equal(hung.signals[0].aborted,true,'the proxy abandoned the call');
+    assert.equal(hung.signals[0].reason?.name,'TimeoutError','through its own timeout');
+    assert.equal(logs[0].reason,'upstream-unreachable');
+  }
   const rejected=proxyWith({'sign-in/email-otp':{status:400,body:{code:'INVALID_OTP',message:'Invalid OTP',token:TOKEN,stack:'at internal'},cookies:[SESSION_SET]}});
   const answer=await rejected.handle(post(P.verify,VERIFY));
   assert.equal(answer.status,400);
@@ -383,6 +546,7 @@ test('the rate-limit hook is asked before an OTP is sent or verified, sees a key
   await allow.handle(getSession(),{clientIp:'203.0.113.7'});
   await allow.handle(post(P.out,{}),{clientIp:'203.0.113.7'});
   await allow.handle(post(P.send,SEND,{origin:'https://evil.example.test'}),{clientIp:'203.0.113.7'});
+  await allow.handle(post(P.send,SEND,{cookie:`${APP_SESSION_COOKIE}=${SIGNED}; ${APP_SESSION_COOKIE}=${SIGNED}`}),{clientIp:'203.0.113.7'});
   const key=crypto.createHash('sha256').update('pool-platform-otp\u0000player@example.test').digest('hex');
   assert.equal(emailKey('player@example.test'),key);
   assert.deepEqual(seen,[{route:'send-otp',clientIp:'203.0.113.7',emailKey:key},{route:'verify-otp',clientIp:'203.0.113.7',emailKey:key}]);
@@ -398,7 +562,7 @@ test('the rate-limit hook is asked before an OTP is sent or verified, sees a key
 test('the log never holds an OTP, email, body, cookie, session token, JWT or Authorization value',async()=>{
   const email='Leaky.Person@Example.test',otp='987654',bearer='Bearer eyJsecret.payload.sig';
   const {handle,logs}=proxyWith({...NEON,'sign-in/email-otp':{...NEON['sign-in/email-otp'],headers:{'set-auth-jwt':JWT}}},{rateLimit:async()=>true});
-  const sensitive={authorization:bearer,cookie:`${SESSION_COOKIE}=${SIGNED}; theme=dark`,'user-agent':'UA-fingerprint-123'};
+  const sensitive={authorization:bearer,cookie:`${APP_SESSION_COOKIE}=${SIGNED}; theme=dark`,'user-agent':'UA-fingerprint-123'};
   await handle(post(P.send,{email,type:'sign-in'},sensitive));
   await handle(post(P.verify,{email,otp},sensitive));
   await handle(getSession(sensitive));
@@ -407,7 +571,9 @@ test('the log never holds an OTP, email, body, cookie, session token, JWT or Aut
   await handle(post(P.send,{email,type:'forget-password'},{...sensitive,origin:'https://evil.example.test'}));
   await handle(req(`${P.session}?email=${encodeURIComponent(email)}&otp=${otp}`,{headers:{...browser,...sensitive}}));
   await handle(req(`/api/auth/${otp}/${email}`,{headers:{...browser,...sensitive}}));
-  assert.equal(logs.length,8);
+  await handle(post(P.verify,{email,otp},{...sensitive,cookie:`${APP_SESSION_COOKIE}=${SIGNED}; ${APP_SESSION_COOKIE}=${TOKEN}`}));
+  assert.equal(logs.length,9);
+  assert.deepEqual(logs.at(-1),{route:'verify-otp',method:'POST',status:401,ms:logs.at(-1).ms,reason:'cookie-conflict'});
   const text=JSON.stringify(logs).toLowerCase();
   for(const secret of [email,'leaky',otp,TOKEN,SIGNED,JWT,bearer,'eyjsecret','ua-fingerprint','dark','sign-in"','forget-password'])assert.equal(text.includes(secret.toLowerCase()),false,secret);
   for(const entry of logs){
@@ -431,9 +597,12 @@ test('vercel.json routes exactly the four paths to the one function, and the ada
   }
   const answer=await handler.fetch(new Request(`${APP}/api/auth?route=get-session`,{headers:headersOf({host:HOST,...browser})}));
   assert.deepEqual([answer.status,await answer.text()],[200,'null']);
-  const out=await handler.fetch(new Request(`${APP}/api/auth?route=sign-out`,{method:'POST',headers:headersOf({host:HOST,...browser,origin:APP,'content-type':'application/json',cookie:`${SESSION_COOKIE}=${SIGNED}`}),body:'{}'}));
+  const out=await handler.fetch(new Request(`${APP}/api/auth?route=sign-out`,{method:'POST',headers:headersOf({host:HOST,...browser,origin:APP,'content-type':'application/json',cookie:`${APP_SESSION_COOKIE}=${SIGNED}`}),body:'{}'}));
   assert.deepEqual([out.status,out.headers.getSetCookie()],[200,[DELETE_SESSION_COOKIE]]);
   assert.equal(up.calls.at(-1).body,'{}','the body survives the mapping');
+  assert.equal(up.calls.at(-1).headers.cookie,`${UPSTREAM_SESSION_COOKIE}=${SIGNED}`);
+  const conflict=await handler.fetch(new Request(`${APP}/api/auth?route=get-session`,{headers:headersOf({host:HOST,...browser,cookie:`${APP_SESSION_COOKIE}=${SIGNED}; ${APP_SESSION_COOKIE}=${SIGNED}`})}));
+  assert.deepEqual([conflict.status,conflict.headers.getSetCookie()],[401,[]],'the adapter keeps the duplicate-cookie refusal');
   for(const url of ['/api/auth','/api/auth?route=bogus','/api/auth?route=get-session&x=1','/api/auth?x=1&route=get-session','/api/auth?route=get-session&route=sign-out','/api/auth?Route=get-session']){
     assert.equal((await handler.fetch(new Request(`${APP}${url}`,{headers:headersOf({host:HOST,...browser})}))).status,404,url);
   }
@@ -449,9 +618,9 @@ const SDK=(()=>{try{return !!createRequire(import.meta.url).resolve('@neondataba
 describe('the pinned Neon SDK through the proxy',{skip:SDK?false:'run npm ci in pool-platform to load the real SDK'},()=>{
   test('signed out, send code, verify, session with the JWT as bearer, sign out: only the four routes, and JavaScript never sees the session token',async()=>{
     const {createClient}=await import('@neondatabase/neon-js');
-    // Neon's get-session: signed in exactly when the forwarded cookie is the session cookie Neon issued.
+    // Neon's get-session: signed in exactly when the forwarded cookie is the session cookie Neon issued, by Neon's name.
     const neon={...NEON,'get-session':init=>{
-      const signedIn=new Headers(init.headers).get('cookie')===`${SESSION_COOKIE}=${SIGNED}`;
+      const signedIn=new Headers(init.headers).get('cookie')===`${UPSTREAM_SESSION_COOKIE}=${SIGNED}`;
       const headers=new Headers({'content-type':'application/json',...REFLECTED,...(signedIn?{'set-auth-jwt':JWT,'set-auth-token':TOKEN}:{})});
       return new Response(JSON.stringify(signedIn?{session:SESSION,user:USER}:null),{status:200,headers});
     }};
@@ -470,9 +639,11 @@ describe('the pinned Neon SDK through the proxy',{skip:SDK?false:'run npm ci in 
       const response=await proxy(new Request(request.url,{method:request.method,headers,body:request.method==='GET'?undefined:await request.text()}));
       for(const line of response.headers.getSetCookie()){
         const [pair,...attrs]=line.split('; '),[name,value]=[pair.slice(0,pair.indexOf('=')),pair.slice(pair.indexOf('=')+1)];
-        const attr=key=>attrs.find(a=>a.toLowerCase().startsWith(key));
-        assert.ok(attr('httponly')&&attr('secure')&&attr('samesite=strict')&&attr('path=/api/auth'),line);
-        if(attr('max-age=0'))jar.delete(name);else jar.set(name,{value,path:attr('path=').slice(5)});
+        // Only ever the app's cookie, with what __Host- requires (Secure, Path=/, no Domain), HttpOnly and SameSite=Strict.
+        assert.equal(name,APP_SESSION_COOKIE,line);
+        for(const required of ['Path=/','HttpOnly','Secure','SameSite=Strict'])assert.ok(attrs.includes(required),line);
+        assert.equal(attrs.some(a=>/^(?:domain|partitioned)\b/i.test(a)),false,line);
+        if(attrs.includes('Max-Age=0'))jar.delete(name);else jar.set(name,{value,path:'/'});
       }
       // What page JavaScript can read: never Set-Cookie (the browser hides it), everything else on a same-origin answer.
       const visible=new Headers(response.headers);visible.delete('set-cookie');
@@ -486,7 +657,7 @@ describe('the pinned Neon SDK through the proxy',{skip:SDK?false:'run npm ci in 
       assert.equal(code.error,null);
       const signIn=await client.auth.signIn.emailOtp({email:'player@example.test',otp:'123456'});
       assert.equal(signIn.error,null);
-      assert.deepEqual([...jar.keys()],[SESSION_COOKIE]);
+      assert.deepEqual([...jar.keys()],[APP_SESSION_COOKIE],'the browser holds the app\'s cookie, never Neon\'s');
       const session=await client.auth.getSession();
       assert.equal(session.data.user.id,'user-1');
       assert.equal(session.data.session.token,JWT,'session.token is the JWT from set-auth-jwt, not the opaque token');
@@ -507,3 +678,27 @@ describe('the pinned Neon SDK through the proxy',{skip:SDK?false:'run npm ci in 
     }finally{globalThis.fetch=realFetch}
   });
 });
+
+// npm test runs each file in its own child process (node --test). A test that waits on nothing ref'd lets that
+// process's event loop empty, and the runner then cancels it and every test after it, which fails the run. So this file
+// is run here exactly that way, in a fresh child with no preload, keep-alive or filter, and must finish with every test
+// passed and none failed, cancelled or skipped, the tests after the hung-upstream case and the last one included.
+// The child leaves this check out (SELF_CHECK), so it does not run itself again.
+const SELF_CHECK='POOL_PLATFORM_PROXY_TEST_SELF_CHECK';
+if(!process.env[SELF_CHECK]){
+  test('this file, run by node --test in a fresh child process, finishes with every test passed and none cancelled, failed or skipped',()=>{
+    const env={...process.env,[SELF_CHECK]:'1'};
+    delete env.NODE_TEST_CONTEXT; // a top-level runner of its own, not a child reporting to this one
+    delete env.NODE_OPTIONS; // nothing preloaded (a keep-alive there would hide the very failure this looks for)
+    const run=spawnSync(process.execPath,['--test','--test-reporter=tap',fileURLToPath(import.meta.url)],{env,encoding:'utf8',timeout:120000});
+    const total=name=>Number(new RegExp(`^# ${name} (\\d+)$`,'m').exec(run.stdout)?.[1]);
+    assert.equal(run.status,0,run.stdout.slice(-3000));
+    assert.deepEqual(['fail','cancelled','skipped','todo'].map(total),[0,0,0,0],run.stdout.slice(-3000));
+    assert.ok(total('tests')>0);
+    assert.equal(total('pass'),total('tests'));
+    assert.doesNotMatch(run.stdout,/^\s*not ok /m);
+    const ran=name=>assert.match(run.stdout,new RegExp(`^\\s*ok \\d+ - ${name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}`,'m'),name);
+    for(const name of ['upstream failures become a generic 502','the rate-limit hook is asked before an OTP','the log never holds an OTP','vercel.json routes exactly the four paths'])ran(name);
+    if(SDK)ran('signed out, send code, verify, session with the JWT as bearer, sign out');
+  });
+}

@@ -120,9 +120,10 @@ Fresh state before each browser/profile run: DevTools → Application → Storag
     for (const key of await caches.keys()) if (key.startsWith('pool-platform-commercial-')) await caches.delete(key);
 
 Then close every tab of the origin and reopen it. The session cookie is first-party on `localhost`
-(`__Secure-neon-auth.session_token`, path `/api/auth`); check DevTools → Application → Cookies for what remains, and
-sign out first when a run needs no prior session. A cookie on a Neon Auth host is left over from before the proxy;
-clear it.
+(`__Host-pool-platform-session`, path `/`); check DevTools → Application → Cookies for what remains, and sign out
+first when a run needs no prior session. A cookie on a Neon Auth host, or a `__Secure-neon-auth.session_token` cookie
+on `localhost`, is left over from before the proxy or an earlier build (the proxy never reads either); clear it.
+Cookies are not isolated by port: serve nothing else on `localhost` during a run.
 
 ## Switch back to the sandbox without editing tracked files
 
@@ -153,6 +154,8 @@ booleans only.
    - `curl -si -X POST -H 'Content-Type: application/json' -H 'Origin: http://localhost:4174' --data '{}' http://localhost:4173/api/auth/sign-out` → 403,
      and the same with `Origin: null`, or with no `Origin` → 403;
    - `curl -si -X OPTIONS -H 'Origin: https://cors-probe.invalid' http://localhost:4173/api/auth/get-session` → 405;
+   - `curl -si -H 'Cookie: __Host-pool-platform-session=a; __Host-pool-platform-session=b' http://localhost:4173/api/auth/get-session`
+     → 401 with no `Set-Cookie` (the session cookie twice is refused, and neither value is used);
    - `curl -si http://localhost:4173/api/auth/list-sessions` → 404; `curl -si -X PUT http://localhost:4173/api/auth/sign-out` → 405.
 6. The service worker's cache holds no `/api/auth` URL (inspect as in "Service worker" above).
 7. The server log shows only `AUTH <method> <route> <status> <reason>` lines for these, with no value from a request.
@@ -162,8 +165,9 @@ booleans only.
 Only after an independent review of the exact corrective SHA, and with the operator's approval to send codes.
 In addition to the sections below, record for the first sign-in:
 
-- the app-host cookie `__Secure-neon-auth.session_token` has `HttpOnly`, `Secure`, `SameSite=Strict`, path `/api/auth`,
-  no `Partitioned`, and there is no cookie for any Neon Auth host;
+- the app-host cookie `__Host-pool-platform-session` has `HttpOnly`, `Secure`, `SameSite=Strict`, path `/`, no
+  `Domain` and no `Partitioned`; there is no `__Secure-neon-auth.session_token` cookie and no cookie for any Neon Auth
+  host;
 - the page-visible `GET /api/auth/get-session` JSON holds no opaque session token (compare, do not print: no
   `session.token` field, or only the JWT the SDK copies there from `set-auth-jwt`);
 - the first RPC carries a bearer whose `sub` is the signed-in synthetic identity (sub only);
@@ -284,10 +288,10 @@ expected; record what Chrome offers.
 
 **C. Safari / WebKit.** Safari on macOS at `http://localhost:4173` and Safari in the iOS Simulator (which shares the
 Mac's `localhost`). A physical iPhone cannot reach the operator machine as `localhost`, so its live sign-in waits for
-the hosted origin. The session cookie is first-party on the app host (`Secure; HttpOnly; SameSite=Strict`, path
-`/api/auth`), but the page is plain `http://localhost` here: record whether Safari keeps a `Secure` (`__Secure-`)
-cookie on it, and whether the session survives a reload and a new tab. If it does not, record it as a finding (local
-https is a separate, unapproved option); do not change Neon settings in the gate.
+the hosted origin. The session cookie is first-party on the app host (`__Host-pool-platform-session`: `Secure;
+HttpOnly; SameSite=Strict`, path `/`), but the page is plain `http://localhost` here: record whether Safari keeps a
+`Secure` (`__Host-`) cookie on it, and whether the session survives a reload and a new tab. If it does not, record it
+as a finding (local https is a separate, unapproved option); do not change Neon settings in the gate.
 
 **Firefox (optional).** Sign in, reload, submit, sign out; record any CSP report.
 
@@ -298,5 +302,7 @@ https is a separate, unapproved option); do not change Neon settings in the gate
 - Offline, a page shows the "could not load its configuration" message instead of the app: the configuration is
   never cached, by design.
 - Sessions are a first-party cookie on the app host, set by the same-origin Auth proxy; browsers hold no cookie for
-  the Neon Auth host. On `http://localhost`, Chromium and Firefox accept `Secure` cookies; Safari's behaviour there is
-  the main unknown. An already-issued JWT stays valid at the Data API until it expires (up to about 15 minutes).
+  the Neon Auth host. On `http://localhost`, Chromium accepts the `__Host-` session cookie (the opt-in Chromium suite
+  in `ui-contract.test.mjs` signs in through the proxy and checks it); whether Firefox and Safari keep a `__Host-`
+  cookie there is not verified, and Safari is the main unknown. An already-issued JWT stays valid at the Data API
+  until it expires (up to about 15 minutes).

@@ -47,9 +47,20 @@ the Neon Auth host**:
 
   Every other path under `/api/auth` is 404 and a wrong method 405. `vercel.json` rewrites the four paths to the one
   function (`/api/auth?route=<id>`), and the adapter maps them back to the route's own path.
-- **Cookies.** The session cookie is re-issued on the app host as `__Secure-neon-auth.session_token; HttpOnly;
-  Secure; SameSite=Strict; Path=/api/auth` (no `Domain`, never `Partitioned`). Only that cookie is sent upstream;
-  every other upstream cookie is dropped. Sign-out always deletes it. Browsers hold no cookie for the Neon Auth host.
+- **Cookies.** The browser holds one session cookie, the app's own: `__Host-pool-platform-session; HttpOnly; Secure;
+  SameSite=Strict; Path=/` (no `Domain`, never `Partitioned`). The `__Host-` prefix makes browsers refuse it with a
+  `Domain` or another path, so no other host, a sibling subdomain included, can set or overwrite it. Neon's session
+  cookie name never reaches the browser: the proxy sends the app cookie's value upstream under Neon's name
+  (`UPSTREAM_SESSION_COOKIE`, the one place it is named) and re-issues Neon's new or refreshed value as the app
+  cookie, keeping only its value and lifetime. No other browser cookie is sent upstream, and every other upstream
+  cookie is dropped. Sign-out always deletes the app cookie, with the attributes it was set with. Browsers hold no
+  cookie for the Neon Auth host.
+- **Duplicate session cookies fail closed.** A request carrying the app cookie more than once (a second one planted
+  from another partition or port of the host, or by a browser that does not enforce the prefix) is refused with 401
+  on every route, before anything else happens: neither value reaches Neon, and no cookie is set or deleted, since
+  deleting the host's own cookie could leave the planted one as the only cookie. The page then shows the refusal
+  ("Clear this site's cookies, then sign in again."). Cookies are not isolated by port, so the app host must serve
+  nothing else, on any port.
 - **Tokens.** Every `token` field is removed from response bodies, and an answer that still contains the session
   token is refused (502), so page JavaScript never sees the opaque session token. `set-auth-token` is dropped.
   `set-auth-jwt` is passed on unchanged: the Data API bearer path (`set-auth-jwt` → SDK memory →
@@ -75,7 +86,7 @@ the Neon Auth host**:
 | Variable | Value | Notes |
 | --- | --- | --- |
 | `POOL_PLATFORM_MODE` | `live` | Anything else disables the proxy: every request is 404. |
-| `POOL_PLATFORM_AUTH_UPSTREAM_URL` | the Neon Auth base URL of the commercial branch | `https`, canonical, a `*.neonauth.*` host and a `/<database>/auth` path. |
+| `POOL_PLATFORM_AUTH_UPSTREAM_URL` | the Neon Auth base URL of the commercial branch | `https`, canonical, a host matched label by label as `ep-<endpoint>.neonauth.<region>.neon.tech` (it must end in `neon.tech`) and a `/<database>/auth` path. |
 | `POOL_PLATFORM_APP_ORIGIN` | the final `https://` commercial origin | Exactly an origin: compared with `Origin` and sent upstream as `Origin`. |
 
 Missing or malformed values fail closed (404 everywhere). The design needs no secret, no Neon API key, no database
@@ -98,8 +109,12 @@ store and its own approval. The proxy never forwards a client IP upstream.
   IP and ignores a forwarded client IP, every user of the app shares one bucket (Better Auth's default is 3 per
   60 s). This must be answered by Neon or measured in a controlled test before the proxy is relied on in hosting.
 - **K.** Whether trusted domains populate Better Auth's `trustedOrigins`.
-- **L.** The canonical, stable session cookie name (Neon's docs say `__Secure-neonauth.session_token`; the SDK and the
-  browser show `__Secure-neon-auth.session_token`, which the proxy uses, in one constant).
+- **L. Hosting dependency.** The canonical, stable name of Neon's session cookie (Neon's docs say
+  `__Secure-neonauth.session_token`; the SDK, and the browser before the proxy, show `__Secure-neon-auth.session_token`,
+  which the proxy uses). It is named in one constant, `UPSTREAM_SESSION_COOKIE` in `server/auth-proxy-core.mjs`, and
+  only ever exchanged with Neon. The browser's cookie (`__Host-pool-platform-session`) does not depend on it, so a
+  rename changes that constant only. Until it is answered, a rename would show as sign-in failing closed (no session
+  recognized), never as another session.
 - **M.** The supported `SameSite` for a proxied cookie (Neon's server docs say `strict`, its SDK code defaults to
   `lax`; the proxy sets `Strict`).
 - **N.** Compatibility of the hosted Better Auth 1.4.18 (per Neon's docs) with the pinned SDK tree's better-auth
@@ -166,7 +181,8 @@ core at `/api/auth`, so the localhost gate runs under the same policy and the sa
 1. Resolve, or settle by a controlled test, Neon questions I (the hosting blocker), H and K; record L, M and N.
 2. Choose the final commercial domain.
 3. Create the Vercel project with root `pool-platform/`, sandbox only (the proxy disabled), and verify a preview,
-   including how the `vercel.json` rewrites present the request URL, `Host` and `x-real-ip` to the function.
+   including how the `vercel.json` rewrites present the request URL, `Host` and `x-real-ip` to the function, and that
+   the `Cookie` header reaches it joined with `; ` (the proxy reads cookies only as `;`-separated pairs).
 4. Add the Data API CORS entry (and, if question H/K requires it, the Neon Auth trusted domain) for exactly the
    production origin.
 5. Set the production build variables and the function's server-only variables, and the Vercel Firewall

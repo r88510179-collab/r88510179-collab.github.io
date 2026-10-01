@@ -10,7 +10,7 @@ import {CONFIG_UNAVAILABLE,SIGN_IN_NOT_CONFIRMED} from './platform-client.js';
 import {buildCommercialFrontend} from './scripts/build.mjs';
 import {contentSecurityPolicy} from './scripts/runtime-config.mjs';
 import {startServer} from './scripts/serve.mjs';
-import {ROUTES} from './server/auth-proxy-core.mjs';
+import {APP_SESSION_COOKIE,ROUTES,UPSTREAM_SESSION_COOKIE} from './server/auth-proxy-core.mjs';
 
 const read=name=>fs.readFileSync(new URL('./'+name,import.meta.url),'utf8');
 const participant=read('participant.html')+read('participant.js');
@@ -259,7 +259,7 @@ test('cross-origin, auth, Data API, non-GET, Authorization-bearing and query req
     request(`${ORIGIN}/nfl-pool/app.js`),
     // The same-origin Auth proxy, as the SDK calls it (fetch, never a navigation), with and without credentials.
     ...Object.keys(ROUTES).flatMap(route=>[request(`${ORIGIN}${route}`,{method:ROUTES[route].method}),request(`${ORIGIN}${route}`,{method:ROUTES[route].method,mode:'same-origin'}),
-      request(`${ORIGIN}${route}`,{method:ROUTES[route].method,headers:{cookie:'__Secure-neon-auth.session_token=x',authorization:'Bearer a.b.c'}})]),
+      request(`${ORIGIN}${route}`,{method:ROUTES[route].method,headers:{cookie:`${APP_SESSION_COOKIE}=x`,authorization:'Bearer a.b.c'}})]),
     request(`${ORIGIN}/api/auth/get-session`,{mode:'no-cors'}),request(`${ORIGIN}/pool-platform/api/auth/get-session`),request(`${ORIGIN}/api/auth/unknown`)
   ];
   for(const r of untouched){
@@ -1072,7 +1072,7 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
 
   test('real bundled SDK: a live build served by scripts/serve.mjs at localhost signs in far enough to send a code, through the same-origin Auth proxy only, under the production CSP',{skip:ESBUILD?false:'run npm ci in pool-platform to bundle the real SDK'},async()=>{
     const work=fs.mkdtempSync(path.join(os.tmpdir(),'pool-platform-live-')),dist=path.join(work,'dist');
-    const UPSTREAM='https://ep-example-000000.neonauth.c-0.us-east-2.aws.neon.test/neondb/auth',DATA='https://data.pool.test/neondb/rest/v1';
+    const UPSTREAM='https://ep-example-000000.neonauth.c-0.us-east-2.aws.neon.tech/neondb/auth',DATA='https://data.pool.test/neondb/rest/v1';
     // Stand-in Neon Auth behind the proxy: no session yet, and an Email OTP send that succeeds.
     const upstream=[];
     const upstreamFetch=async(url,init)=>{
@@ -1154,5 +1154,143 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
         assert.equal(upstream.length,before,'nothing from another origin reached Neon');
       }finally{await local.close();await new Promise(resolve=>{other.close(()=>resolve());other.closeAllConnections()})}
     }finally{fs.rmSync(work,{recursive:true,force:true})}
+  });
+
+  test('real bundled SDK: signed in through the proxy and a stand-in Neon Auth, Chromium holds only the app\'s __Host- cookie, no script reads the session, the JWT is the Data API bearer, a planted duplicate fails closed, and sign-out deletes the cookie',{skip:ESBUILD?false:'run npm ci in pool-platform to bundle the real SDK'},async()=>{
+    const work=fs.mkdtempSync(path.join(os.tmpdir(),'pool-platform-cookie-')),dist=path.join(work,'dist');
+    const UPSTREAM='https://ep-example-000000.neonauth.c-0.us-east-2.aws.neon.tech/neondb/auth',DATA='https://data.pool.test/neondb/rest/v1';
+    // Synthetic shapes only. The stand-in answers like Neon's Better Auth: its own Partitioned, SameSite=None session
+    // cookie, the opaque token in the body and in set-auth-token, the JWT in set-auth-jwt. It accepts one synthetic
+    // code; no code is ever sent anywhere.
+    const TOKEN='SynthSessTokenAbcdefghijklmn0123',SIGNED=`${TOKEN}.c3ludGhldGljLXNpZ25hdHVyZQ%3D%3D`,PLANTED='PlantedSessTokenZyxwvutsrq98765.cGxhbnRlZA%3D%3D';
+    const b64=value=>Buffer.from(JSON.stringify(value)).toString('base64url');
+    const JWT=`${b64({alg:'EdDSA',typ:'JWT'})}.${b64({sub:'user-1',role:'authenticated'})}.c2hhcGUtb25seS1zaWduYXR1cmU`;
+    const USER={id:'user-1',email:'player@example.test',emailVerified:true,name:'Player'};
+    const neonCookie=value=>`${UPSTREAM_SESSION_COOKIE}=${value}; Max-Age=${value?604800:0}; Path=/; HttpOnly; Secure; SameSite=None; Partitioned`;
+    const upstream=[];
+    const upstreamFetch=async(url,init)=>{
+      const call={path:url.slice(UPSTREAM.length),cookie:new Headers(init.headers).get('cookie'),body:init.body??null};
+      upstream.push(call);
+      const headers=new Headers({'content-type':'application/json','access-control-allow-origin':'https://evil.example.test','access-control-allow-credentials':'true'});
+      if(call.path==='/get-session'){
+        if(call.cookie!==`${UPSTREAM_SESSION_COOKIE}=${SIGNED}`)return new Response('null',{status:200,headers});
+        headers.set('set-auth-jwt',JWT);headers.set('set-auth-token',TOKEN);headers.append('set-cookie',neonCookie(SIGNED));
+        return new Response(JSON.stringify({session:{id:'sess-1',userId:'user-1',token:TOKEN,expiresAt:'2030-01-01T00:00:00.000Z'},user:USER}),{status:200,headers});
+      }
+      if(call.path==='/email-otp/send-verification-otp')return new Response('{"success":true}',{status:200,headers});
+      if(call.path==='/sign-in/email-otp'){
+        if(JSON.parse(call.body).otp!=='123456')return new Response('{"code":"INVALID_OTP","message":"Invalid OTP"}',{status:400,headers});
+        headers.set('set-auth-token',TOKEN);headers.append('set-cookie',neonCookie(SIGNED));
+        return new Response(JSON.stringify({token:TOKEN,user:USER}),{status:200,headers});
+      }
+      if(call.path==='/sign-out'){headers.append('set-cookie',neonCookie(''));return new Response('{"success":true}',{status:200,headers})}
+      return new Response('{}',{status:404,headers});
+    };
+    // Another port of the same host. Cookies are not isolated by port, and __Host- cannot stop that host from adding a
+    // second, Partitioned cookie of the same name, which Chromium then sends to the app beside the genuine one.
+    const planter=http.createServer((req,res)=>{
+      const cookie={'/plant':`${APP_SESSION_COOKIE}=${PLANTED}; Path=/; Secure; HttpOnly; SameSite=None; Partitioned`,
+        '/unplant':`${APP_SESSION_COOKIE}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=None; Partitioned`}[req.url];
+      res.writeHead(cookie?200:404,{'content-type':'text/plain; charset=utf-8',...(cookie?{'set-cookie':cookie}:{})}).end('planter');
+    });
+    await new Promise(resolve=>planter.listen(0,'127.0.0.1',resolve));
+    try{
+      await buildCommercialFrontend({outDir:dist,env:{POOL_PLATFORM_MODE:'live',POOL_PLATFORM_DATA_URL:DATA,POOL_PLATFORM_DEFAULT_POOL_SLUG:'it-pool'}});
+      const lines=[];
+      const local=await startServer({dir:dist,port:0,log:line=>lines.push(line),env:{POOL_PLATFORM_MODE:'live',POOL_PLATFORM_AUTH_UPSTREAM_URL:UPSTREAM},upstreamFetch});
+      try{
+        const origin=new URL(local.url).origin,plant=`http://localhost:${planter.address().port}`;
+        const context=await browser.newContext({serviceWorkers:'block'});contexts.push(context);
+        const page=await context.newPage(),errors=[],escaped=[],bearers=[],auth=[];
+        page.on('pageerror',error=>errors.push(error.message));
+        page.on('response',response=>{
+          const url=new URL(response.url());
+          if(url.origin===origin&&url.pathname.startsWith('/api/auth/'))auth.push(`${response.request().method()} ${url.pathname} ${response.status()}`);
+        });
+        await context.route(/neonauth/,route=>{escaped.push(route.request().url());return route.abort()});
+        // The Data API (cross-origin): record the bearer each RPC carries and answer pool_not_found, the page's empty state.
+        await context.route('https://data.pool.test/**',route=>{
+          const request=route.request(),cors={'access-control-allow-origin':origin,'access-control-allow-headers':'authorization, content-type, accept','access-control-allow-methods':'POST'};
+          if(request.method()==='OPTIONS')return route.fulfill({status:204,headers:cors});
+          bearers.push(request.headers().authorization??null);
+          return route.fulfill({status:400,contentType:'application/json',headers:cors,body:'{"message":"pool_not_found"}'});
+        });
+        const sessionCookies=async()=>(await context.cookies()).filter(c=>c.name===APP_SESSION_COOKIE).map(c=>c.value).sort();
+        await page.goto(`${local.url}participant.html`);
+        await page.locator('#authCard').waitFor({state:'visible'});
+        assert.deepEqual(await context.cookies(),[]);
+        // 1. Sign in through the proxy.
+        await page.fill('#email','player@example.test');await page.click('#sendCode');
+        await page.locator('#otpWrap').waitFor({state:'visible'});
+        await page.fill('#otp','123456');await page.click('#verifyCode');
+        await page.locator('#emptyCard').waitFor({state:'visible'});
+        assert.equal(await page.isVisible('#signOut'),true);
+        // 2, 3. Exactly one cookie: the app's own, HttpOnly, Secure, SameSite=Strict, Path=/, host-only, not partitioned.
+        // Neon's cookie name is never stored.
+        const cookies=await context.cookies();
+        assert.deepEqual(cookies.map(({name,value,domain,path,secure,httpOnly,sameSite,partitionKey})=>({name,value,domain,path,secure,httpOnly,sameSite,partitionKey})),
+          [{name:APP_SESSION_COOKIE,value:SIGNED,domain:'localhost',path:'/',secure:true,httpOnly:true,sameSite:'Strict',partitionKey:undefined}]);
+        assert.equal(cookies.some(c=>c.name===UPSTREAM_SESSION_COOKIE||c.name.includes('neon')),false);
+        // 6, 7. What a script can read of the session: no cookie, no opaque token, no cookie value; only the JWT from
+        // set-auth-jwt, which the SDK keeps.
+        const seen=await page.evaluate(async()=>{const r=await fetch('/api/auth/get-session');return{status:r.status,headers:[...r.headers],body:await r.text(),cookie:document.cookie}});
+        assert.equal(seen.status,200);
+        assert.equal(seen.cookie,'');
+        assert.equal(JSON.stringify(seen).includes(TOKEN),false,'neither the opaque token nor the cookie value, which begins with it');
+        assert.deepEqual(seen.headers.filter(([name])=>['set-auth-jwt','set-auth-token','set-cookie'].includes(name)),[['set-auth-jwt',JWT]]);
+        assert.deepEqual(Object.keys(JSON.parse(seen.body).session).sort(),['expiresAt','id','userId']);
+        // 8. The Data API bearer is the JWT, never the opaque token.
+        assert.ok(bearers.length>=1);
+        assert.deepEqual([...new Set(bearers)],[`Bearer ${JWT}`]);
+        // A reload stays signed in: the app cookie's value travels upstream under Neon's name.
+        await page.reload();
+        await page.locator('#emptyCard').waitFor({state:'visible'});
+        assert.equal(upstream.filter(c=>c.path==='/get-session').at(-1).cookie,`${UPSTREAM_SESSION_COOKIE}=${SIGNED}`);
+        // 4. A planted duplicate: both cookies now reach the app, and the proxy uses neither. The page confirms no session
+        // and shows the proxy's refusal (its get-session failure notice), a sign-out request is refused too, nothing
+        // reaches Neon or the Data API, and no cookie is set or deleted.
+        const planterPage=await context.newPage();
+        await planterPage.goto(`${plant}/plant`);
+        assert.deepEqual(await sessionCookies(),[PLANTED,SIGNED].sort());
+        const [upstreamBefore,bearersBefore]=[upstream.length,bearers.length];
+        await page.reload();
+        await page.locator('#sessionError').waitFor({state:'visible'});
+        assert.equal(await page.textContent('#sessionError'),'Sign-in could not be confirmed. Clear this site\'s cookies, then sign in again.');
+        assert.equal(await page.isVisible('#signOut'),false,'signed in as neither');
+        assert.equal(await page.isVisible('#emptyCard'),false);
+        const refused=await page.evaluate(async()=>{const r=await fetch('/api/auth/sign-out',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});return{status:r.status,body:await r.text()}});
+        assert.equal(refused.status,401);
+        assert.equal(refused.body.includes(PLANTED.split('.')[0])||refused.body.includes(TOKEN),false);
+        assert.deepEqual([upstream.length,bearers.length],[upstreamBefore,bearersBefore],'neither value reached Neon, and no RPC was made');
+        assert.deepEqual(await sessionCookies(),[PLANTED,SIGNED].sort(),'nothing was set or deleted');
+        // The planted cookie removed, the untouched genuine one is signed in again.
+        await planterPage.goto(`${plant}/unplant`);
+        await planterPage.close();
+        assert.deepEqual(await sessionCookies(),[SIGNED]);
+        await page.reload();
+        await page.locator('#emptyCard').waitFor({state:'visible'});
+        // 5. Sign-out deletes the app cookie, and Neon is asked under its own cookie name.
+        await page.click('#signOut');
+        await page.locator('#authCard').waitFor({state:'visible'});
+        assert.deepEqual(await context.cookies(),[]);
+        assert.deepEqual([upstream.at(-1).path,upstream.at(-1).cookie],['/sign-out',`${UPSTREAM_SESSION_COOKIE}=${SIGNED}`]);
+        const afterOut=upstream.length;
+        await page.reload();
+        await page.locator('#authCard').waitFor({state:'visible'});
+        assert.equal(upstream.length,afterOut,'signed out: answered without asking Neon');
+        // Over the whole run: Neon only ever saw its own session cookie with the genuine value, never the planted one.
+        for(const call of upstream)assert.ok(call.cookie===null||call.cookie===`${UPSTREAM_SESSION_COOKIE}=${SIGNED}`,JSON.stringify(call));
+        assert.ok(auth.includes('GET /api/auth/get-session 401')&&auth.includes('POST /api/auth/sign-out 401'),JSON.stringify(auth));
+        assert.deepEqual([...new Set(auth.map(entry=>entry.split(' ').slice(0,2).join(' ')))].sort(),
+          ['GET /api/auth/get-session','POST /api/auth/email-otp/send-verification-otp','POST /api/auth/sign-in/email-otp','POST /api/auth/sign-out']);
+        assert.ok(lines.includes('AUTH GET get-session 401 cookie-conflict')&&lines.includes('AUTH POST sign-out 401 cookie-conflict'));
+        assert.equal(lines.some(line=>line.includes(TOKEN)||line.includes('Planted')||line.includes(JWT)),false);
+        assert.deepEqual(escaped,[],'no request to a Neon Auth host reached the network');
+        assert.deepEqual(errors,[]);
+      }finally{await local.close()}
+    }finally{
+      await new Promise(resolve=>{planter.close(()=>resolve());planter.closeAllConnections()});
+      fs.rmSync(work,{recursive:true,force:true});
+    }
   });
 });
