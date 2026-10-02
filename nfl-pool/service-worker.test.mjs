@@ -26,7 +26,7 @@ const httpResponse=status=>{const response={status,ok:status>=200&&status<300,cl
 const cache={addAll:async assets=>{added=Array.from(assets)},put:async(request,response)=>{putCalls.push({request,response})}};
 const caches={
   open:async name=>{opened.push(name);return cache},
-  keys:async()=>['pool-center-shell-v12','pool-center-shell-v13'],
+  keys:async()=>['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14'],
   delete:async key=>{deleted.push(key);return true},
   match:async key=>{matchCalls.push(key);return cached.get(typeof key==='string'?key:key.url)}
 };
@@ -44,20 +44,23 @@ listeners.install({waitUntil:p=>{installPromise=p}});await installPromise;
 assert(added.includes('./public-math.js?v=2'));
 assert(added.includes('./survivor-math.js?v=5'));
 assert(!added.some(x=>x.startsWith('./admin')));
-// HDC-05 changes only the shell cache name: install still precaches exactly the public shell it did before, in the same
-// order and with the same module versions, and writes it to pool-center-shell-v13.
+// HDC-05 and its corrective change only the shell cache name: install still precaches exactly the public shell it did
+// before, in the same order and with the same module versions, and writes it to pool-center-shell-v14.
 assert.deepEqual(added,[
   './','./index.html','./style.css?v=premium-v3','./slate.css?v=slate-v1','./weekly.css?v=premium-v2',
   './weekly-app.js?v=weekly-v13','./public-math.js?v=2','./survivor.css?v=3','./survivor-app.js?v=5','./survivor-math.js?v=5',
   './score-feed-proxy.js?v=2','./pwa.js?v=1','./manifest.webmanifest',
   './assets/pool-center-icon.svg','./assets/pool-center-icon-192.svg','./assets/pool-center-icon-512.svg'
 ],'the precached public shell must be unchanged');
-assert.deepEqual(opened,['pool-center-shell-v13'],'install must write the shell to pool-center-shell-v13');
+assert.deepEqual(opened,['pool-center-shell-v14'],'install must write the shell to pool-center-shell-v14');
 
 let activatePromise;
 listeners.activate({waitUntil:p=>{activatePromise=p}});await activatePromise;
-// HDC-05 rolls the shell cache so a v12 cache that may hold runtime-cached Admin modules is deleted on activation.
-assert.deepEqual(deleted,['pool-center-shell-v12']);
+// HDC-05 rolls the shell cache so a v12 cache that may hold runtime-cached Admin modules is deleted on activation. Its
+// corrective rolls it again: v13 was filled while noncanonical Admin paths (/nfl-pool//admin/, /nfl-pool/%61dmin/, ...)
+// still reached networkFirst, so v13 may hold runtime-cached Admin modules under those paths and is deleted too. Only the
+// new shell cache, pool-center-shell-v14, is kept.
+assert.deepEqual(deleted,['pool-center-shell-v12','pool-center-shell-v13'],'activation must delete v12 and v13 and keep only v14');
 
 const adminRequest={method:'GET',mode:'navigate',url:'https://example.test/nfl-pool/admin/survivor.html'};
 let adminResponse;
@@ -720,8 +723,8 @@ for(const path of ['/nfl-pool/admin/x%2F..%2F..%2Fstyle.css?v=premium-v3','/nfl-
   // answers the first with the public stylesheet). It is direct network in every request mode, never a cached copy.
   for(const mode of allModes)await assertDirectNetwork(ncLoad(path,mode,'/nfl-pool/admin/'),`${path} (${mode})`);
 }
-// Every cache the HDC-05 worker opened, at install and before each runtime cache.put above, is pool-center-shell-v13.
+// Every cache the worker opened, at install and before each runtime cache.put above, is pool-center-shell-v14.
 assert.equal(opened.length,1+putCalls.length,'install and each runtime cache.put open the shell cache once');
-assert.deepEqual([...new Set(opened)],['pool-center-shell-v13'],'the worker must write only to pool-center-shell-v13');
+assert.deepEqual([...new Set(opened)],['pool-center-shell-v14'],'the worker must write only to pool-center-shell-v14');
 
 console.log('service-worker precache graph, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');
