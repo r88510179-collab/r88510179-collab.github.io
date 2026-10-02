@@ -557,8 +557,171 @@ for(const path of ['/nfl-pool/administrator','/nfl-pool/administer','/nfl-pool/a
   }
   await assertExactNavigation(path);
 }
+
+// Noncanonical Admin paths (NC). GitHub Pages also serves the Admin directory at spellings other than /nfl-pool/admin/:
+// it decodes each %XX escape once, merges repeated slashes and then removes dot segments, so /nfl-pool//admin/,
+// /nfl-pool///admin/, /nfl-pool/%61dmin/, /nfl-pool/a%64min/, /nfl-pool%2Fadmin/ and /nfl-pool/x%2F..%2Fadmin/ all return
+// the real Admin page and modules (checked against production with read-only GETs). An Admin page opened at such a path
+// loads its modules and stylesheet relative to it, under the same spelling. Every such request is Admin and gets exactly
+// the direct-network behavior of the canonical path, fetched as it was made; paths that only look similar, and the shared
+// public resources such a page loads, keep their existing routing.
+const ncLoad=(path,mode,referrer='/nfl-pool//admin/')=>({method:'GET',mode,url:`https://example.test${path}`,referrer:`https://example.test${referrer}`});
+const allModes=['navigate','cors','no-cors','same-origin'];
+{
+  // NC-A. The production defect. With a stale copy of the Pick'em Admin module cached under the spelling its page at
+  // /nfl-pool//admin/ requests, a success must be returned without being cached, and an HTTP 503 must be returned as the
+  // 503 itself, never answered with the stale copy of write-capable Admin code.
+  const request=ncLoad('/nfl-pool//admin/admin.js?v=10','cors'),stale=httpResponse(200),fresh=httpResponse(200),unavailable=httpResponse(503);
+  const answered=response=>response===stale?'the stale cached copy':response===fresh?'the network HTTP 200':response===unavailable?'the network HTTP 503':'another response';
+  cached.set(request.url,stale);
+  network=()=>fresh;
+  const healthy=await route(request);
+  network=()=>unavailable;
+  const failed=await route(request);
+  cached.delete(request.url);
+  assert.deepEqual({
+    'HTTP 200 answered with':answered(healthy.result),'HTTP 200 cache.put calls':healthy.put.length,
+    'HTTP 503 answered with':answered(failed.result),'HTTP 503 caches.match calls':failed.matched.length
+  },{
+    'HTTP 200 answered with':'the network HTTP 200','HTTP 200 cache.put calls':0,
+    'HTTP 503 answered with':'the network HTTP 503','HTTP 503 caches.match calls':0
+  },'/nfl-pool//admin/admin.js?v=10 is Admin: it must be direct network, never cached and never answered from the cache');
+}
+for(const path of ['/nfl-pool//admin/','/nfl-pool//admin/admin.js?v=10','/nfl-pool///admin/parser-core.js?v=11']){
+  // NC-B. The repeated-slash Admin directory and the modules its page loads, in every request mode: a success is not
+  // cached, an HTTP 404/500/503 or a redirect is returned exactly and a thrown fetch rejects, with a stale copy of the
+  // resource and the shell both cached. Two slashes or three make no difference.
+  for(const mode of allModes)await assertDirectNetwork(ncLoad(path,mode),`${path} (${mode})`);
+}
+for(const path of ['/nfl-pool/%61dmin/','/nfl-pool/%61dmin/admin.js?v=10','/nfl-pool/a%64min/','/nfl-pool/a%64min/parser-core.js?v=11']){
+  // NC-C. A percent-encoded letter of "admin" names the same directory, in every request mode, for the directory itself
+  // and for its modules alike.
+  for(const mode of allModes)await assertDirectNetwork(ncLoad(path,mode,'/nfl-pool/%61dmin/'),`${path} (${mode})`);
+}
+for(const prefix of [
+  '/nfl-pool//admin/','/nfl-pool///admin/','/nfl-pool////admin/','//nfl-pool/admin/','/nfl-pool//admin//',
+  '/nfl-pool/%61dmin/','/nfl-pool/a%64min/','/nfl-pool/%61%64%6D%69%6E/','/nfl-pool/%61%64%6d%69%6e/',
+  '/nfl-pool%2Fadmin/','/nfl-pool/admin%2F','/nfl-pool%2F%2Fadmin%2F','/nfl-pool/.%2Fadmin/',
+  '/nfl-pool/x%2F..%2Fadmin/','/nfl-pool/x%2F%2E%2E%2Fadmin/','/nfl-pool/x//..%2Fadmin/'
+]){
+  // NC-D. Every current Admin page, module and stylesheet, in the mode its page requests it, under each spelling Pages
+  // resolves to /nfl-pool/admin/: repeated slashes anywhere, encoded letters in either hex case, an encoded slash, an
+  // encoded single-dot segment, and an encoded dot-dot segment that climbs back into the Admin directory (Pages merges
+  // repeated slashes before removing it).
+  for(const [file,mode] of [
+    ['index.html','navigate'],['survivor.html','navigate'],['admin.css?v=premium-v3','no-cors'],
+    ['admin.js?v=10','cors'],['parser-core.js?v=11','cors'],['survivor-admin.js?v=3','cors'],
+    ['survivor-parser.js?v=3','cors'],['survivor-publish-checks.js?v=2','cors']
+  ])await assertDirectNetwork(ncLoad(prefix+file,mode,prefix),`${prefix}${file} (${mode})`);
+}
+for(const path of ['/nfl-pool//admin/%E0%A4%A.js','/nfl-pool/%61dmin/%ZZ.js','/nfl-pool/a%64min/%','/nfl-pool//admin/%C3.css']){
+  // NC-E. A malformed escape (a % without two hex digits after it, or an incomplete UTF-8 sequence) is one that
+  // decodeURIComponent cannot decode. It must never throw out of the fetch handler: it stays literal text and the rest of
+  // the path is still classified, so a request inside the Admin directory stays Admin and direct network (Pages answers
+  // such a path HTTP 400, which reaches the page exactly) ...
+  for(const mode of ['cors','navigate'])await assertDirectNetwork(ncLoad(path,mode),`${path} (${mode})`);
+}
+for(const path of ['/nfl-pool/%ZZ/style.css','/nfl-pool//%E0%A4%A.css','/nfl-pool/adm%ZZin/admin.js','/nfl-pool/%61dm%ZZin/x.js']){
+  // ... while a malformed escape anywhere else, including inside what would be the "admin" segment, does not make a
+  // public request Admin: as a subresource it keeps networkFirst, and as a navigation the exact network result.
+  await assertNetworkFirst(asset(path),path);
+  await assertExactNavigation(path);
+}
+for(const path of [
+  '/nfl-pool//administrator/','/nfl-pool//admin-old.js','/nfl-pool//admin2/',
+  '/nfl-pool/%61dministrator/','/nfl-pool/%61dmin-old.js','/nfl-pool/%61dmin2/',
+  '/nfl-pool/%2561dmin/admin.js?v=10','/nfl-pool/Admin/admin.js?v=10','/nfl-pool/admin%5Cadmin.js?v=10',
+  '/nfl-pool//..%2Fadmin/admin.js?v=10','/nfl-pool/admin%2F..%2Fstyle.css?v=premium-v3'
+]){
+  // NC-F. Normalization does not widen the boundary. Siblings that merely begin with "admin" stay public however they are
+  // spelled, and so do the spellings Pages itself does not resolve into the Admin directory: a double-encoded escape
+  // (decoded once, it is %61dmin), another letter case, an encoded backslash, a dot segment that climbs out of /nfl-pool/
+  // before "admin" (the slashes merge first, so it lands on /admin/) and one that climbs out of the Admin directory to a
+  // public file. As subresources they keep networkFirst with their own cached copy as the only fallback, and as
+  // navigations the exact network result.
+  await assertNetworkFirst(asset(path),path);
+  await assertExactNavigation(path);
+}
+for(const query of ['from=/nfl-pool//admin/','from=/nfl-pool/%61dmin/','from=%2Fnfl-pool%2F%2Fadmin%2F']){
+  // NC-G. A noncanonical Admin spelling that appears only in the query string does not make a public request Admin: the
+  // public asset keeps networkFirst and the public document keeps the HDC-02 shell fallback.
+  await assertNetworkFirst(asset(`/nfl-pool/style.css?v=premium-v3&${query}`),`a public asset with ${query} in its query`);
+  const request=page(`/nfl-pool/?view=home&${query}`),unavailable=httpResponse(503);
+  network=()=>unavailable;
+  const seen=await route(request);
+  assert.equal(seen.result,fallback,`${query} in the query string must not take a public document out of the shell fallback`);
+  assert.deepEqual(seen.matched,[request,'./index.html']);
+  assert.deepEqual(seen.put,[]);
+}
+for(const request of [
+  {method:'POST',mode:'cors',url:'https://example.test/nfl-pool//admin/admin.js?v=10'},
+  {method:'POST',mode:'navigate',url:'https://example.test/nfl-pool/%61dmin/'},
+  {method:'GET',mode:'cors',url:'https://cdn.example/nfl-pool//admin/admin.js?v=10'},
+  {method:'GET',mode:'cors',url:'https://cdn.example/nfl-pool/%61dmin/admin.js?v=10'}
+]){
+  // NC-H. Normalization runs after the existing GET and same-origin checks: a non-GET request and another origin's
+  // noncanonical Admin-shaped path are still left to the browser, untouched by the worker.
+  network=()=>okResponse;
+  const seen=await route(request);
+  assert.deepEqual(seen.fetched,[],`${request.method} ${request.url} must not be handled by the worker`);
+  assert.equal(seen.result,undefined);
+  assert.deepEqual(seen.matched,[]);
+  assert.deepEqual(seen.put,[]);
+}
+for(const [path,mode,referrer] of [
+  ['/nfl-pool//style.css?v=premium-v3','no-cors','/nfl-pool//admin/'],
+  ['/nfl-pool//slate.css?v=slate-v1','no-cors','/nfl-pool//admin/'],
+  ['/nfl-pool//score-feed-proxy.js?v=2','no-cors','/nfl-pool//admin/'],
+  ['/nfl-pool//pwa.js?v=1','no-cors','/nfl-pool//admin/'],
+  ['/nfl-pool//assets/pool-center-icon.svg','no-cors','/nfl-pool//admin/'],
+  ['/nfl-pool//manifest.webmanifest','cors','/nfl-pool//admin/'],
+  ['/nfl-pool//survivor-math.js?v=4','cors','/nfl-pool//admin/survivor-publish-checks.js?v=2'],
+  ['/nfl-pool///style.css?v=premium-v3','no-cors','/nfl-pool///admin/'],
+  ['/nfl-pool///survivor-math.js?v=4','cors','/nfl-pool///admin/survivor-publish-checks.js?v=2'],
+  ['/nfl-pool/style.css?v=premium-v3','no-cors','/nfl-pool/%61dmin/'],
+  ['/nfl-pool/slate.css?v=slate-v1','no-cors','/nfl-pool/%61dmin/'],
+  ['/nfl-pool/score-feed-proxy.js?v=2','no-cors','/nfl-pool/%61dmin/'],
+  ['/nfl-pool/pwa.js?v=1','no-cors','/nfl-pool/%61dmin/'],
+  ['/nfl-pool/survivor-math.js?v=4','cors','/nfl-pool/%61dmin/survivor-publish-checks.js?v=2'],
+  ['/nfl-pool/manifest.webmanifest','cors','/nfl-pool/%61dmin/'],
+  ['/nfl-pool/weekly-app.js?v=weekly-v13','cors','/nfl-pool/'],
+  ['/nfl-pool/assets/pool-center-icon-192.svg','no-cors','/nfl-pool/'],
+  ['/nfl-pool/assets/pool-center-icon-512.svg','no-cors','/nfl-pool/']
+]){
+  // NC-I. The shared public resources a noncanonical Admin page loads are not Admin: by ../ from /nfl-pool//admin/ they
+  // keep the repeated slash, from /nfl-pool/%61dmin/ they are the canonical public files. Like the rest of the public
+  // static shell they keep networkFirst with their own cached copy as the only fallback.
+  await assertNetworkFirst(ncLoad(path,mode,referrer),`${path} requested by ${referrer}`);
+}
+for(const path of ['/nfl-pool//','/nfl-pool//index.html','/nfl-pool///?view=home','/nfl-pool/%69ndex.html','/nfl-pool/index%2Ehtml']){
+  // NC-J. Only the Admin gate reads the normalized path. The Pool Center document is still exactly /nfl-pool/ or
+  // /nfl-pool/index.html as written (its relative assets resolve only there), so another spelling of either is not a
+  // document path: it gets the exact network result, never the shell or a cached copy, and nothing is cached for it.
+  const request=page(path);
+  cached.set(request.url,httpResponse(200));
+  assert.equal(cached.get('./index.html'),fallback,'the Pool Center shell is cached for this regression');
+  for(const response of [httpResponse(404),httpResponse(503),httpResponse(200)]){
+    network=()=>response;
+    const seen=await route(request);
+    assert.equal(seen.result,response,`${outcome(response)} for ${path} must be returned unchanged`);
+    assert.deepEqual(seen.fetched,[request]);
+    assert.deepEqual(seen.matched,[],`${path} is not a document path and must not call caches.match`);
+    assert.deepEqual(seen.put,[],`${path} is not a document path and must not call cache.put`);
+  }
+  network=()=>{throw offline};
+  const seen=await route(request);
+  assert.equal(seen.error,offline,`offline ${path} must reject with the original network error, never the shell`);
+  assert.deepEqual(seen.matched,[]);
+  cached.delete(request.url);
+}
+for(const path of ['/nfl-pool/admin/x%2F..%2F..%2Fstyle.css?v=premium-v3','/nfl-pool/admin/%2E%2E%2Fslate.css?v=slate-v1','/nfl-pool/admin/..%2F..%2Findex.html']){
+  // NC-K. Normalization only adds Admin spellings and never removes one: a pathname that begins /nfl-pool/admin/ as
+  // written stays Admin, as HDC-05 made it, even where an encoded dot segment reads it out of the Admin directory (Pages
+  // answers the first with the public stylesheet). It is direct network in every request mode, never a cached copy.
+  for(const mode of allModes)await assertDirectNetwork(ncLoad(path,mode,'/nfl-pool/admin/'),`${path} (${mode})`);
+}
 // Every cache the HDC-05 worker opened, at install and before each runtime cache.put above, is pool-center-shell-v13.
 assert.equal(opened.length,1+putCalls.length,'install and each runtime cache.put open the shell cache once');
 assert.deepEqual([...new Set(opened)],['pool-center-shell-v13'],'the worker must write only to pool-center-shell-v13');
 
-console.log('service-worker precache graph, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation and Admin path boundary regressions passed');
+console.log('service-worker precache graph, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');
