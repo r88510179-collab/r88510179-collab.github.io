@@ -8,7 +8,7 @@ import {fileURLToPath} from 'node:url';
 import {extractAccessToken} from './auth-core.js';
 import {AUTH_PROXY_PATH} from './platform-client.js';
 import {
-  APP_SESSION_COOKIE,BODY_LIMIT,DELETE_SESSION_COOKIE,PROXY_PREFIX,ROUTES,SECURITY_HEADERS,UPSTREAM_SESSION_COOKIE,createAuthProxy,
+  APP_SESSION_COOKIE,BODY_LIMIT,DELETE_SESSION_COOKIE,PROXY_PREFIX,ROUTES,SECURITY_HEADERS,UPSTREAM_SESSION_COOKIE,authUpstreamUrl,createAuthProxy,
   emailKey,proxyConfigFromEnv,sessionCookie,sessionCookieValue,stripTokens
 } from './server/auth-proxy-core.mjs';
 import vercelDefault,{canonicalAuthRequest,createVercelHandler} from './api/auth.mjs';
@@ -130,6 +130,31 @@ test('the upstream host must be a Neon Auth host ending in neon.tech, matched la
     const config=proxyConfigFromEnv({...ENV,POOL_PLATFORM_AUTH_UPSTREAM_URL:url});
     assert.equal(config.enabled,false,url);
     assert.doesNotMatch(config.reason,/attacker|still-recipe|ep-x/,'the rejected value is never repeated');
+    const up=upstream();
+    assert.equal((await createAuthProxy({config,fetch:up.fetch})(getSession())).status,404,url);
+    assert.deepEqual(up.calls,[]);
+  }
+});
+
+test('the upstream auth URL uses the default HTTPS port only: no explicit port is accepted, a non-default port (and the explicit default :443) is refused, and nothing reaches Neon',async()=>{
+  // No explicit port: accepted. The production-style host must keep working.
+  for(const url of ['https://ep-still-recipe-b5g7680z.neonauth.c-7.us-east-2.aws.neon.tech/neondb/auth','https://ep-x.neonauth.c-7.aws.neon.tech/neondb/auth']){
+    assert.deepEqual({...proxyConfigFromEnv({...ENV,POOL_PLATFORM_AUTH_UPSTREAM_URL:url})},{enabled:true,upstreamUrl:url,appOrigin:APP},url);
+    assert.equal(authUpstreamUrl(url),url);
+  }
+  // A non-default explicit port is refused, on a Neon Auth host and on an attacker/lookalike host alike; the explicit
+  // default :443 stays refused by canonicalization (the URL parser strips it, so the value is not canonical).
+  const ports=[
+    'https://ep-still-recipe-b5g7680z.neonauth.c-7.us-east-2.aws.neon.tech:8443/neondb/auth',
+    'https://ep-x.neonauth.c-7.aws.neon.tech:8443/neondb/auth','https://ep-x.neonauth.c-7.aws.neon.tech:444/neondb/auth',
+    'https://ep-x.neonauth.c-7.us-east-2.aws.neon.tech:443/neondb/auth','https://ep-x.neonauth.c-7.aws.neon.tech:80/neondb/auth',
+    'https://x.neonauth.attacker.example:8443/neondb/auth','https://attacker.example:8443/ep-x.neonauth.c-7.aws.neon.tech/auth'
+  ];
+  for(const url of ports){
+    assert.throws(()=>authUpstreamUrl(url),/default HTTPS port|canonical/,url);
+    const config=proxyConfigFromEnv({...ENV,POOL_PLATFORM_AUTH_UPSTREAM_URL:url});
+    assert.equal(config.enabled,false,url);
+    assert.doesNotMatch(config.reason,/attacker|still-recipe|8443|444/,'the rejected value and its port are never repeated');
     const up=upstream();
     assert.equal((await createAuthProxy({config,fetch:up.fetch})(getSession())).status,404,url);
     assert.deepEqual(up.calls,[]);
@@ -416,6 +441,69 @@ test('the app session cookie more than once in a request fails closed on every r
   assert.equal(await (await handle(getSession({cookie:'theme=dark'}))).text(),'null');
   assert.deepEqual(up.calls,[]);
   assert.deepEqual((await handle(getSession({cookie:`theme=dark; ${APP_SESSION_COOKIE}=${SIGNED}`}))).headers.getSetCookie(),[REISSUED]);
+  assert.deepEqual(up.calls.map(c=>c.headers.cookie),[`${UPSTREAM_SESSION_COOKIE}=${SIGNED}`]);
+});
+
+// Finding 1 (Corrective 2): cookie names are matched byte-exactly. The retired parser trimmed the name with
+// String.prototype.trim(), which removes Unicode whitespace (NBSP, VT, FF, CR, LF, BOM, ...); a sibling host that
+// planted a name like NBSP + __Host-pool-platform-session — which the browser keeps distinct from the __Host- cookie —
+// was then read by the proxy as the session, so its value was forwarded upstream (session fixation). Only ASCII SP and
+// HTAB (cookie OWS) are now trimmed, only the byte-exact name supplies a value, and a trim()-collapsing look-alike
+// fails the whole request closed, never supplying or being normalised into a session value.
+test('only the byte-exact cookie name supplies a session value: ASCII SP/HTAB are the only trimmed whitespace, every trim()-collapsing look-alike fails closed, and other non-exact names supply nothing',async()=>{
+  const A=APP_SESSION_COOKIE,OTHER='PlantedSessTokenZyxwvutsrq98765.cGxhbnRlZA%3D%3D';
+  // 1. ASCII cookie OWS (SP, HTAB) around the exact name and value is stripped, and the exact value is read.
+  for(const ows of [' ','\t','  ','\t ',' \t']){
+    assert.deepEqual(sessionCookieValue(`${ows}${A}${ows}=${ows}${SIGNED}${ows}`),{value:SIGNED,conflict:false},JSON.stringify(ows));
+    assert.deepEqual(sessionCookieValue(`theme=dark;${ows}${A}=${SIGNED}`),{value:SIGNED,conflict:false},JSON.stringify(ows));
+  }
+  // 2. The exact name once is read; the exact name more than once still fails closed (unchanged).
+  assert.deepEqual(sessionCookieValue(`${A}=${SIGNED}`),{value:SIGNED,conflict:false});
+  assert.deepEqual(sessionCookieValue(`${A}=${SIGNED}; ${A}=${OTHER}`),{value:null,conflict:true});
+  // 3. A non-exact name the retired trim() parser would have accepted (NBSP, VT, FF, CR, LF, other Unicode whitespace,
+  //    BOM), leading or trailing, alone or beside the genuine cookie: never a value, always fail closed. CR and LF are
+  //    representable here as string input though a browser can never place them in a header on the wire.
+  const collapsing={NBSP:' ',VT:'\u000B',FF:'\u000C',CR:'\r',LF:'\n',BOM:'﻿','EN QUAD':' ','IDEOGRAPHIC SPACE':'　','LINE SEP':' ','NARROW NBSP':' '};
+  for(const [label,ws] of Object.entries(collapsing)){
+    for(const header of [`${ws}${A}=${OTHER}`,`${A}${ws}=${OTHER}`,`${ws}${A}${ws}=${OTHER}`,`theme=dark; ${ws}${A}=${OTHER}`,
+      `${A}=${SIGNED}; ${ws}${A}=${OTHER}`,`${ws}${A}=${OTHER}; ${A}=${SIGNED}`]){
+      assert.deepEqual(sessionCookieValue(header),{value:null,conflict:true},`${label}: ${JSON.stringify(header)}`);
+    }
+  }
+  // 4. A non-exact name that trim() would NOT fold to the protected name supplies no value and is not a conflict: the
+  //    Neon upstream name, a case fold (never case-folded here), an added prefix/suffix, and Unicode look-alikes
+  //    (Cyrillic о, a hyphen look-alike, a fullwidth underscore) — none is normalised, none supplies a session.
+  for(const name of [UPSTREAM_SESSION_COOKIE,'__host-pool-platform-session','__HOST-pool-platform-session',`${A}x`,`x${A}`,
+    '__Host-poоl-platform-session','__Host‐pool-platform-session','＿_Host-pool-platform-session']){
+    assert.deepEqual(sessionCookieValue(`${name}=${SIGNED}`),{value:null,conflict:false},name);
+  }
+  // 5. Mixed unrelated cookies, the Neon upstream name among them, do not disturb the exact one.
+  assert.deepEqual(sessionCookieValue(`theme=dark; lang=en-US; ${A}=${SIGNED}; ${UPSTREAM_SESSION_COOKIE}=${OTHER}; other=1`),{value:SIGNED,conflict:false});
+  // 6. End to end: a planted look-alike fails closed on every route — 401, zero upstream, no Set-Cookie (not even by
+  //    sign-out), refused before the rate-limit hook, and no cookie value in the log — alone or beside the genuine one.
+  for(const planted of [` ${A}=${OTHER}`,`${A}=${SIGNED};  ${A}=${OTHER}`,`\u000C${A}=${OTHER}; other=1`]){
+    const seen=[];
+    const {handle,up,logs}=proxyWith(NEON,{rateLimit:async args=>{seen.push(args);return true}});
+    for(const request of [getSession({cookie:planted}),post(P.send,SEND,{cookie:planted}),post(P.verify,VERIFY,{cookie:planted}),post(P.out,{},{cookie:planted})]){
+      const response=await handle(request);
+      assert.equal(response.status,401,JSON.stringify(planted));
+      const text=await response.text();
+      assert.deepEqual(JSON.parse(text),{code:'UNAUTHORIZED',message:'Sign-in could not be confirmed. Clear this site\'s cookies, then sign in again.'});
+      for(const secret of [SIGNED,OTHER,TOKEN,'Planted',A])assert.equal(text.includes(secret),false,secret);
+      assert.deepEqual(response.headers.getSetCookie(),[],'nothing set, nothing deleted');
+      assert.deepEqual(accessControl(response),[]);
+      for(const [name,value] of Object.entries(SECURITY_HEADERS))assert.equal(response.headers.get(name),value,name);
+    }
+    assert.deepEqual(up.calls,[],'the planted value never reaches Neon');
+    assert.deepEqual(seen,[],'refused before the rate-limit hook');
+    assert.deepEqual(logs.map(l=>`${l.route} ${l.status} ${l.reason}`),['get-session 401 cookie-conflict','send-otp 401 cookie-conflict','verify-otp 401 cookie-conflict','sign-out 401 cookie-conflict']);
+    const log=JSON.stringify(logs);
+    for(const secret of [SIGNED,OTHER,TOKEN,'Planted'])assert.equal(log.includes(secret),false,secret);
+  }
+  // 7. The look-alike, not the genuine value, is what caused the refusals above: the genuine cookie alone still signs
+  //    in, and only its value travels upstream under Neon's name — the planted value is never laundered into it.
+  const {handle,up}=proxyWith();
+  assert.deepEqual((await handle(getSession({cookie:`${A}=${SIGNED}`}))).headers.getSetCookie(),[REISSUED]);
   assert.deepEqual(up.calls.map(c=>c.headers.cookie),[`${UPSTREAM_SESSION_COOKIE}=${SIGNED}`]);
 });
 

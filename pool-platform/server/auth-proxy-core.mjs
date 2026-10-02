@@ -30,8 +30,14 @@ export const PROXY_ENV=Object.freeze({
 });
 export const PROXY_PREFIX='/api/auth';
 // The browser's session cookie is the app's own, never Neon's, so the browser's cookie contract does not depend on what
-// Neon calls its cookie. The __Host- prefix makes browsers accept it only with Secure, Path=/ and no Domain: it is
-// bound to the app host, and no other host (a sibling subdomain included) can set or overwrite it.
+// Neon calls its cookie. The __Host- prefix makes a conforming browser refuse to set this EXACT name with a Domain or a
+// non-root Path, so a sibling subdomain cannot plant the protected cookie itself. It is not, on its own, a complete
+// isolation: a sibling host can still set a DIFFERENT, non-exact name that only looks like this one (a leading NBSP,
+// say), which the browser keeps distinct from the __Host- cookie and sends alongside it. The server therefore parses
+// cookie names exactly (sessionCookieValue): only the byte-exact name supplies a session value, a non-exact look-alike
+// never does, and an exact duplicate or a planted look-alike fails the request closed. Compromise of the exact app
+// host remains outside this protection; on localhost all ports share one host and cookie namespace, which stays a
+// local-gate operational concern (docs/HOSTING_ARCHITECTURE.md).
 export const APP_SESSION_COOKIE='__Host-pool-platform-session';
 // Neon Auth's session cookie, under the name Neon issues and reads today (whether that name is canonical and stable is
 // Neon question L, docs/HOSTING_ARCHITECTURE.md). It exists only between this proxy and the upstream: the session value
@@ -82,13 +88,16 @@ const REFUSALS=Object.freeze({
 // domain, so a "neonauth" label under any other domain, or neon.tech followed by more labels, is refused.
 const NEON_AUTH_HOST=/^ep-[a-z0-9]+(?:-[a-z0-9]+)*\.neonauth(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)+\.neon\.tech$/;
 
-// The Neon Auth base URL: canonical https (as endpointUrl() requires of every endpoint), a Neon Auth host and a
-// /<database>/auth path with no trailing slash, so appending a fixed endpoint path can only ever produce
-// <base>/<endpoint>.
+// The Neon Auth base URL: canonical https (as endpointUrl() requires of every endpoint), a Neon Auth host on the
+// default HTTPS port, and a /<database>/auth path with no trailing slash, so appending a fixed endpoint path can only
+// ever produce <base>/<endpoint>. endpointUrl() already rejects a non-canonical value, which strips an explicit :443
+// (so https://host:443/... is refused as non-canonical, preserving the default-port canonicalisation); here we
+// additionally refuse any explicit non-default port such as :8443 or :444, which the URL parser keeps. url.port is the
+// empty string exactly when the port is the HTTPS default.
 export function authUpstreamUrl(raw){
   const href=endpointUrl(PROXY_ENV.upstreamUrl,raw),url=new URL(href);
-  if(!NEON_AUTH_HOST.test(url.hostname)||!/^\/[a-z0-9_-]+\/auth$/i.test(url.pathname)){
-    throw new ConfigError(`${PROXY_ENV.upstreamUrl} must be a Neon Auth base URL of the form https://ep-<endpoint>.neonauth.<region>.neon.tech/<database>/auth.`);
+  if(url.port!==''||!NEON_AUTH_HOST.test(url.hostname)||!/^\/[a-z0-9_-]+\/auth$/i.test(url.pathname)){
+    throw new ConfigError(`${PROXY_ENV.upstreamUrl} must be a Neon Auth base URL of the form https://ep-<endpoint>.neonauth.<region>.neon.tech/<database>/auth on the default HTTPS port.`);
   }
   return href;
 }
@@ -132,18 +141,39 @@ export function refusal(status,extra=[]){
   return jsonResponse(status,{code,message},extra);
 }
 
+// Cookie-header optional whitespace is ASCII SP (0x20) and HTAB (0x09) only (RFC 6265 cookie-string, RFC 7230 OWS). We
+// strip exactly those from the ends of a cookie name and value, and nothing else: never NBSP, VT, FF, CR, LF, other
+// Unicode whitespace, a BOM, or any Unicode normalisation. A cookie name is the application session only when, after
+// that ASCII-only trim, it is byte-for-byte APP_SESSION_COOKIE.
+const COOKIE_OWS=/^[\t ]+|[\t ]+$/g;
+const stripCookieOws=s=>s.replace(COOKIE_OWS,'');
+
 // The app session cookie from a Cookie header: {value} (null when absent, or when not a plain cookie value), or
-// {conflict:true} when the header holds it more than once. A browser sends one cookie per name, host, path and
-// partition, so a second one was set from somewhere else (another partition or port of this host, or a browser that
-// does not enforce the __Host- prefix). Which one is genuine cannot be told, so neither is ever used: never the first,
-// never the last.
+// {conflict:true} when the request is ambiguous and must fail closed, so neither value is ever used — never the first,
+// never the last. A browser sends one cookie per name, host, path and partition, so a second cookie that resolves to
+// this name was set from somewhere else (another partition or port of this host, or a client that does not enforce the
+// __Host- prefix). Two cases fail closed:
+//   - the exact name appears more than once; or
+//   - a NON-exact cookie name is present that the retired broad-trim() parser would have mistaken for this cookie — a
+//     planted look-alike such as a leading NBSP before __Host-pool-platform-session. Chromium keeps such a planted
+//     name distinct from the protected __Host- cookie, so it can sit beside the genuine one and is sent with it; the
+//     retired parser, which trimmed Unicode whitespace from the name, would then have read the planted value as the
+//     session. We never do that: the name must be byte-exact to supply a value. Detecting the look-alike here only to
+//     refuse the whole request keeps a non-exact name from ever influencing a session, without re-introducing broad
+//     normalisation to select one.
 export function sessionCookieValue(header){
   const values=[];
+  let nearMatch=false;
   for(const part of String(header??'').split(';')){
-    const at=part.indexOf('=');
-    if(at>=0&&part.slice(0,at).trim()===APP_SESSION_COOKIE)values.push(part.slice(at+1).trim());
+    const eq=part.indexOf('=');
+    if(eq<0)continue;
+    const rawName=part.slice(0,eq);
+    if(stripCookieOws(rawName)===APP_SESSION_COOKIE){values.push(stripCookieOws(part.slice(eq+1)));continue}
+    // Detection only, never selection: would the retired String.prototype.trim() parser have accepted this planted
+    // name as the session cookie (NBSP, VT, FF, CR, LF, Unicode whitespace, BOM)? If so, refuse the whole request.
+    if(rawName.trim()===APP_SESSION_COOKIE)nearMatch=true;
   }
-  if(values.length>1)return{value:null,conflict:true};
+  if(nearMatch||values.length>1)return{value:null,conflict:true};
   return{value:values.length===1&&COOKIE_VALUE.test(values[0])?values[0]:null,conflict:false};
 }
 

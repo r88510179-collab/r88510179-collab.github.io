@@ -156,6 +156,9 @@ booleans only.
    - `curl -si -X OPTIONS -H 'Origin: https://cors-probe.invalid' http://localhost:4173/api/auth/get-session` → 405;
    - `curl -si -H 'Cookie: __Host-pool-platform-session=a; __Host-pool-platform-session=b' http://localhost:4173/api/auth/get-session`
      → 401 with no `Set-Cookie` (the session cookie twice is refused, and neither value is used);
+   - a planted look-alike name with a leading NBSP byte (`0xA0`) is refused the same way, and never normalised into a
+     session: `curl -si -H $'Cookie: \xa0__Host-pool-platform-session=planted' http://localhost:4173/api/auth/get-session`
+     → 401 with no `Set-Cookie` and no upstream call (not `200 null`, which a signed-out request with no cookie gives);
    - `curl -si http://localhost:4173/api/auth/list-sessions` → 404; `curl -si -X PUT http://localhost:4173/api/auth/sign-out` → 405.
 6. The service worker's cache holds no `/api/auth` URL (inspect as in "Service worker" above).
 7. The server log shows only `AUTH <method> <route> <status> <reason>` lines for these, with no value from a request.

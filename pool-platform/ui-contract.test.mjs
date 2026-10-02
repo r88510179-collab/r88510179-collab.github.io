@@ -1293,4 +1293,140 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
       fs.rmSync(work,{recursive:true,force:true});
     }
   });
+
+  // Finding 1 (Corrective 2) in real Chromium: a sibling host plants a cookie whose raw name carries a leading
+  // non-ASCII whitespace byte (NBSP, 0xA0) before __Host-pool-platform-session. Chromium keeps that planted name
+  // distinct from the protected __Host- cookie — so another port may set it, and it is sent to the app beside any
+  // genuine cookie — but the retired proxy parser trimmed Unicode whitespace from the name and would have read the
+  // planted value as the session, forwarding it upstream (session fixation). The corrected proxy matches the name
+  // byte-exactly, so the planted value is never a session, never travels upstream, and is never laundered into the
+  // real app cookie; the request fails closed (401). A is a signed-out browser with the planted near-match only; B is
+  // a genuine signed-in cookie plus the planted near-match, proving the planted value cannot replace or override it.
+  test('real bundled SDK: a sibling-host NBSP look-alike cookie is never read as the session, sends nothing upstream, and cannot override the genuine __Host- cookie (signed out, and beside a real session)',{skip:ESBUILD?false:'run npm ci in pool-platform to bundle the real SDK'},async()=>{
+    const work=fs.mkdtempSync(path.join(os.tmpdir(),'pool-platform-nbsp-')),dist=path.join(work,'dist');
+    const UPSTREAM='https://ep-example-000000.neonauth.c-0.us-east-2.aws.neon.tech/neondb/auth',DATA='https://data.pool.test/neondb/rest/v1';
+    const TOKEN='SynthSessTokenAbcdefghijklmn0123',SIGNED=`${TOKEN}.c3ludGhldGljLXNpZ25hdHVyZQ%3D%3D`,PLANTED='PlantedSessTokenZyxwvutsrq98765.cGxhbnRlZA%3D%3D';
+    const b64=value=>Buffer.from(JSON.stringify(value)).toString('base64url');
+    const JWT=`${b64({alg:'EdDSA',typ:'JWT'})}.${b64({sub:'user-1',role:'authenticated'})}.c2hhcGUtb25seS1zaWduYXR1cmU`;
+    const USER={id:'user-1',email:'player@example.test',emailVerified:true,name:'Player'};
+    const neonCookie=value=>`${UPSTREAM_SESSION_COOKIE}=${value}; Max-Age=${value?604800:0}; Path=/; HttpOnly; Secure; SameSite=None; Partitioned`;
+    const upstream=[];
+    const upstreamFetch=async(url,init)=>{
+      const call={path:url.slice(UPSTREAM.length),cookie:new Headers(init.headers).get('cookie'),body:init.body??null};
+      upstream.push(call);
+      const headers=new Headers({'content-type':'application/json'});
+      if(call.path==='/get-session'){
+        if(call.cookie!==`${UPSTREAM_SESSION_COOKIE}=${SIGNED}`)return new Response('null',{status:200,headers});
+        headers.set('set-auth-jwt',JWT);headers.append('set-cookie',neonCookie(SIGNED));
+        return new Response(JSON.stringify({session:{id:'sess-1',userId:'user-1',token:TOKEN,expiresAt:'2030-01-01T00:00:00.000Z'},user:USER}),{status:200,headers});
+      }
+      if(call.path==='/email-otp/send-verification-otp')return new Response('{"success":true}',{status:200,headers});
+      if(call.path==='/sign-in/email-otp'){
+        headers.append('set-cookie',neonCookie(SIGNED));
+        return new Response(JSON.stringify({token:TOKEN,user:USER}),{status:200,headers});
+      }
+      if(call.path==='/sign-out'){headers.append('set-cookie',neonCookie(''));return new Response('{"success":true}',{status:200,headers})}
+      return new Response('{}',{status:404,headers});
+    };
+    // The planter runs on another port of the same host. Its Set-Cookie name is the app cookie name with one leading
+    // NBSP byte (0xA0), written as a Latin-1 byte on the wire. Chromium stores it as a cookie DISTINCT from the
+    // __Host- cookie (the raw name does not start with "__Host-"), so this sibling may set it with no __Host- rules and
+    // it rides alongside the genuine cookie. /unplant-nbsp expires that same distinct name.
+    const nbspName=` ${APP_SESSION_COOKIE}`;
+    const planter=http.createServer((req,res)=>{
+      const cookie={[`/plant-nbsp`]:`${nbspName}=${PLANTED}; Path=/; Secure; SameSite=None`,
+        [`/unplant-nbsp`]:`${nbspName}=; Path=/; Max-Age=0; Secure; SameSite=None`}[req.url];
+      res.writeHead(cookie?200:404,{'content-type':'text/plain; charset=utf-8',...(cookie?{'set-cookie':cookie}:{})}).end('planter');
+    });
+    await new Promise(resolve=>planter.listen(0,'127.0.0.1',resolve));
+    try{
+      await buildCommercialFrontend({outDir:dist,env:{POOL_PLATFORM_MODE:'live',POOL_PLATFORM_DATA_URL:DATA,POOL_PLATFORM_DEFAULT_POOL_SLUG:'it-pool'}});
+      const lines=[];
+      const local=await startServer({dir:dist,port:0,log:line=>lines.push(line),env:{POOL_PLATFORM_MODE:'live',POOL_PLATFORM_AUTH_UPSTREAM_URL:UPSTREAM},upstreamFetch});
+      try{
+        const origin=new URL(local.url).origin,plant=`http://localhost:${planter.address().port}`;
+        const context=await browser.newContext({serviceWorkers:'block'});contexts.push(context);
+        const page=await context.newPage(),errors=[],escaped=[],auth=[];
+        page.on('pageerror',error=>errors.push(error.message));
+        page.on('response',response=>{
+          const url=new URL(response.url());
+          if(url.origin===origin&&url.pathname.startsWith('/api/auth/'))auth.push(`${response.request().method()} ${url.pathname} ${response.status()}`);
+        });
+        await context.route(/neonauth/,route=>{escaped.push(route.request().url());return route.abort()});
+        await context.route('https://data.pool.test/**',route=>{
+          const request=route.request(),cors={'access-control-allow-origin':origin,'access-control-allow-headers':'authorization, content-type, accept','access-control-allow-methods':'POST'};
+          if(request.method()==='OPTIONS')return route.fulfill({status:204,headers:cors});
+          return route.fulfill({status:400,contentType:'application/json',headers:cors,body:'{"message":"pool_not_found"}'});
+        });
+        // Playwright's CDP cookie view strips the leading NBSP byte from the stored name, so the genuine and the
+        // planted cookie both read back here under the exact name; they are told apart by value. The wire truth — that
+        // the planted cookie reaches the app as a DISTINCT, NBSP-prefixed near-match and not the exact cookie — is what
+        // the proxy refusing with reason `cookie-conflict` below proves: an exact cookie would have been read as the
+        // session (200), never a conflict.
+        const appCookieValues=async()=>(await context.cookies()).filter(c=>c.name===APP_SESSION_COOKIE).map(c=>c.value).sort();
+        const plantPage=await context.newPage();
+
+        // A. Signed out, planted near-match only. The app never had a session. get-session fails closed (401), nothing
+        //    reaches Neon, and no genuine app cookie is minted from the planted value.
+        await plantPage.goto(`${plant}/plant-nbsp`);
+        assert.deepEqual(await appCookieValues(),[PLANTED],'the sibling planted exactly one app-named cookie');
+        const beforeA=upstream.length;
+        await page.goto(`${local.url}participant.html`);
+        await page.locator('#sessionError').waitFor({state:'visible'});
+        assert.equal(await page.textContent('#sessionError'),'Sign-in could not be confirmed. Clear this site\'s cookies, then sign in again.');
+        assert.equal(await page.isVisible('#signOut'),false,'the planted value is not a session');
+        const seenA=await page.evaluate(async()=>{const r=await fetch('/api/auth/get-session');return{status:r.status,body:await r.text(),cookie:document.cookie}});
+        assert.equal(seenA.status,401,'fails closed, not 200 null');
+        assert.equal(seenA.body.includes(PLANTED.split('.')[0]),false,'no planted value in the body');
+        assert.equal(seenA.cookie,'','no script-visible cookie');
+        assert.equal(upstream.length,beforeA,'the planted value never reached Neon');
+        assert.equal(lines.filter(l=>l.startsWith('AUTH GET get-session')).at(-1),'AUTH GET get-session 401 cookie-conflict',
+          'a lone planted near-match is refused as a conflict — proof the wire name carried the NBSP, not the exact cookie');
+        assert.deepEqual(await appCookieValues(),[PLANTED],'nothing set or deleted: no genuine cookie minted from the planted value');
+
+        // B. A genuine session plus the planted near-match. Sign in first (clear the planted cookie, sign in, confirm
+        //    the empty state), then plant the near-match beside the genuine cookie and reload.
+        await plantPage.goto(`${plant}/unplant-nbsp`);
+        assert.deepEqual(await context.cookies(),[]);
+        await page.goto(`${local.url}participant.html`);
+        await page.locator('#authCard').waitFor({state:'visible'});
+        await page.fill('#email','player@example.test');await page.click('#sendCode');
+        await page.locator('#otpWrap').waitFor({state:'visible'});
+        await page.fill('#otp','123456');await page.click('#verifyCode');
+        await page.locator('#emptyCard').waitFor({state:'visible'});
+        assert.deepEqual(await appCookieValues(),[SIGNED],'exactly the genuine session cookie');
+        await plantPage.goto(`${plant}/plant-nbsp`);
+        assert.deepEqual(await appCookieValues(),[PLANTED,SIGNED].sort(),'the planted near-match now rides beside the genuine cookie');
+        const beforeB=upstream.length;
+        await page.reload();
+        await page.locator('#sessionError').waitFor({state:'visible'});
+        assert.equal(await page.isVisible('#signOut'),false,'the request is ambiguous and fails closed');
+        const seenB=await page.evaluate(async()=>{const r=await fetch('/api/auth/sign-out',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});return{status:r.status,body:await r.text()}});
+        assert.equal(seenB.status,401);
+        assert.equal(seenB.body.includes(PLANTED.split('.')[0])||seenB.body.includes(TOKEN),false);
+        assert.equal(upstream.length,beforeB,'neither value reached Neon; the look-alike never overrode the genuine session');
+        assert.equal(lines.filter(l=>l.startsWith('AUTH POST sign-out')).at(-1),'AUTH POST sign-out 401 cookie-conflict','the planted near-match cannot even drive a sign-out of the genuine cookie');
+        assert.deepEqual(await appCookieValues(),[PLANTED,SIGNED].sort(),'nothing set or deleted; the genuine cookie survives untouched');
+
+        // Remove the planted cookie: the untouched genuine cookie signs in again, proving B never overrode it.
+        await plantPage.goto(`${plant}/unplant-nbsp`);
+        assert.deepEqual(await appCookieValues(),[SIGNED]);
+        await page.reload();
+        await page.locator('#emptyCard').waitFor({state:'visible'});
+        assert.equal(upstream.filter(c=>c.path==='/get-session').at(-1).cookie,`${UPSTREAM_SESSION_COOKIE}=${SIGNED}`);
+
+        // Over the whole run Neon only ever saw its own cookie with the genuine value, never the planted one; the two
+        // fail-closed get-session/sign-out answers were 401; and no value leaked to a Neon Auth host or the log.
+        for(const call of upstream)assert.ok(call.cookie===null||call.cookie===`${UPSTREAM_SESSION_COOKIE}=${SIGNED}`,JSON.stringify(call));
+        assert.ok(auth.includes('GET /api/auth/get-session 401')&&auth.includes('POST /api/auth/sign-out 401'),JSON.stringify(auth));
+        assert.ok(lines.includes('AUTH GET get-session 401 cookie-conflict')&&lines.includes('AUTH POST sign-out 401 cookie-conflict'));
+        assert.equal(lines.some(line=>line.includes(TOKEN)||line.includes('Planted')||line.includes(JWT)),false);
+        assert.deepEqual(escaped,[],'no request to a Neon Auth host reached the network');
+        assert.deepEqual(errors,[]);
+      }finally{await local.close()}
+    }finally{
+      await new Promise(resolve=>{planter.close(()=>resolve());planter.closeAllConnections()});
+      fs.rmSync(work,{recursive:true,force:true});
+    }
+  });
 });

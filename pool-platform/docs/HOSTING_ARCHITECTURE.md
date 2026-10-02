@@ -48,19 +48,28 @@ the Neon Auth host**:
   Every other path under `/api/auth` is 404 and a wrong method 405. `vercel.json` rewrites the four paths to the one
   function (`/api/auth?route=<id>`), and the adapter maps them back to the route's own path.
 - **Cookies.** The browser holds one session cookie, the app's own: `__Host-pool-platform-session; HttpOnly; Secure;
-  SameSite=Strict; Path=/` (no `Domain`, never `Partitioned`). The `__Host-` prefix makes browsers refuse it with a
-  `Domain` or another path, so no other host, a sibling subdomain included, can set or overwrite it. Neon's session
+  SameSite=Strict; Path=/` (no `Domain`, never `Partitioned`). The `__Host-` prefix makes a conforming browser refuse
+  to set this **exact** name with a `Domain` or a non-root path, so a sibling subdomain cannot plant the protected
+  cookie itself. That prefix alone is not full isolation: a sibling host can still set a **different**, non-exact name
+  that only resembles this one (a leading NBSP before `__Host-pool-platform-session`, say), which the browser keeps
+  distinct from the `__Host-` cookie and sends alongside it. The server therefore also parses cookie names exactly
+  (`sessionCookieValue`): optional whitespace is ASCII `SP`/`HTAB` only, never Unicode whitespace or normalisation, so
+  only the byte-exact name supplies a session value and a non-exact look-alike never does (see **Duplicate session
+  cookies fail closed**). Compromise of the exact app host stays outside this protection. Neon's session
   cookie name never reaches the browser: the proxy sends the app cookie's value upstream under Neon's name
   (`UPSTREAM_SESSION_COOKIE`, the one place it is named) and re-issues Neon's new or refreshed value as the app
   cookie, keeping only its value and lifetime. No other browser cookie is sent upstream, and every other upstream
   cookie is dropped. Sign-out always deletes the app cookie, with the attributes it was set with. Browsers hold no
   cookie for the Neon Auth host.
-- **Duplicate session cookies fail closed.** A request carrying the app cookie more than once (a second one planted
-  from another partition or port of the host, or by a browser that does not enforce the prefix) is refused with 401
-  on every route, before anything else happens: neither value reaches Neon, and no cookie is set or deleted, since
-  deleting the host's own cookie could leave the planted one as the only cookie. The page then shows the refusal
-  ("Clear this site's cookies, then sign in again."). Cookies are not isolated by port, so the app host must serve
-  nothing else, on any port.
+- **Duplicate and look-alike session cookies fail closed.** A request is refused with 401 on every route, before
+  anything else happens, when it carries the exact app cookie more than once, **or** when it carries a non-exact
+  cookie name that the retired broad-`trim()` parser would have mistaken for the app cookie (a planted look-alike such
+  as a leading NBSP before the name). Either way neither value reaches Neon, and no cookie is set or deleted, since
+  deleting the host's own cookie could leave the planted one as the only cookie. The exact look-alike is never
+  normalised into the real cookie or used as a session; it only triggers the fail-closed refusal. The page then shows
+  the refusal ("Clear this site's cookies, then sign in again."). Cookies are not isolated by port, so the app host
+  must serve nothing else, on any port; on `localhost` every port shares one host and cookie namespace, which stays a
+  local-gate operational concern.
 - **Tokens.** Every `token` field is removed from response bodies, and an answer that still contains the session
   token is refused (502), so page JavaScript never sees the opaque session token. `set-auth-token` is dropped.
   `set-auth-jwt` is passed on unchanged: the Data API bearer path (`set-auth-jwt` → SDK memory →
