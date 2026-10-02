@@ -5,16 +5,18 @@ import vm from 'node:vm';
 const source=readFileSync(new URL('./service-worker.js',import.meta.url),'utf8');
 const index=readFileSync(new URL('./index.html',import.meta.url),'utf8');
 for(const asset of [
-  './weekly-app.js?v=weekly-v13',
+  './weekly-app.js?v=weekly-v14',
   './public-math.js?v=2',
   './survivor-app.js?v=5',
   './survivor-math.js?v=5',
   './score-feed-proxy.js?v=2'
 ])assert(source.includes(`'${asset}'`),`precache must include ${asset}`);
+assert(!source.includes("'./weekly-app.js?v=weekly-v13'"),'the superseded weekly-v13 module must no longer be precached');
 assert(!source.includes("'./survivor-math.js?v=4'"));
 assert(!source.includes("'./score-feed-proxy.js?v=1'"));
 assert(!source.includes("'./admin/"),'Admin pages are network-dependent and must not be precached');
-assert(index.includes('weekly-app.js?v=weekly-v13'));
+assert(index.includes('weekly-app.js?v=weekly-v14'),'the Pool Center page must load weekly-v14');
+assert(!index.includes('weekly-app.js?v=weekly-v13'),'the Pool Center page must no longer load weekly-v13');
 assert(index.includes('survivor-app.js?v=5'));
 assert(index.includes('score-feed-proxy.js?v=2'));
 
@@ -26,7 +28,7 @@ const httpResponse=status=>{const response={status,ok:status>=200&&status<300,cl
 const cache={addAll:async assets=>{added=Array.from(assets)},put:async(request,response)=>{putCalls.push({request,response})}};
 const caches={
   open:async name=>{opened.push(name);return cache},
-  keys:async()=>['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14'],
+  keys:async()=>['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15'],
   delete:async key=>{deleted.push(key);return true},
   match:async key=>{matchCalls.push(key);return cached.get(typeof key==='string'?key:key.url)}
 };
@@ -44,23 +46,25 @@ listeners.install({waitUntil:p=>{installPromise=p}});await installPromise;
 assert(added.includes('./public-math.js?v=2'));
 assert(added.includes('./survivor-math.js?v=5'));
 assert(!added.some(x=>x.startsWith('./admin')));
-// HDC-05 and its corrective change only the shell cache name: install still precaches exactly the public shell it did
-// before, in the same order and with the same module versions, and writes it to pool-center-shell-v14.
+// HDC-06 changes only the weekly-app module version and the shell cache name: install precaches the same public shell, in
+// the same order and with the same other module versions, now with weekly-app.js?v=weekly-v14, and writes it to
+// pool-center-shell-v15.
 assert.deepEqual(added,[
   './','./index.html','./style.css?v=premium-v3','./slate.css?v=slate-v1','./weekly.css?v=premium-v2',
-  './weekly-app.js?v=weekly-v13','./public-math.js?v=2','./survivor.css?v=3','./survivor-app.js?v=5','./survivor-math.js?v=5',
+  './weekly-app.js?v=weekly-v14','./public-math.js?v=2','./survivor.css?v=3','./survivor-app.js?v=5','./survivor-math.js?v=5',
   './score-feed-proxy.js?v=2','./pwa.js?v=1','./manifest.webmanifest',
   './assets/pool-center-icon.svg','./assets/pool-center-icon-192.svg','./assets/pool-center-icon-512.svg'
-],'the precached public shell must be unchanged');
-assert.deepEqual(opened,['pool-center-shell-v14'],'install must write the shell to pool-center-shell-v14');
+],'the precached public shell must change only in its weekly-app version');
+assert.deepEqual(opened,['pool-center-shell-v15'],'install must write the shell to pool-center-shell-v15');
 
 let activatePromise;
 listeners.activate({waitUntil:p=>{activatePromise=p}});await activatePromise;
 // HDC-05 rolls the shell cache so a v12 cache that may hold runtime-cached Admin modules is deleted on activation. Its
 // corrective rolls it again: v13 was filled while noncanonical Admin paths (/nfl-pool//admin/, /nfl-pool/%61dmin/, ...)
-// still reached networkFirst, so v13 may hold runtime-cached Admin modules under those paths and is deleted too. Only the
-// new shell cache, pool-center-shell-v14, is kept.
-assert.deepEqual(deleted,['pool-center-shell-v12','pool-center-shell-v13'],'activation must delete v12 and v13 and keep only v14');
+// still reached networkFirst, so v13 may hold runtime-cached Admin modules under those paths and is deleted too. HDC-06
+// rolls it to v15 with weekly-app.js?v=weekly-v14, so v14, which holds the weekly-v13 module and the page that loads it,
+// is deleted as well. Only the new shell cache, pool-center-shell-v15, is kept.
+assert.deepEqual(deleted,['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14'],'activation must delete v12, v13 and v14 and keep only v15');
 
 const adminRequest={method:'GET',mode:'navigate',url:'https://example.test/nfl-pool/admin/survivor.html'};
 let adminResponse;
@@ -87,7 +91,7 @@ async function route(request){
 }
 
 // A. HTTP 503 with the requested resource cached: its last-good copy wins over the error and the shell.
-for(const request of [page('/nfl-pool/?view=survivor'),asset('/nfl-pool/weekly-app.js?v=weekly-v13')]){
+for(const request of [page('/nfl-pool/?view=survivor'),asset('/nfl-pool/weekly-app.js?v=weekly-v14')]){
   const lastGood=httpResponse(200),unavailable=httpResponse(503);
   cached.set(request.url,lastGood);
   network=()=>unavailable;
@@ -127,7 +131,7 @@ for(const request of [page('/nfl-pool/?view=survivor'),asset('/nfl-pool/weekly-a
   cached.set('./index.html',fallback);
 }
 // D. HTTP 200: the network response itself is returned and a clone is cached under the request, as before.
-for(const request of [page('/nfl-pool/?view=home'),asset('/nfl-pool/weekly-app.js?v=weekly-v13')]){
+for(const request of [page('/nfl-pool/?view=home'),asset('/nfl-pool/weekly-app.js?v=weekly-v14')]){
   const fresh=httpResponse(200);
   network=()=>fresh;
   const {result,matched,put}=await route(request);
@@ -687,7 +691,7 @@ for(const [path,mode,referrer] of [
   ['/nfl-pool/pwa.js?v=1','no-cors','/nfl-pool/%61dmin/'],
   ['/nfl-pool/survivor-math.js?v=4','cors','/nfl-pool/%61dmin/survivor-publish-checks.js?v=2'],
   ['/nfl-pool/manifest.webmanifest','cors','/nfl-pool/%61dmin/'],
-  ['/nfl-pool/weekly-app.js?v=weekly-v13','cors','/nfl-pool/'],
+  ['/nfl-pool/weekly-app.js?v=weekly-v14','cors','/nfl-pool/'],
   ['/nfl-pool/assets/pool-center-icon-192.svg','no-cors','/nfl-pool/'],
   ['/nfl-pool/assets/pool-center-icon-512.svg','no-cors','/nfl-pool/']
 ]){
@@ -723,8 +727,8 @@ for(const path of ['/nfl-pool/admin/x%2F..%2F..%2Fstyle.css?v=premium-v3','/nfl-
   // answers the first with the public stylesheet). It is direct network in every request mode, never a cached copy.
   for(const mode of allModes)await assertDirectNetwork(ncLoad(path,mode,'/nfl-pool/admin/'),`${path} (${mode})`);
 }
-// Every cache the worker opened, at install and before each runtime cache.put above, is pool-center-shell-v14.
+// Every cache the worker opened, at install and before each runtime cache.put above, is pool-center-shell-v15.
 assert.equal(opened.length,1+putCalls.length,'install and each runtime cache.put open the shell cache once');
-assert.deepEqual([...new Set(opened)],['pool-center-shell-v14'],'the worker must write only to pool-center-shell-v14');
+assert.deepEqual([...new Set(opened)],['pool-center-shell-v15'],'the worker must write only to pool-center-shell-v15');
 
 console.log('service-worker precache graph, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');
