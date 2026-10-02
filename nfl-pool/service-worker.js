@@ -20,6 +20,17 @@ const SHELL=[
 ];
 const DOCUMENT_PATHS=['/nfl-pool/','/nfl-pool/index.html'];
 const ADMIN_PATH='/nfl-pool/admin';
+// Pages also serves Admin at equivalent spellings (/nfl-pool//admin/, /nfl-pool/%61dmin/, /nfl-pool/x%2F..%2Fadmin/): it
+// decodes each %XX once, merges repeated slashes, then drops dot segments. Classify the path as written and as Pages reads it.
+// Only ASCII escapes can spell the boundary, so malformed or non-ASCII ones stay literal text and nothing here throws.
+function isAdminPath(pathname){
+  const segments=[];
+  for(const segment of pathname.replace(/%([0-7][0-9a-f])/gi,(_,hex)=>String.fromCharCode(parseInt(hex,16))).split('/')){
+    if(segment==='..')segments.pop();
+    else if(segment!==''&&segment!=='.')segments.push(segment);
+  }
+  return [pathname,'/'+segments.join('/')].some(path=>path===ADMIN_PATH||path.startsWith(ADMIN_PATH+'/'));
+}
 self.addEventListener('install',event=>{
   event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)).then(()=>self.skipWaiting()));
 });
@@ -52,7 +63,7 @@ self.addEventListener('fetch',event=>{
   if(request.method!=='GET')return;
   const url=new URL(request.url);
   if(url.origin!==self.location.origin)return;
-  if(url.pathname===ADMIN_PATH||url.pathname.startsWith(ADMIN_PATH+'/')){event.respondWith(fetch(request));return}
+  if(isAdminPath(url.pathname)){event.respondWith(fetch(request));return}
   if(request.mode==='navigate'){
     if(!DOCUMENT_PATHS.includes(url.pathname)){event.respondWith(fetch(request));return}
     event.respondWith(networkFirst(request,'./index.html'));
