@@ -61,15 +61,16 @@ the Neon Auth host**:
   cookie, keeping only its value and lifetime. No other browser cookie is sent upstream, and every other upstream
   cookie is dropped. Sign-out always deletes the app cookie, with the attributes it was set with. Browsers hold no
   cookie for the Neon Auth host.
-- **Duplicate and look-alike session cookies fail closed.** A request is refused with 401 on every route, before
-  anything else happens, when it carries the exact app cookie more than once, **or** when it carries a non-exact
-  cookie name that the retired broad-`trim()` parser would have mistaken for the app cookie (a planted look-alike such
-  as a leading NBSP before the name). Either way neither value reaches Neon, and no cookie is set or deleted, since
-  deleting the host's own cookie could leave the planted one as the only cookie. The exact look-alike is never
-  normalised into the real cookie or used as a session; it only triggers the fail-closed refusal. The page then shows
-  the refusal ("Clear this site's cookies, then sign in again."). Cookies are not isolated by port, so the app host
-  must serve nothing else, on any port; on `localhost` every port shares one host and cookie namespace, which stays a
-  local-gate operational concern.
+- **Duplicate and look-alike session cookies fail closed.** A request is refused with 401 on every route when it
+  carries the exact app cookie more than once, **or** when it carries a non-exact cookie name that the retired
+  broad-`trim()` parser would have mistaken for the app cookie (a planted look-alike such as a leading NBSP before the
+  name). The check runs after the route, method, query-string, `Host`, fetch-metadata and `Origin` checks, and before
+  any body processing, the rate-limit hook, the upstream request or any `Set-Cookie`: neither value reaches Neon, and
+  no cookie is set or deleted, since deleting the host's own cookie could leave the planted one as the only cookie.
+  The exact look-alike is never normalised into the real cookie or used as a session; it only triggers the
+  fail-closed refusal. The page then shows the refusal ("Clear this site's cookies, then sign in again."). Cookies
+  are not isolated by port, so the app host must serve nothing else, on any port; on `localhost` every port shares
+  one host and cookie namespace, which stays a local-gate operational concern.
 - **Tokens.** Every `token` field is removed from response bodies, and an answer that still contains the session
   token is refused (502), so page JavaScript never sees the opaque session token. `set-auth-token` is dropped.
   `set-auth-jwt` is passed on unchanged: the Data API bearer path (`set-auth-jwt` → SDK memory →
@@ -95,7 +96,7 @@ the Neon Auth host**:
 | Variable | Value | Notes |
 | --- | --- | --- |
 | `POOL_PLATFORM_MODE` | `live` | Anything else disables the proxy: every request is 404. |
-| `POOL_PLATFORM_AUTH_UPSTREAM_URL` | the Neon Auth base URL of the commercial branch | `https`, canonical, a host matched label by label as `ep-<endpoint>.neonauth.<region>.neon.tech` (it must end in `neon.tech`) and a `/<database>/auth` path. |
+| `POOL_PLATFORM_AUTH_UPSTREAM_URL` | the Neon Auth base URL of the commercial branch | `https`, canonical, a host matched label by label as `ep-<endpoint>.neonauth.<region>.neon.tech` (it must end in `neon.tech`), no explicit port (only the implicit default HTTPS port is accepted; `:443`, `:8443` or any other explicit port is refused) and a `/<database>/auth` path. |
 | `POOL_PLATFORM_APP_ORIGIN` | the final `https://` commercial origin | Exactly an origin: compared with `Origin` and sent upstream as `Origin`. |
 
 Missing or malformed values fail closed (404 everywhere). The design needs no secret, no Neon API key, no database

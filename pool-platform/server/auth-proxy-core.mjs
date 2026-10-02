@@ -145,8 +145,16 @@ export function refusal(status,extra=[]){
 // strip exactly those from the ends of a cookie name and value, and nothing else: never NBSP, VT, FF, CR, LF, other
 // Unicode whitespace, a BOM, or any Unicode normalisation. A cookie name is the application session only when, after
 // that ASCII-only trim, it is byte-for-byte APP_SESSION_COOKIE.
-const COOKIE_OWS=/^[\t ]+|[\t ]+$/g;
-const stripCookieOws=s=>s.replace(COOKIE_OWS,'');
+// The strip is one boundary scan from each end, linear in the input. Never a regex such as /^[\t ]+|[\t ]+$/g: its
+// trailing alternative is retried at every position of an internal SP/HTAB run, so a header any client controls costs
+// time quadratic in that run, before authentication.
+function stripCookieOws(value){
+  const s=String(value);
+  let start=0,end=s.length;
+  while(start<end&&(s.charCodeAt(start)===0x20||s.charCodeAt(start)===0x09))start++;
+  while(end>start&&(s.charCodeAt(end-1)===0x20||s.charCodeAt(end-1)===0x09))end--;
+  return s.slice(start,end);
+}
 
 // The app session cookie from a Cookie header: {value} (null when absent, or when not a plain cookie value), or
 // {conflict:true} when the request is ambiguous and must fail closed, so neither value is ever used — never the first,
@@ -292,9 +300,11 @@ export function createAuthProxy({config,fetch:upstreamFetch=globalThis.fetch,log
     if(mode!==null&&mode!=='cors'&&mode!=='same-origin')return finish(refusal(403),'fetch-mode');
     const origin=request.headers.get('origin');
     if(route.method==='POST'?origin!==appOrigin:origin!==null&&origin!==appOrigin)return finish(refusal(403),'origin');
-    // The app session cookie more than once: refused on every route before anything else happens. Neither value reaches
-    // Neon, and no cookie is set or deleted: deleting this host's own cookie could leave the other one as the only
-    // session cookie, to be sent with the next request.
+    // The app session cookie more than once, or a planted look-alike of it (sessionCookieValue): refused on every route,
+    // after the Host, route, method, query, fetch-metadata and Origin checks above, and before any body processing, the
+    // rate-limit hook, the upstream request or any Set-Cookie. Neither value reaches Neon, and no cookie is set or
+    // deleted: deleting this host's own cookie could leave the other one as the only session cookie, to be sent with
+    // the next request.
     const cookie=sessionCookieValue(request.headers.get('cookie'));
     if(cookie.conflict)return finish(refusal(401),'cookie-conflict');
 

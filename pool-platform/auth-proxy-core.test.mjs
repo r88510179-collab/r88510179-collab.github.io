@@ -507,6 +507,93 @@ test('only the byte-exact cookie name supplies a session value: ASCII SP/HTAB ar
   assert.deepEqual(up.calls.map(c=>c.headers.cookie),[`${UPSTREAM_SESSION_COOKIE}=${SIGNED}`]);
 });
 
+// Corrective 3: cookie OWS is stripped by a linear boundary scan. The retired strip, /^[\t ]+|[\t ]+$/g, retried its
+// trailing alternative at every position of an internal SP/HTAB run, so a Cookie header any client can send (a name
+// such as "a" + 16000 spaces + "b") held the event loop for time quadratic in the run, before authentication: about
+// 0.2 s per parse at 16000 and 3 s at 64000 on a development machine. Nothing else changes: an internal run is never
+// stripped, so it never forms the app cookie or a look-alike, and boundary SP/HTAB are still stripped however long.
+// The bounds are generous (the linear scan needs well under 1% of them) and still far below the quadratic cost.
+const OWS_BOUND_MS=250;
+test('a long internal SP or HTAB run in a cookie name is never the app cookie, changes nothing else on any route, and is answered promptly',async()=>{
+  const A=APP_SESSION_COOKIE,OTHER='PlantedSessTokenZyxwvutsrq98765.cGxhbnRlZA%3D%3D';
+  const started=performance.now();
+  for(const ows of [' ','\t']){
+    const run=ows.repeat(16000),junk=`a${run}b=${OTHER}`,label=JSON.stringify(ows);
+    // 1. The parser: an internal run is kept, so the name is neither the exact app cookie nor a trim()-collapsing
+    //    look-alike; the same run inside the exact cookie's value is not a plain value, so it is treated as absent.
+    for(const header of [junk,`__Host-${run}pool-platform-session=${OTHER}`,`${A}${run}x=${OTHER}`,`${A}=a${run}b`]){
+      assert.deepEqual(sessionCookieValue(header),{value:null,conflict:false},`${label} ${header.length}`);
+    }
+    assert.deepEqual(sessionCookieValue(`${junk}; ${A}=${SIGNED}`),{value:SIGNED,conflict:false},`${label}: the genuine cookie beside it still reads`);
+    assert.deepEqual(sessionCookieValue(`${run}${A}${run}=${run}${SIGNED}${run}`),{value:SIGNED,conflict:false},`${label}: boundary OWS is stripped, however long`);
+    assert.deepEqual(sessionCookieValue(`${A}=${SIGNED}; ${run}${A}${run}=${OTHER}`),{value:null,conflict:true},`${label}: an exact duplicate fails closed`);
+    for(const header of [`\u00A0${A}${run}=${OTHER}`,`${A}=${SIGNED}; \u00A0${A}${run}=${OTHER}`]){
+      assert.deepEqual(sessionCookieValue(header),{value:null,conflict:true},`${label}: a raw-NBSP look-alike fails closed, alone or beside the genuine cookie`);
+    }
+    // 2. End to end, every route: the long name is one more unrelated cookie. Only the genuine value ever travels
+    //    upstream, under Neon's name; the look-alike carrying the same run still fails closed with nothing upstream.
+    const seen=[];
+    const {handle,up,logs}=proxyWith(NEON,{rateLimit:async args=>{seen.push(args.route);return true}});
+    const signedOut=await handle(getSession({cookie:`theme=dark; ${junk}`}));
+    assert.deepEqual([signedOut.status,await signedOut.text()],[200,'null'],label);
+    assert.deepEqual(up.calls,[],`${label}: signed out, Neon is not asked`);
+    const signedIn=await handle(getSession({cookie:`${junk}; ${A}=${SIGNED}`}));
+    assert.deepEqual([signedIn.status,signedIn.headers.getSetCookie()],[200,[REISSUED]],label);
+    const send=await handle(post(P.send,SEND,{cookie:junk}));
+    assert.deepEqual([send.status,await json(send)],[200,{success:true}],label);
+    const verify=await handle(post(P.verify,VERIFY,{cookie:junk}));
+    assert.deepEqual([verify.status,verify.headers.getSetCookie()],[200,[REISSUED]],label);
+    const out=await handle(post(P.out,{},{cookie:`${junk}; ${A}=${SIGNED}`}));
+    assert.deepEqual([out.status,out.headers.getSetCookie()],[200,[DELETE_SESSION_COOKIE]],label);
+    assert.deepEqual(up.calls.map(c=>`${c.url.slice(UPSTREAM.length)} ${c.headers.cookie??'no cookie'}`),[`/get-session ${UPSTREAM_SESSION_COOKIE}=${SIGNED}`,
+      '/email-otp/send-verification-otp no cookie','/sign-in/email-otp no cookie',`/sign-out ${UPSTREAM_SESSION_COOKIE}=${SIGNED}`],label);
+    assert.deepEqual(seen,['send-otp','verify-otp'],`${label}: the rate-limit hook is asked as usual`);
+    const conflict=await handle(getSession({cookie:`theme=dark; \u00A0${A}${run}=${OTHER}`}));
+    assert.deepEqual([conflict.status,conflict.headers.getSetCookie(),up.calls.length],[401,[],4],`${label}: the planted value never reached Neon`);
+    assert.equal(logs.at(-1).reason,'cookie-conflict');
+    for(const secret of [OTHER,SIGNED,TOKEN,'Planted'])assert.equal(JSON.stringify(logs).includes(secret),false,secret);
+  }
+  // 3. Twenty-eight parses and requests, each carrying a 16000-character run: milliseconds with the linear scan, and
+  //    seconds with the quadratic strip (about 0.2 s for each of the twenty with an internal run).
+  const ms=performance.now()-started;
+  assert.ok(ms<2*OWS_BOUND_MS,`${ms.toFixed(1)} ms`);
+});
+
+test('cookie OWS stripping stays linear: no parse comes near the bound as an internal SP or HTAB run grows to 1024000, and the cost per character stays flat',()=>{
+  const A=APP_SESSION_COOKIE,SIZES=[16000,64000,256000,1024000],CHARACTERS=2048000;
+  // An internal run in a name and in the exact cookie's value (the shapes the quadratic strip choked on), and long
+  // boundary runs around the exact name (which the scan walks in full).
+  const shapes=run=>[[`a${run}b=${SIGNED}`,null],[`${A}=a${run}b`,null],[`${run}${A}${run}=${SIGNED}`,SIGNED]];
+  for(const ows of [' ','\t']){
+    const label=JSON.stringify(ows);
+    // 1. Every single parse, at every size, stays far inside the bound. The sizes rise, so a quadratic strip fails at
+    //    the first size it cannot parse in time (64000: about 3 s) rather than running on to the larger ones.
+    for(const size of SIZES){
+      for(const [header,value] of shapes(ows.repeat(size))){
+        const started=performance.now(),result=sessionCookieValue(header),ms=performance.now()-started;
+        assert.ok(ms<OWS_BOUND_MS,`${label} run of ${size}: ${ms.toFixed(1)} ms`);
+        assert.deepEqual(result,{value,conflict:false},`${label} run of ${size}`);
+      }
+    }
+    // 2. Linear scaling: the same number of characters takes about the same time, whether parsed as many headers with
+    //    a short run or a few with a long one (the best of three rounds per size). A quadratic strip would take 64
+    //    times as long at 1024000 as at 16000; the check allows eight times (halfway, on a log scale, between linear
+    //    and quadratic), plus a fixed allowance for timer and scheduling noise.
+    const round=size=>{
+      const headers=shapes(ows.repeat(size)).map(([header])=>header);
+      let best=Infinity;
+      for(let r=0;r<3;r++){
+        const started=performance.now();
+        for(let i=0;i<CHARACTERS/size;i++)for(const header of headers)sessionCookieValue(header);
+        best=Math.min(best,performance.now()-started);
+      }
+      return best;
+    };
+    const times=SIZES.map(round),report=SIZES.map((size,i)=>`${size}: ${times[i].toFixed(1)} ms`).join(', ');
+    for(const time of times.slice(1))assert.ok(time<8*times[0]+25,`${label} ${report}`);
+  }
+});
+
 test('the opaque session token never reaches a body JavaScript can read, however Neon nests or renames it',async()=>{
   assert.deepEqual(stripTokens({token:'a',session:{token:'b',id:'s'},list:[{token:'c',keep:1}],deep:{a:{b:{token:'d'}}}}),{session:{id:'s'},list:[{keep:1}],deep:{a:{b:{}}}});
   assert.deepEqual(stripTokens(null),null);
