@@ -1,5 +1,5 @@
 'use strict';
-const CACHE='pool-center-shell-v15';
+const CACHE='pool-center-shell-v16';
 const SHELL=[
   './',
   './index.html',

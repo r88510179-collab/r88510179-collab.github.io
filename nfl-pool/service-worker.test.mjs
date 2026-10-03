@@ -28,7 +28,7 @@ const httpResponse=status=>{const response={status,ok:status>=200&&status<300,cl
 const cache={addAll:async requests=>{addAllCalls.push(Array.from(requests))},put:async(request,response)=>{putCalls.push({request,response})}};
 const caches={
   open:async name=>{opened.push(name);return cache},
-  keys:async()=>['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15'],
+  keys:async()=>['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15','pool-center-shell-v16'],
   delete:async key=>{deleted.push(key);return true},
   match:async key=>{matchCalls.push(key);return cached.get(typeof key==='string'?key:key.url)}
 };
@@ -80,7 +80,7 @@ assert.equal(installRequests[shell.indexOf('https://example.test/nfl-pool/weekly
   'https://example.test/nfl-pool/weekly-app.js?v=weekly-v14','the reload request must keep the weekly-v14 query string');
 assert.deepEqual([fetchCalls.length,putCalls.length],[0,0],'install must fetch and store the shell only through Cache.addAll');
 assert.equal(skipWaitingCalls,1,'a completed install skips waiting once');
-assert.deepEqual(opened,['pool-center-shell-v15'],'install must write the shell to pool-center-shell-v15');
+assert.deepEqual(opened,['pool-center-shell-v16'],'install must write the shell to pool-center-shell-v16');
 {
   // HDC-07 keeps Cache.addAll all-or-nothing. When any shell response is not OK the browser rejects addAll and stores none
   // of the shell; install must reject with that same error and never skip waiting, so the previous worker keeps control
@@ -98,7 +98,7 @@ assert.deepEqual(opened,['pool-center-shell-v15'],'install must write the shell 
   assert.equal(failedSkips,0,'a failed install must never skip waiting');
   assert.equal(failedCalls.length,1,'a failed Cache.addAll must not be retried or replaced by a partial precache');
   assert.equal(failedCalls[0].length,shell.length);
-  assert.deepEqual(failedOpens,['pool-center-shell-v15']);
+  assert.deepEqual(failedOpens,['pool-center-shell-v16']);
 }
 
 let activatePromise;
@@ -107,8 +107,10 @@ listeners.activate({waitUntil:p=>{activatePromise=p}});await activatePromise;
 // corrective rolls it again: v13 was filled while noncanonical Admin paths (/nfl-pool//admin/, /nfl-pool/%61dmin/, ...)
 // still reached networkFirst, so v13 may hold runtime-cached Admin modules under those paths and is deleted too. HDC-06
 // rolls it to v15 with weekly-app.js?v=weekly-v14, so v14, which holds the weekly-v13 module and the page that loads it,
-// is deleted as well. Only the new shell cache, pool-center-shell-v15, is kept.
-assert.deepEqual(deleted,['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14'],'activation must delete v12, v13 and v14 and keep only v15');
+// is deleted as well. HDC-07 rolls it to v16: v15 may have been installed from still-fresh HTTP-cache copies, such as the
+// page from before the HDC-06 deploy that loads weekly-v13, so v15 is deleted too. Only the new shell cache,
+// pool-center-shell-v16, is kept.
+assert.deepEqual(deleted,['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15'],'activation must delete v12, v13, v14 and v15 and keep only v16');
 
 const adminRequest={method:'GET',mode:'navigate',url:'https://example.test/nfl-pool/admin/survivor.html'};
 let adminResponse;
@@ -771,8 +773,8 @@ for(const path of ['/nfl-pool/admin/x%2F..%2F..%2Fstyle.css?v=premium-v3','/nfl-
   // answers the first with the public stylesheet). It is direct network in every request mode, never a cached copy.
   for(const mode of allModes)await assertDirectNetwork(ncLoad(path,mode,'/nfl-pool/admin/'),`${path} (${mode})`);
 }
-// Every cache the worker opened, at install and before each runtime cache.put above, is pool-center-shell-v15.
+// Every cache the worker opened, at install and before each runtime cache.put above, is pool-center-shell-v16.
 assert.equal(opened.length,1+putCalls.length,'install and each runtime cache.put open the shell cache once');
-assert.deepEqual([...new Set(opened)],['pool-center-shell-v15'],'the worker must write only to pool-center-shell-v15');
+assert.deepEqual([...new Set(opened)],['pool-center-shell-v16'],'the worker must write only to pool-center-shell-v16');
 
 console.log('service-worker precache graph, fresh (cache:"reload") precache requests, all-or-nothing install, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');
