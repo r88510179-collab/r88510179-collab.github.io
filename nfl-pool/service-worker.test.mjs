@@ -20,42 +20,86 @@ assert(!index.includes('weekly-app.js?v=weekly-v13'),'the Pool Center page must 
 assert(index.includes('survivor-app.js?v=5'));
 assert(index.includes('score-feed-proxy.js?v=2'));
 
-const listeners={},deleted=[],fetchCalls=[],matchCalls=[],putCalls=[],opened=[];
-let added=[],network=()=>okResponse;
+const listeners={},deleted=[],fetchCalls=[],matchCalls=[],putCalls=[],opened=[],addAllCalls=[];
+let network=()=>okResponse,skipWaitingCalls=0;
 const fallback={kind:'public-shell'},okResponse={ok:true,clone(){return this}};
 const offline=new Error('offline'),cached=new Map([['./index.html',fallback]]);
 const httpResponse=status=>{const response={status,ok:status>=200&&status<300,clone:()=>({status,ok:response.ok,cloneOf:response})};return response};
-const cache={addAll:async assets=>{added=Array.from(assets)},put:async(request,response)=>{putCalls.push({request,response})}};
+const cache={addAll:async requests=>{addAllCalls.push(Array.from(requests))},put:async(request,response)=>{putCalls.push({request,response})}};
 const caches={
   open:async name=>{opened.push(name);return cache},
   keys:async()=>['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15'],
   delete:async key=>{deleted.push(key);return true},
   match:async key=>{matchCalls.push(key);return cached.get(typeof key==='string'?key:key.url)}
 };
+// The worker is served at /nfl-pool/service-worker.js. In a ServiceWorkerGlobalScope a relative URL passed to new Request()
+// resolves against the worker script's URL, as Cache.addAll resolves a URL string.
+const workerURL='https://example.test/nfl-pool/service-worker.js';
+// Test-only stand-in for the browser's Request: the resolved URL and the cache mode ('default' unless one is given) are all
+// the install regressions inspect.
+class Request{constructor(input,init={}){this.url=new URL(input,workerURL).href;this.cache=init.cache??'default'}}
 const self={
-  location:{origin:'https://example.test'},
+  location:{origin:'https://example.test',href:workerURL},
   clients:{claim:async()=>{}},
-  skipWaiting:async()=>{},
+  skipWaiting:async()=>{skipWaitingCalls++},
   addEventListener(t,f){listeners[t]=f}
 };
 const fetch=async request=>{fetchCalls.push(request);return network(request)};
-vm.runInNewContext(source,{self,caches,fetch,URL,Promise,console});
+vm.runInNewContext(source,{self,caches,fetch,URL,Promise,console,Request});
 
 let installPromise;
 listeners.install({waitUntil:p=>{installPromise=p}});await installPromise;
-assert(added.includes('./public-math.js?v=2'));
-assert(added.includes('./survivor-math.js?v=5'));
-assert(!added.some(x=>x.startsWith('./admin')));
-// HDC-06 changes only the weekly-app module version and the shell cache name: install precaches the same public shell, in
-// the same order and with the same other module versions, now with weekly-app.js?v=weekly-v14, and writes it to
-// pool-center-shell-v15.
-assert.deepEqual(added,[
+// HDC-07. A request with the default cache mode may be answered from the browser's HTTP cache while that copy is fresh, and
+// Pages serves max-age=600. cache.addAll(SHELL) passed URL strings, so a new shell cache could be filled with the page
+// from before the deploy: pool-center-shell-v15 was observed holding an index.html that loads weekly-app.js?v=weekly-v13
+// next to the weekly-v14 module. Install must give Cache.addAll one Request per shell asset with cache:'reload', which
+// skips any HTTP-cache copy on the way to the origin and stores the origin's response in the HTTP cache on the way back,
+// so a new shell cache holds one deployment.
+const shell=[
   './','./index.html','./style.css?v=premium-v3','./slate.css?v=slate-v1','./weekly.css?v=premium-v2',
   './weekly-app.js?v=weekly-v14','./public-math.js?v=2','./survivor.css?v=3','./survivor-app.js?v=5','./survivor-math.js?v=5',
   './score-feed-proxy.js?v=2','./pwa.js?v=1','./manifest.webmanifest',
   './assets/pool-center-icon.svg','./assets/pool-center-icon-192.svg','./assets/pool-center-icon-512.svg'
-],'the precached public shell must change only in its weekly-app version');
+].map(path=>new URL(path,workerURL).href);
+assert.equal(addAllCalls.length,1,'install must precache the whole shell with one all-or-nothing Cache.addAll');
+const installRequests=addAllCalls[0];
+// It changes how each shell asset is fetched, never which: the HDC-06 shell, in the same order, every query string intact.
+// A URL string is resolved as Cache.addAll would resolve it.
+const precached=installRequests.map(request=>request instanceof Request?request.url:new URL(request,workerURL).href);
+assert(precached.includes('https://example.test/nfl-pool/public-math.js?v=2'));
+assert(precached.includes('https://example.test/nfl-pool/survivor-math.js?v=5'));
+assert(!precached.some(url=>new URL(url).pathname.startsWith('/nfl-pool/admin')),'Admin pages must not be precached');
+assert.deepEqual(precached,shell,'install must precache exactly the public shell, each asset at its own URL');
+assert.deepEqual(installRequests.map(request=>request.cache),shell.map(()=>'reload'),
+  'every shell asset must be requested with cache:"reload", never answered from a fresh HTTP-cache copy');
+for(const mode of ['default','no-cache','no-store','force-cache','only-if-cached']){
+  assert(!installRequests.some(request=>request.cache===mode),`no shell asset may be requested with cache:"${mode}"`);
+}
+assert(installRequests.every(request=>request instanceof Request),'install must give Cache.addAll Request objects, not URL strings');
+assert.equal(installRequests[shell.indexOf('https://example.test/nfl-pool/weekly-app.js?v=weekly-v14')].url,
+  'https://example.test/nfl-pool/weekly-app.js?v=weekly-v14','the reload request must keep the weekly-v14 query string');
+assert.deepEqual([fetchCalls.length,putCalls.length],[0,0],'install must fetch and store the shell only through Cache.addAll');
+assert.equal(skipWaitingCalls,1,'a completed install skips waiting once');
 assert.deepEqual(opened,['pool-center-shell-v15'],'install must write the shell to pool-center-shell-v15');
+{
+  // HDC-07 keeps Cache.addAll all-or-nothing. When any shell response is not OK the browser rejects addAll and stores none
+  // of the shell; install must reject with that same error and never skip waiting, so the previous worker keeps control
+  // with its complete shell instead of a partly filled one activating.
+  const failure=new TypeError('Cache.addAll: ./survivor.css?v=3 answered HTTP 404'),failedListeners={},failedOpens=[],failedCalls=[];
+  let failedSkips=0,failedInstall;
+  vm.runInNewContext(source,{
+    self:{location:self.location,clients:self.clients,skipWaiting:async()=>{failedSkips++},addEventListener(t,f){failedListeners[t]=f}},
+    caches:{open:async name=>{failedOpens.push(name);return{addAll:async requests=>{failedCalls.push(Array.from(requests));throw failure},put:async()=>{throw new Error('install must not call cache.put')}}}},
+    fetch:async()=>{throw new Error('install must not fetch outside Cache.addAll')},
+    URL,Promise,console,Request
+  });
+  failedListeners.install({waitUntil:p=>{failedInstall=p}});
+  await assert.rejects(failedInstall,error=>error===failure,'a shell asset that fails must fail the install with the Cache.addAll error');
+  assert.equal(failedSkips,0,'a failed install must never skip waiting');
+  assert.equal(failedCalls.length,1,'a failed Cache.addAll must not be retried or replaced by a partial precache');
+  assert.equal(failedCalls[0].length,shell.length);
+  assert.deepEqual(failedOpens,['pool-center-shell-v15']);
+}
 
 let activatePromise;
 listeners.activate({waitUntil:p=>{activatePromise=p}});await activatePromise;
@@ -731,4 +775,4 @@ for(const path of ['/nfl-pool/admin/x%2F..%2F..%2Fstyle.css?v=premium-v3','/nfl-
 assert.equal(opened.length,1+putCalls.length,'install and each runtime cache.put open the shell cache once');
 assert.deepEqual([...new Set(opened)],['pool-center-shell-v15'],'the worker must write only to pool-center-shell-v15');
 
-console.log('service-worker precache graph, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');
+console.log('service-worker precache graph, fresh (cache:"reload") precache requests, all-or-nothing install, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');
