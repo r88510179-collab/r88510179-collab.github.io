@@ -31,8 +31,10 @@ function isAdminPath(pathname){
   }
   return [pathname,'/'+segments.join('/')].some(path=>path===ADMIN_PATH||path.startsWith(ADMIN_PATH+'/'));
 }
+// Install fetches each shell asset from the origin (cache:'reload'), never from a still-fresh HTTP-cache copy, so a new
+// shell cache holds one deployment and the HTTP cache is refreshed with it. Cache.addAll stays all-or-nothing.
 self.addEventListener('install',event=>{
-  event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)).then(()=>self.skipWaiting()));
+  event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL.map(asset=>new Request(asset,{cache:'reload'})))).then(()=>self.skipWaiting()));
 });
 self.addEventListener('activate',event=>{
   event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));
