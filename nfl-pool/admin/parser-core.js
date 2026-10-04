@@ -326,9 +326,12 @@ function pdfTableBoundary(sourceRows,matchups){
         const yContinuous=!prev||(spacing&&Number.isFinite(gap)&&gap<=spacing.maxGap);
         if(!current||!yContinuous){current={page,records:[],startPos:pos,endPos:pos,pageSize:pageRecords.length,firstEvidence:record,lastEvidence:record,sparseBridgeCount:0};runs.push(current)}
         current.records.push(record);current.endPos=pos;current.lastEvidence=record;current.sparseBridgeCount=0;
-      }else if(current&&record.sparseTableEvidence&&current.sparseBridgeCount===0){
+      }else if(current&&record.sparseTableEvidence&&current.sparseBridgeCount<2){
+        // Real pool PDFs can contain two consecutive inactive rows (name + lone W value) inside the regular table.
+        // Permit that exact bounded bridge, but a third consecutive sparse row still breaks the run so sparse evidence
+        // cannot walk the trusted table into a separate aligned mini-table.
         const gap=pdfRowGap(current.lastEvidence,record);
-        if(spacing&&Number.isFinite(gap)&&gap<=spacing.maxGap){current.endPos=pos;current.lastEvidence=record;current.sparseBridgeCount=1}
+        if(spacing&&Number.isFinite(gap)&&gap<=spacing.maxGap){current.endPos=pos;current.lastEvidence=record;current.sparseBridgeCount++}
         else current=null;
       }else current=null;
     });
