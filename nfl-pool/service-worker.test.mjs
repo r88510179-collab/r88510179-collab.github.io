@@ -20,7 +20,7 @@ assert(!index.includes('weekly-app.js?v=weekly-v13'),'the Pool Center page must 
 assert(index.includes('survivor-app.js?v=5'));
 assert(index.includes('score-feed-proxy.js?v=2'));
 
-const listeners={},deleted=[],fetchCalls=[],matchCalls=[],putCalls=[],opened=[],addAllCalls=[];
+const listeners={},deleted=[],fetchCalls=[],fetchInitCalls=[],matchCalls=[],putCalls=[],opened=[],addAllCalls=[];
 let network=()=>okResponse,skipWaitingCalls=0;
 const fallback={kind:'public-shell'},okResponse={ok:true,clone(){return this}};
 const offline=new Error('offline'),cached=new Map([['./index.html',fallback]]);
@@ -28,7 +28,7 @@ const httpResponse=status=>{const response={status,ok:status>=200&&status<300,cl
 const cache={addAll:async requests=>{addAllCalls.push(Array.from(requests))},put:async(request,response)=>{putCalls.push({request,response})}};
 const caches={
   open:async name=>{opened.push(name);return cache},
-  keys:async()=>['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15','pool-center-shell-v16'],
+  keys:async()=>['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15','pool-center-shell-v16','pool-center-shell-v17'],
   delete:async key=>{deleted.push(key);return true},
   match:async key=>{matchCalls.push(key);return cached.get(typeof key==='string'?key:key.url)}
 };
@@ -44,7 +44,7 @@ const self={
   skipWaiting:async()=>{skipWaitingCalls++},
   addEventListener(t,f){listeners[t]=f}
 };
-const fetch=async request=>{fetchCalls.push(request);return network(request)};
+const fetch=async(request,init)=>{fetchCalls.push(request);fetchInitCalls.push(init);return network(request,init)};
 vm.runInNewContext(source,{self,caches,fetch,URL,Promise,console,Request});
 
 let installPromise;
@@ -80,7 +80,7 @@ assert.equal(installRequests[shell.indexOf('https://example.test/nfl-pool/weekly
   'https://example.test/nfl-pool/weekly-app.js?v=weekly-v14','the reload request must keep the weekly-v14 query string');
 assert.deepEqual([fetchCalls.length,putCalls.length],[0,0],'install must fetch and store the shell only through Cache.addAll');
 assert.equal(skipWaitingCalls,1,'a completed install skips waiting once');
-assert.deepEqual(opened,['pool-center-shell-v16'],'install must write the shell to pool-center-shell-v16');
+assert.deepEqual(opened,['pool-center-shell-v17'],'install must write the shell to pool-center-shell-v17');
 {
   // HDC-07 keeps Cache.addAll all-or-nothing. When any shell response is not OK the browser rejects addAll and stores none
   // of the shell; install must reject with that same error and never skip waiting, so the previous worker keeps control
@@ -98,7 +98,7 @@ assert.deepEqual(opened,['pool-center-shell-v16'],'install must write the shell 
   assert.equal(failedSkips,0,'a failed install must never skip waiting');
   assert.equal(failedCalls.length,1,'a failed Cache.addAll must not be retried or replaced by a partial precache');
   assert.equal(failedCalls[0].length,shell.length);
-  assert.deepEqual(failedOpens,['pool-center-shell-v16']);
+  assert.deepEqual(failedOpens,['pool-center-shell-v17']);
 }
 
 let activatePromise;
@@ -108,9 +108,9 @@ listeners.activate({waitUntil:p=>{activatePromise=p}});await activatePromise;
 // still reached networkFirst, so v13 may hold runtime-cached Admin modules under those paths and is deleted too. HDC-06
 // rolls it to v15 with weekly-app.js?v=weekly-v14, so v14, which holds the weekly-v13 module and the page that loads it,
 // is deleted as well. HDC-07 rolls it to v16: v15 may have been installed from still-fresh HTTP-cache copies, such as the
-// page from before the HDC-06 deploy that loads weekly-v13, so v15 is deleted too. Only the new shell cache,
-// pool-center-shell-v16, is kept.
-assert.deepEqual(deleted,['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15'],'activation must delete v12, v13, v14 and v15 and keep only v16');
+// page from before the HDC-06 deploy that loads weekly-v13, so v15 is deleted too. HDC-08 rolls it to v17 because v16
+// may already contain runtime responses accepted from a still-fresh browser HTTP-cache copy. Only v17 is kept.
+assert.deepEqual(deleted,['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15','pool-center-shell-v16'],'activation must delete v12 through v16 and keep only v17');
 
 const adminRequest={method:'GET',mode:'navigate',url:'https://example.test/nfl-pool/admin/survivor.html'};
 let adminResponse;
@@ -129,11 +129,35 @@ assert(matchCalls.includes('./index.html'));
 const page=path=>({method:'GET',mode:'navigate',url:`https://example.test${path}`});
 const asset=path=>({method:'GET',mode:'no-cors',url:`https://example.test${path}`});
 async function route(request){
-  const seen=[fetchCalls.length,matchCalls.length,putCalls.length];
+  const seen=[fetchCalls.length,matchCalls.length,putCalls.length],initBefore=fetchInitCalls.length;
   let responded,result,error;
   listeners.fetch({request,respondWith:p=>{responded=p}});
   try{result=await responded}catch(err){error=err}
-  return{result,error,fetched:fetchCalls.slice(seen[0]),matched:matchCalls.slice(seen[1]),put:putCalls.slice(seen[2])};
+  return{result,error,fetched:fetchCalls.slice(seen[0]),fetchInit:fetchInitCalls.slice(initBefore),matched:matchCalls.slice(seen[1]),put:putCalls.slice(seen[2])};
+}
+
+// HDC-08. Model the browser HTTP cache separately from the origin. With ordinary default fetch semantics, a still-fresh
+// response from the prior deployment wins. Managed runtime requests must instead use reload semantics, reach the NEW
+// origin response, return it, and write only that NEW response into the active Cache API generation.
+for(const request of [
+  page('/nfl-pool/'),
+  page('/nfl-pool/index.html'),
+  page('/nfl-pool/?view=survivor'),
+  page('/nfl-pool/?view=survivor&sw=4&season=2026'),
+  asset('/nfl-pool/weekly-app.js?v=weekly-v14')
+]){
+  const stale=httpResponse(200),fresh=httpResponse(200);
+  network=(_request,init)=>init?.cache==='reload'?fresh:stale;
+  assert.equal(network(request),stale,`the modeled default-cache fetch for ${request.url} must receive the OLD HTTP-cache response`);
+  const seen=await route(request);
+  assert.equal(seen.result,fresh,`${request.url} must bypass the stale ordinary HTTP cache and return the NEW origin response`);
+  assert.deepEqual(seen.fetched,[request]);
+  assert.equal(seen.fetchInit.length,1);
+  assert.equal(seen.fetchInit[0]?.cache,'reload',`${request.url} runtime fetch must force HTTP-cache reload semantics`);
+  assert.deepEqual(seen.matched,[],'a successful fresh runtime response must not consult the Cache API fallback');
+  assert.equal(seen.put.length,1,'a successful fresh runtime response must be cached');
+  assert.equal(seen.put[0].request,request,'the fresh response must be cached under the originally requested resource');
+  assert.equal(seen.put[0].response.cloneOf,fresh,'only the NEW origin response may be written into the active Cache API generation');
 }
 
 // A. HTTP 503 with the requested resource cached: its last-good copy wins over the error and the shell.
@@ -447,6 +471,8 @@ async function assertDirectNetwork(request,label){
     assert.equal(seen.result,response,`${outcome(response)} for Admin ${label} must be returned exactly, never a cached copy`);
     assert.equal(seen.fetched.length,1,`Admin ${label} must be fetched from the network once`);
     assert.equal(seen.fetched[0],request,`Admin ${label} must be fetched as requested`);
+    assert.equal(seen.fetchInit.length,1);
+    assert.equal(seen.fetchInit[0],undefined,`Admin ${label} must keep ordinary direct-network fetch semantics`);
     assert.deepEqual(seen.matched,[],`Admin ${label} must not call caches.match`);
     assert.deepEqual(seen.put,[],`Admin ${label} must not call cache.put`);
   }
@@ -773,8 +799,8 @@ for(const path of ['/nfl-pool/admin/x%2F..%2F..%2Fstyle.css?v=premium-v3','/nfl-
   // answers the first with the public stylesheet). It is direct network in every request mode, never a cached copy.
   for(const mode of allModes)await assertDirectNetwork(ncLoad(path,mode,'/nfl-pool/admin/'),`${path} (${mode})`);
 }
-// Every cache the worker opened, at install and before each runtime cache.put above, is pool-center-shell-v16.
+// Every cache the worker opened, at install and before each runtime cache.put above, is pool-center-shell-v17.
 assert.equal(opened.length,1+putCalls.length,'install and each runtime cache.put open the shell cache once');
-assert.deepEqual([...new Set(opened)],['pool-center-shell-v16'],'the worker must write only to pool-center-shell-v16');
+assert.deepEqual([...new Set(opened)],['pool-center-shell-v17'],'the worker must write only to pool-center-shell-v17');
 
 console.log('service-worker precache graph, fresh (cache:"reload") precache requests, all-or-nothing install, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');

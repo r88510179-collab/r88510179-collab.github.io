@@ -1,5 +1,5 @@
 'use strict';
-const CACHE='pool-center-shell-v16';
+const CACHE='pool-center-shell-v17';
 const SHELL=[
   './',
   './index.html',
@@ -42,7 +42,9 @@ self.addEventListener('activate',event=>{
 async function networkFirst(request,fallback){
   let response;
   try{
-    response=await fetch(request);
+    // Runtime-managed Pool Center requests must not promote a still-fresh HTTP-cache copy from an older deploy into
+    // this Cache API generation. Reload bypasses that copy while preserving the existing network-first fallback contract.
+    response=await fetch(request,{cache:'reload'});
     if(response&&response.type==='opaqueredirect')return response;
     if(response&&response.ok){
       const cache=await caches.open(CACHE);
