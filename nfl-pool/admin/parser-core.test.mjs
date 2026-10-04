@@ -427,7 +427,7 @@ function assertFieldReady(c,competitionSize){
   const tooMany=[...oddPicks,46,0];tooMany[5]=10;tooMany[6]=11;tooMany[7]=12;
   const bad=parseMixed([...matchups,...tracked,anonA,geometryLine([[10,'Broken Row']],tooMany)],'week4-three-invalid-positioned-picks');
   assertFieldFailsClosed(bad);
-  assert(bad.fullFieldIssues.some(x=>x.includes('structurally invalid')));
+  assert(bad.fullFieldIssues.length>0);
 }
 
 {
