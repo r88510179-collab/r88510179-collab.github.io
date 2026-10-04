@@ -224,13 +224,22 @@ function assertFieldReady(c,competitionSize){
   // self-declared in the config, so validateConfig enforces the bound itself rather than trusting it.
   const withEntry=(cfg,pickNumbers,tiebreak)=>{const x=structuredClone(cfg);Object.assign(x.fieldEntries[0],{pickNumbers,tiebreak});return validateConfig(x)};
   const noPicks=k=>[...Array(k).fill(0),...oddPicks.slice(k)];
-  assert.equal(c.config.fullFieldValidationVersion,3);
-  // Version 3 (PDF geometry recovery): at most two empty cells across the pick and Pts columns.
-  for(const [k,tiebreak] of [[1,44],[2,44],[0,null],[1,null]])assert.deepEqual(withEntry(c.config,noPicks(k),tiebreak),[],`v3 ${k} no-picks, tiebreak ${tiebreak}`);
-  for(const [k,tiebreak,error] of [[matchups.length,44,'too many no-picks'],[3,44,'too many no-picks'],[matchups.length,null,'at most one no-pick is allowed'],[2,null,'at most one no-pick is allowed']]){
-    assert(withEntry(c.config,noPicks(k),tiebreak).includes(`Field entry 1: ${error}`),`v3 ${k} no-picks, tiebreak ${tiebreak}`);
+  assert.equal(c.config.fullFieldValidationVersion,4);
+  // Version 4 proves each positioned PDF pick against its own matchup column and requires a W cell plus at least one
+  // real pick. Any other blank pick cells may therefore be represented as explicit no-picks; Pts may also be blank.
+  for(const [k,tiebreak] of [[1,44],[2,44],[3,44],[matchups.length-1,44],[0,null],[1,null],[2,null],[matchups.length-1,null]]){
+    assert.deepEqual(withEntry(c.config,noPicks(k),tiebreak),[],`v4 ${k} no-picks, tiebreak ${tiebreak}`);
   }
-  // Earlier versions (2, or none): one explicit no-pick and a required tiebreak, whatever v3 allows.
+  for(const tiebreak of [44,null]){
+    assert(withEntry(c.config,noPicks(matchups.length),tiebreak).includes('Field entry 1: too many no-picks'),`v4 all no-picks, tiebreak ${tiebreak}`);
+  }
+  // Version 3 keeps the previous two-cell geometry ceiling.
+  const v3=structuredClone(c.config);v3.fullFieldValidationVersion=3;
+  for(const [k,tiebreak] of [[1,44],[2,44],[0,null],[1,null]])assert.deepEqual(withEntry(v3,noPicks(k),tiebreak),[],`v3 ${k} no-picks, tiebreak ${tiebreak}`);
+  for(const [k,tiebreak,error] of [[matchups.length,44,'too many no-picks'],[3,44,'too many no-picks'],[matchups.length,null,'at most one no-pick is allowed'],[2,null,'at most one no-pick is allowed']]){
+    assert(withEntry(v3,noPicks(k),tiebreak).includes(`Field entry 1: ${error}`),`v3 ${k} no-picks, tiebreak ${tiebreak}`);
+  }
+  // Earlier versions (2, or none): one explicit no-pick and a required tiebreak.
   for(const version of [2,undefined]){
     const legacy=structuredClone(c.config);if(version===undefined)delete legacy.fullFieldValidationVersion;else legacy.fullFieldValidationVersion=version;
     assert.deepEqual(validateConfig(legacy),[],`version ${version}`);
@@ -364,7 +373,7 @@ function assertFieldReady(c,competitionSize){
   assert.deepEqual(c.errors,[]);
   assert.deepEqual(c.fullFieldIssues,[]);
   assert.equal(c.config.fullFieldReady,true);
-  assert.equal(c.config.fullFieldValidationVersion,3);
+  assert.equal(c.config.fullFieldValidationVersion,4);
   assert.equal(c.config.competitionSize,8);
   assert.equal(c.config.fieldEntries.length,4);
   assert(c.config.fieldEntries.some(e=>e.tiebreak===42&&e.pickNumbers.filter(n=>n===0).length===2));
@@ -372,24 +381,26 @@ function assertFieldReady(c,competitionSize){
   assert.deepEqual(validateConfig(c.config),[]);
 }
 {
-  // WEEK-3 GEOMETRY BOUNDARY — recovery needs a participant-width count of positioned cells plus the W cell, so it proves
-  // at most two empty cells across the pick and Pts columns, the bound validateConfig enforces for version 3. Beyond it
-  // the row is not recovered and fails closed on structure alone; an all-empty pick row never becomes an entrant.
+  // PDF GEOMETRY BOUNDARY — blank cells disappear from extracted PDF text, so recovery is column-driven rather than
+  // count-driven. A row is recoverable when W is present, at least one pick is positioned, and every positioned pick is
+  // valid for its own matchup. A completely empty pick row remains continuity evidence and is never counted as an entrant.
   const edge=values=>geometryLine([[10,'Edge Row']],values);
   const recovered=[
     ['one empty pick, Pts present',[null,...oddPicks.slice(1),44,1],{pickNumbers:[0,...oddPicks.slice(1)],tiebreak:44}],
-    ['two empty picks, Pts present',[null,null,...oddPicks.slice(2),44,1],{pickNumbers:[0,0,...oddPicks.slice(2)],tiebreak:44}],
-    ['one empty pick, Pts empty',[null,...oddPicks.slice(1),null,1],{pickNumbers:[0,...oddPicks.slice(1)],tiebreak:null}]
+    ['three empty picks, Pts present',[null,null,null,...oddPicks.slice(3),44,1],{pickNumbers:[0,0,0,...oddPicks.slice(3)],tiebreak:44}],
+    ['two empty picks, Pts empty',[null,null,...oddPicks.slice(2),null,1],{pickNumbers:[0,0,...oddPicks.slice(2)],tiebreak:null}],
+    ['only one positioned pick, Pts present',[oddPicks[0],...Array(matchups.length-1).fill(null),44,1],{pickNumbers:[oddPicks[0],...Array(matchups.length-1).fill(0)],tiebreak:44}]
   ];
   for(const [label,values,entry] of recovered){
     const c=parseMixed([...matchups,...tracked,anonA,edge(values)],`geometry-bound-${label}`);
     assertFieldReady(c,6);
+    assert.equal(c.config.fullFieldValidationVersion,4,label);
     assert.deepEqual(c.config.fieldEntries[1],{id:'field-002',...entry},label);
+    assert.deepEqual(validateConfig(c.config),[],label);
   }
   const refused=[
-    ['three empty picks, Pts present',[null,null,null,...oddPicks.slice(3),44,1]],
-    ['two empty picks, Pts empty',[null,null,...oddPicks.slice(2),null,1]],
-    ['every pick empty, Pts present',[...Array(matchups.length).fill(null),44,1]]
+    ['every pick empty, Pts present',[...Array(matchups.length).fill(null),44,1]],
+    ['every pick empty, Pts empty',[...Array(matchups.length).fill(null),null,1]]
   ];
   for(const [label,values] of refused){
     const c=parseMixed([...matchups,...tracked,anonA,edge(values)],`geometry-bound-${label}`);
