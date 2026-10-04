@@ -1,5 +1,5 @@
 'use strict';
-const CACHE='pool-center-shell-v16';
+const CACHE='pool-center-shell-v17';
 const SHELL=[
   './',
   './index.html',
@@ -42,7 +42,9 @@ self.addEventListener('activate',event=>{
 async function networkFirst(request,fallback){
   let response;
   try{
-    response=await fetch(request);
+    // Runtime-managed requests must bypass a still-fresh browser HTTP-cache copy before any successful
+    // response is promoted into the active Cache API generation.
+    response=await fetch(new Request(request,{cache:'reload'}));
     if(response&&response.type==='opaqueredirect')return response;
     if(response&&response.ok){
       const cache=await caches.open(CACHE);
