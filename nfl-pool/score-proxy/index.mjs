@@ -24,6 +24,25 @@ export const upstreamUrl=(season,week)=>`${ESPN_SCOREBOARD}?dates=${season}&week
 
 // A JSON object: not null, not an array.
 const isRecord=value=>typeof value==='object'&&value!==null&&!Array.isArray(value);
+
+// ESPN context is authoritative only where it is explicitly exposed. Numeric fields may be numbers or digit strings;
+// absent/null fields stay compatible, but an exposed value that cannot equal the requested regular-season context is
+// contradictory. Validate this before projection removes season/week metadata from successful responses.
+const contextValue=value=>typeof value==='number'?value:typeof value==='string'&&/^\d+$/.test(value.trim())?Number(value.trim()):NaN;
+function contextContradiction(source,{season,week}){
+  if(!isRecord(source))return false;
+  const checks=[[source.season?.year,season],[source.season?.type,2],[source.week?.number,week]];
+  for(const [actual,expected] of checks){
+    if(actual===undefined||actual===null)continue;
+    if(contextValue(actual)!==expected)return true;
+  }
+  return false;
+}
+function scoreboardContextContradiction(payload,context){
+  if(contextContradiction(payload,context))return true;
+  return Array.isArray(payload?.events)&&payload.events.some(event=>isRecord(event)&&contextContradiction(event,context));
+}
+
 // The listed keys the source has, in list order, values copied verbatim. Absent keys stay absent.
 function pick(source,keys){const out={};for(const key of keys)if(Object.hasOwn(source,key))out[key]=source[key];return out}
 
@@ -99,8 +118,10 @@ export function createHandler({fetch:upstream=(url,init)=>globalThis.fetch(url,i
     let body=null;
     try{
       const response=await upstream(upstreamUrl(params.season,params.week),{headers:{accept:'application/json'},signal:AbortSignal.timeout(timeoutMs)});
-      if(response.ok)body=projectScoreboard(await response.json(),new Date(now()).toISOString());
-      else await response.body?.cancel();
+      if(response.ok){
+        const payload=await response.json();
+        if(!scoreboardContextContradiction(payload,params))body=projectScoreboard(payload,new Date(now()).toISOString());
+      }else await response.body?.cancel();
     }catch{body=null}
     return body?json(200,body,origin):json(502,{error:'upstream_unavailable'},origin,'no-store');
   };
