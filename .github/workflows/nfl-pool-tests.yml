@@ -1,0 +1,162 @@
+# NFL Pool Center regression gate.
+#
+# Runs the committed NFL Pool Center Node assertion suites on every push and
+# pull request. Detection only: nothing is deployed, no secrets are used, and
+# the token can only read repository contents.
+name: NFL Pool Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  regression-gate:
+    name: 12-suite regression gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Approved suite inventory. The inventory guard fails unless the tracked
+      # nfl-pool/**/*.test.mjs files are exactly these paths, so adding,
+      # removing or renaming a suite means updating this list and the count in
+      # the same change.
+      EXPECTED_SUITE_COUNT: '12'
+      EXPECTED_SUITES: |
+        nfl-pool/admin/parser-core.test.mjs
+        nfl-pool/admin/survivor-admin.test.mjs
+        nfl-pool/admin/survivor-parser.test.mjs
+        nfl-pool/admin/survivor-publish-checks.test.mjs
+        nfl-pool/public-math.test.mjs
+        nfl-pool/pwa.test.mjs
+        nfl-pool/score-feed-proxy.test.mjs
+        nfl-pool/score-proxy/index.test.mjs
+        nfl-pool/service-worker.test.mjs
+        nfl-pool/survivor-app.test.mjs
+        nfl-pool/survivor-math.test.mjs
+        nfl-pool/weekly-app.test.mjs
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Verify Node.js 22
+        run: |
+          set -euo pipefail
+          echo "node $(node --version) at $(command -v node)"
+          if [ "$(node -p 'process.versions.node.split(".")[0]')" != 22 ]; then
+            echo "::error title=Wrong Node.js version::expected Node.js 22.x, found $(node --version)"
+            exit 1
+          fi
+
+      - name: Inventory guard
+        run: |
+          set -euo pipefail
+          export LC_ALL=C # byte-order sort and comm, whatever the runner locale
+          work="$(mktemp -d)"
+
+          # Both lists are sorted, so the comparison never depends on order.
+          printf '%s\n' "$EXPECTED_SUITES" | sed '/^[[:space:]]*$/d' | sort > "$work/expected"
+          # ':(glob)' lets ** match zero or more directories; a plain
+          # 'nfl-pool/**/*.test.mjs' pathspec would skip nfl-pool/*.test.mjs.
+          git -c core.quotepath=off ls-files -- ':(glob)nfl-pool/**/*.test.mjs' | sort > "$work/discovered"
+
+          count="$(wc -l < "$work/expected")"
+          echo "Approved inventory ($count):"
+          sed 's/^/  /' "$work/expected"
+          echo "Discovered nfl-pool/**/*.test.mjs ($(wc -l < "$work/discovered")):"
+          sed 's/^/  /' "$work/discovered"
+
+          uniq -d "$work/expected" > "$work/duplicate"
+          comm -23 "$work/expected" "$work/discovered" > "$work/missing"
+          comm -13 "$work/expected" "$work/discovered" > "$work/unexpected"
+
+          failed=0
+          if [ "$count" != "$EXPECTED_SUITE_COUNT" ]; then
+            echo "::error title=Suite inventory::EXPECTED_SUITES lists $count suites but EXPECTED_SUITE_COUNT is $EXPECTED_SUITE_COUNT"
+            failed=1
+          fi
+          if [ -s "$work/duplicate" ]; then
+            while IFS= read -r path; do
+              echo "::error title=Suite inventory::listed more than once in EXPECTED_SUITES: $path"
+            done < "$work/duplicate"
+            failed=1
+          fi
+          if [ -s "$work/missing" ]; then
+            while IFS= read -r path; do
+              echo "::error title=Suite missing::approved suite not found: $path"
+            done < "$work/missing"
+            failed=1
+          fi
+          if [ -s "$work/unexpected" ]; then
+            while IFS= read -r path; do
+              echo "::error title=Unexpected suite::test file not in the approved inventory: $path"
+            done < "$work/unexpected"
+            failed=1
+          fi
+
+          if [ "$failed" -ne 0 ]; then
+            echo "Inventory guard FAILED. A renamed suite shows up as one missing and one unexpected path."
+            echo "If the change is intended, update EXPECTED_SUITES and EXPECTED_SUITE_COUNT in .github/workflows/nfl-pool-tests.yml."
+            exit 1
+          fi
+          echo "Inventory guard passed: the discovered suites are exactly the $count approved suites."
+
+      - name: Run 12 suites
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+          # LC_ALL=C only for sort: the suites run in the runner's own locale.
+          printf '%s\n' "$EXPECTED_SUITES" | sed '/^[[:space:]]*$/d' | LC_ALL=C sort > "$work/expected"
+          mapfile -t suites < "$work/expected"
+          total="${#suites[@]}"
+          if [ "$total" != "$EXPECTED_SUITE_COUNT" ]; then
+            echo "::error title=Suite inventory::EXPECTED_SUITES lists $total suites but EXPECTED_SUITE_COUNT is $EXPECTED_SUITE_COUNT"
+            exit 1
+          fi
+
+          echo "Running $total suites with node $(node --version); the first failure stops the run."
+          printf '| # | Suite | Result |\n|---|---|---|\n' >> "$summary"
+          n=0
+          passed=0
+          for suite in "${suites[@]}"; do
+            n=$((n + 1))
+            echo "::group::[$n/$total] node $suite"
+            if node "$suite"; then status=0; else status=$?; fi
+            echo "::endgroup::"
+            if [ "$status" -ne 0 ]; then
+              echo "::error file=$suite,title=Suite failed::[$n/$total] $suite exited with code $status"
+              echo "| $n | \`$suite\` | FAIL (exit $status) |" >> "$summary"
+              echo "FAIL [$n/$total] $suite (exit code $status)"
+              if [ "$n" -lt "$total" ]; then
+                printf '  not run: %s\n' "${suites[@]:n}"
+              fi
+              exit "$status"
+            fi
+            passed=$((passed + 1))
+            echo "$suite" >> "$work/passed"
+            echo "PASS [$n/$total] $suite"
+            echo "| $n | \`$suite\` | PASS |" >> "$summary"
+          done
+
+          # Every approved suite ran exactly once and passed.
+          LC_ALL=C sort "$work/passed" > "$work/passed.sorted"
+          if [ "$passed" != "$EXPECTED_SUITE_COUNT" ] || ! cmp -s "$work/expected" "$work/passed.sorted"; then
+            echo "::error title=Suite run incomplete::$passed of $EXPECTED_SUITE_COUNT approved suites ran and passed"
+            exit 1
+          fi
+          echo "All $passed/$EXPECTED_SUITE_COUNT NFL Pool suites passed."
+          echo "All $passed/$EXPECTED_SUITE_COUNT NFL Pool suites passed." >> "$summary"
