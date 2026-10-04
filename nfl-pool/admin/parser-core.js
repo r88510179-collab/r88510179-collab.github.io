@@ -257,11 +257,17 @@ function pdfGeometryRecoveredParticipantRow(row,ref,matchups){
   // Require a proven W column plus at least one positioned pick; every positioned pick must still be valid for its own
   // matchup. A name + W-only row remains continuity evidence and is never promoted to an anonymous entrant.
   if(columns[gameCount+1]===null)return null;
-  const pickNumbers=[];let positionedPicks=0;
+  const pickNumbers=[];let positionedPicks=0,invalidPicks=0;
   for(let i=0;i<gameCount;i++){
     const n=columns[i],g=matchups[i];
     if(n===null){pickNumbers.push(0);continue}
-    if(n!==g.awayNumber&&n!==g.homeNumber)return null;
+    if(n!==g.awayNumber&&n!==g.homeNumber){
+      // A small number of visibly mis-entered values inside an otherwise proven participant row are quarantined as
+      // explicit no-picks rather than guessed. Cap this at two so a badly shifted/malformed row still fails closed.
+      invalidPicks++;pickNumbers.push(0);
+      if(invalidPicks>2)return null;
+      continue;
+    }
     positionedPicks++;pickNumbers.push(n);
   }
   if(positionedPicks<1)return null;
