@@ -265,7 +265,7 @@ function pdfGeometryRecoveredParticipantRow(row,ref,matchups){
       // A small number of visibly mis-entered values inside an otherwise proven participant row are quarantined as
       // explicit no-picks rather than guessed. Cap this at two so a badly shifted/malformed row still fails closed.
       invalidPicks++;pickNumbers.push(0);
-      if(invalidPicks>2)return null;
+      if(invalidPicks>2||/^\d+$/.test(sourceName))return null;
       continue;
     }
     positionedPicks++;pickNumbers.push(n);
