@@ -39,10 +39,12 @@ self.addEventListener('install',event=>{
 self.addEventListener('activate',event=>{
   event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));
 });
+// The network leg fetches a copy of the request with cache:'reload', like install, so a still-fresh HTTP-cache copy of an
+// earlier deployment never answers it and lands in this shell cache. Cache entries stay keyed by the request itself.
 async function networkFirst(request,fallback){
   let response;
   try{
-    response=await fetch(request);
+    response=await fetch(new Request(request,{cache:'reload'}));
     if(response&&response.type==='opaqueredirect')return response;
     if(response&&response.ok){
       const cache=await caches.open(CACHE);
