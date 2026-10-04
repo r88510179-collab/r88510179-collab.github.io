@@ -253,16 +253,18 @@ function pdfGeometryRecoveredParticipantRow(row,ref,matchups){
     if(column<0||distances[column]>8||column<=lastColumn||columns[column]!==null)return null;
     columns[column]=Number(t.token);lastColumn=column;mapped++;
   }
-  // Recovery is intentionally narrow: at least a participant-width number of positioned numeric cells and a proven W
-  // column. Rows with only a name + W remain table-continuity evidence and are not turned into anonymous entrants.
-  if(mapped<gameCount||columns[gameCount+1]===null)return null;
-  const pickNumbers=[];
+  // Geometry recovery is for real participant rows whose blank PDF cells disappear from extracted text.
+  // Require a proven W column plus at least one positioned pick; every positioned pick must still be valid for its own
+  // matchup. A name + W-only row remains continuity evidence and is never promoted to an anonymous entrant.
+  if(columns[gameCount+1]===null)return null;
+  const pickNumbers=[];let positionedPicks=0;
   for(let i=0;i<gameCount;i++){
     const n=columns[i],g=matchups[i];
     if(n===null){pickNumbers.push(0);continue}
     if(n!==g.awayNumber&&n!==g.homeNumber)return null;
-    pickNumbers.push(n);
+    positionedPicks++;pickNumbers.push(n);
   }
+  if(positionedPicks<1)return null;
   const tiebreak=columns[gameCount]===null?null:columns[gameCount];
   const geometry={nameX:nameItems[0].x,numericXs:ref.numericXs.slice(),nameItems};
   return{sourceName,pickNumbers,tiebreak,wins:columns[gameCount+1],geometry};
@@ -580,7 +582,7 @@ function parseWeekGroup(week,weekGroups,filename,season,expectedCompetitionSize)
   const fullFieldReady=errors.length===0&&fullFieldIssues.length===0;
   const fieldEntries=fullFieldReady?temporary.map((row,i)=>({id:'field-'+String(i+1).padStart(3,'0'),pickNumbers:row.pickNumbers.slice(),tiebreak:row.tiebreak})):[];
   const games=matchups.map((g,index)=>({index,awayNumber:g.awayNumber,homeNumber:g.homeNumber,away:g.away,home:g.home,awayName:g.awayName,homeName:g.homeName}));
-  const config={schemaVersion:1,season,week,label:'Week '+week,tiePoints:0,tiebreakGameIndex:Math.max(0,games.length-1),games,participants,fullFieldReady,fullFieldValidationVersion:3,source:{kind:'weekly-upload',filename}};
+  const config={schemaVersion:1,season,week,label:'Week '+week,tiePoints:0,tiebreakGameIndex:Math.max(0,games.length-1),games,participants,fullFieldReady,fullFieldValidationVersion:4,source:{kind:'weekly-upload',filename}};
   if(fullFieldReady){config.fieldEntries=fieldEntries;config.fullFieldEntryCount=fieldEntries.length;config.competitionSize=participants.length+fieldEntries.length}
   return{week,gameCount,errors,fullFieldIssues:[...new Set(fullFieldIssues)],competitionSize:fullFieldReady?config.competitionSize:participants.length,config};
 }
@@ -635,12 +637,14 @@ export function validateConfig(config){
         if(keys.length!==allowed.length||keys.some((k,ki)=>k!==allowed[ki]))errors.push(label+': only id, pickNumbers, and tiebreak are allowed');
         if(typeof p.id!=='string'||!p.id)errors.push(label+': missing id');
         else if(ids.has(p.id))errors.push('Duplicate field entry id '+p.id);else ids.add(p.id);
-        // Version 3 is self-declared by the config: it records that the parser proved empty cells from PDF geometry. That
-        // recovery needs a participant-width count of positioned cells plus the W cell, so it proves at most two empty
-        // cells across the pick and Pts columns: two no-picks with a tiebreak, one without. Earlier versions keep one
-        // no-pick and a required tiebreak.
-        const geometryValidated=Number(config.fullFieldValidationVersion)>=3;
-        validateEntry(p,label,{allowNoPick:true,maxNoPicks:geometryValidated?(p?.tiebreak===null?1:2):1,allowMissingTiebreak:geometryValidated});
+        // Version 3 accepted only the original tightly-bounded geometry recovery. Version 4 records the stronger
+        // column-by-column proof: a recovered row must have the W column, at least one valid positioned pick, and every
+        // other positioned pick must match its own matchup column. Missing PDF cells may therefore become no-pick
+        // sentinels without an arbitrary two-cell ceiling. Earlier versions keep their original limits.
+        const validationVersion=Number(config.fullFieldValidationVersion)||0;
+        const geometryValidated=validationVersion>=3;
+        const maxNoPicks=validationVersion>=4?Math.max(0,games.length-1):(geometryValidated?(p?.tiebreak===null?1:2):1);
+        validateEntry(p,label,{allowNoPick:true,maxNoPicks,allowMissingTiebreak:geometryValidated});
       });
       const expected=participants.length+fieldEntries.length;
       if(config.competitionSize!==expected)errors.push('Competition size mismatch: expected '+expected);
