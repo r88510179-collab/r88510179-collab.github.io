@@ -398,14 +398,17 @@ function assertFieldReady(c,competitionSize){
     assert.deepEqual(c.config.fieldEntries[1],{id:'field-002',...entry},label);
     assert.deepEqual(validateConfig(c.config),[],label);
   }
-  const refused=[
-    ['every pick empty, Pts present',[...Array(matchups.length).fill(null),44,1]],
-    ['every pick empty, Pts empty',[...Array(matchups.length).fill(null),null,1]]
-  ];
-  for(const [label,values] of refused){
+  {
+    const label='every pick empty, Pts present',values=[...Array(matchups.length).fill(null),44,1];
     const c=parseMixed([...matchups,...tracked,anonA,edge(values)],`geometry-bound-${label}`);
     assertFieldFailsClosed(c);
     assert(c.fullFieldIssues.includes('Participant-shaped PDF row adjoining the proven regular participant table could not be validated'),label);
+  }
+  {
+    // Name + W only is the established inactive-row shape: it may bridge table continuity but is not counted as an entrant.
+    const label='every pick empty, Pts empty',values=[...Array(matchups.length).fill(null),null,1];
+    const c=parseMixed([...matchups,...tracked,anonA,edge(values)],`geometry-bound-${label}`);
+    assertFieldReady(c,5);
   }
 }
 
