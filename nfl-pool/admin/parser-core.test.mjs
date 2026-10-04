@@ -413,6 +413,23 @@ function assertFieldReady(c,competitionSize){
 }
 
 {
+  // WEEK-4 REAL-PDF REGRESSION — two consecutive inactive rows can occur inside the regular participant table.
+  // They preserve table continuity, are not published as anonymous entrants, and the complete rows after them remain in-field.
+  const s1='Matt Coyle 15',s2='Michelle Coyle 15';
+  const lines=[...matchups,...tracked,anonA,s1,s2,anonB],rows=sourceRows(lines,1);
+  for(const text of [s1,s2]){
+    const row=rows.find(r=>r.text===text);
+    row.parts=[{x:10,text:text.replace(/ 15$/,'')},{x:538,text:'15'}];
+  }
+  const c=parse(lines,{sourceRows:rows,pageFingerprint:'week4-two-consecutive-inactive',expectedCompetitionSize:6});
+  assert.deepEqual(c.errors,[]);
+  assert.deepEqual(c.fullFieldIssues,[]);
+  assert.equal(c.config.fullFieldReady,true);
+  assert.equal(c.config.fieldEntries.length,2);
+  assert.equal(c.config.competitionSize,6);
+}
+
+{
   // CONSECUTIVE SPARSE ROWS — sparse evidence cannot walk a trusted run into another aligned mini-table.
   const s1='S1 15',s2='S2 15',s3='S3 15';
   const falseA='False Leader 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 60 0';
