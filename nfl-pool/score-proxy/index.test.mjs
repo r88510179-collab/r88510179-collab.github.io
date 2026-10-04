@@ -315,6 +315,54 @@ for(const [method,origin,query,status,body,headers] of MATRIX){
     assert(h.calls[0].init.signal instanceof AbortSignal,`${label}: upstream request is time-limited`);
   }else assert.equal(h.calls.length,0,`${label}: no upstream request`);
 }
+
+
+// HDC-09 — explicit ESPN season/week context must be validated before projection strips it. Contradictions fail
+// closed with the existing upstream-integrity contract; genuinely absent context remains compatible.
+{
+  const expectContextFailure=async(label,payload)=>{
+    const h=harness(async()=>Response.json(payload)),r=await h.send('GET',Q,'allowed');
+    assert.equal(r.status,502,`${label}: contradictory upstream context must fail closed`);
+    assert.equal(r.body,error('upstream_unavailable'),`${label}: existing upstream failure body`);
+    assert.deepEqual(r.headers,H.corsFailed,`${label}: contradictory context is never cacheable`);
+    assert.deepEqual(h.calls.map(c=>c.url),[upstreamUrl(2026,3)],`${label}: requested upstream URL is unchanged`);
+  };
+
+  // TEST A — wrong payload week.
+  const wrongPayloadWeek=structuredClone(W3);wrongPayloadWeek.week.number=2;
+  await expectContextFailure('wrong payload week',wrongPayloadWeek);
+
+  // TEST B — wrong payload season.
+  const wrongPayloadSeason=structuredClone(W3);wrongPayloadSeason.season.year=2025;
+  await expectContextFailure('wrong payload season',wrongPayloadSeason);
+
+  // TEST C — wrong top-level season type.
+  const wrongPayloadType=structuredClone(W3);wrongPayloadType.season.type=3;
+  await expectContextFailure('wrong payload season type',wrongPayloadType);
+
+  // TEST D — event-level contradictions. Top-level context stays correct.
+  const wrongEventSeason=structuredClone(W3);wrongEventSeason.events[0].season.year=2025;
+  await expectContextFailure('wrong event season',wrongEventSeason);
+  const wrongEventWeek=structuredClone(W3);wrongEventWeek.events[0].week.number=2;
+  await expectContextFailure('wrong event week',wrongEventWeek);
+  const wrongEventType=structuredClone(W3);wrongEventType.events[0].season.type=3;
+  await expectContextFailure('wrong event season type',wrongEventType);
+
+  // TEST E — correct context preserves the successful response projection, event order, scores, odds and fetchedAt.
+  const correct=harness(async()=>Response.json(W3)),correctResponse=await correct.send('GET',Q,'allowed');
+  assert.equal(correctResponse.status,200,'correct ESPN context remains successful');
+  assert.equal(correctResponse.body,OK,'correct context keeps the exact existing projected body');
+  assert.deepEqual(correctResponse.headers,H.cors,'correct context keeps successful cache/CORS headers');
+
+  // TEST F — context absent is still accepted; no season/week/type is invented or required.
+  const absent=structuredClone(W3);
+  delete absent.season;delete absent.week;
+  for(const event of absent.events){delete event.season;delete event.week}
+  const absentHarness=harness(async()=>Response.json(absent)),absentResponse=await absentHarness.send('GET',Q,'allowed');
+  assert.equal(absentResponse.status,200,'absent context remains compatible');
+  assert.equal(absentResponse.body,JSON.stringify(projected(absent)),'absent context keeps the existing projection');
+  assert.deepEqual(absentResponse.headers,H.cors,'absent context keeps successful cache/CORS headers');
+}
 // Coerced parameters reach ESPN as plain integers; seasontype, limit and _ are never forwarded.
 for(const [query,season,week] of ACCEPTED){
   const h=harness(async()=>Response.json(scoreboard([],week,season))),r=await h.send('GET',`?${query}`,'allowed');
