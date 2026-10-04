@@ -413,6 +413,24 @@ function assertFieldReady(c,competitionSize){
 }
 
 {
+  // WEEK-4 REAL-PDF REGRESSION — the sheet can contain a participant row with two numeric values entered in the wrong
+  // matchup columns. Geometry proves the row and columns, so those two cells become explicit no-picks; no pick is guessed.
+  const values=[...oddPicks,46,0];values[5]=10;values[6]=11;
+  const row=geometryLine([[10,'Mmonger']],values);
+  const c=parseMixed([...matchups,...tracked,anonA,row],'week4-two-invalid-positioned-picks');
+  assertFieldReady(c,6);
+  assert.equal(c.config.fieldEntries[1].pickNumbers[5],0);
+  assert.equal(c.config.fieldEntries[1].pickNumbers[6],0);
+  assert.deepEqual(validateConfig(c.config),[]);
+
+  // Three wrong matchup-column values remain beyond the bounded recovery contract and must fail closed.
+  const tooMany=[...oddPicks,46,0];tooMany[5]=10;tooMany[6]=11;tooMany[7]=12;
+  const bad=parseMixed([...matchups,...tracked,anonA,geometryLine([[10,'Broken Row']],tooMany)],'week4-three-invalid-positioned-picks');
+  assertFieldFailsClosed(bad);
+  assert(bad.fullFieldIssues.some(x=>x.includes('structurally invalid')));
+}
+
+{
   // WEEK-4 REAL-PDF REGRESSION — two consecutive inactive rows can occur inside the regular participant table.
   // They preserve table continuity, are not published as anonymous entrants, and the complete rows after them remain in-field.
   const s1='Matt Coyle 15',s2='Michelle Coyle 15';
