@@ -35,16 +35,31 @@ const caches={
 // The worker is served at /nfl-pool/service-worker.js. In a ServiceWorkerGlobalScope a relative URL passed to new Request()
 // resolves against the worker script's URL, as Cache.addAll resolves a URL string.
 const workerURL='https://example.test/nfl-pool/service-worker.js';
-// Test-only stand-in for the browser's Request: the resolved URL and the cache mode ('default' unless one is given) are all
-// the install regressions inspect.
-class Request{constructor(input,init={}){this.url=new URL(input,workerURL).href;this.cache=init.cache??'default'}}
+// Test-only stand-in for the browser's Request. A URL string resolves against the worker script's URL. A request (the
+// request records the tests dispatch stand in for FetchEvent.request) is copied as the Fetch Standard's Request
+// constructor copies it, which a probe worker confirmed in Chromium 141: URL, method, credentials mode, redirect mode and
+// the headers a script may set are kept, init replaces what it names, and a non-empty init makes a copy of a navigate
+// request same-origin and resets its referrer to the client. The regressions inspect the URL, the cache mode ('default'
+// unless one is given) and, for runtime fetches, what the copy keeps.
+class Request{
+  constructor(input,init={}){
+    const from=typeof input==='object'&&'url' in input?input:{url:new URL(input,workerURL).href,method:'GET',mode:'cors',credentials:'same-origin',redirect:'follow',referrer:'about:client',headers:[]};
+    const changed=Object.keys(init).length>0;
+    Object.assign(this,{
+      url:from.url,method:init.method??from.method,mode:init.mode??(changed&&from.mode==='navigate'?'same-origin':from.mode),
+      credentials:init.credentials??from.credentials,cache:init.cache??from.cache??'default',redirect:init.redirect??from.redirect,
+      referrer:init.referrer??(changed?'about:client':from.referrer),headers:init.headers??from.headers
+    });
+  }
+}
 const self={
   location:{origin:'https://example.test',href:workerURL},
   clients:{claim:async()=>{}},
   skipWaiting:async()=>{skipWaitingCalls++},
   addEventListener(t,f){listeners[t]=f}
 };
-const fetch=async request=>{fetchCalls.push(request);return network(request)};
+// Like the Fetch Standard's fetch(input, init), the stand-in sends new Request(input, init); with no init it sends input.
+const fetch=async(input,init)=>{const request=init===undefined?input:new Request(input,init);fetchCalls.push(request);return network(request)};
 vm.runInNewContext(source,{self,caches,fetch,URL,Promise,console,Request});
 
 let installPromise;
@@ -112,6 +127,219 @@ listeners.activate({waitUntil:p=>{activatePromise=p}});await activatePromise;
 // pool-center-shell-v16, is kept.
 assert.deepEqual(deleted,['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15'],'activation must delete v12, v13, v14 and v15 and keep only v16');
 
+// HDC-08. The network leg of networkFirst is one fetch of a copy of the requested resource with cache:'reload': its own URL
+// and query string, method, credentials mode, redirect mode and headers (a copy of a navigate request is same-origin, as
+// browsers make it). A request with the page's own cache mode, normally 'default', may be answered from the browser's HTTP
+// cache instead of the origin.
+function assertReloadLeg(fetched,request,label){
+  assert.equal(fetched.length,1,`${label} must be fetched from the network once`);
+  const [sent]=fetched;
+  assert.deepEqual(
+    {url:sent.url,method:sent.method,mode:sent.mode,credentials:sent.credentials,redirect:sent.redirect,headers:sent.headers,cache:sent.cache},
+    {url:request.url,method:request.method,mode:request.mode==='navigate'?'same-origin':request.mode,credentials:request.credentials,redirect:request.redirect,headers:request.headers,cache:'reload'},
+    `${label} must be fetched as a copy of its own request with cache:"reload", never answered from a fresh HTTP-cache copy`);
+}
+{
+  // HDC-08. Runtime HTTP-cache coherence. HDC-07 makes install fetch every shell asset from the origin, but networkFirst
+  // passed the page's own request to fetch(). Its cache mode, normally 'default', lets the browser answer from its HTTP
+  // cache while a stored copy is fresh, and Pages serves max-age=600. After a deploy, a runtime URL that install does not
+  // fetch (a view such as /nfl-pool/?view=survivor, or a static file under another query string) and that the visitor
+  // loaded in the previous ten minutes came back from the HTTP cache as the previous deployment, and networkFirst stored it
+  // in the new shell cache as a network success. This plays a deploy from deployment A to deployment B against a model of
+  // the browser: the origin serves the current deployment, the HTTP cache answers by cache mode as in the Fetch Standard
+  // (every stored copy is still fresh), and CacheStorage keeps one entry per URL.
+  const current='pool-center-shell-v16',previous='pool-center-shell-v15',older='pool-center-shell-v12';
+  const at=path=>new URL(path,workerURL).href;
+  const origin={deployment:'A',state:'up',hits:[]}; // state: 'up', 'down' (unreachable) or an HTTP error status
+  const served=(url,deployment,status=200)=>({type:'basic',status,ok:status>=200&&status<300,url,deployment,clone:()=>served(url,deployment,status)});
+  const httpCache=new Map();
+  function toOrigin(request){
+    origin.hits.push(request.url);
+    if(origin.state==='down')throw new TypeError('Failed to fetch');
+    if(origin.state!=='up')return served(request.url,origin.deployment,origin.state);
+    // The origin redirects a moved page; a navigation's redirect mode is 'manual', so the worker receives an opaqueredirect.
+    if(new URL(request.url).searchParams.get('view')==='moved'&&request.redirect==='manual'){
+      const redirect={type:'opaqueredirect',status:0,ok:false,url:request.url,clone:()=>({...redirect})};
+      return redirect;
+    }
+    return served(request.url,origin.deployment);
+  }
+  async function browserFetch(request){
+    const stored=httpCache.get(request.url);
+    switch(request.cache){
+      case 'default':case 'force-cache':if(stored)return stored.clone();break;
+      case 'only-if-cached':
+        if(request.mode!=='same-origin')throw new TypeError('only-if-cached requires same-origin mode');
+        if(stored)return stored.clone();
+        throw new TypeError('only-if-cached: no copy in the HTTP cache');
+      case 'no-cache':case 'reload':case 'no-store':break; // no-cache revalidates a stored copy: the origin's answer wins
+      default:throw new TypeError(`unknown cache mode ${request.cache}`);
+    }
+    const response=toOrigin(request);
+    if(response.ok&&request.cache!=='no-store')httpCache.set(request.url,response.clone());
+    return response;
+  }
+  const storage=new Map(),putLog=[],matchLog=[],sent=[];
+  const keyOf=request=>typeof request==='string'?at(request):request.url;
+  function cacheNamed(name){
+    if(!storage.has(name))storage.set(name,new Map());
+    const entries=storage.get(name);
+    return{
+      // All or nothing, like Cache.addAll: each request is fetched as the browser fetches it; a non-OK answer stores none.
+      async addAll(requests){
+        const fetched=[];
+        for(const request of Array.from(requests,r=>r instanceof Request?r:new Request(r))){
+          const response=await browserFetch(request);
+          if(!response.ok)throw new TypeError(`Cache.addAll: ${request.url} answered ${response.status}`);
+          fetched.push([request.url,{request,response}]);
+        }
+        for(const [url,entry] of fetched)entries.set(url,entry);
+      },
+      async put(request,response){putLog.push({cache:name,request,response});entries.set(keyOf(request),{request,response})}
+    };
+  }
+  const listeners08={};
+  vm.runInNewContext(source,{
+    self:{location:self.location,clients:{claim:async()=>{}},skipWaiting:async()=>{},addEventListener(t,f){listeners08[t]=f}},
+    caches:{
+      open:async name=>cacheNamed(name),keys:async()=>[...storage.keys()],delete:async name=>storage.delete(name),
+      match:async request=>{matchLog.push(request);for(const entries of storage.values()){const entry=entries.get(keyOf(request));if(entry)return entry.response.clone()}}
+    },
+    fetch:async(input,init)=>{const request=init===undefined?input:new Request(input,init);sent.push(request);return browserFetch(request)},
+    URL,Promise,console,Request
+  });
+  async function run(request){
+    const before=[sent.length,putLog.length,matchLog.length,origin.hits.length];
+    let responded;
+    listeners08.fetch({request,respondWith:p=>{responded=p}});
+    const seen={handled:responded!==undefined};
+    if(seen.handled){try{seen.response=await responded}catch(error){seen.error=error}}
+    return Object.assign(seen,{sent:sent.slice(before[0]),put:putLog.slice(before[1]),matched:matchLog.slice(before[2]),hits:origin.hits.slice(before[3])});
+  }
+  // FetchEvent.request as Chromium 141 builds it for each kind of runtime load (checked with a probe worker), limited to
+  // the headers a script may set, which a copy keeps.
+  const loaded=(path,fields)=>({method:'GET',url:at(path),cache:'default',referrer:at('/nfl-pool/'),headers:[['accept','*/*']],...fields});
+  const navigation=path=>loaded(path,{mode:'navigate',credentials:'include',redirect:'manual',referrer:'',headers:[['accept','text/html,application/xhtml+xml'],['upgrade-insecure-requests','1']]});
+  const moduleScript=path=>loaded(path,{mode:'cors',credentials:'same-origin',redirect:'follow'});
+  const classicScript=path=>loaded(path,{mode:'no-cors',credentials:'include',redirect:'follow'});
+  const stylesheet=path=>loaded(path,{mode:'no-cors',credentials:'include',redirect:'follow',headers:[['accept','text/css,*/*;q=0.1']]});
+  const pageFetch=path=>loaded(path,{mode:'cors',credentials:'same-origin',redirect:'follow'});
+  const runtime=[
+    navigation('/nfl-pool/?view=survivor'),
+    navigation('/nfl-pool/index.html?season=2026&week=4'),
+    moduleScript('/nfl-pool/weekly-app.js?v=weekly-v14&runtime-probe=1'),
+    classicScript('/nfl-pool/score-feed-proxy.js?v=2&runtime-probe=1'),
+    stylesheet('/nfl-pool/style.css?v=premium-v3&runtime-probe=1'),
+    pageFetch('/nfl-pool/assets/pool-center-icon.svg?runtime-probe=1'),
+    pageFetch('/nfl-pool/manifest.webmanifest?runtime-probe=1'),
+    pageFetch('/nfl-pool/?view=survivor&runtime-probe=1') // a directory path requested as a subresource
+  ];
+  const leftover=navigation('/nfl-pool/?view=picks'); // viewed under deployment A, not opened again before going offline
+  // Deployment A is live: the previous worker's cache holds it, and the visitor loaded the shell and every runtime URL in
+  // the last ten minutes, so the HTTP cache keeps a fresh deployment-A copy of each. Then deployment B goes live and the
+  // new worker installs and activates.
+  const loadedUnderA=[...shell,...runtime.map(request=>request.url),leftover.url];
+  storage.set(older,new Map());
+  storage.set(previous,new Map(loadedUnderA.map(url=>[url,{request:{url},response:served(url,'A')}])));
+  for(const url of loadedUnderA)httpCache.set(url,served(url,'A'));
+  origin.deployment='B';
+  for(const type of ['install','activate']){let done;listeners08[type]({waitUntil:p=>{done=p}});await done}
+  const deploymentIn=(name,url)=>storage.get(name)?.get(url)?.response.deployment;
+  assert.deepEqual([...storage.keys()],[current],`activation must delete ${previous} and ${older} and keep only ${current}`);
+  assert.deepEqual(shell.map(url=>[deploymentIn(current,url),httpCache.get(url).deployment]),shell.map(()=>['B','B']),
+    'HDC-07: install stores deployment B for every shell asset and refreshes its HTTP-cache copy');
+  assert.deepEqual(runtime.map(request=>[request.url,httpCache.get(request.url).deployment,deploymentIn(current,request.url)]),
+    runtime.map(request=>[request.url,'A',undefined]),
+    'install does not fetch the runtime URLs, so their fresh deployment-A HTTP-cache copies survive it');
+  for(const request of runtime){
+    // The defect: networkFirst must answer with and store what the origin serves now, not the HTTP cache's copy.
+    const keys=[...storage.get(current).keys()];
+    const seen=await run(request);
+    assert.deepEqual({returned:seen.response?.deployment,stored:deploymentIn(current,request.url)},{returned:'B',stored:'B'},
+      `${request.url} must be answered and stored as deployment B, which the origin serves, not as the fresh HTTP-cache copy of deployment A`);
+    assertReloadLeg(seen.sent,request,request.url);
+    assert.deepEqual(seen.hits,[request.url],`${request.url} must reach the origin at its own URL`);
+    // CacheStorage stays keyed by the page's own request: put receives that request, and the new shell cache gains exactly
+    // its URL, query string intact.
+    assert.equal(seen.put.length,1,`a successful ${request.url} response must be cached`);
+    assert.equal(seen.put[0].cache,current,`runtime responses are stored in ${current}`);
+    assert.equal(seen.put[0].request,request,`${request.url} must be stored under the page's own request, not the reload copy`);
+    assert.deepEqual([...storage.get(current).keys()],[...keys,request.url],`${current} must gain exactly ${request.url}`);
+    assert.deepEqual(seen.matched,[],'a successful network response does not consult the cache');
+    // The reload also replaced the stale HTTP-cache copy: an ordinary request is now answered with deployment B from it.
+    const hits=origin.hits.length,ordinary=await browserFetch({url:request.url,mode:'cors',cache:'default'});
+    assert.deepEqual({deployment:ordinary.deployment,originHits:origin.hits.length-hits},{deployment:'B',originHits:0},
+      `after the reload, an ordinary request for ${request.url} must get deployment B from the refreshed HTTP cache`);
+  }
+  assert.deepEqual([...storage.get(current).keys()].filter(url=>!shell.includes(url)),[
+    'https://example.test/nfl-pool/?view=survivor',
+    'https://example.test/nfl-pool/index.html?season=2026&week=4',
+    'https://example.test/nfl-pool/weekly-app.js?v=weekly-v14&runtime-probe=1',
+    'https://example.test/nfl-pool/score-feed-proxy.js?v=2&runtime-probe=1',
+    'https://example.test/nfl-pool/style.css?v=premium-v3&runtime-probe=1',
+    'https://example.test/nfl-pool/assets/pool-center-icon.svg?runtime-probe=1',
+    'https://example.test/nfl-pool/manifest.webmanifest?runtime-probe=1',
+    'https://example.test/nfl-pool/?view=survivor&runtime-probe=1'
+  ],'each runtime response is keyed by its own URL: never rewritten, timestamped or stripped of its query string');
+  // Offline, each runtime URL is answered with its last-good deployment-B copy, looked up under the page's own request.
+  origin.state='down';
+  for(const request of runtime){
+    const seen=await run(request);
+    assert.equal(seen.response?.deployment,'B',`offline ${request.url} must be answered with its cached deployment-B copy`);
+    assertReloadLeg(seen.sent,request,`offline ${request.url}`);
+    assert.deepEqual(seen.matched,[request],'the cached copy is looked up under the page\'s own request');
+    assert.deepEqual(seen.put,[]);
+  }
+  // The previous worker's copies went with its cache, and a deployment-A copy still fresh in the HTTP cache is not offered
+  // either: an uncached page gets the deployment-B shell and an uncached static file rejects with the network error.
+  let seen=await run(leftover);
+  assert.deepEqual([seen.response?.url,seen.response?.deployment],[at('/nfl-pool/index.html'),'B'],
+    'offline, a page cached only by the previous worker must get the deployment-B shell, never deployment A');
+  assert.deepEqual(seen.matched,[leftover,'./index.html']);
+  assert.deepEqual(seen.put,[]);
+  seen=await run(moduleScript('/nfl-pool/weekly-app.js?v=weekly-v14&never-seen=1'));
+  assert(seen.error instanceof TypeError,'offline, an uncached static file must reject with the network error');
+  assert.deepEqual(seen.put,[]);
+  // An HTTP 503 is never stored: each runtime URL keeps, and is answered with, its last-good copy; an uncached page gets
+  // the shell and an uncached static file the 503 itself.
+  origin.state=503;
+  for(const request of runtime){
+    seen=await run(request);
+    assert.deepEqual([seen.response?.status,seen.response?.deployment],[200,'B'],`HTTP 503 for ${request.url} must be answered with its last-good copy`);
+    assertReloadLeg(seen.sent,request,`HTTP 503 ${request.url}`);
+    assert.deepEqual(seen.put,[],'an HTTP 503 must never be stored');
+    assert.equal(storage.get(current).get(request.url).response.status,200,`the last-good ${request.url} must not be overwritten`);
+  }
+  seen=await run(navigation('/nfl-pool/?view=never-seen'));
+  assert.deepEqual([seen.response?.url,seen.response?.status,seen.put],[at('/nfl-pool/index.html'),200,[]],'HTTP 503 for an uncached page must fall back to the shell');
+  seen=await run(moduleScript('/nfl-pool/weekly-app.js?v=weekly-v14&never-seen=2'));
+  assert.deepEqual([seen.response?.status,seen.put],[503,[]],'HTTP 503 for an uncached static file must be returned as-is and not stored');
+  // A redirected navigation is returned to the browser unchanged and never stored.
+  origin.state='up';
+  const moved=navigation('/nfl-pool/?view=moved');
+  seen=await run(moved);
+  assert.equal(seen.response?.type,'opaqueredirect','a redirected navigation must be returned as the opaqueredirect');
+  assertReloadLeg(seen.sent,moved,'a redirected navigation');
+  assert.deepEqual([seen.put,seen.matched,storage.get(current).has(moved.url)],[[],[],false],'a redirect is never stored or replaced by a cached page');
+  // Only networkFirst reloads. Admin, at its canonical path or another spelling, and a navigation outside the two document
+  // paths are fetched as the page requested them, under the browser's own cache mode; another origin's request and a
+  // non-GET request are left to the browser.
+  for(const request of [
+    navigation('/nfl-pool/admin/'),moduleScript('/nfl-pool/admin/admin.js?v=10'),moduleScript('/nfl-pool//admin/admin.js?v=10'),
+    moduleScript('/nfl-pool/%61dmin/admin.js?v=10'),navigation('/nfl-pool/assets/'),navigation('/nfl-pool/foo?view=survivor')
+  ]){
+    seen=await run(request);
+    assert.equal(seen.sent.length,1,`${request.url} must be fetched once`);
+    assert.equal(seen.sent[0],request,`${request.url} must be fetched as the page requested it, with no cache mode of the worker's`);
+    assert.deepEqual([seen.put,seen.matched],[[],[]],`${request.url} must not be stored or looked up`);
+  }
+  for(const request of [{...moduleScript('/nfl-pool/weekly-app.js?v=weekly-v14'),url:'https://cdn.example/nfl-pool/weekly-app.js?v=weekly-v14'},{...navigation('/nfl-pool/?view=survivor'),method:'POST'}]){
+    seen=await run(request);
+    assert.deepEqual([seen.handled,seen.sent],[false,[]],`${request.method} ${request.url} must be left to the browser`);
+  }
+  assert(putLog.every(entry=>entry.cache===current),`every runtime write must go to ${current}`);
+}
+
 const adminRequest={method:'GET',mode:'navigate',url:'https://example.test/nfl-pool/admin/survivor.html'};
 let adminResponse;
 const matchBefore=matchCalls.length;
@@ -126,8 +354,8 @@ listeners.fetch({request:publicRequest,respondWith:p=>{publicResponse=p}});
 assert.equal(await publicResponse,fallback,'offline public navigation should fall back to cached Pool Center shell');
 assert(matchCalls.includes('./index.html'));
 
-const page=path=>({method:'GET',mode:'navigate',url:`https://example.test${path}`});
-const asset=path=>({method:'GET',mode:'no-cors',url:`https://example.test${path}`});
+const page=path=>({method:'GET',mode:'navigate',credentials:'include',redirect:'manual',url:`https://example.test${path}`});
+const asset=path=>({method:'GET',mode:'no-cors',credentials:'include',redirect:'follow',url:`https://example.test${path}`});
 async function route(request){
   const seen=[fetchCalls.length,matchCalls.length,putCalls.length];
   let responded,result,error;
@@ -180,7 +408,8 @@ for(const request of [page('/nfl-pool/?view=survivor'),asset('/nfl-pool/weekly-a
 for(const request of [page('/nfl-pool/?view=home'),asset('/nfl-pool/weekly-app.js?v=weekly-v14')]){
   const fresh=httpResponse(200);
   network=()=>fresh;
-  const {result,matched,put}=await route(request);
+  const {result,fetched,matched,put}=await route(request);
+  assertReloadLeg(fetched,request,request.url);
   assert.equal(result,fresh,'a successful network response must be returned as-is');
   assert.equal(put.length,1,'a successful network response must be cached');
   assert.equal(put[0].request,request,'the successful response is cached under the requested resource');
@@ -241,7 +470,7 @@ for(const request of [page('/nfl-pool/?view=home'),asset('/nfl-pool/weekly-app.j
   network=()=>redirect;
   let seen=await route(request);
   assert.equal(seen.result,redirect,'a public navigation redirect must be returned unchanged, not a cached page or the shell');
-  assert.deepEqual(seen.fetched,[request]);
+  assertReloadLeg(seen.fetched,request,'a public navigation that redirects');
   assert.deepEqual(seen.matched,[],'a redirect must consult neither the requested page cache nor the ./index.html fallback');
   assert.deepEqual(seen.put,[],'a redirect must never be written to the cache');
   // With only the shell cached, the redirect is still not replaced by the ./index.html fallback.
@@ -281,7 +510,7 @@ for(const path of documentPaths){
     cached.set(request.url,lastGood);
     let seen=await route(request);
     assert.equal(seen.result,lastGood,`HTTP ${status} for ${path} must serve the cached copy of the requested page`);
-    assert.deepEqual(seen.fetched,[request]);
+    assertReloadLeg(seen.fetched,request,path);
     assert.deepEqual(seen.matched,[request],'the requested page is looked up before the shell');
     assert.deepEqual(seen.put,[],`HTTP ${status} must never be written to the cache`);
     cached.delete(request.url);
@@ -317,6 +546,7 @@ for(const path of documentPaths){
   const fresh=httpResponse(200);
   network=()=>fresh;
   seen=await route(request);
+  assertReloadLeg(seen.fetched,request,path);
   assert.equal(seen.result,fresh,`a successful ${path} response must be returned as-is`);
   assert.deepEqual(seen.matched,[]);
   assert.equal(seen.put.length,1,`a successful ${path} response must be cached`);
@@ -425,6 +655,7 @@ for(const path of ['/nfl-pool/style.css?v=premium-v3','/nfl-pool/pwa.js?v=1','/n
   assert.deepEqual(seen.matched,[request]);
   network=()=>fresh;
   seen=await route(request);
+  assertReloadLeg(seen.fetched,request,path);
   assert.equal(seen.result,fresh);
   assert.equal(seen.put.length,1,`a successful ${path} response must be cached`);
   assert.equal(seen.put[0].request,request);
@@ -480,6 +711,7 @@ async function assertNetworkFirst(request,label){
   assert.deepEqual(seen.matched,[request]);
   network=()=>fresh;
   seen=await route(request);
+  assertReloadLeg(seen.fetched,request,label);
   assert.equal(seen.result,fresh);
   assert.deepEqual(seen.matched,[]);
   assert.equal(seen.put.length,1,`a successful ${label} response must still be cached`);
@@ -777,4 +1009,4 @@ for(const path of ['/nfl-pool/admin/x%2F..%2F..%2Fstyle.css?v=premium-v3','/nfl-
 assert.equal(opened.length,1+putCalls.length,'install and each runtime cache.put open the shell cache once');
 assert.deepEqual([...new Set(opened)],['pool-center-shell-v16'],'the worker must write only to pool-center-shell-v16');
 
-console.log('service-worker precache graph, fresh (cache:"reload") precache requests, all-or-nothing install, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');
+console.log('service-worker precache graph, fresh (cache:"reload") precache requests, all-or-nothing install, cache rollover, fresh (cache:"reload") runtime network requests, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');
