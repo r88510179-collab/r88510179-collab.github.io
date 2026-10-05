@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {projectScoreboard} from './score-proxy/index.mjs';
+import {survivorBuildResults} from './survivor-math.js';
 
 const source=readFileSync(new URL('./weekly-app.js',import.meta.url),'utf8');
 const from="from './public-math.js?v=2';";
@@ -541,4 +543,122 @@ const nsScheduled=()=>[scheduled({away:'DEN',home:'KC'}),scheduled({away:'MIA',h
   await sameAsAbsent(v,cfg,['Drew'],events,'15-game');
 }
 
-console.log('weekly public feed-context, malformed-event isolation, fail-safe preservation, foreground-refresh and no-submission race-boundary regressions passed');
+// HDC-10. Pick'em grades a completed event only when the final evidence the feed exposes agrees with it, as Survivor
+// (survivor-math.js) requires: the event state is 'post'; a status name, where given, names a FINAL and no halted game; the
+// competition status does not explicitly contradict the event; no winner flag claims a team that did not outscore its
+// opponent. Absent evidence stays compatible; explicit contradiction leaves the game ungraded and is surfaced. Fixtures
+// follow ESPN's finals (2020-2026 scoreboards): the competition repeats the event status, each competitor carries a boolean
+// winner flag (false/false on a tie), and an overtime final is STATUS_FINAL with detail 'Final/OT'.
+const espnFinal=({away='DEN',home='KC',awayScore='24',homeScore='17',detail='Final'}={})=>{
+  const type={id:'3',name:'STATUS_FINAL',state:'post',completed:true,description:'Final',detail,shortDetail:detail};
+  const tie=awayScore===homeScore,awayWon=Number(awayScore)>Number(homeScore);
+  return{id:`${away.toLowerCase()}-${home.toLowerCase()}`,season:{year:2026,type:2},week:{number:3},status:{clock:0,displayClock:'0:00',period:4,type:{...type}},
+    competitions:[{competitors:[
+      {homeAway:'home',winner:!tie&&!awayWon,team:{abbreviation:home},score:homeScore},
+      {homeAway:'away',winner:!tie&&awayWon,team:{abbreviation:away},score:awayScore}
+    ],status:{clock:0,displayClock:'0:00',period:4,type:{...type},isTBDFlex:false}}]};
+};
+const finalWith=(mutate,scores)=>{const e=espnFinal(scores);mutate(e);return e};
+const eventType=e=>e.status.type,competitionType=e=>e.competitions[0].status.type,competitorsOf=e=>e.competitions[0].competitors;
+// [label, valid final, its result: the winner or 'tie']. D.C. picked DEN and DJS picked KC.
+const VALID_FINALS=[
+  ['STATUS_FINAL with every piece of evidence',espnFinal(),'DEN'],
+  ['a home win with its winner flags',espnFinal({awayScore:'17',homeScore:'24'}),'KC'],
+  ['Final/OT (STATUS_FINAL, detail Final/OT)',espnFinal({awayScore:'27',homeScore:'24',detail:'Final/OT'}),'DEN'],
+  ['a tie (Final/OT, winner flags false/false)',espnFinal({awayScore:'20',homeScore:'20',detail:'Final/OT'}),'tie'],
+  ['no status name',finalWith(e=>{delete eventType(e).name;delete competitionType(e).name}),'DEN'],
+  ['a null status name',finalWith(e=>{eventType(e).name=null;competitionType(e).name=null}),'DEN'],
+  ['no competition status',finalWith(e=>{delete e.competitions[0].status}),'DEN'],
+  ['a competition status without a type',finalWith(e=>{delete e.competitions[0].status.type}),'DEN'],
+  ['no winner flags',finalWith(e=>{for(const x of competitorsOf(e))delete x.winner}),'DEN'],
+  ['a tie without winner flags',finalWith(e=>{for(const x of competitorsOf(e))delete x.winner},{awayScore:'20',homeScore:'20'}),'tie'],
+  ['no optional evidence at all (the deployment-1 shape)',finalWith(e=>{delete eventType(e).name;delete e.competitions[0].status;for(const x of competitorsOf(e))delete x.winner}),'DEN']
+];
+// [label, contradictory "final", what contradicts it]. Each is a 31-10 KC rout that would hand DJS the week if graded.
+const ROUT={awayScore:'10',homeScore:'31'};
+const CONTRADICTORY_FINALS=[
+  ['completed:true + state:in',finalWith(e=>{eventType(e).state='in'},ROUT),'status'],
+  ['completed:true + state:pre',finalWith(e=>{eventType(e).state='pre'},ROUT),'status'],
+  ['completed:true without a state (Survivor requires post)',finalWith(e=>{delete eventType(e).state},ROUT),'status'],
+  ['completed:true + STATUS_CANCELED',finalWith(e=>{eventType(e).name='STATUS_CANCELED'},ROUT),'status'],
+  ['completed:true + STATUS_SUSPENDED',finalWith(e=>{eventType(e).name='STATUS_SUSPENDED'},ROUT),'status'],
+  ['completed:true + STATUS_POSTPONED',finalWith(e=>{eventType(e).name='STATUS_POSTPONED'},ROUT),'status'],
+  ['completed:true + STATUS_FORFEIT',finalWith(e=>{eventType(e).name='STATUS_FORFEIT'},ROUT),'status'],
+  ['completed:true + a status name that is not a final',finalWith(e=>{eventType(e).name='STATUS_IN_PROGRESS'},ROUT),'status'],
+  ['completed:true + a status name that is not a string',finalWith(e=>{eventType(e).name=3},ROUT),'status'],
+  ['event final + competition state:in',finalWith(e=>{competitionType(e).state='in'},ROUT),'status'],
+  ['event final + competition completed:false',finalWith(e=>{competitionType(e).completed=false},ROUT),'status'],
+  ['event final + competition STATUS_CANCELED',finalWith(e=>{competitionType(e).name='STATUS_CANCELED'},ROUT),'status'],
+  ['winner flags contradicting the score',finalWith(e=>{for(const x of competitorsOf(e))x.winner=!x.winner},ROUT),'winner flag'],
+  ['a winner flag on a tie',finalWith(e=>{competitorsOf(e).find(x=>x.homeAway==='home').winner=true},{awayScore:'20',homeScore:'20'}),'winner flag']
+];
+const pickCells=v=>[...v.$('pickBody').innerHTML.matchAll(/<td class="c ([a-z]+)">/g)].map(m=>m[1]);
+const records=v=>standingCells(v).map(r=>[r[1],r[3],r[4]]);
+// Everything a grade reaches: final count, standings, pick board, game cards, leader, warning and the sync label.
+const graded=v=>({finals:v.$('finals').textContent,standings:v.$('standings').innerHTML,picks:v.$('pickBody').innerHTML,games:v.$('gamegrid').innerHTML,
+  leader:[v.$('leaderKicker').textContent,v.$('leaderName').textContent,v.$('leaderRecord').textContent],warning:v.warning(),sync:v.$('sync').textContent.split(' · ')[0]});
+const PROJECTED_AT='2026-09-27T20:00:00.000Z';
+
+{
+  // HDC-10 R3. A contradictory final grades nothing: from kickoff no win, loss or tie is recorded, the scheduled game card
+  // stays, and the ignored final is surfaced as a warning with an INCOMPLETE sync label. A verified final still grades, and
+  // the same contradiction arriving later never regrades it: the verified 24-17 result is kept.
+  for(const [label,contradiction,kind] of CONTRADICTORY_FINALS){
+    const ignored=new RegExp(`^Some feed data was ignored to protect standings: DEN-KC: final with contradictory ${kind} ignored$`);
+    const v=await view({initialScorePayload:{events:[scheduled({away:'DEN',home:'KC'})]}});
+    v.setPayload({events:[structuredClone(contradiction)]});await v.refresh();
+    assert.equal(v.$('finals').textContent,'0/1',`${label}: never counted as a final`);
+    assert.deepEqual(records(v),[['D.C.','0','0'],['DJS','0','0']],`${label}: no win, loss or tie from the contradictory final`);
+    assert.deepEqual(pickCells(v),['pending','pending'],`${label}: no pick graded`);
+    assert.match(v.$('gamegrid').innerHTML,/^<div class="game pre">/,`${label}: the last verified (scheduled) game card is kept`);
+    assert.doesNotMatch(v.$('gamegrid').innerHTML,/FINAL/,`${label}: the game is never shown as final`);
+    assert.match(v.warning(),ignored,`${label}: the ignored final is surfaced`);
+    assert.match(v.$('sync').textContent,/^INCOMPLETE · .* · 1 warning$/,`${label}: sync reports incomplete data, not a clean final`);
+
+    v.setPayload({events:[espnFinal()]});await v.refresh();
+    assert.deepEqual([v.warning(),v.$('finals').textContent,...records(v)],['','1/1',['D.C.','1','0'],['DJS','0','1']],`${label}: a verified final still grades`);
+    v.setPayload({events:[structuredClone(contradiction)]});await v.refresh();
+    assert.equal(v.$('finals').textContent,'1/1',`${label}: the verified final stays final`);
+    assert.deepEqual(records(v),[['D.C.','1','0'],['DJS','0','1']],`${label}: the verified result is never regraded`);
+    assert.deepEqual(pickCells(v),['ok','bad']);
+    assert.match(v.$('gamegrid').innerHTML,/^<div class="game final">.*<span class="score">24<\/span>.*<span class="score">17<\/span>/,`${label}: the verified 24-17 game card is kept`);
+    assert.match(v.warning(),ignored,`${label}: the later contradiction is surfaced too`);
+    assert.match(v.$('sync').textContent,/^INCOMPLETE · .* · 1 warning$/);
+  }
+}
+
+{
+  // HDC-10 R4. Valid finals grade exactly as before, absent evidence included, and the projected feed (what nflscores2
+  // serves) renders the identical page.
+  const expected={DEN:[['D.C.','1','0'],['DJS','0','1']],KC:[['DJS','1','0'],['D.C.','0','1']],tie:[['D.C.','0','0'],['DJS','0','0']]};
+  const cells={DEN:['ok','bad'],KC:['bad','ok'],tie:['neutral','neutral']};
+  for(const [label,final,result] of VALID_FINALS){
+    const v=await view({initialScorePayload:{events:[structuredClone(final)]}}),page=graded(v);
+    assert.equal(page.warning,'',`${label}: no warning`);
+    assert.equal(page.sync,'LIVE',`${label}: a clean final`);
+    assert.equal(page.finals,'1/1',`${label}: graded final`);
+    assert.deepEqual(records(v),expected[result],`${label}: graded as before`);
+    assert.deepEqual(pickCells(v),cells[result],`${label}: pick board graded as before`);
+    assert.match(page.games,result==='tie'?/^<div class="game final tie">/:/^<div class="game final">/,`${label}: final game card`);
+    const viaProxy=await view({initialScorePayload:projectScoreboard({events:[structuredClone(final)]},PROJECTED_AT)});
+    assert.deepEqual(graded(viaProxy),page,`${label}: the projected final renders identically`);
+  }
+}
+
+{
+  // HDC-10 R5. One shared fixture set, so the two public surfaces cannot drift apart again: Pick'em and Survivor
+  // (survivorBuildResults, which the Survivor view and Admin use) must reach the same verdict on every event, from the raw
+  // ESPN event and from its projection: the winner, a tie, or no safe final (null).
+  const pickem={ok:'DEN',bad:'KC',neutral:'tie',pending:null};
+  for(const [label,event,expected] of [...VALID_FINALS,...CONTRADICTORY_FINALS.map(([label,event])=>[label,event,null])]){
+    const verdicts={};
+    for(const [source,payload] of [['raw',{events:[structuredClone(event)]}],['projected',projectScoreboard({events:[structuredClone(event)]},PROJECTED_AT)]]){
+      const v=await view({initialScorePayload:payload}),result=survivorBuildResults(payload.events,{season:2026,week:3}).get('DEN');
+      verdicts[`Pick'em ${source}`]=pickem[pickCells(v)[0]];
+      verdicts[`Survivor ${source}`]=result?.completed===true&&!result.unresolved?(result.tie?'tie':result.winner):null;
+    }
+    assert.deepEqual(verdicts,{"Pick'em raw":expected,'Survivor raw':expected,"Pick'em projected":expected,'Survivor projected':expected},`${label}: Pick'em and Survivor agree, raw and projected`);
+  }
+}
+
+console.log('weekly public feed-context, malformed-event isolation, fail-safe preservation, foreground-refresh, no-submission race-boundary and final-evidence regressions passed');

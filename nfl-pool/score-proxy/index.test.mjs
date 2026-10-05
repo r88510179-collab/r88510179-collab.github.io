@@ -1,10 +1,10 @@
 // FCR-01: the score-feed proxy source (score-proxy/index.mjs, the Neon Function nflscores2). Covers the deployment-1
-// projection plus the Survivor market-odds subset, parity with the Survivor feed parsers, parameter coercion, the exact
-// upstream URL and the HTTP handler. No live network: every upstream fetch here is a stub.
+// projection plus the Survivor market-odds subset and the HDC-10 final evidence, parity with the Survivor feed parsers,
+// parameter coercion, the exact upstream URL and the HTTP handler. No live network: every upstream fetch here is a stub.
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import proxy,{ALLOWED_ORIGIN,UPSTREAM_TIMEOUT_MS,parseSeasonWeek,upstreamUrl,projectScoreboard,createHandler} from './index.mjs';
-import {survivorMarketMatchups,survivorBuildResults,survivorFeedContextError} from '../survivor-math.js';
+import {survivorMarketMatchups,survivorBuildResults,survivorEntryState,survivorFeedContextError} from '../survivor-math.js';
 
 // Deployed as one unbundled file: nothing imported, no environment or secrets read.
 const source=readFileSync(new URL('./index.mjs',import.meta.url),'utf8');
@@ -71,16 +71,24 @@ const projected=payload=>projectScoreboard(payload,FETCHED);
 const legacy=e=>({id:e.id,date:e.date,status:{type:{state:e.status.type.state,completed:e.status.type.completed,shortDetail:e.status.type.shortDetail,detail:e.status.type.detail}},
   competitions:e.competitions.map(c=>({competitors:c.competitors.map(x=>({homeAway:x.homeAway,score:x.score,team:{abbreviation:x.team.abbreviation}}))}))});
 const withoutOdds=payload=>{const copy=structuredClone(payload);for(const e of copy.events)for(const c of e.competitions)delete c.odds;return copy};
+// Projected events with the HDC-10 final evidence removed again: event status names, competition statuses, winner flags.
+const withoutFinalEvidence=events=>events.map(e=>{
+  const copy=structuredClone(e);
+  if(copy.status?.type)delete copy.status.type.name;
+  for(const c of copy.competitions||[]){if(!c)continue;delete c.status;for(const x of c.competitors||[])if(x)delete x.winner}
+  return copy;
+});
 
 // ---- Exact projection: key order as deployment 1, the odds subset last, and nothing else.
 {
-  const body=projected(W3);
+  const body=projected(W3),deployment1=withoutFinalEvidence(body.events);
   assert.deepEqual(Object.keys(body),['fetchedAt','events']);
   assert.equal(body.fetchedAt,FETCHED);
   assert.deepEqual(body.events.map(e=>e.id),W3.events.map(e=>e.id),'event order equals ESPN');
-  // Byte-identical to deployment 1's live responses for these two events (the final carries no line).
-  assert.equal(JSON.stringify(body.events[0]),'{"id":"401872948","date":"2026-09-25T00:15Z","status":{"type":{"state":"post","completed":true,"shortDetail":"Final","detail":"Final"}},"competitions":[{"competitors":[{"homeAway":"home","score":"14","team":{"abbreviation":"GB"}},{"homeAway":"away","score":"35","team":{"abbreviation":"ATL"}}]}]}');
-  assert.equal(JSON.stringify(body.events[3]),'{"id":"401872955","date":"2026-09-27T17:00Z","status":{"type":{"state":"pre","completed":false,"shortDetail":"9/27 - 1:00 PM EDT","detail":"Sun, September 27th at 1:00 PM EDT"}},"competitions":[{"competitors":[{"homeAway":"home","score":"0","team":{"abbreviation":"WSH"}},{"homeAway":"away","score":"0","team":{"abbreviation":"SEA"}}],"odds":[{"details":"SEA -7.5","spread":7.5,"awayTeamOdds":{"favorite":true},"homeTeamOdds":{"favorite":false}}]}]}');
+  // With the HDC-10 final evidence removed, byte-identical to deployment 1's live responses for these two events (the
+  // final carries no line).
+  assert.equal(JSON.stringify(deployment1[0]),'{"id":"401872948","date":"2026-09-25T00:15Z","status":{"type":{"state":"post","completed":true,"shortDetail":"Final","detail":"Final"}},"competitions":[{"competitors":[{"homeAway":"home","score":"14","team":{"abbreviation":"GB"}},{"homeAway":"away","score":"35","team":{"abbreviation":"ATL"}}]}]}');
+  assert.equal(JSON.stringify(deployment1[3]),'{"id":"401872955","date":"2026-09-27T17:00Z","status":{"type":{"state":"pre","completed":false,"shortDetail":"9/27 - 1:00 PM EDT","detail":"Sun, September 27th at 1:00 PM EDT"}},"competitions":[{"competitors":[{"homeAway":"home","score":"0","team":{"abbreviation":"WSH"}},{"homeAway":"away","score":"0","team":{"abbreviation":"SEA"}}],"odds":[{"details":"SEA -7.5","spread":7.5,"awayTeamOdds":{"favorite":true},"homeTeamOdds":{"favorite":false}}]}]}');
   // Odds copied verbatim: sign convention, feed aliases and flags untouched.
   const odds=body.events.map(e=>e.competitions[0].odds);
   assert.deepEqual(odds,[
@@ -97,21 +105,29 @@ const withoutOdds=payload=>{const copy=structuredClone(payload);for(const e of c
 
 // ---- Extra ESPN fields are never emitted: every object in the response has only its whitelisted keys.
 {
-  const ALLOWED={body:['fetchedAt','events'],event:['id','date','status','competitions'],status:['type'],type:['state','completed','shortDetail','detail'],
-    competition:['competitors','odds'],competitor:['homeAway','score','team'],team:['abbreviation'],odds:['details','spread','awayTeamOdds','homeTeamOdds'],side:['favorite']};
+  const ALLOWED={body:['fetchedAt','events'],event:['id','date','status','competitions'],status:['type'],type:['state','completed','shortDetail','detail','name'],
+    competition:['competitors','status','odds'],competitionType:['state','completed','name'],competitor:['homeAway','score','team','winner'],team:['abbreviation'],
+    odds:['details','spread','awayTeamOdds','homeTeamOdds'],side:['favorite']};
   const only=(object,kind)=>{for(const key of Object.keys(object))assert(ALLOWED[kind].includes(key),`${kind} must not carry ${key}`)};
   const body=projected(W3);only(body,'body');
   for(const e of body.events){
     only(e,'event');only(e.status,'status');only(e.status.type,'type');
     for(const c of e.competitions){
-      only(c,'competition');for(const x of c.competitors){only(x,'competitor');only(x.team,'team')}
+      only(c,'competition');
+      // Every W3 competition has a status, as on ESPN's live feed: HDC-10 projects its type subset only.
+      assert.equal(typeof c.status?.type,'object',`event ${e.id}: the competition status type is projected`);
+      only(c.status,'status');only(c.status.type,'competitionType');
+      for(const x of c.competitors){only(x,'competitor');only(x.team,'team')}
       for(const o of c.odds||[]){only(o,'odds');only(o.awayTeamOdds,'side');only(o.homeTeamOdds,'side')}
     }
   }
   const text=JSON.stringify(body);
-  for(const name of ['season','week','name','winner','uid','shortName','overUnder','provider','underdog','moneyline','venue','records','links','leagues'])
+  for(const name of ['season','week','uid','shortName','overUnder','provider','underdog','moneyline','venue','records','links','leagues','clock','displayClock','period','isTBDFlex','description'])
     assert(!text.includes(`"${name}"`),`${name} is never emitted`);
-  assert.equal(body.events.some(e=>e.competitions.some(c=>'status' in c)),false,'no competitions[].status');
+  // The only names are status names and the only winners are winner flags: one name in each event and competition status
+  // type, and a flag on each competitor of the one final (the fixture flags only the competitors of completed games).
+  assert.equal((text.match(/"name":/g)||[]).length,2*body.events.length,'a name only in each event and competition status type');
+  assert.equal((text.match(/"winner":/g)||[]).length,2,'winner flags only on the final\'s two competitors');
   assert.equal(survivorFeedContextError(body,{season:2026,week:3}),null,'no season/week context, so the Survivor guard has nothing to contradict');
 }
 
@@ -153,14 +169,14 @@ for(const [label,odds,expected] of ODDS_CASES){
   assert.equal(p.competitions.length,5);
   assert.deepEqual(p.competitions.slice(1,4),[null,null,null]);
   assert.deepEqual(p.competitions[0].competitors,[{homeAway:'home',score:'0',team:{abbreviation:'KC'}},null,null,null,null,{homeAway:'away',score:'0',team:{abbreviation:'DEN'}}]);
-  assert.deepEqual(p.competitions[4],{competitors:[{homeAway:'home',score:'0',team:{abbreviation:'NYG'}},{homeAway:'away',score:'0',team:{abbreviation:'NYJ'}}]});
+  assert.deepEqual(p.competitions[4],{competitors:[{homeAway:'home',score:'0',team:{abbreviation:'NYG'}},{homeAway:'away',score:'0',team:{abbreviation:'NYJ'}}],status:{type:{state:'pre',completed:false,name:'STATUS_SCHEDULED'}}});
   const valid=espnEvent({away:'MIA',home:'BUF'});
   assert.deepEqual(projected({events:[null,'x',42,true,[valid],valid]}).events.map(x=>x.id),[valid.id],'non-object events skipped');
   const shapes=[
     [{competitions:[{competitors:[{homeAway:'away',team:{abbreviation:'DEN'}},{homeAway:'home'}]}]},{competitions:[{competitors:[{homeAway:'away',team:{abbreviation:'DEN'}},{homeAway:'home'}]}]}],
     [{id:1,date:null,status:'Final',competitions:'x'},{id:1,date:null}],
     [{id:'a',status:{type:'post'},competitions:[{competitors:{}},{}]},{id:'a',status:{},competitions:[{},{}]}],
-    [{id:'b',status:{type:{completed:true,name:'STATUS_FINAL'}}},{id:'b',status:{type:{completed:true}}}],
+    [{id:'b',status:{type:{completed:true,name:'STATUS_FINAL'}}},{id:'b',status:{type:{completed:true,name:'STATUS_FINAL'}}}],
     [{id:'c',competitions:[{competitors:[{homeAway:'home',score:null,team:null},{score:24,team:{abbreviation:null,id:'1'}},{homeAway:'away',team:'DEN'}]}]},
       {id:'c',competitions:[{competitors:[{homeAway:'home',score:null},{score:24,team:{abbreviation:null}},{homeAway:'away'}]}]}]
   ];
@@ -241,13 +257,99 @@ for(const [label,odds,expected] of ODDS_CASES){
   assert.equal(results.get('KC').state,'in');assert.equal(results.get('LAC').completed,false);
 }
 
-// ---- Legacy parity: without odds the projection is the deployment-1 whitelist byte for byte, and with odds, removing the
-// odds subset leaves exactly that whitelist.
+// ---- Legacy parity: the response is the deployment-1 whitelist plus exactly two additions, the Survivor odds subset
+// (FCR-01) and the HDC-10 final evidence. Without odds and with the final evidence removed, the projection is the
+// deployment-1 whitelist byte for byte; with odds, removing both additions leaves exactly that whitelist.
 {
   const bare=withoutOdds(W3);
-  assert.equal(JSON.stringify(projected(bare).events),JSON.stringify(bare.events.map(legacy)));
-  const stripped=projected(W3).events.map(e=>({...e,competitions:e.competitions.map(({odds,...c})=>c)}));
+  assert.equal(JSON.stringify(withoutFinalEvidence(projected(bare).events)),JSON.stringify(bare.events.map(legacy)));
+  const stripped=withoutFinalEvidence(projected(W3).events).map(e=>({...e,competitions:e.competitions.map(({odds,...c})=>c)}));
   assert.equal(JSON.stringify(stripped),JSON.stringify(W3.events.map(legacy)));
+}
+
+// ---- HDC-10 R1: the final evidence Pick'em and Survivor check before grading a completed game survives projection:
+// status.type.name, competitions[].status.type.{state,completed,name} and competitors[].winner. It is copied verbatim and
+// only where ESPN sends it, after the deployment-1 keys (competitions[].status before the odds subset): nothing is
+// coerced, repaired or invented, and no other ESPN field comes with it.
+{
+  const [final,,,scheduled]=projected(W3).events;
+  // The final ATL @ GB and the scheduled SEA @ WSH (with its line), byte for byte.
+  assert.equal(JSON.stringify(final),'{"id":"401872948","date":"2026-09-25T00:15Z","status":{"type":{"state":"post","completed":true,"shortDetail":"Final","detail":"Final","name":"STATUS_FINAL"}},"competitions":[{"competitors":[{"homeAway":"home","score":"14","team":{"abbreviation":"GB"},"winner":false},{"homeAway":"away","score":"35","team":{"abbreviation":"ATL"},"winner":true}],"status":{"type":{"state":"post","completed":true,"name":"STATUS_FINAL"}}}]}');
+  assert.equal(JSON.stringify(scheduled),'{"id":"401872955","date":"2026-09-27T17:00Z","status":{"type":{"state":"pre","completed":false,"shortDetail":"9/27 - 1:00 PM EDT","detail":"Sun, September 27th at 1:00 PM EDT","name":"STATUS_SCHEDULED"}},"competitions":[{"competitors":[{"homeAway":"home","score":"0","team":{"abbreviation":"WSH"}},{"homeAway":"away","score":"0","team":{"abbreviation":"SEA"}}],"status":{"type":{"state":"pre","completed":false,"name":"STATUS_SCHEDULED"}},"odds":[{"details":"SEA -7.5","spread":7.5,"awayTeamOdds":{"favorite":true},"homeTeamOdds":{"favorite":false}}]}]}');
+  assert.deepEqual(Object.keys(final.status.type),['state','completed','shortDetail','detail','name'],'the status name follows the deployment-1 status keys');
+  assert.deepEqual(Object.keys(scheduled.competitions[0]),['competitors','status','odds'],'the competition status sits before the odds subset');
+  assert.deepEqual(Object.keys(final.competitions[0].status.type),['state','completed','name']);
+  assert.deepEqual(final.competitions[0].competitors.map(x=>Object.keys(x)),[['homeAway','score','team','winner'],['homeAway','score','team','winner']],'the winner flag follows the deployment-1 competitor keys');
+  assert.deepEqual(scheduled.competitions[0].competitors.map(x=>Object.keys(x)),[['homeAway','score','team'],['homeAway','score','team']],'no winner flag where ESPN sends none');
+
+  // Verbatim: any value in an evidence field (contradictory, malformed or not a string) reaches the pages unchanged, so
+  // they judge exactly what ESPN sent.
+  for(const value of ['STATUS_FINAL','STATUS_CANCELED','status_final','','post','in',true,false,'true','false',0,1,null,{},['STATUS_FINAL'],{name:'STATUS_FINAL'}]){
+    const e=espnEvent({away:'DEN',home:'KC',state:'post',as:'20',hs:'27'}),type=e.competitions[0].status.type,label=JSON.stringify(value);
+    e.status.type.name=type.state=type.completed=type.name=value;
+    for(const x of e.competitions[0].competitors)x.winner=value;
+    const [p]=projected(scoreboard([e])).events,[c]=p.competitions;
+    assert.equal(JSON.stringify([p.status.type.name,c.status?.type,c.competitors.map(x=>x.winner)]),JSON.stringify([value,{state:value,completed:value,name:value},[value,value]]),`${label}: copied verbatim`);
+    assert(Object.is(p.status.type.name,value)&&Object.is(c.status.type.state,value)&&Object.is(c.status.type.completed,value)&&Object.is(c.status.type.name,value)&&c.competitors.every(x=>Object.is(x.winner,value)),`${label}: the same value, never a coerced copy`);
+  }
+
+  // Absent evidence stays absent: no status name, competition status field or winner flag is invented.
+  {
+    const e=espnEvent({id:'401872999',away:'DEN',home:'KC',state:'post',as:'20',hs:'27'});
+    delete e.status.type.name;for(const key of ['state','completed','name'])delete e.competitions[0].status.type[key];
+    for(const x of e.competitions[0].competitors)delete x.winner;
+    assert.equal(JSON.stringify(projected(scoreboard([e])).events[0]),'{"id":"401872999","date":"2026-09-27T17:00Z","status":{"type":{"state":"post","completed":true,"shortDetail":"Final","detail":"Final"}},"competitions":[{"competitors":[{"homeAway":"home","score":"27","team":{"abbreviation":"KC"}},{"homeAway":"away","score":"20","team":{"abbreviation":"DEN"}}],"status":{"type":{}}}]}');
+  }
+
+  // A competition status is projected as the event status is: a non-object status is dropped and a non-object type leaves
+  // an empty status, never repaired. Survivor reads each projection exactly as it reads the raw event.
+  for(const [label,status,expected] of [
+    ['absent',undefined,undefined],
+    ['null',null,undefined],
+    ['a string','Final',undefined],
+    ['an array',[{type:{state:'in',completed:false}}],undefined],
+    ['without a type',{clock:0,displayClock:'0:00',period:4},{}],
+    ['with a null type',{type:null},{}],
+    ['with a string type',{type:'STATUS_FINAL'},{}],
+    ['with an array type',{type:[{state:'in',completed:false}]},{}],
+    ['with an empty type',{type:{}},{type:{}}],
+    ['with a partial type',{type:{completed:false,description:'Canceled'}},{type:{completed:false}}]
+  ]){
+    const e=espnEvent({away:'DEN',home:'KC',state:'post',as:'20',hs:'27'});
+    if(status===undefined)delete e.competitions[0].status;else e.competitions[0].status=status;
+    const payload=scoreboard([e]),[c]=projected(payload).events[0].competitions;
+    if(expected===undefined)assert.equal('status' in c,false,`competition status ${label}: no status key`);
+    else assert.equal(JSON.stringify(c.status),JSON.stringify(expected),`competition status ${label}: projected status`);
+    assert.deepEqual(survivorBuildResults(projected(payload).events,{season:2026,week:3}),survivorBuildResults(payload.events,{season:2026,week:3}),`competition status ${label}: same Survivor results`);
+  }
+}
+
+// ---- HDC-10 R2: Survivor reaches the same safe result from the raw ESPN event and from its projection. A halted or
+// contradictory "final" leaves both teams unresolved, so a pick on either side stays pending: never eliminated, never
+// advanced. Each field the projection now forwards is needed by one of these cases.
+{
+  const CONTRADICTIONS=[
+    ['STATUS_CANCELED on the event and competition status',e=>{e.status.type.name=e.competitions[0].status.type.name='STATUS_CANCELED'},'status'],
+    ['STATUS_SUSPENDED on the event and competition status',e=>{e.status.type.name=e.competitions[0].status.type.name='STATUS_SUSPENDED'},'status'],
+    ['STATUS_POSTPONED on the event status only',e=>{e.status.type.name='STATUS_POSTPONED'},'status'],
+    ['STATUS_CANCELED on the competition status only',e=>{e.competitions[0].status.type.name='STATUS_CANCELED'},'status'],
+    ['completed:true with competition completed:false',e=>{e.competitions[0].status.type.completed=false},'status'],
+    ['event post with competition state:in',e=>{e.competitions[0].status.type.state='in'},'status'],
+    ['winner flags contradicting the score',e=>{for(const x of e.competitions[0].competitors)x.winner=!x.winner},'winner']
+  ];
+  for(const [label,mutate,issue] of CONTRADICTIONS){
+    const e=espnEvent({away:'DEN',home:'KC',state:'post',as:'20',hs:'27'});mutate(e);
+    const payload=scoreboard([e,espnEvent({away:'MIA',home:'BUF',state:'post',as:'10',hs:'24'})]);
+    const raw=survivorBuildResults(payload.events,{season:2026,week:3}),proj=survivorBuildResults(projected(payload).events,{season:2026,week:3});
+    assert.deepEqual(proj,raw,`${label}: same Survivor results from the raw and the projected feed`);
+    for(const team of ['DEN','KC'])assert.deepEqual([proj.get(team)?.unresolved,proj.get(team)?.issue],[true,issue],`${label}: ${team} is unresolved (${issue})`);
+    assert.equal(proj.get('BUF').winner,'BUF',`${label}: other games unaffected`);
+    for(const pick of ['DEN','KC']){
+      const viaProxy=survivorEntryState({picks:[pick]},0,[proj]);
+      assert.deepEqual(viaProxy,survivorEntryState({picks:[pick]},0,[raw]),`${label}: a ${pick} pick has the same state either way`);
+      assert.deepEqual([viaProxy.status,viaProxy.type],['pending','unresolved'],`${label}: a ${pick} pick stays pending`);
+    }
+  }
 }
 
 // ---- Parameters: Number()-coerced integers, season 2020-2100 and week 1-22, as deployment 1 answered them on
@@ -265,7 +367,7 @@ for(const query of REJECTED)assert.equal(parseSeasonWeek(new URLSearchParams(que
 assert.equal(upstreamUrl(2026,3),'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&week=3&seasontype=2');
 assert.equal(upstreamUrl(2022,17),'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2022&week=17&seasontype=2');
 
-console.log('score proxy projection, odds subset, structure preservation, Survivor parity, legacy whitelist and parameter regressions passed');
+console.log('score proxy projection, odds subset, final evidence, structure preservation, Survivor parity, legacy whitelist and parameter regressions passed');
 
 // ---- HTTP handler with a stubbed upstream: status codes, bodies and headers for every Origin and method.
 const NOW=Date.parse(FETCHED),CACHE='public, max-age=5, s-maxage=10, stale-while-revalidate=20',JSON_TYPE='application/json; charset=utf-8';
@@ -363,6 +465,24 @@ for(const [method,origin,query,status,body,headers] of MATRIX){
   assert.equal(absentResponse.body,JSON.stringify(projected(absent)),'absent context keeps the existing projection');
   assert.deepEqual(absentResponse.headers,H.cors,'absent context keeps successful cache/CORS headers');
 }
+
+// HDC-10 — final evidence is forwarded, never judged: unlike contradictory context, a "final" that contradicts itself (a
+// completed STATUS_CANCELED event whose competition status says it is not completed and whose winner flags contradict the
+// score) is a successful, cacheable 200 carrying that evidence verbatim. The pages refuse to grade it; the proxy neither
+// rejects nor repairs it.
+{
+  const e=espnEvent({away:'DEN',home:'KC',state:'post',as:'20',hs:'27'});
+  e.status.type.name='STATUS_CANCELED';e.competitions[0].status.type.completed=false;
+  for(const x of e.competitions[0].competitors)x.winner=!x.winner;
+  const payload=scoreboard([e]),h=harness(async()=>Response.json(payload)),r=await h.send('GET',Q,'allowed');
+  assert.equal(r.status,200,'contradictory final evidence is forwarded, not rejected');
+  assert.deepEqual(r.headers,H.cors,'contradictory final evidence keeps the successful cache/CORS headers');
+  assert.equal(r.body,JSON.stringify(projected(payload)));
+  const [p]=JSON.parse(r.body).events;
+  assert.equal(p.status.type.name,'STATUS_CANCELED');
+  assert.deepEqual(p.competitions[0].status,{type:{state:'post',completed:false,name:'STATUS_FINAL'}});
+  assert.deepEqual(p.competitions[0].competitors.map(x=>[x.team.abbreviation,x.score,x.winner]),[['KC','27',false],['DEN','20',true]]);
+}
 // Coerced parameters reach ESPN as plain integers; seasontype, limit and _ are never forwarded.
 for(const [query,season,week] of ACCEPTED){
   const h=harness(async()=>Response.json(scoreboard([],week,season))),r=await h.send('GET',`?${query}`,'allowed');
@@ -419,4 +539,4 @@ for(const [label,upstream] of FAILURES){
   }finally{globalThis.fetch=realFetch}
 }
 
-console.log('score proxy HTTP handler origin, method, parameter, header, upstream-failure and default-export regressions passed');
+console.log('score proxy HTTP handler origin, method, parameter, header, context, final-evidence pass-through, upstream-failure and default-export regressions passed');

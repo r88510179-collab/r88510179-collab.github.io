@@ -2,6 +2,7 @@
 // Only the module import path is rewritten; the view logic runs unmodified.
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {projectScoreboard} from './score-proxy/index.mjs';
 
 const source=readFileSync(new URL('./survivor-app.js',import.meta.url),'utf8');
 const from="from './survivor-math.js?v=5';";
@@ -276,9 +277,9 @@ console.log('survivor decision-board NFL-code allowlist and logo output-encoding
 // ---- FCR-01: in production every scoreboard request goes through the Neon score proxy, whose payload has no season or
 // week context anywhere: {fetchedAt, events:[{id, status.type.{state,completed}, competitions[].competitors[].{homeAway,
 // score,team.abbreviation}}]} (date and status details only where ESPN sends them), plus competitions[].odds when ESPN
-// has a line. The view needs no change: with the odds subset the proxy-shaped feed renders the same board as the
-// ESPN-shaped feed; without it (the deployment-1 contract) no option is a market favorite. The LINES odds are already
-// that subset.
+// has a line (HDC-10 adds the final evidence where ESPN sends it; these fixtures carry none, see the HDC-10 block below).
+// The view needs no change: with the odds subset the proxy-shaped feed renders the same board as the ESPN-shaped feed;
+// without it (the deployment-1 contract) no option is a market favorite. The LINES odds are already that subset.
 const proxied=(payload,{odds=true}={})=>({fetchedAt:'2026-09-26T12:00:00.000Z',events:payload.events.map(e=>({
   id:e.id,status:{type:{state:e.status.type.state,completed:e.status.type.completed}},
   competitions:e.competitions.map(c=>({
@@ -327,3 +328,39 @@ assert.doesNotMatch(JSON.stringify([proxied(week(W1,1)),proxied(week(NEXT,3,LINE
 }
 
 console.log('survivor decision-board proxy-shaped feed (with and without market lines) regressions passed');
+
+
+// ---- HDC-10: nflscores2 (score-proxy/index.mjs) forwards the final evidence Survivor validates (status names, the
+// competition status and winner flags), so a halted or contradictory Week-2 "final" leaves both SF pickers pending
+// whether the page reads ESPN directly or the projection of the same feed: never eliminated, never advanced.
+{
+  const FETCHED='2026-09-27T20:00:00.000Z',STATUS='final status is contradictory or not a completed game',WINNER='feed winner flag contradicts the final score';
+  // The fixture game as ESPN sends a final: a status name, the competition repeating the status, and winner flags.
+  const withEvidence=g=>{
+    g.status.type.name='STATUS_FINAL';g.competitions[0].status={type:{...g.status.type}};
+    const [a,h]=g.competitions[0].competitors;a.winner=Number(a.score)>Number(h.score);h.winner=Number(h.score)>Number(a.score);
+    return g;
+  };
+  for(const [label,mutate,issue] of [
+    ['STATUS_CANCELED',g=>{g.status.type.name=g.competitions[0].status.type.name='STATUS_CANCELED'},STATUS],
+    ['STATUS_SUSPENDED',g=>{g.status.type.name=g.competitions[0].status.type.name='STATUS_SUSPENDED'},STATUS],
+    ['competition completed:false',g=>{g.competitions[0].status.type.completed=false},STATUS],
+    ['competition state:in',g=>{g.competitions[0].status.type.state='in'},STATUS],
+    ['winner flags contradicting the score',g=>{for(const x of g.competitions[0].competitors)x.winner=!x.winner},WINNER]
+  ]){
+    const feeds={1:week(W1,1),2:week(W2,2,{SF:(a,h,n)=>{const g=withEvidence(game(a,h,n));mutate(g);return g}}),3:week(W3,3)};
+    const espn=await view(feeds);
+    const v=await view(Object.fromEntries(Object.entries(feeds).map(([w,payload])=>[w,projectScoreboard(payload,FETCHED)])));
+    for(const id of ['svTracked','svDistribution','svProgress','svDecisionEntries'])assert.equal(v.$(id).innerHTML,espn.$(id).innerHTML,`${label}: projected-feed ${id} markup equals the ESPN-fed page`);
+    for(const id of ['svFeed','svSummaryNote','svStillIn','svPending','svDecisionNote'])assert.equal(v.$(id).textContent,espn.$(id).textContent,`${label}: projected-feed ${id} equals the ESPN-fed page`);
+    for(const name of ['D.C.','DJS']){
+      assert.match(v.row(name),/PENDING/,`${label}: ${name} stays pending`);
+      assert(v.row(name).includes(`Week 2 SF result unavailable: ${issue}`),`${label}: ${name} shows why`);
+    }
+    assert.equal(v.$('svFeed').textContent,'LIVE · 1 TEAM RESULT UNVERIFIED',`${label}: the unverified result is flagged`);
+    assert.match(v.row('Thaddeus'),/LAC lost in Week 1/,`${label}: other results unchanged`);
+    assert.match(v.$('svDecisionEntries').innerHTML,/Waiting for the current week to settle/,`${label}: decision support waits`);
+  }
+}
+
+console.log('survivor projected-feed final-evidence regressions passed');
