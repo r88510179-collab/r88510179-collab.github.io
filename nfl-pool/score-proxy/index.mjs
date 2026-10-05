@@ -2,8 +2,9 @@
 // at the zip root, unbundled). score-feed-proxy.js sends every ESPN scoreboard request from Pick'em, Survivor and Admin
 // here as GET ?season=S&week=W, answered with {"fetchedAt","events"}: that regular-season week's ESPN events reduced to
 // the fields the pages read. It keeps the nflscores deployment-1 contract (projection, parameters, origin rules and
-// headers, as observed on 2026-09-26) and adds only the Survivor market-odds subset, competitions[].odds, and a 502 for
-// a failed upstream. No imports, Node 24 globals only; no secrets or environment variables.
+// headers, as observed on 2026-09-26) and adds only the Survivor market-odds subset, competitions[].odds, the final
+// evidence the pages check before grading a completed game, and a 502 for a failed upstream. No imports, Node 24
+// globals only; no secrets or environment variables.
 
 export const ALLOWED_ORIGIN='https://r88510179-collab.github.io';
 export const ESPN_SCOREBOARD='https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
@@ -54,17 +55,25 @@ function projectOdds(line){
   return[out];
 }
 // Competitions and competitors keep every position (a non-object entry becomes null) and are never truncated or
-// repaired, so the pages' malformed-feed checks still see exactly what ESPN sent.
+// repaired, so the pages' malformed-feed checks still see exactly what ESPN sent. The final evidence Pick'em and
+// Survivor check before grading a completed game (the event status name, the competition status state, completed and
+// name, and each competitor's winner flag) is copied verbatim and only where ESPN sends it, after the deployment-1 keys:
+// the proxy never judges, repairs or invents it.
 function projectCompetitor(competitor){
   if(!isRecord(competitor))return null;
   const out=pick(competitor,['homeAway','score']);
   if(isRecord(competitor.team))out.team=pick(competitor.team,['abbreviation']);
+  if(Object.hasOwn(competitor,'winner'))out.winner=competitor.winner;
   return out;
 }
 function projectCompetition(competition){
   if(!isRecord(competition))return null;
   const out={};
   if(Array.isArray(competition.competitors))out.competitors=competition.competitors.map(projectCompetitor);
+  if(isRecord(competition.status)){
+    out.status={};
+    if(isRecord(competition.status.type))out.status.type=pick(competition.status.type,['state','completed','name']);
+  }
   if(Array.isArray(competition.odds)&&isRecord(competition.odds[0]))out.odds=projectOdds(competition.odds[0]);
   return out;
 }
@@ -72,14 +81,14 @@ function projectEvent(event){
   const out=pick(event,['id','date']);
   if(isRecord(event.status)){
     out.status={};
-    if(isRecord(event.status.type))out.status.type=pick(event.status.type,['state','completed','shortDetail','detail']);
+    if(isRecord(event.status.type))out.status.type=pick(event.status.type,['state','completed','shortDetail','detail','name']);
   }
   if(Array.isArray(event.competitions))out.competitions=event.competitions.map(projectCompetition);
   return out;
 }
 
 // ESPN scoreboard payload -> the response body; null when the payload has no events array. Non-object events are
-// skipped. Nothing else is added: no season, week, status name, competition status or winner flag.
+// skipped. Nothing else is added: no season or week.
 export function projectScoreboard(payload,fetchedAt){
   if(!Array.isArray(payload?.events))return null;
   return{fetchedAt,events:payload.events.filter(isRecord).map(projectEvent)};

@@ -241,7 +241,20 @@ function exactCompetitorPair(e){
   if(away.length!==1||home.length!==1)return null;
   return{away:away[0],home:home[0]};
 }
-function parseEvent(e,a,h,old){const pair=exactCompetitorPair(e);if(!pair)return{game:old,warning:`${a}-${h}: malformed competitor data ignored`};const {away,home}=pair,st=e.status?.type?.state||'pre',done=e.status?.type?.completed===true,as=score(away.score),hs=score(home.score);if((st==='in'||done)&&(as===null||hs===null))return{game:old,warning:`${a}-${h}: invalid score ignored`};const tied=done&&as===hs;return{game:{away:a,home:h,state:st,completed:done,winner:done&&!tied?(as>hs?a:h):null,awayScore:as,homeScore:hs,detail:String(e.status?.type?.shortDetail||e.status?.type?.detail||(done?(tied?'Final · Tie':'Final'):'Scheduled')),eventId:e.id?String(e.id):old.eventId},warning:null}}
+// A completed event is graded only when the final evidence the feed exposes agrees with it, exactly as survivor-math.js
+// requires before Survivor resolves a pick: the event state is 'post'; a status name, where given, names a FINAL and no
+// halted game; the competition status does not explicitly contradict the event; no winner flag claims a team that did
+// not outscore its opponent. Absent evidence is compatible. A contradiction keeps the last verified game and warns.
+const HALTED_STATUS=/CANCEL|POSTPON|SUSPEND|FORFEIT/i;
+const nonFinalName=name=>name!==undefined&&name!==null&&(typeof name!=='string'||!/FINAL/i.test(name)||HALTED_STATUS.test(name));
+function finalEvidenceIssue(e,away,home,as,hs){
+  const type=e.status.type,comp=e.competitions[0].status?.type;
+  if(type.state!=='post'||nonFinalName(type.name))return 'status';
+  if(comp&&(comp.completed===false||(typeof comp.state==='string'&&comp.state!=='post')||nonFinalName(comp.name)))return 'status';
+  if((away.winner===true&&!(as>hs))||(home.winner===true&&!(hs>as)))return 'winner flag';
+  return null;
+}
+function parseEvent(e,a,h,old){const pair=exactCompetitorPair(e);if(!pair)return{game:old,warning:`${a}-${h}: malformed competitor data ignored`};const {away,home}=pair,st=e.status?.type?.state||'pre',done=e.status?.type?.completed===true,as=score(away.score),hs=score(home.score);if((st==='in'||done)&&(as===null||hs===null))return{game:old,warning:`${a}-${h}: invalid score ignored`};const issue=done?finalEvidenceIssue(e,away,home,as,hs):null;if(issue)return{game:old,warning:`${a}-${h}: final with contradictory ${issue} ignored`};const tied=done&&as===hs;return{game:{away:a,home:h,state:st,completed:done,winner:done&&!tied?(as>hs?a:h):null,awayScore:as,homeScore:hs,detail:String(e.status?.type?.shortDetail||e.status?.type?.detail||(done?(tied?'Final · Tie':'Final'):'Scheduled')),eventId:e.id?String(e.id):old.eventId},warning:null}}
 function eventContextWarning(e,a,h){
   const season=e?.season?.year,seasonType=e?.season?.type,week=e?.week?.number;
   if(season!=null&&Number(season)!==CFG.season)return `${a}-${h}: feed season ${season} does not match ${CFG.season}`;
