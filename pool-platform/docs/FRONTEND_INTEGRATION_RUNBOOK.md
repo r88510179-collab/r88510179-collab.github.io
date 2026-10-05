@@ -69,8 +69,8 @@ Use shell variables or an untracked file. `pool-platform/.gitignore` ignores `.e
 
 The build reads the first three; the server reads `POOL_PLATFORM_MODE` and the last two, which never reach the
 browser. They are public endpoints, nothing else: never a password, a connection string, an API key, a Neon
-management credential or a Vercel credential. Do not set `POOL_PLATFORM_AUTH_URL`: it is retired, and the build
-refuses it. Build and check:
+management credential, a Netlify credential or a Vercel credential. Do not set `POOL_PLATFORM_AUTH_URL`: it is
+retired, and the build refuses it. Build and check:
 
     cd pool-platform
     npm ci

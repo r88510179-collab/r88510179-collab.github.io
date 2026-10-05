@@ -1,0 +1,21 @@
+# Netlify build settings for the Commercial V1 frontend and its same-origin Auth proxy (docs/HOSTING_ARCHITECTURE.md).
+# Netlify finds this file through the site's base directory, set to pool-platform/, and every path below is relative
+# to it. Nothing here is a variable or a value: build and function variables are set on the site, and Netlify never
+# passes variables from this file to functions. Response headers are generated into dist/_headers after the build,
+# never declared here, and no redirect is needed: each function routes its own paths.
+
+[build]
+  # Only a production deploy of commercial-v1-netlify-adapter builds; any other branch, and every deploy preview,
+  # branch deploy or local context, is skipped. Netlify runs this with Bash: exit 1 builds, exit 0 skips.
+  ignore = 'if [ "$CONTEXT" = "production" ] && [ "$BRANCH" = "commercial-v1-netlify-adapter" ]; then exit 1; else exit 0; fi'
+  # The same check again, failing instead of skipping, because an ignore command never cancels a build that a build
+  # hook started. Then the locked install, the existing build, and the response headers for that build.
+  command = 'if [ "$CONTEXT" = "production" ] && [ "$BRANCH" = "commercial-v1-netlify-adapter" ]; then npm ci && npm run build && node scripts/netlify-headers.mjs; else echo "Refusing to build: only a production deploy of commercial-v1-netlify-adapter builds." >&2; exit 1; fi'
+  publish = "dist"
+
+[build.processing.html]
+  # Pretty URLs off: no post-processing rewrites the built pages or redirects their paths.
+  pretty_urls = false
+
+[functions]
+  directory = "netlify/functions"
