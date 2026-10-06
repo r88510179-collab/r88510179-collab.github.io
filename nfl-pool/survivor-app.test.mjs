@@ -5,9 +5,10 @@ import {readFileSync} from 'node:fs';
 import {projectScoreboard} from './score-proxy/index.mjs';
 
 const source=readFileSync(new URL('./survivor-app.js',import.meta.url),'utf8');
-const from="from './survivor-math.js?v=5';";
-assert(source.includes(from),'harness expects the survivor-math import');
-const mathHref=new URL('./survivor-math.js?v=5',import.meta.url).href,patched=source.replace(from,`from '${mathHref}';`);
+// The view's survivor-math import at the version it pins; the exact version is checked at the end of this file.
+const from=source.match(/from '\.\/survivor-math\.js\?v=\d+';/)?.[0];
+assert(from,'harness expects the survivor-math import');
+const mathHref=new URL(from.slice("from '".length,-"';".length),import.meta.url).href,patched=source.replace(from,`from '${mathHref}';`);
 let instance=0;
 // Fast timers: the view's 15 s score-feed time limit elapses in 5 ms here; short timers are unchanged.
 // The long delays requested are recorded so the real time limit can be checked against the real refresh interval.
@@ -364,3 +365,136 @@ console.log('survivor decision-board proxy-shaped feed (with and without market 
 }
 
 console.log('survivor projected-feed final-evidence regressions passed');
+
+
+// ---- HDC-11: a picked game that is not completed and whose status explicitly names a halted state (canceled, postponed,
+// suspended, forfeit) awaits a pool ruling. Its pickers show RULING, never ALIVE, OUT or PENDING, and are counted neither as
+// still in nor as eliminated. They no longer hold the next-week board for everyone: provably alive entries get decision
+// support, the halted pickers get none and are not part of the surviving field, and the page says the board is provisional.
+// Ordinary unfinished games still hold the board exactly as before, and nothing is memoized. The halted game is shaped like
+// ESPN 2022 Week 17 BUF at CIN: completed:false, 0-0, the competition repeating the event status.
+const notCompleted=(name,state)=>(a,h,n)=>{
+  const g=game(a,h,n,{as:'0',hs:'0',completed:false,state});
+  if(name!==undefined){g.status.type.name=name;g.competitions[0].status={type:{...g.status.type}}}
+  return g;
+};
+// D.C. and survivor-003 picked the Week-2 SF-ARI game; DJS and survivor-001 won with BUF; Thaddeus and survivor-002 went out
+// in Week 1.
+const rulingConfig=structuredClone(config);
+rulingConfig.trackedEntries=[{id:'dc',displayName:'D.C.',picks:['PIT','SF']},{id:'djs',displayName:'DJS',picks:['LV','BUF']},{id:'thaddeus',displayName:'Thaddeus',picks:['LAC',null]}];
+rulingConfig.fieldEntries=[{id:'survivor-001',picks:['JAX','BUF']},{id:'survivor-002',picks:['CLE',null]},{id:'survivor-003',picks:['JAX','ARI']}];
+rulingConfig.currentWeekEntryCount=4;
+const rulingRows=[{season:2026,week:2,status:'locked',revision:9,config:rulingConfig}];
+const shown=v=>['svTracked','svDistribution','svProgress','svDecisionEntries'].map(id=>v.$(id).innerHTML).concat(['svFeed','svSummaryNote','svDecisionNote'].map(id=>v.$(id).textContent)).join('\n');
+const HALTED=[['STATUS_CANCELED','post'],['STATUS_POSTPONED','pre'],['STATUS_SUSPENDED','in'],['STATUS_FORFEIT','post']];
+const WEEK1_STEP='<div class="survivor-week-step"><span>Week 1</span><b>4</b><small>6 eligible · 6 submitted · 6 legal · 2 out</small></div>';
+{
+  // R2/R3. The board is not frozen; the halted pickers are shown separately and kept out of the alive and out counts.
+  for(const [name,state] of HALTED){
+    const v=await view({1:week(W1,1),2:week(W2,2,{SF:notCompleted(name,state)}),3:week(W3,3)},rulingRows),html=v.$('svDecisionEntries').innerHTML;
+    const reason=`Week 2 SF game halted (${name}): awaiting pool ruling`;
+    assert(v.row('D.C.').includes(`<span class="status-pill survivor-pending">RULING</span><small>${reason}</small>`),`${name}: D.C. awaits a pool ruling`);
+    assert.doesNotMatch(v.row('D.C.'),/>(?:ALIVE|OUT|PENDING|LIVE)</,`${name}: D.C. is never alive, out or ordinary pending`);
+    assert.match(v.row('DJS'),/>ALIVE</);assert.match(v.row('Thaddeus'),/>OUT</);
+    assert.equal(v.$('svStillIn').textContent,2,`${name}: still in counts DJS and survivor-001 only`);
+    assert.equal(v.$('svPending').textContent,0,`${name}: no ordinary pending entry`);
+    assert.equal(v.$('svSummaryNote').textContent,'2 eliminated before Week 2 · 4 eligible entering · 4 submitted · 4 legal picks · 0 eliminated this week so far. 2 entries are awaiting a pool ruling on a halted game and are not counted as still in or eliminated.',`${name}: summary`);
+    assert.equal(v.$('svProgress').innerHTML,WEEK1_STEP+'<div class="survivor-week-step"><span>Week 2</span><b>2</b><small>4 eligible · 4 submitted · 4 legal · 0 out · 2 awaiting ruling</small></div>',`${name}: attrition`);
+    assert.equal(v.$('svFeed').textContent,'LIVE · 2 TEAM RESULTS AWAITING RULING',`${name}: the feed status is not a clean LIVE`);assert.match(v.$('svFeed').className,/warn/);
+    assert.doesNotMatch(html,/Waiting for the current week to settle/,`${name}: the next-week board is not frozen`);
+    assert.match(v.$('svDecisionNote').textContent,/^Provisional · 2 entries await a pool ruling on a halted game and are not part of the surviving field\. Field availability = share of surviving entries/,`${name}: the board says it is provisional`);
+    assert.deepEqual(board(html),{
+      'D.C.':{head:'Awaiting pool ruling',burned:[],safer:[],leverage:[]},
+      DJS:{head:'Week 3 Board',burned:['LV','BUF'],safer:[KC],leverage:[KC]},
+      Thaddeus:OUT
+    },`${name}: DJS gets decision support over a surviving field of 2; D.C. awaits a ruling with no options`);
+    assert(html.includes(`<span class="status-pill survivor-pending">RULING</span></div><p>${reason}</p></article>`),`${name}: the ruling card says why`);
+    assert.doesNotMatch(html.split('<article').find(a=>a.includes('D.C.')),/ELIGIBLE|Out of Survivor|>OUT</,`${name}: D.C. is neither eligible nor out`);
+    // The halted picks were made in Week 2, so the Week-2 distribution keeps them and needs no provisional note.
+    assert.doesNotMatch(v.$('svDistribution').innerHTML,/Provisional/);
+    assertLogoImgs(html,`${name} board`);
+  }
+}
+{
+  // R5. Ordinary unfinished games keep the production page exactly: LIVE or PENDING pickers, the waiting board, no ruling.
+  for(const [label,override,pill,reason] of [
+    ['live without a status name',(a,h,n)=>game(a,h,n,{as:'7',hs:'3',completed:false,state:'in'}),'LIVE','Week 2 game live'],
+    ['live (STATUS_IN_PROGRESS)',notCompleted('STATUS_IN_PROGRESS','in'),'LIVE','Week 2 game live'],
+    ['halftime (STATUS_HALFTIME)',notCompleted('STATUS_HALFTIME','in'),'LIVE','Week 2 game live'],
+    ['a weather delay expected to resume (STATUS_DELAYED)',notCompleted('STATUS_DELAYED','in'),'LIVE','Week 2 game live'],
+    ['scheduled (STATUS_SCHEDULED)',notCompleted('STATUS_SCHEDULED','pre'),'PENDING','Week 2 game pending'],
+    ['pregame without a status name',notCompleted(undefined,'pre'),'PENDING','Week 2 game pending'],
+    ['state post without a status name',notCompleted(undefined,'post'),'PENDING','Week 2 game pending']
+  ]){
+    const v=await view({1:week(W1,1),2:week(W2,2,{SF:override}),3:week(W3,3)},rulingRows);
+    assert(v.row('D.C.').includes(`<span class="status-pill survivor-${pill.toLowerCase()}">${pill}</span><small>${reason}</small>`),`${label}: D.C. stays ${pill}`);
+    assert.equal(v.$('svPending').textContent,2,`${label}: D.C. and survivor-003 are pending`);
+    assert.equal(v.$('svStillIn').textContent,4,`${label}: still in includes the pending pickers`);
+    assert.equal(v.$('svSummaryNote').textContent,'2 eliminated before Week 2 · 4 eligible entering · 4 submitted · 4 legal picks · 0 eliminated this week so far.');
+    assert.equal(v.$('svProgress').innerHTML,WEEK1_STEP+'<div class="survivor-week-step"><span>Week 2</span><b>4</b><small>4 eligible · 4 submitted · 4 legal · 0 out</small></div>');
+    assert.equal(v.$('svFeed').textContent,'LIVE · NFL results');
+    assert.equal(v.$('svDecisionNote').textContent,'Decision support is provisional until every current-week Survivor result is final.',`${label}: the board still waits`);
+    assert.equal(v.$('svDecisionEntries').innerHTML,'<div class="empty">Waiting for the current week to settle before calculating the next-week surviving field.</div>');
+    assert.doesNotMatch(shown(v),/ruling/i,`${label}: never a pool ruling`);
+  }
+}
+{
+  // R6. Nothing is memoized: the same Week-2 event reported later as live, then as a verified final, is judged as such.
+  const v=await view({1:week(W1,1),2:week(W2,2,{SF:notCompleted('STATUS_SUSPENDED','in')}),3:week(W3,3)},rulingRows);
+  assert(v.row('D.C.').includes('>RULING<'),'suspended: awaiting a pool ruling');
+  v.feeds[2]=week(W2,2,{SF:notCompleted('STATUS_IN_PROGRESS','in')});await v.refresh();
+  assert(v.row('D.C.').includes('<span class="status-pill survivor-live">LIVE</span><small>Week 2 game live</small>'),'resumed: ordinary live again');
+  assert.equal(v.$('svFeed').textContent,'LIVE · NFL results');
+  assert.match(v.$('svDecisionEntries').innerHTML,/Waiting for the current week to settle/,'resumed: the live game holds the board again');
+  v.feeds[2]=week(W2,2);await v.refresh();
+  assert.match(v.row('D.C.'),/>ALIVE</,'final: SF won, so D.C. is alive');
+  assert.equal(v.$('svFeed').textContent,'LIVE · NFL results');
+  assert.match(v.$('svDecisionEntries').innerHTML,/D\.C\.<\/span><h3>Week 3 Board/);
+  assert.doesNotMatch(shown(v),/ruling/i,'final: no pool ruling remains');
+}
+{
+  // Later weeks. Week 3 with the Week-2 SF game still canceled: D.C. and survivor-003 keep awaiting the Week-2 ruling (D.C.'s
+  // Week-3 KC loss is not applied), are not eligible entering Week 3, and the Week-4 board serves the provably alive
+  // entries. The unsettled Week 2 keeps being refreshed, so when it goes final the ordinary results take over.
+  const cfg3=structuredClone(rulingConfig);cfg3.week=3;cfg3.label='Survivor Week 3';
+  cfg3.trackedEntries=[{id:'dc',displayName:'D.C.',picks:['PIT','SF','KC']},{id:'djs',displayName:'DJS',picks:['LV','BUF','MIA']},{id:'thaddeus',displayName:'Thaddeus',picks:['LAC',null,null]}];
+  cfg3.fieldEntries=[{id:'survivor-001',picks:['JAX','BUF','DEN']},{id:'survivor-002',picks:['CLE',null,null]},{id:'survivor-003',picks:['JAX','ARI',null]}];
+  cfg3.currentWeekEntryCount=3;
+  const finals3={season:{year:2026,type:2},week:{number:3},events:W3.map(([a,h])=>game(a,h,3))};
+  const next4={season:{year:2026,type:2},week:{number:4},events:W1.map(([a,h])=>game(a,h,4,{completed:false}))};
+  const v=await view({1:week(W1,1),2:week(W2,2,{SF:notCompleted('STATUS_CANCELED','post')}),3:finals3,4:next4},[{season:2026,week:3,status:'locked',revision:11,config:cfg3}]);
+  const provisional='Provisional · 2 entries await a pool ruling on a halted earlier-week game and are not counted as eligible.';
+  assert(v.row('D.C.').includes('<span class="status-pill survivor-pending">RULING</span><small>Week 2 SF game halted (STATUS_CANCELED): awaiting pool ruling</small>'),'D.C. awaits the Week-2 ruling');
+  assert.doesNotMatch(v.row('D.C.'),/>OUT<|KC lost/,'the later Week-3 loss is not applied to the halted pick');
+  assert.match(v.row('DJS'),/>ALIVE</);
+  assert.equal(v.$('svStillIn').textContent,2);assert.equal(v.$('svPending').textContent,0);
+  assert.equal(v.$('svSummaryNote').textContent,`2 eliminated before Week 3 · 2 eligible entering · 2 submitted · 2 legal picks · 0 eliminated this week so far. 2 entries are awaiting a pool ruling on a halted game and are not counted as still in or eliminated. ${provisional}`);
+  assert(v.$('svDistribution').innerHTML.startsWith(`<div class="empty">${provisional}</div>`),'the Week-3 distribution is provisional');
+  assert.equal(v.$('svProgress').innerHTML,WEEK1_STEP+'<div class="survivor-week-step"><span>Week 2</span><b>2</b><small>4 eligible · 4 submitted · 4 legal · 0 out · 2 awaiting ruling</small></div><div class="survivor-week-step"><span>Week 3</span><b>2</b><small>2 eligible · 2 submitted · 2 legal · 0 out · 2 awaiting ruling</small></div>');
+  assert.equal(v.$('svFeed').textContent,'LIVE · 2 TEAM RESULTS AWAITING RULING');
+  const html=v.$('svDecisionEntries').innerHTML;
+  assert.deepEqual(Object.fromEntries(Object.entries(board(html)).map(([name,b])=>[name,b.head])),{'D.C.':'Awaiting pool ruling',DJS:'Week 4 Board',Thaddeus:'Out of Survivor'});
+  v.feeds[2]=week(W2,2);await v.refresh();
+  assert(v.seen.includes(2),'the unsettled Week 2 is refreshed');
+  assert(v.row('D.C.').includes('<span class="status-pill survivor-out">OUT</span><small>KC lost in Week 3</small>'),'once Week 2 is final, the ordinary results decide');
+  assert.equal(v.$('svFeed').textContent,'LIVE · NFL results');
+  assert.doesNotMatch(shown(v),/ruling/i);
+}
+{
+  // R7. nflscores2 forwards the status names, so the page built from the projected feed (score-proxy/index.mjs) is the page
+  // built from ESPN's own feed.
+  const FETCHED='2026-09-27T20:00:00.000Z';
+  for(const [name,state] of HALTED){
+    const feeds={1:week(W1,1),2:week(W2,2,{SF:notCompleted(name,state)}),3:week(W3,3)};
+    const espn=await view(feeds,rulingRows);
+    const v=await view(Object.fromEntries(Object.entries(feeds).map(([w,payload])=>[w,projectScoreboard(payload,FETCHED)])),rulingRows);
+    for(const id of ['svTracked','svDistribution','svProgress','svDecisionEntries'])assert.equal(v.$(id).innerHTML,espn.$(id).innerHTML,`${name}: projected-feed ${id} markup equals the ESPN-fed page`);
+    for(const id of ['svFeed','svSummaryNote','svStillIn','svPending','svDecisionNote'])assert.equal(v.$(id).textContent,espn.$(id).textContent,`${name}: projected-feed ${id} equals the ESPN-fed page`);
+    assert(v.row('D.C.').includes('>RULING<'),`${name}: the projected feed awaits the pool ruling too`);
+  }
+}
+
+// HDC-11 changes survivor-math.js, so the view imports it as survivor-math.js?v=6 (service-worker.test.mjs pins the rest).
+assert.equal(from,"from './survivor-math.js?v=6';",'survivor-app.js must import survivor-math.js?v=6');
+
+console.log('survivor HDC-11 halted-game ruling, unfrozen board, ordinary-pending, recovery, later-week and projected-feed regressions passed');

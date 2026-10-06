@@ -662,3 +662,131 @@ const PROJECTED_AT='2026-09-27T20:00:00.000Z';
 }
 
 console.log('weekly public feed-context, malformed-event isolation, fail-safe preservation, foreground-refresh, no-submission race-boundary and final-evidence regressions passed');
+
+
+// HDC-11. A game the feed reports as not completed whose event or competition status explicitly names a halted state
+// (canceled, postponed, suspended, forfeit) stays ungraded exactly as before: it is not a final, and the standings, pick
+// board, games, race and tiebreak are those of the same game without its status name. The page now says why the week is
+// incomplete: a warning names the matchup and the halted status (and says when it is the tiebreak game) and that the week
+// awaits a pool ruling or official resolution, so the sync label reads INCOMPLETE instead of a clean LIVE. Fixtures follow
+// ESPN 2022 Week 17 BUF at CIN (event 401437947): STATUS_CANCELED, state post, completed:false, 0-0, the competition
+// repeating the event status. BUF-CIN is game 2; D.C. picked DEN and BUF, DJS picked KC and CIN.
+const haltConfig=(tiebreakGameIndex=1)=>({schemaVersion:1,season:2026,week:3,tiebreakGameIndex,
+  games:[{away:'DEN',home:'KC',awayNumber:1,homeNumber:2,date:'2026-09-27'},{away:'BUF',home:'CIN',awayNumber:3,homeNumber:4,date:'2026-09-28'}],
+  participants:[{id:'dc',displayName:'D.C.',pickNumbers:[1,3],tiebreak:41},{id:'djs',displayName:'DJS',pickNumbers:[2,4],tiebreak:44}]});
+const espnStatus=(name,state,detail)=>({id:'5',...(name===undefined?{}:{name}),state,completed:false,description:detail,detail,shortDetail:detail});
+const bufCin=(type=espnStatus('STATUS_CANCELED','post','Canceled'),comp=type)=>({id:'401437947',date:'2026-09-28T00:15Z',season:{year:2026,type:2},week:{number:3},
+  status:{clock:372,displayClock:'6:12',period:1,type:{...type}},
+  competitions:[{...(comp?{status:{clock:372,displayClock:'6:12',period:1,type:{...comp},isTBDFlex:false}}:{}),competitors:[
+    {homeAway:'home',team:{abbreviation:'CIN'},score:'0'},{homeAway:'away',team:{abbreviation:'BUF'},score:'0'}]}]});
+const midGame=e=>{const [cin,buf]=e.competitions[0].competitors;cin.score='7';buf.score='3';return e};
+const withoutNames=e=>{delete e.status.type.name;if(e.competitions[0].status?.type)delete e.competitions[0].status.type.name;return e};
+const HALT_PAGE=['standings','homeStandings','gamegrid','homeGamePreview','pickHead','pickBody','raceList','swingList','scenarioCount','swingMeta','swingLeft','finals','liveCount','left','mnf','tbNote','leaderKicker','leaderName','leaderRecord','leaderNote','bestWins','progressText','fieldSummary','footerRule'];
+const haltPage=v=>Object.fromEntries(HALT_PAGE.map(id=>[id,`${v.$(id).innerHTML}|${v.$(id).textContent}`]));
+const syncLabel=v=>v.$('sync').textContent.split(' · ')[0];
+const HALTED_GAMES=[
+  ['STATUS_CANCELED (ESPN 2022 Week 17 BUF at CIN)',bufCin(),'STATUS_CANCELED'],
+  ['STATUS_POSTPONED (the ESPN 2017 Week 1 TB at MIA shape)',bufCin(espnStatus('STATUS_POSTPONED','post','Postponed')),'STATUS_POSTPONED'],
+  ['STATUS_POSTPONED before kickoff',bufCin(espnStatus('STATUS_POSTPONED','pre','Postponed')),'STATUS_POSTPONED'],
+  ['STATUS_SUSPENDED mid-game',midGame(bufCin(espnStatus('STATUS_SUSPENDED','in','Suspended'))),'STATUS_SUSPENDED'],
+  ['STATUS_FORFEIT',bufCin(espnStatus('STATUS_FORFEIT','post','Forfeit')),'STATUS_FORFEIT'],
+  ['the event status name only (no competition status)',bufCin(espnStatus('STATUS_CANCELED','post','Canceled'),null),'STATUS_CANCELED'],
+  ['the competition status name only',bufCin(espnStatus(undefined,'post','Canceled'),espnStatus('STATUS_CANCELED','post','Canceled')),'STATUS_CANCELED']
+];
+
+{
+  // HDC-11 R4. The halted game is never graded and changes nothing but the warning and the sync label, as the tiebreak
+  // game (index 1) and as an ordinary game (index 0).
+  for(const tiebreakGameIndex of [1,0]){
+    for(const [label,halted,name] of HALTED_GAMES){
+      const cfg=haltConfig(tiebreakGameIndex),as=`${label}${tiebreakGameIndex===1?' (tiebreak game)':''}`;
+      const unnamed=await view({weekConfig:cfg,initialScorePayload:{events:[espnFinal(),withoutNames(structuredClone(halted))]}});
+      const before={page:haltPage(unnamed),warning:unnamed.warning(),sync:syncLabel(unnamed)};
+      assert.deepEqual([before.warning,before.sync],['','LIVE'],`${as}: without its status name the same game raises no warning (production behaviour)`);
+      const v=await view({weekConfig:cfg,initialScorePayload:{events:[espnFinal(),structuredClone(halted)]}});
+      assert.deepEqual(haltPage(v),before.page,`${as}: standings, picks, games, race and tiebreak are those of the same game without its status name`);
+      assert.equal(v.$('finals').textContent,'1/2',`${as}: never counted as a final`);
+      assert.deepEqual(records(v),[['D.C.','1','0'],['DJS','0','1']],`${as}: only the DEN-KC final is graded`);
+      assert.deepEqual(pickCells(v),['ok','pending','bad','pending'],`${as}: the halted game's picks stay ungraded`);
+      assert.equal(v.warning(),`Some feed data was ignored to protect standings: BUF-CIN: ${tiebreakGameIndex===1?'tiebreak game':'game'} halted (${name}), not graded; awaiting a pool ruling or official resolution`,`${as}: the warning names the matchup, the halted status and the pending ruling`);
+      assert.match(v.$('sync').textContent,/^INCOMPLETE · .* · 1 warning$/,`${as}: sync reports an incomplete week, not a clean LIVE state`);
+      assert.doesNotMatch(v.warning(),/pending/i,`${as}: not merely a pending game`);
+    }
+  }
+  // The canceled tiebreak game leaves the tiebreak exactly as unresolved as before: no total and no differences.
+  const v=await view({weekConfig:haltConfig(1),initialScorePayload:{events:[espnFinal(),bufCin()]}});
+  assert.deepEqual([v.$('mnf').textContent,v.$('tbNote').textContent,v.$('left').textContent],['—','Tiebreak guesses: D.C. 41 · DJS 44.','1']);
+  assert.deepEqual(standingCells(v).map(r=>r[r.length-1]),['41','44'],'no tiebreak differences');
+  assert.match(v.$('gamegrid').innerHTML,/<div class="status">Canceled<\/div>/,'the game card keeps ESPN\'s own status text');
+}
+
+{
+  // HDC-11 R5. Ordinary unfinished games keep exactly the production page: no warning, a LIVE sync label, ungraded picks.
+  for(const [label,event] of [
+    ['scheduled (STATUS_SCHEDULED)',bufCin(espnStatus('STATUS_SCHEDULED','pre','Sun 8:15 PM'))],
+    ['pregame without a status name',bufCin(espnStatus(undefined,'pre','Sun 8:15 PM'))],
+    ['live (STATUS_IN_PROGRESS)',midGame(bufCin(espnStatus('STATUS_IN_PROGRESS','in','6:12 - 1st')))],
+    ['halftime (STATUS_HALFTIME)',midGame(bufCin(espnStatus('STATUS_HALFTIME','in','Halftime')))],
+    ['end of a period (STATUS_END_PERIOD)',midGame(bufCin(espnStatus('STATUS_END_PERIOD','in','End of 1st')))],
+    ['a weather delay expected to resume (STATUS_DELAYED)',midGame(bufCin(espnStatus('STATUS_DELAYED','in','Delayed')))],
+    ['a rain delay (STATUS_RAIN_DELAY)',midGame(bufCin(espnStatus('STATUS_RAIN_DELAY','in','Rain Delay')))],
+    ['state post without a status name',bufCin(espnStatus(undefined,'post','Canceled'))],
+    ['a null status name',bufCin(espnStatus(null,'pre','Sun 8:15 PM'))],
+    ['a status name that is not a string',bufCin(espnStatus(5,'pre','Sun 8:15 PM'))]
+  ]){
+    const v=await view({weekConfig:haltConfig(1),initialScorePayload:{events:[espnFinal(),structuredClone(event)]}});
+    assert.equal(v.warning(),'',`${label}: no warning`);
+    assert.match(v.$('sync').textContent,/^LIVE · /,`${label}: a clean LIVE sync label`);
+    assert.equal(v.$('finals').textContent,'1/2',`${label}: not a final`);
+    assert.deepEqual(pickCells(v),['ok','pending','bad','pending'],`${label}: ungraded`);
+  }
+}
+
+{
+  // HDC-11 R6. Nothing is memoized: the same event reported later as an ordinary live game, then as a verified final, is
+  // judged exactly as such. The warning clears and the final grades under the HDC-10 rules.
+  for(const [label,halted] of [['STATUS_POSTPONED',bufCin(espnStatus('STATUS_POSTPONED','pre','Postponed'))],['STATUS_SUSPENDED',midGame(bufCin(espnStatus('STATUS_SUSPENDED','in','Suspended')))]]){
+    const v=await view({weekConfig:haltConfig(1),initialScorePayload:{events:[espnFinal(),halted]}});
+    assert.match(v.warning(),/BUF-CIN: tiebreak game halted/,`${label}: awaiting a ruling first`);
+    v.setPayload({events:[espnFinal(),midGame(bufCin(espnStatus('STATUS_IN_PROGRESS','in','10:00 - 3rd')))]});await v.refresh();
+    assert.deepEqual([v.warning(),syncLabel(v),v.$('liveCount').textContent,v.$('finals').textContent],['','LIVE','1','1/2'],`${label}: resumed as an ordinary live game`);
+    v.setPayload({events:[espnFinal(),{...espnFinal({away:'BUF',home:'CIN',awayScore:'27',homeScore:'24'}),id:'401437947'}]});await v.refresh();
+    assert.deepEqual([v.warning(),syncLabel(v),v.$('finals').textContent],['','LIVE','2/2'],`${label}: the verified final grades`);
+    assert.deepEqual(records(v),[['D.C.','2','0'],['DJS','0','2']]);
+    assert.equal(v.$('tbNote').textContent,'Tiebreak final total: 51. Tiebreak differences are active.');
+  }
+}
+
+{
+  // HDC-11 R7. nflscores2 forwards the status names, so the projected feed renders the identical page, warning and sync
+  // label included, and Survivor (survivorBuildResults) sees the same halted game, raw and projected.
+  for(const [label,halted,name] of HALTED_GAMES){
+    const raw={events:[espnFinal(),structuredClone(halted)]},projected=projectScoreboard(structuredClone(raw),PROJECTED_AT);
+    const a=await view({weekConfig:haltConfig(1),initialScorePayload:raw}),rawPage={page:haltPage(a),warning:a.warning(),sync:syncLabel(a)};
+    const b=await view({weekConfig:haltConfig(1),initialScorePayload:projected});
+    assert.deepEqual({page:haltPage(b),warning:b.warning(),sync:syncLabel(b)},rawPage,`${label}: the projected feed renders the identical page`);
+    assert(rawPage.warning.endsWith(`BUF-CIN: tiebreak game halted (${name}), not graded; awaiting a pool ruling or official resolution`),`${label}: both pages carry the halted warning`);
+    for(const payload of [raw,projected]){
+      const results=survivorBuildResults(payload.events,{season:2026,week:3});
+      for(const team of ['BUF','CIN'])assert.deepEqual([results.get(team).completed,results.get(team).halted],[false,name],`${label}: Survivor sees the same halted ${team} game`);
+    }
+  }
+}
+
+{
+  // HDC-11 R8/R9. completed:true is judged only as a final (HDC-10): a halted name on a completed event, FORFEIT included,
+  // stays a contradictory final and never a pending ruling, while a consistent final that mentions a forfeit only in its
+  // detail text grades as before.
+  for(const name of ['STATUS_CANCELED','STATUS_POSTPONED','STATUS_SUSPENDED','STATUS_FORFEIT','STATUS_FINAL_FORFEIT']){
+    const contradiction=finalWith(e=>{eventType(e).name=name;competitionType(e).name=name},{away:'BUF',home:'CIN',awayScore:'10',homeScore:'31'});
+    const v=await view({weekConfig:haltConfig(1),initialScorePayload:{events:[espnFinal(),contradiction]}});
+    assert.equal(v.warning(),'Some feed data was ignored to protect standings: BUF-CIN: final with contradictory status ignored',`completed:true + ${name}: still the HDC-10 contradiction`);
+    assert.equal(v.$('finals').textContent,'1/2',`completed:true + ${name}: never graded`);
+  }
+  const forfeitFinal=finalWith(e=>{for(const t of [eventType(e),competitionType(e)])Object.assign(t,{detail:'Final - Forfeit',shortDetail:'Final - Forfeit'})},{away:'BUF',home:'CIN',awayScore:'0',homeScore:'2'});
+  const v=await view({weekConfig:haltConfig(1),initialScorePayload:{events:[espnFinal(),forfeitFinal]}});
+  assert.deepEqual([v.warning(),syncLabel(v),v.$('finals').textContent],['','LIVE','2/2'],'a consistent completed final mentioning a forfeit grades');
+  assert.deepEqual(records(v),[['D.C.','1','1'],['DJS','1','1']]);
+}
+
+console.log('weekly HDC-11 halted-game warning, ungraded halted game, unchanged standings and tiebreak, ordinary-pending, recovery, projected-feed and HDC-10 completed-final regressions passed');
