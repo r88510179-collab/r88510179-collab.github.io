@@ -1,6 +1,6 @@
 'use strict';
 
-import {survivorEntryState,survivorPickDistribution,survivorSummary,survivorWeekProgress,survivorFieldAvailability,survivorDecisionOptions,survivorMarketMatchups,survivorBuildResults,survivorFeedContextError,survivorUnresolvedEntering} from './survivor-math.js?v=5';
+import {survivorEntryState,survivorPickDistribution,survivorSummary,survivorWeekProgress,survivorFieldAvailability,survivorDecisionOptions,survivorMarketMatchups,survivorBuildResults,survivorFeedContextError,survivorUnresolvedEntering,survivorAwaitingRuling} from './survivor-math.js?v=6';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
@@ -41,6 +41,8 @@ function allEntries(){return cfg?[...cfg.trackedEntries,...cfg.fieldEntries]:[]}
 const pickedTeams=i=>new Set(allEntries().map(e=>e.picks[i]).filter(Boolean));
 function weekSettled(i){const map=resultsByWeek[i];if(!(map instanceof Map))return false;for(const team of pickedTeams(i)){const r=map.get(team);if(!r||r.completed!==true||r.unresolved)return false}return true}
 function feedIssueCount(){let n=0;resultsByWeek.forEach((map,i)=>{if(!(map instanceof Map))return;for(const team of pickedTeams(i)){const r=map.get(team);if(!r||r.unresolved)n++}});return n}
+// HDC-11: picked teams whose game is halted and awaits a pool ruling.
+function haltedPickCount(){let n=0;resultsByWeek.forEach((map,i)=>{if(!(map instanceof Map))return;for(const team of pickedTeams(i))if(map.get(team)?.halted)n++});return n}
 
 function marketLabel(option){
   if(!option.favorite)return 'No market favorite';
@@ -50,15 +52,18 @@ function optionRow(option){
   const where=option.home?'vs':'@',avail=option.fieldDenominator?`${option.fieldAvailable}/${option.fieldDenominator} can use · ${option.fieldAvailablePct}%`:'field availability unavailable';
   return `<div class="survivor-option-row"><div>${teamChip(option.team)}<span class="survivor-opponent">${where} ${esc(option.opponent)}</span></div><div class="survivor-option-meta"><b>${esc(marketLabel(option))}</b><span>${esc(avail)}</span></div></div>`;
 }
-function renderDecision(summary){
+function renderDecision(summary,ruling=0){
   const box=$('svDecisionEntries');if(!box||!cfg)return;
   const nextWeekIndex=cfg.week,nextWeek=cfg.week+1,entries=allEntries();
   $('svDecisionWeek').textContent=`Week ${nextWeek}`;
   if(summary.pending>0){$('svDecisionNote').textContent='Decision support is provisional until every current-week Survivor result is final.';box.innerHTML='<div class="empty">Waiting for the current week to settle before calculating the next-week surviving field.</div>';return}
   if(!nextWeekMatchups.length){$('svDecisionNote').textContent=nextWeekError||`Week ${nextWeek} schedule/market data has not loaded yet.`;box.innerHTML='<div class="empty">Week-ahead schedule unavailable. Burned-team history remains unchanged.</div>';return}
   const teams=nextWeekMatchups.flatMap(m=>[m.away,m.home]),availability=survivorFieldAvailability(entries,nextWeekIndex,resultsByWeek,teams);
-  $('svDecisionNote').textContent='Field availability = share of surviving entries that have not already burned that team. It is not projected pick ownership.';
+  // HDC-11: entries awaiting a pool ruling on a halted game no longer hold the board, but they are not in the surviving field.
+  $('svDecisionNote').textContent=`${ruling?`Provisional · ${ruling} ${ruling===1?'entry awaits':'entries await'} a pool ruling on a halted game and ${ruling===1?'is':'are'} not part of the surviving field. `:''}Field availability = share of surviving entries that have not already burned that team. It is not projected pick ownership.`;
   box.innerHTML=cfg.trackedEntries.map(entry=>{
+    const state=survivorEntryState(entry,nextWeekIndex-1,resultsByWeek);
+    if(state.halted)return `<article class="survivor-decision-entry survivor-decision-ruling"><div class="survivor-decision-head"><div><span class="section-kicker">${esc(entry.displayName)}</span><h3>Awaiting pool ruling</h3></div><span class="status-pill survivor-pending">RULING</span></div><p>${esc(state.reason)}</p></article>`;
     const support=survivorDecisionOptions(entry,nextWeekIndex,resultsByWeek,nextWeekMatchups,availability),burned=support.burned.map(team=>`<span class="survivor-burned-chip">${esc(team)}</span>`).join('')||'<span class="survivor-none">None</span>';
     if(!support.eligible)return `<article class="survivor-decision-entry survivor-decision-out"><div class="survivor-decision-head"><div><span class="section-kicker">${esc(entry.displayName)}</span><h3>Out of Survivor</h3></div><span class="status-pill survivor-out">OUT</span></div><div class="survivor-burned"><span>Burned</span>${burned}</div><p>${esc(support.reason||'Entry is eliminated.')}</p></article>`;
     const favorites=support.options.filter(x=>x.favorite).sort((a,b)=>(b.spread||0)-(a.spread||0)||a.fieldAvailablePct-b.fieldAvailablePct||a.team.localeCompare(b.team));
@@ -69,21 +74,27 @@ function renderDecision(summary){
 }
 
 function statusLabel(state){
-  return state.status==='alive'?'ALIVE':state.status==='live'?'LIVE':state.status==='pending'?'PENDING':'OUT';
+  return state.halted?'RULING':state.status==='alive'?'ALIVE':state.status==='live'?'LIVE':state.status==='pending'?'PENDING':'OUT';
 }
 function render(){
   if(!cfg)return;
   const entries=allEntries(),wi=cfg.week-1,summary=survivorSummary(entries,wi,resultsByWeek),dist=survivorPickDistribution(entries,wi,resultsByWeek),progress=survivorWeekProgress(entries,wi,resultsByWeek),unresolvedPrior=survivorUnresolvedEntering(entries,wi,resultsByWeek);
-  const provisional=unresolvedPrior?`Provisional · ${unresolvedPrior} ${unresolvedPrior===1?'entry is':'entries are'} awaiting a verified earlier-week result and ${unresolvedPrior===1?'is':'are'} not counted as eligible.`:'';
+  // HDC-11: entries awaiting a pool ruling on a halted game are shown on their own, never as still in, eligible or eliminated.
+  const ruling=survivorAwaitingRuling(entries,wi,resultsByWeek),rulingPrior=survivorAwaitingRuling(entries,wi-1,resultsByWeek);
+  const provisional=[
+    unresolvedPrior?`Provisional · ${unresolvedPrior} ${unresolvedPrior===1?'entry is':'entries are'} awaiting a verified earlier-week result and ${unresolvedPrior===1?'is':'are'} not counted as eligible.`:'',
+    rulingPrior?`Provisional · ${rulingPrior} ${rulingPrior===1?'entry awaits':'entries await'} a pool ruling on a halted earlier-week game and ${rulingPrior===1?'is':'are'} not counted as eligible.`:''
+  ].filter(Boolean).join(' ');
+  const awaiting=ruling?` ${ruling} ${ruling===1?'entry is':'entries are'} awaiting a pool ruling on a halted game and ${ruling===1?'is':'are'} not counted as still in or eliminated.`:'';
   $('svPoolSize').textContent=cfg.competitionSize;$('svEntered').textContent=summary.entered;$('svStillIn').textContent=summary.active;$('svPending').textContent=summary.pending;
-  $('svSummaryNote').textContent=`${summary.eliminatedBefore} eliminated before Week ${cfg.week} · ${summary.eligibleEntering} eligible entering · ${summary.submitted} submitted · ${summary.entered} legal picks · ${summary.eliminatedThisWeek} eliminated this week so far.${provisional?` ${provisional}`:''}`;
+  $('svSummaryNote').textContent=`${summary.eliminatedBefore} eliminated before Week ${cfg.week} · ${summary.eligibleEntering} eligible entering · ${summary.submitted} submitted · ${summary.entered} legal picks · ${summary.eliminatedThisWeek} eliminated this week so far.${awaiting}${provisional?` ${provisional}`:''}`;
   $('svTracked').innerHTML=cfg.trackedEntries.map(entry=>{
     const state=survivorEntryState(entry,wi,resultsByWeek),current=state.eliminatedWeek&&state.eliminatedWeek<cfg.week?entry.picks[state.eliminatedWeek-1]:entry.picks[wi],history=entry.picks.map((pick,i)=>`<span class="survivor-history-chip"><small>W${i+1}</small>${pick?esc(pick):'—'}</span>`).join('');
     return`<div class="survivor-tracked-row"><div><b>${esc(entry.displayName)}</b><div class="survivor-history">${history}</div></div><div class="survivor-current">${teamChip(current)}<span class="status-pill survivor-${state.status}">${statusLabel(state)}</span><small>${esc(state.reason)}</small></div></div>`;
   }).join('');
   $('svDistribution').innerHTML=(provisional?`<div class="empty">${esc(provisional)}</div>`:'')+(dist.length?dist.map(item=>`<div class="survivor-pick-row"><div>${teamChip(item.team)}</div><div class="survivor-bar"><i style="width:${item.pct}%"></i></div><b>${item.count}</b><span>${item.pct}%</span></div>`).join(''):'<div class="empty">No eligible entries have a Week pick.</div>');
-  $('svProgress').innerHTML=progress.map(x=>`<div class="survivor-week-step"><span>Week ${x.week}</span><b>${x.remaining}</b><small>${x.eligibleEntering} eligible · ${x.submitted} submitted · ${x.entered} legal · ${x.eliminated} out</small></div>`).join('');
-  renderDecision(summary);
+  $('svProgress').innerHTML=progress.map(x=>{const r=survivorAwaitingRuling(entries,x.week-1,resultsByWeek);return`<div class="survivor-week-step"><span>Week ${x.week}</span><b>${x.remaining}</b><small>${x.eligibleEntering} eligible · ${x.submitted} submitted · ${x.entered} legal · ${x.eliminated} out${r?` · ${r} awaiting ruling`:''}</small></div>`}).join('');
+  renderDecision(summary,ruling);
   $('svMeta').textContent=`Week ${cfg.week} · revision ${rows.find(r=>r.config===cfg)?.revision||'—'}`;
 }
 
@@ -140,8 +151,8 @@ async function updateScores(){
     outcomes.forEach((o,k)=>{const i=indexes[k];if(o.status==='fulfilled')resultsByWeek[i]=o.value;else failed.push({i,reason:o.reason})});
     failed.forEach(f=>console.warn(f.reason));
     if(failed.some(f=>f.i===current||!(resultsByWeek[f.i] instanceof Map)))throw failed.find(f=>f.i===current||!(resultsByWeek[f.i] instanceof Map)).reason;
-    const issues=feedIssueCount();
-    $('svFeed').textContent=issues?`LIVE · ${issues} TEAM RESULT${issues===1?'':'S'} UNVERIFIED`:'LIVE · NFL results';$('svFeed').className=`survivor-feed ${issues?'warn':'ok'}`;render();void updateDecisionSchedule();
+    const issues=feedIssueCount(),halted=haltedPickCount(),flags=[issues?`${issues} TEAM RESULT${issues===1?'':'S'} UNVERIFIED`:'',halted?`${halted} TEAM RESULT${halted===1?'':'S'} AWAITING RULING`:''].filter(Boolean);
+    $('svFeed').textContent=flags.length?`LIVE · ${flags.join(' · ')}`:'LIVE · NFL results';$('svFeed').className=`survivor-feed ${flags.length?'warn':'ok'}`;render();void updateDecisionSchedule();
   }catch(e){if(id!==refreshId||cfg!==scoreCfg)return;$('svFeed').textContent='RESULT FEED UNAVAILABLE';$('svFeed').className='survivor-feed warn';render();console.warn(e)}
 }
 

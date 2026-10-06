@@ -49,6 +49,14 @@ function finalStatusIssue(event,competition){
   if(comp&&(comp.completed===false||(typeof comp.state==='string'&&comp.state!=='post')||nonFinalName(comp.name)))return 'status';
   return null;
 }
+// HDC-11: a game that is not completed but whose status, at the event or competition level, explicitly names a halted state
+// (canceled, postponed, suspended, forfeit) awaits a pool ruling: it is neither a result nor ordinary pending. Absent or
+// non-string names never halt a game, and a completed game is judged only as a final (above). Returns the halted name or null.
+function haltedStatusName(event,competition){
+  if(event?.status?.type?.completed===true)return null;
+  for(const name of [event?.status?.type?.name,competition?.status?.type?.name])if(typeof name==='string'&&HALTED_STATUS.test(name))return name;
+  return null;
+}
 
 // Builds team -> result for one NFL week. Anything that cannot be proven stays unresolved (never a tie, winner or loss).
 export function survivorBuildResults(events,context={}){
@@ -68,7 +76,7 @@ export function survivorBuildResults(events,context={}){
     else if(survivorContextMismatch(event,context))issue='context';
     else if(done)issue=finalStatusIssue(event,c)||(as===null||hs===null?'score':null)||
       ((away.winner===true&&!(as>hs))||(home.winner===true&&!(hs>as))?'winner':null);
-    records.push({teams:[...new Set(codes)],a,h,state,done,issue,as,hs});
+    records.push({teams:[...new Set(codes)],a,h,state,done,issue,as,hs,halted:haltedStatusName(event,c)});
   }
   const ambiguous=team=>(appearances.get(team)||0)>1;
   const map=new Map(),unresolved=(team,opponent,state,issue)=>{if(team&&(!map.has(team)||!map.get(team).unresolved||issue==='ambiguous'))map.set(team,{completed:false,state,winner:null,tie:false,opponent:opponent||null,unresolved:true,issue})};
@@ -78,8 +86,8 @@ export function survivorBuildResults(events,context={}){
       unresolved(r.a,r.h,r.state,ambiguous(r.a)?'ambiguous':'affected');unresolved(r.h,r.a,r.state,ambiguous(r.h)?'ambiguous':'affected');continue;
     }
     if(r.issue){unresolved(r.a,r.h,r.state,r.issue);unresolved(r.h,r.a,r.state,r.issue);continue}
-    const tie=r.done&&r.as===r.hs,winner=r.done&&!tie?(r.as>r.hs?r.a:r.h):null;
-    map.set(r.a,{completed:r.done,state:r.state,winner,tie,opponent:r.h});map.set(r.h,{completed:r.done,state:r.state,winner,tie,opponent:r.a});
+    const tie=r.done&&r.as===r.hs,winner=r.done&&!tie?(r.as>r.hs?r.a:r.h):null,halted=r.halted?{halted:r.halted}:{};
+    map.set(r.a,{completed:r.done,state:r.state,winner,tie,opponent:r.h,...halted});map.set(r.h,{completed:r.done,state:r.state,winner,tie,opponent:r.a,...halted});
   }
   return map;
 }
@@ -107,6 +115,9 @@ export function survivorEntryState(entry,weekIndex,resultsByWeek){
     const result=teamResult(results,pick);
     if(!result)return{status:'pending',pick,week,reason:`${pick} not present in verified Week ${week} feed/schedule`,type:'absent'};
     if(result.unresolved)return{status:'pending',pick,week,reason:`Week ${week} ${pick} result unavailable: ${survivorResultIssue(result)}`,type:'unresolved'};
+    // HDC-11: a halted game awaits a pool ruling. status and type stay 'pending', what the Admin publish guard reads; halted
+    // names the status, and nothing is decided for the pick: not alive, not out, and no later week is applied.
+    if(result.completed!==true&&typeof result.halted==='string'&&result.halted)return{status:'pending',pick,week,reason:`Week ${week} ${pick} game halted (${result.halted}): awaiting pool ruling`,type:'pending',halted:result.halted};
     if(result.completed!==true)return{status:result.state==='in'?'live':'pending',pick,week,reason:result.state==='in'?`Week ${week} game live`:`Week ${week} game pending`,type:'pending'};
     const unverified={status:'pending',pick,week,reason:`Week ${week} ${pick} result unavailable: final result has no verified winner`,type:'unresolved'};
     if(result.tie===true)return result.winner?unverified:{status:'out',pick,week,eliminatedWeek:week,reason:`NFL tie eliminated entry in Week ${week}`,type:'tie'};
@@ -123,10 +134,20 @@ export function survivorEligibleEntering(entry,weekIndex,resultsByWeek){
   return prior.status==='alive';
 }
 
+// Ordinary unresolved: pending or live, but not awaiting a pool ruling on a halted game (HDC-11).
+const unresolvedState=state=>(state.status==='pending'||state.status==='live')&&!state.halted;
+
 // Entries whose status entering weekIndex cannot be decided yet (an earlier result is pending, live or unverified).
 export function survivorUnresolvedEntering(entries,weekIndex,resultsByWeek){
   if(weekIndex<=0)return 0;
-  return (entries||[]).filter(e=>['pending','live'].includes(survivorEntryState(e,weekIndex-1,resultsByWeek).status)).length;
+  return (entries||[]).filter(e=>unresolvedState(survivorEntryState(e,weekIndex-1,resultsByWeek))).length;
+}
+
+// HDC-11: entries whose state at weekIndex awaits a pool ruling on a halted game. They are never alive, out or ordinary
+// pending, so the summary and attrition counts leave them out and the page shows them on their own.
+export function survivorAwaitingRuling(entries,weekIndex,resultsByWeek){
+  if(!Number.isInteger(weekIndex)||weekIndex<0)return 0;
+  return (entries||[]).filter(e=>survivorEntryState(e,weekIndex,resultsByWeek).halted).length;
 }
 
 export function survivorCurrentPickIsLegal(entry,weekIndex){
@@ -147,10 +168,10 @@ export function survivorSummary(entries,weekIndex,resultsByWeek){
   const eligibleEntering=all.filter(e=>survivorEligibleEntering(e,weekIndex,resultsByWeek)).length;
   const submitted=all.filter(e=>survivorEligibleEntering(e,weekIndex,resultsByWeek)&&e?.picks?.[weekIndex]).length;
   const entered=all.filter(e=>survivorEligibleEntering(e,weekIndex,resultsByWeek)&&survivorCurrentPickIsLegal(e,weekIndex)).length;
-  const active=states.filter(s=>['alive','pending','live'].includes(s.status)).length;
+  const active=states.filter(s=>s.status==='alive'||unresolvedState(s)).length;
   const eliminatedBefore=states.filter(s=>s.status==='out'&&s.eliminatedWeek<weekIndex+1).length;
   const eliminatedThisWeek=states.filter(s=>s.status==='out'&&s.eliminatedWeek===weekIndex+1).length;
-  const pending=states.filter(s=>s.status==='pending'||s.status==='live').length;
+  const pending=states.filter(unresolvedState).length;
   return{poolSize:all.length,eligibleEntering,submitted,entered,active,eliminatedBefore,eliminatedThisWeek,pending};
 }
 
@@ -161,7 +182,7 @@ export function survivorWeekProgress(entries,currentWeekIndex,resultsByWeek){
     const submitted=all.filter(e=>survivorEligibleEntering(e,i,resultsByWeek)&&e?.picks?.[i]).length;
     const entered=all.filter(e=>survivorEligibleEntering(e,i,resultsByWeek)&&survivorCurrentPickIsLegal(e,i)).length;
     const states=all.map(e=>survivorEntryState(e,i,resultsByWeek));
-    const remaining=states.filter(s=>['alive','pending','live'].includes(s.status)).length;
+    const remaining=states.filter(s=>s.status==='alive'||unresolvedState(s)).length;
     const eliminated=states.filter(s=>s.status==='out'&&s.eliminatedWeek===i+1).length;
     rows.push({week:i+1,eligibleEntering,submitted,entered,remaining,eliminated});
   }
