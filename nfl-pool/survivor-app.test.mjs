@@ -4,7 +4,11 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {projectScoreboard} from './score-proxy/index.mjs';
 
-const source=readFileSync(new URL('./survivor-app.js',import.meta.url),'utf8');
+const appSource=readFileSync(new URL('./survivor-app.js',import.meta.url),'utf8');
+// HDC-12: the view imports the contest-ruling evaluator; where it does, point that import at the module's file URL so the
+// view still loads from a data: URL. Before HDC-12 there is no such import and the source is used as it is.
+const rulingsFrom=appSource.match(/from '\.\/contest-rulings\.js\?v=\d+';/)?.[0]??null;
+const source=rulingsFrom?appSource.replace(rulingsFrom,`from '${new URL(rulingsFrom.slice("from '".length,-"';".length),import.meta.url).href}';`):appSource;
 // The view's survivor-math import at the version it pins; the exact version is checked at the end of this file.
 const from=source.match(/from '\.\/survivor-math\.js\?v=\d+';/)?.[0];
 assert(from,'harness expects the survivor-math import');
@@ -29,9 +33,31 @@ config.competitionSize=6;config.currentWeekEntryCount=3;
 class El{constructor(){this.textContent='';this.innerHTML='';this.className='';this.value='';this.listeners={}}addEventListener(t,f){(this.listeners[t]||=[]).push(f)}}
 const flush=async(n=12)=>{for(let i=0;i<n;i++)await new Promise(r=>setTimeout(r,0))};
 
-async function view(feeds,rowsOverride=null,app=patched){
+// HDC-12: the contest rules and rulings, served as the Neon Data API serves them to the anonymous role. Only the granted
+// public columns can be selected (select=* or any other column is refused, as PostgREST refuses a column the role may not
+// read) and rows are filtered by the request's eq./lte. filters. The stored rows carry the private columns too, so a request
+// for one fails. By default: one valid contest, its revision-1 policy and no ruling, so every page above renders as before.
+const RULING_COLUMNS={
+  nfl_contests:['contest_id','season','contest_type','display_name','starts_at','created_at'],
+  nfl_contest_policies:['contest_id','contest_type','revision','effective_week','halted_game_policy','public_note','created_at'],
+  nfl_incident_rulings:['ruling_id','contest_id','contest_type','week','away_team','home_team','policy_revision','chain_seq','parent_ruling_id','consequence','incident_status','event_id','evidence_source','public_note','created_at']
+};
+const SV_CONTEST='pool-center-2026-survivor',PRIVATE={admin_note:'PRIVATE ADMIN NOTE',created_by:'auth-user-7f3a'};
+const svContestRow=(o={})=>({contest_id:SV_CONTEST,season:2026,contest_type:'survivor',display_name:'Pool Center 2026 Survivor',starts_at:'2026-09-01T00:00:00+00:00',created_at:'2026-10-08T12:00:00+00:00',created_by:PRIVATE.created_by,...o});
+const svPolicyRow=(halted_game_policy='advance_team_used',o={})=>({contest_id:SV_CONTEST,contest_type:'survivor',revision:1,effective_week:1,halted_game_policy,public_note:'Approved policy for this contest.',created_at:'2026-10-08T12:00:00+00:00',...PRIVATE,...o});
+const rulingStore=(o={})=>({nfl_contests:[svContestRow()],nfl_contest_policies:[svPolicyRow()],nfl_incident_rulings:[],...o});
+function dataApi(table,rows,u){
+  const select=(u.searchParams.get('select')||'*').split(','),allowed=RULING_COLUMNS[table];
+  if(select.some(c=>!allowed.includes(c)))return{ok:false,status:401,json:async()=>({code:'42501',message:`permission denied for table ${table}`})};
+  const filters=[...u.searchParams].filter(([k])=>k!=='select'&&k!=='order');
+  if(filters.some(([k,v])=>!allowed.includes(k)||!/^(eq|lte)\./.test(v)))return{ok:false,status:400,json:async()=>({message:'unsupported filter'})};
+  const keep=row=>filters.every(([k,v])=>{const [op,...rest]=v.split('.'),want=rest.join('.'),have=row[k],w=typeof have==='number'?Number(want):want;return op==='eq'?have===w:have<=w});
+  return{ok:true,status:200,json:async()=>structuredClone(rows.filter(keep).map(row=>Object.fromEntries(select.map(c=>[c,row[c]]))))};
+}
+
+async function view(feeds,rowsOverride=null,app=patched,store=rulingStore()){
   const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new El());return els.get(id)},docListeners={};
-  const seen=[],signals=[],doc={getElementById:$,body:{dataset:{view:'survivor'}},visibilityState:'hidden',addEventListener(t,f){(docListeners[t]||=[]).push(f)}};
+  const seen=[],signals=[],rulingRequests=[],doc={getElementById:$,body:{dataset:{view:'survivor'}},visibilityState:'hidden',addEventListener(t,f){(docListeners[t]||=[]).push(f)}};
   globalThis.document=doc;
   globalThis.location={href:'https://example.test/nfl-pool/?view=survivor',search:'?view=survivor'};
   globalThis.history={state:null,replaceState(){}};
@@ -42,6 +68,14 @@ async function view(feeds,rowsOverride=null,app=patched){
     const u=new URL(url);
     if(u.pathname.endsWith('/token/anonymous'))return{ok:true,json:async()=>({token})};
     if(u.pathname.endsWith('/nfl_survivor_weeks'))return{ok:true,json:async()=>structuredClone(rowsData)};
+    const table=Object.keys(RULING_COLUMNS).find(t=>u.pathname.endsWith(`/${t}`));
+    if(table){
+      rulingRequests.push({table,url:u,authorization:init.headers?.Authorization??null});
+      const rows=store[table];
+      if(typeof rows==='function')return rows(u,init);
+      if(typeof rows==='number')return{ok:false,status:rows,json:async()=>({})};
+      return dataApi(table,rows,u);
+    }
     const w=Number(u.searchParams.get('week'));seen.push(w);if(init.signal)signals.push({week:w,signal:init.signal});
     const payload=feeds[w];
     if(typeof payload==='function')return payload({week:w,signal:init.signal});
@@ -53,7 +87,7 @@ async function view(feeds,rowsOverride=null,app=patched){
   await flush();
   const row=name=>$('svTracked').innerHTML.split('survivor-tracked-row').find(s=>s.includes(`<b>${name}</b>`))||'';
   return{
-    $,row,seen,feeds,signals,intervals,
+    $,row,seen,feeds,signals,intervals,store,rulingRequests,token,
     refresh:async()=>{seen.length=0;tick();await flush()},
     resume:async()=>{seen.length=0;doc.visibilityState='visible';for(const fn of docListeners.visibilitychange||[])fn();await flush()}
   };
@@ -494,7 +528,160 @@ const WEEK1_STEP='<div class="survivor-week-step"><span>Week 1</span><b>4</b><sm
   }
 }
 
-// HDC-11 changes survivor-math.js, so the view imports it as survivor-math.js?v=6 (service-worker.test.mjs pins the rest).
-assert.equal(from,"from './survivor-math.js?v=6';",'survivor-app.js must import survivor-math.js?v=6');
-
 console.log('survivor HDC-11 halted-game ruling, unfrozen board, ordinary-pending, recovery, later-week and projected-feed regressions passed');
+
+
+// ---- HDC-12: contest-scoped commissioner rulings in the public Survivor view. The view reads the public columns of the
+// contest, its policy history and its rulings through Week N, applies only a confirmed incident ruling (the policy alone
+// changes nothing), keeps the NFL fact apart from the pool consequence, and fails closed when the ruling data cannot be
+// read. D.C. picked SF and survivor-003 picked ARI in the canceled Week-2 SF at ARI game (event 401547001); DJS and
+// survivor-001 won with BUF; Thaddeus and survivor-002 went out in Week 1. Each regression reports through one collector.
+{
+  const failures=[];
+  const regression=async(name,check)=>{try{await check()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+  const canceled=(name='STATUS_CANCELED',id='401547001')=>(a,h,n)=>{const g=notCompleted(name,'post')(a,h,n);g.id=id;return g};
+  const finalSF=(as,hs,id='401547001')=>(a,h,n)=>({...game(a,h,n,{as,hs}),id});
+  const feeds=(sf=canceled())=>({1:week(W1,1),2:week(W2,2,{SF:sf}),3:week(W3,3)});
+  const rulings=(consequences,o={},firstId=1)=>consequences.map((consequence,i)=>({ruling_id:firstId+i,contest_id:SV_CONTEST,contest_type:'survivor',week:2,away_team:'SF',home_team:'ARI',
+    policy_revision:1,chain_seq:i+1,parent_ruling_id:i?firstId+i-1:null,consequence,incident_status:'STATUS_CANCELED',event_id:'401547001',evidence_source:'nflscores2',
+    public_note:i?null:'Game canceled by the league; commissioner ruling applied.',created_at:'2026-10-08T12:00:00+00:00',...PRIVATE,...o}));
+  const store=(policy,rows)=>rulingStore({nfl_contest_policies:[svPolicyRow(policy)],nfl_incident_rulings:rows});
+  const pill=(v,name)=>(v.row(name).match(/<span class="status-pill [^"]*">([^<]*)<\/span>/g)||[]).map(x=>x.replace(/<[^>]+>/g,''));
+  const small=(v,name)=>v.row(name).match(/<small>([^<]*)<\/small>/)?.[1]||'';
+  const heads=html=>Object.fromEntries(Object.entries(board(html)).map(([name,b])=>[name,b.head]));
+  const rules=v=>v.$('svRules').innerHTML;
+
+  await regression('the view imports the evaluator and survivor-math at their HDC-12 versions',()=>{
+    assert.equal(rulingsFrom,"from './contest-rulings.js?v=1';",'survivor-app.js must import contest-rulings.js?v=1');
+    assert.equal(from,"from './survivor-math.js?v=7';",'survivor-app.js must import survivor-math.js?v=7');
+  });
+  await regression('the public loader requests only public columns of this contest, rulings through the selected week, with the anonymous token',async()=>{
+    const v=await view(feeds(),rulingRows);
+    const byTable=t=>v.rulingRequests.filter(r=>r.table===t);
+    for(const table of Object.keys(RULING_COLUMNS)){
+      const requests=byTable(table);
+      assert(requests.length>=1,`${table} is requested`);
+      for(const {url,authorization} of requests){
+        assert.deepEqual(url.searchParams.get('select')?.split(','),RULING_COLUMNS[table],`${table}: exactly the public columns`);
+        assert.equal(url.searchParams.get('contest_id'),`eq.${SV_CONTEST}`,`${table}: this contest only`);
+        assert.equal(authorization,`Bearer ${v.token}`,`${table}: the anonymous Data API token`);
+        assert.doesNotMatch(url.href,/admin_note|created_by|select=\*/,`${table}: never a private column`);
+      }
+    }
+    for(const {url} of byTable('nfl_incident_rulings'))assert.equal(url.searchParams.get('week'),'lte.2','Survivor needs every ruling through the selected week');
+  });
+  await regression('preservation guard: a valid empty ruling set leaves the HDC-11 page exactly as it was',async()=>{
+    const v=await view(feeds(),rulingRows);
+    assert(v.row('D.C.').includes('<span class="status-pill survivor-pending">RULING</span><small>Week 2 SF game halted (STATUS_CANCELED): awaiting pool ruling</small>'));
+    assert.equal(v.$('svFeed').textContent,'LIVE · 2 TEAM RESULTS AWAITING RULING');
+  });
+  await regression('advance_team_used: the pickers are ALIVE by applied commissioner ruling, the team stays burned, the board serves them',async()=>{
+    const v=await view(feeds(),rulingRows,patched,store('advance_team_used',rulings(['advance_team_used'])));
+    for(const name of ['D.C.','DJS'])assert.deepEqual(pill(v,name),['ALIVE'],`${name} is alive`);
+    assert.match(small(v,'D.C.'),/applied commissioner ruling/,'the row says the survival came from a commissioner ruling');
+    assert.doesNotMatch(v.row('D.C.'),/>RULING<|awaiting pool ruling/);
+    assert.equal(v.$('svStillIn').textContent,4,'D.C. and survivor-003 are still in alongside DJS and survivor-001');
+    assert.equal(v.$('svPending').textContent,0);
+    assert.equal(v.$('svFeed').textContent,'LIVE · NFL results','nothing awaits a ruling');
+    assert.equal(v.$('svSummaryNote').textContent,'2 eliminated before Week 2 · 4 eligible entering · 4 submitted · 4 legal picks · 0 eliminated this week so far.');
+    const html=v.$('svDecisionEntries').innerHTML;
+    assert.deepEqual(heads(html),{'D.C.':'Week 3 Board',DJS:'Week 3 Board',Thaddeus:'Out of Survivor'},'D.C. gets next-week decision support');
+    const dc=board(html)['D.C.'];
+    assert.deepEqual(dc.burned,['PIT','SF'],'SF stays burned');
+    assert(![...dc.safer,...dc.leverage].some(o=>o.startsWith('SF ')),'SF is never offered again');
+    assert.doesNotMatch(v.$('svDecisionNote').textContent,/^Provisional/);
+  });
+  await regression('eliminate: the pickers are OUT by applied commissioner ruling in Week 2',async()=>{
+    const v=await view(feeds(),rulingRows,patched,store('eliminate',rulings(['eliminate'])));
+    assert.deepEqual(pill(v,'D.C.'),['OUT']);assert.match(small(v,'D.C.'),/applied commissioner ruling/);
+    assert.equal(v.$('svStillIn').textContent,2);
+    assert.equal(v.$('svSummaryNote').textContent,'2 eliminated before Week 2 · 4 eligible entering · 4 submitted · 4 legal picks · 2 eliminated this week so far.');
+    assert.equal(heads(v.$('svDecisionEntries').innerHTML)['D.C.'],'Out of Survivor');
+  });
+  await regression('withdrawn: after the ruling is withdrawn the page returns to the NFL fact and HDC-11 awaiting',async()=>{
+    const v=await view(feeds(),rulingRows,patched,store('advance_team_used',rulings(['advance_team_used'])));
+    assert.deepEqual(pill(v,'D.C.'),['ALIVE'],'first the ruling applies');
+    v.store.nfl_incident_rulings=rulings(['advance_team_used','withdrawn']);await v.refresh();
+    assert(v.row('D.C.').includes('<span class="status-pill survivor-pending">RULING</span><small>Week 2 SF game halted (STATUS_CANCELED): awaiting pool ruling</small>'),'then the pick awaits a ruling again');
+    assert.equal(v.$('svFeed').textContent,'LIVE · 2 TEAM RESULTS AWAITING RULING');
+    assert.match(rules(v),/WITHDRAWN/);
+  });
+  await regression('a later NFL final neither overrides the advance nor undoes the elimination; the conflict is shown as UNDER REVIEW',async()=>{
+    const v=await view(feeds(finalSF('10','24')),rulingRows,patched,store('advance_team_used',rulings(['advance_team_used'])));
+    assert.deepEqual(pill(v,'D.C.'),['ALIVE','UNDER REVIEW'],'SF lost the later final, but the advance stands and is under review');
+    assert.match(small(v,'D.C.'),/UNDER REVIEW: the feed now reports a completed final/);
+    assert.match(v.$('svFeed').textContent,/UNDER REVIEW/);
+    assert.match(rules(v),/UNDER REVIEW/);
+    const e=await view(feeds(finalSF('24','10')),rulingRows,patched,store('eliminate',rulings(['eliminate'])));
+    assert.deepEqual(pill(e,'D.C.'),['OUT','UNDER REVIEW'],'SF won the later final, but the elimination stands');
+  });
+  await regression('a changed event id at first load is UNDER REVIEW, not a removed ruling and not a new slot',async()=>{
+    const v=await view(feeds(canceled('STATUS_CANCELED','401547999')),rulingRows,patched,store('advance_team_used',rulings(['advance_team_used'])));
+    assert.deepEqual(pill(v,'D.C.'),['ALIVE','UNDER REVIEW']);assert.match(small(v,'D.C.'),/different event/);
+  });
+  await regression('later weeks are evaluated after an advance, and the advanced team cannot be used again',async()=>{
+    const cfg3=structuredClone(rulingConfig);cfg3.week=3;cfg3.label='Survivor Week 3';cfg3.currentWeekEntryCount=3;
+    cfg3.trackedEntries=[{id:'dc',displayName:'D.C.',picks:['PIT','SF','KC']},{id:'djs',displayName:'DJS',picks:['LV','BUF','MIA']},{id:'thaddeus',displayName:'Thaddeus',picks:['LAC',null,null]}];
+    cfg3.fieldEntries=[{id:'survivor-001',picks:['JAX','BUF','DEN']},{id:'survivor-002',picks:['CLE',null,null]},{id:'survivor-003',picks:['JAX','ARI',null]}];
+    const f={1:week(W1,1),2:week(W2,2,{SF:canceled()}),3:{season:{year:2026,type:2},week:{number:3},events:W3.map(([a,h])=>game(a,h,3))},4:{season:{year:2026,type:2},week:{number:4},events:W1.map(([a,h])=>game(a,h,4,{completed:false}))}};
+    const v=await view(f,[{season:2026,week:3,status:'locked',revision:11,config:cfg3}],patched,store('advance_team_used',rulings(['advance_team_used'])));
+    assert(v.row('D.C.').includes('<span class="status-pill survivor-out">OUT</span><small>KC lost in Week 3</small>'),'the Week-3 loss after the Week-2 advance eliminates');
+    assert.deepEqual(pill(v,'DJS'),['ALIVE']);
+    const repeat=structuredClone(cfg3);repeat.trackedEntries[0].picks=['PIT','SF','SF'];
+    const r=await view(f,[{season:2026,week:3,status:'locked',revision:11,config:repeat}],patched,store('advance_team_used',rulings(['advance_team_used'])));
+    assert(r.row('D.C.').includes('<span class="status-pill survivor-out">OUT</span><small>Repeated SF in Week 3</small>'),'using the advanced team again is a repeat');
+  });
+  await regression('an invalid ruling holds only the coverage it names: HOLD, never ALIVE, OUT, ELIGIBLE or awaiting',async()=>{
+    const v=await view(feeds(),rulingRows,patched,store('commissioner_decides',rulings(['advance_team_used','eliminate'])));
+    assert.deepEqual(pill(v,'D.C.'),['HOLD']);assert.match(small(v,'D.C.'),/on hold/i);
+    assert.deepEqual(pill(v,'DJS'),['ALIVE'],'unrelated coverage still resolves');
+    assert.equal(v.$('svStillIn').textContent,2);assert.equal(v.$('svPending').textContent,0);
+    assert.match(v.$('svSummaryNote').textContent,/2 entries are on HOLD/);
+    assert.match(v.$('svFeed').textContent,/ON HOLD/);
+    const html=v.$('svDecisionEntries').innerHTML,dc=html.split('<article').find(a=>a.includes('D.C.'));
+    assert.equal(heads(html)['D.C.'],'On hold');
+    assert.doesNotMatch(dc,/ELIGIBLE|Out of Survivor|>OUT<|>RULING</,'HOLD never collapses into another state');
+    assert.equal(heads(html).DJS,'Week 3 Board');
+    assert.match(rules(v),/HOLD/);
+  });
+  await regression("Survivor: a ruling whose matchup the feed contradicts (inverted, no recorded event) holds",async()=>{
+    const v=await view(feeds(),rulingRows,patched,store('advance_team_used',rulings(['advance_team_used'],{away_team:'ARI',home_team:'SF',event_id:null,evidence_source:null})));
+    assert.deepEqual(pill(v,'D.C.'),['HOLD']);
+  });
+  await regression('global: when the ruling data cannot be loaded at all, nothing is graded from the NFL feed alone (ON HOLD)',async()=>{
+    for(const [label,o] of [['rulings unavailable',{nfl_incident_rulings:503}],['tables absent',{nfl_contests:404,nfl_contest_policies:404,nfl_incident_rulings:404}],
+      ['contest not provisioned',{nfl_contests:[]}],['policy history unusable',{nfl_contest_policies:[svPolicyRow('advance')]}],
+      ['a request that never answers',{nfl_incident_rulings:()=>new Promise(()=>{})}]]){
+      const v=await view(feeds(),rulingRows,patched,rulingStore(o));
+      for(const name of ['D.C.','DJS','Thaddeus'])assert.deepEqual(pill(v,name),['HOLD'],`${label}: ${name} is on hold`);
+      assert.equal(v.$('svStillIn').textContent,0,label);
+      assert.equal(v.$('svFeed').textContent,'ON HOLD · RULING DATA UNAVAILABLE',label);
+      assert.match(v.$('svSummaryNote').textContent,/^ON HOLD · Ruling data unavailable/,label);
+      assert.match(v.$('svDecisionEntries').innerHTML,/ON HOLD · Ruling data unavailable/,label);
+      assert.doesNotMatch(v.$('svDecisionEntries').innerHTML,/Week 3 Board|Out of Survivor/,label);
+      assert.match(rules(v),/ON HOLD · Ruling data unavailable/,label);
+    }
+  });
+  await regression('a ruling refresh that fails after a verified load keeps the verified rulings (stale) instead of grading from the feed',async()=>{
+    const v=await view(feeds(),rulingRows,patched,store('advance_team_used',rulings(['advance_team_used'])));
+    v.store.nfl_incident_rulings=503;await v.refresh();
+    assert.deepEqual(pill(v,'D.C.'),['ALIVE']);
+    assert.match(rules(v),/could not be refreshed/);
+  });
+  await regression('Rules & rulings: contest, policy, revision, effective week, confirmation, rulings, history and notes; never private fields',async()=>{
+    const rows=[...rulings(['advance_team_used','advance_team_used'])];rows[1].public_note='Reaffirmed after review.';
+    const v=await view(feeds(),rulingRows,patched,store('advance_team_used',rows)),html=rules(v);
+    for(const text of ['Survivor contest','Pool Center 2026 Survivor','Advance, team used','Policy revision 1','in force from Week 1','Approved policy for this contest.',
+      'Commissioner confirmation is required','SF @ ARI','APPLIED','Ruled ADVANCE','Reaffirmed ADVANCE','Game canceled by the league; commissioner ruling applied.','Reaffirmed after review.'])
+      assert(html.includes(text),`the card shows: ${text}`);
+    // Even a misconfigured API that returned private columns never reaches the page.
+    const leaky=rulingStore({nfl_contest_policies:()=>({ok:true,status:200,json:async()=>[svPolicyRow()]}),nfl_incident_rulings:()=>({ok:true,status:200,json:async()=>rulings(['advance_team_used'])})});
+    const l=await view(feeds(),rulingRows,patched,leaky);
+    const page=['svRules','svTracked','svDecisionEntries','svSummaryNote','svFeed'].map(id=>`${l.$(id).innerHTML}${l.$(id).textContent}`).join('\n');
+    assert.doesNotMatch(`${html}\n${page}`,/PRIVATE ADMIN NOTE|auth-user-7f3a/);
+  });
+
+  assert.equal(failures.length,0,`HDC-12 Survivor view regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+}
+
+console.log('survivor HDC-12 contest-ruling load, privacy, advance, eliminate, withdrawn, under-review, later-week, hold, fail-closed and Rules & rulings regressions passed');

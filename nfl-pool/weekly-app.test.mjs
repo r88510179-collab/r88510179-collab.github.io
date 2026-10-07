@@ -3,7 +3,11 @@ import {readFileSync} from 'node:fs';
 import {projectScoreboard} from './score-proxy/index.mjs';
 import {survivorBuildResults} from './survivor-math.js';
 
-const source=readFileSync(new URL('./weekly-app.js',import.meta.url),'utf8');
+const appSource=readFileSync(new URL('./weekly-app.js',import.meta.url),'utf8');
+// HDC-12: the page imports the contest-ruling evaluator; where it does, point that import at the module's file URL so the
+// page still loads from a data: URL. Before HDC-12 there is no such import and the source is used as it is.
+const rulingsFrom=appSource.match(/from '\.\/contest-rulings\.js\?v=\d+';/)?.[0]??null;
+const source=rulingsFrom?appSource.replace(rulingsFrom,`from '${new URL(rulingsFrom.slice("from '".length,-"';".length),import.meta.url).href}';`):appSource;
 const from="from './public-math.js?v=2';";
 assert(source.includes(from),'harness expects the public-math import');
 assert(source.includes("if(ctl)ctl.abort()"),'overlapping Pick’em refreshes must abort the older request');
@@ -37,7 +41,29 @@ const game=({season=2026,seasonType=2,week=3,away='DEN',home='KC',id=`${away.toL
   ]}]
 });
 
-async function view({weekConfig=config,initialScorePayload={events:[game()]}}={}){
+// HDC-12: the contest rules and rulings, served as the Neon Data API serves them to the anonymous role. Only the granted
+// public columns can be selected (select=* or any other column is refused, as PostgREST refuses a column the role may not
+// read) and rows are filtered by the request's eq./lte. filters. The stored rows carry the private columns too, so a request
+// for one fails. By default: one valid contest, its revision-1 policy and no ruling, so every page above renders as before.
+const RULING_COLUMNS={
+  nfl_contests:['contest_id','season','contest_type','display_name','starts_at','created_at'],
+  nfl_contest_policies:['contest_id','contest_type','revision','effective_week','halted_game_policy','public_note','created_at'],
+  nfl_incident_rulings:['ruling_id','contest_id','contest_type','week','away_team','home_team','policy_revision','chain_seq','parent_ruling_id','consequence','incident_status','event_id','evidence_source','public_note','created_at']
+};
+const PK_CONTEST='pool-center-2026-pickem',PRIVATE={admin_note:'PRIVATE ADMIN NOTE',created_by:'auth-user-7f3a'};
+const pkContestRow=(o={})=>({contest_id:PK_CONTEST,season:2026,contest_type:'pickem',display_name:"Pool Center 2026 Pick'em",starts_at:'2026-09-01T00:00:00+00:00',created_at:'2026-10-08T12:00:00+00:00',created_by:PRIVATE.created_by,...o});
+const pkPolicyRow=(o={})=>({contest_id:PK_CONTEST,contest_type:'pickem',revision:1,effective_week:1,halted_game_policy:'void',public_note:'Approved policy for this contest.',created_at:'2026-10-08T12:00:00+00:00',...PRIVATE,...o});
+const pickemStore=(o={})=>({nfl_contests:[pkContestRow()],nfl_contest_policies:[pkPolicyRow()],nfl_incident_rulings:[],...o});
+function dataApi(table,rows,u){
+  const select=(u.searchParams.get('select')||'*').split(','),allowed=RULING_COLUMNS[table];
+  if(select.some(c=>!allowed.includes(c)))return{ok:false,status:401,json:async()=>({code:'42501',message:`permission denied for table ${table}`})};
+  const filters=[...u.searchParams].filter(([k])=>k!=='select'&&k!=='order');
+  if(filters.some(([k,v])=>!allowed.includes(k)||!/^(eq|lte)\./.test(v)))return{ok:false,status:400,json:async()=>({message:'unsupported filter'})};
+  const keep=row=>filters.every(([k,v])=>{const [op,...rest]=v.split('.'),want=rest.join('.'),have=row[k],w=typeof have==='number'?Number(want):want;return op==='eq'?have===w:have<=w});
+  return{ok:true,status:200,json:async()=>structuredClone(rows.filter(keep).map(row=>Object.fromEntries(select.map(c=>[c,row[c]]))))};
+}
+
+async function view({weekConfig=config,initialScorePayload={events:[game()]},store=pickemStore()}={}){
   const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new El());return els.get(id)},docListeners={};
   const doc={
     body:{dataset:{}},title:'',visibilityState:'hidden',
@@ -50,13 +76,21 @@ async function view({weekConfig=config,initialScorePayload={events:[game()]}}={}
   globalThis.window={addEventListener(t,f){(windowListeners[t]||=[]).push(f)},scrollTo(){}};
   globalThis.location={href:'https://example.test/nfl-pool/?view=home',search:'?view=home'};
   globalThis.history={pushState(){},state:null};
-  let tick=null,scorePayload=structuredClone(initialScorePayload),scoreFailure=false,scoreCalls=0;
+  let tick=null,scorePayload=structuredClone(initialScorePayload),scoreFailure=false,scoreCalls=0;const rulingRequests=[];
   globalThis.setInterval=(fn,ms)=>{assert.equal(ms,20000);tick=fn;return 0};
   const token='x.'+Buffer.from(JSON.stringify({exp:Math.floor(Date.now()/1000)+3600})).toString('base64url')+'.y';
   globalThis.fetch=async (url,init={})=>{
     const u=new URL(url);
     if(u.pathname.endsWith('/token/anonymous'))return{ok:true,json:async()=>({token})};
     if(u.pathname.endsWith('/nfl_pool_weeks'))return{ok:true,json:async()=>[{season:2026,week:3,status:'locked',revision:1,config:structuredClone(weekConfig)}]};
+    const table=Object.keys(RULING_COLUMNS).find(t=>u.pathname.endsWith(`/${t}`));
+    if(table){
+      rulingRequests.push({table,url:u,authorization:init.headers?.Authorization??null});
+      const rows=store[table];
+      if(typeof rows==='function')return rows(u,init);
+      if(typeof rows==='number')return{ok:false,status:rows,json:async()=>({})};
+      return dataApi(table,rows,u);
+    }
     scoreCalls++;
     if(scoreFailure)return{ok:false,status:503,json:async()=>({})};
     return{ok:true,status:200,json:async()=>structuredClone(scorePayload)};
@@ -66,7 +100,7 @@ async function view({weekConfig=config,initialScorePayload={events:[game()]}}={}
   await flush();
   const warning=()=>$('error').children[0]?.textContent||'';
   return{
-    $,warning,mod,
+    $,warning,mod,store,rulingRequests,token,
     html:()=>[...els.values()].map(e=>`${e.innerHTML}\n${e.textContent}`).join('\n'),
     setPayload:v=>{scorePayload=v},
     setFailure:v=>{scoreFailure=v},
@@ -790,3 +824,175 @@ const HALTED_GAMES=[
 }
 
 console.log('weekly HDC-11 halted-game warning, ungraded halted game, unchanged standings and tiebreak, ordinary-pending, recovery, projected-feed and HDC-10 completed-final regressions passed');
+
+
+// HDC-12. Contest-scoped commissioner rulings in Pick'em. The page reads the public columns of the 2026 Pick'em contest,
+// its policy history and the selected week's rulings, applies only a confirmed incident ruling (void: no win, no loss, no
+// points, not remaining, never shown as an NFL tie), keeps the NFL fact apart from the pool consequence, voids the tiebreak
+// without choosing another game, and fails closed when the ruling data cannot be read. Fixtures reuse the HDC-11 Week-3
+// BUF at CIN game (event 401437947, STATUS_CANCELED): D.C. picked DEN and BUF, DJS picked KC and CIN. Each regression
+// reports through one collector; the block fails at its end if any did.
+{
+  const failures=[];
+  const regression=async(name,check)=>{try{await check()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+  const voids=(consequences,o={},firstId=1)=>consequences.map((consequence,i)=>({ruling_id:firstId+i,contest_id:PK_CONTEST,contest_type:'pickem',week:3,away_team:'BUF',home_team:'CIN',
+    policy_revision:1,chain_seq:i+1,parent_ruling_id:i?firstId+i-1:null,consequence,incident_status:'STATUS_CANCELED',event_id:'401437947',evidence_source:'nflscores2',
+    public_note:i?null:'League canceled the game; voided for this contest.',created_at:'2026-10-08T12:00:00+00:00',...PRIVATE,...o}));
+  const canceledGame=(away,home,id)=>{const e=bufCin();e.id=id;const [h,a]=e.competitions[0].competitors;h.team.abbreviation=home;a.team.abbreviation=away;return e};
+  const page=async({tiebreakGameIndex=0,events=[espnFinal(),bufCin()],rulings=voids(['void']),store=null,weekConfig=null}={})=>
+    view({weekConfig:weekConfig||haltConfig(tiebreakGameIndex),initialScorePayload:{events},store:store||pickemStore({nfl_incident_rulings:rulings})});
+  const card=(v,away)=>v.$('gamegrid').innerHTML.split('<div class="game').slice(1).find(g=>g.includes(`<span class="abbr">${away}</span>`))||'';
+  const rules=v=>v.$('pickemRules').innerHTML;
+  const esc=t=>String(t).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  const banner=v=>v.$('error').children.map(c=>c.textContent).join('\n');
+
+  await regression('the page imports the HDC-12 evaluator',()=>assert.equal(rulingsFrom,"from './contest-rulings.js?v=1';",'weekly-app.js must import contest-rulings.js?v=1'));
+  await regression("the public loader requests only public columns of the Pick'em contest and the selected week's rulings, with the anonymous token",async()=>{
+    const v=await page({rulings:[]});
+    for(const table of Object.keys(RULING_COLUMNS)){
+      const requests=v.rulingRequests.filter(r=>r.table===table);
+      assert(requests.length>=1,`${table} is requested`);
+      for(const {url,authorization} of requests){
+        assert.deepEqual(url.searchParams.get('select')?.split(','),RULING_COLUMNS[table],`${table}: exactly the public columns`);
+        assert.equal(url.searchParams.get('contest_id'),`eq.${PK_CONTEST}`);
+        assert.equal(authorization,`Bearer ${v.token}`);
+        assert.doesNotMatch(url.href,/admin_note|created_by|select=\*/);
+        if(table==='nfl_incident_rulings')assert.equal(url.searchParams.get('week'),'eq.3',"Pick'em needs the selected week's rulings");
+      }
+    }
+  });
+  await regression('preservation guard: a valid empty ruling set keeps the HDC-11 INCOMPLETE page',async()=>{
+    const v=await page({rulings:[]});
+    assert.equal(v.warning(),'Some feed data was ignored to protect standings: BUF-CIN: game halted (STATUS_CANCELED), not graded; awaiting a pool ruling or official resolution');
+    assert.equal(syncLabel(v),'INCOMPLETE');assert.equal(v.$('finals').textContent,'1/2');
+  });
+  await regression('void: no win, no loss, not remaining, resolved for the week; shown as VOID by commissioner ruling, never as an NFL tie',async()=>{
+    const v=await page();
+    assert.deepEqual(records(v),[['D.C.','1','0'],['DJS','0','1']],'only DEN-KC scores; BUF-CIN gives no win and no loss');
+    assert.deepEqual(pickCells(v),['ok','void','bad','void']);
+    assert.equal(v.$('finals').textContent,'1/2 · 1 void');
+    assert.equal(v.$('left').textContent,'0','the void game is not remaining');
+    assert.equal(v.$('progressText').textContent,'100%');
+    assert.equal(v.warning(),'','the week is not incomplete merely because the canceled game never finished');
+    assert.equal(syncLabel(v),'LIVE');
+    const buf=card(v,'BUF');
+    assert.match(buf,/VOID/);assert.match(buf,/Commissioner ruling/);
+    assert.doesNotMatch(buf,/FINAL TIE|final tie|Canceled<\/div>/,'never shown as an NFL tie');
+    assert.doesNotMatch(v.$('pickBody').innerHTML,/class="c neutral"/,'no tie cell');
+    assert.match(v.$('pickBody').innerHTML,/<td class="c void">.*?VOID/);
+    assert.deepEqual([v.$('leaderKicker').textContent,v.$('leaderName').textContent],['Group winner','D.C.']);
+    assert.equal(v.$('tbNote').textContent,'Tiebreak final total: 41. Tiebreak differences are active.','the DEN-KC tiebreak is unaffected');
+  });
+  await regression('voided tiebreak: no tiebreak that week, ranking by scored record only, tied leaders are co-winners, no fallback game',async()=>{
+    const v=await page({tiebreakGameIndex:1,events:[espnFinal({awayScore:'20',homeScore:'20'}),bufCin()]});
+    assert.deepEqual(records(v),[['D.C.','0','0'],['DJS','0','0']]);
+    assert.equal(v.$('mnf').textContent,'VOID');
+    assert.match(v.$('tbNote').textContent,/no tiebreak this week/);
+    assert.match(v.$('footerRule').textContent,/BUF–CIN tiebreak game voided by commissioner ruling: no tiebreak this week/);
+    assert.deepEqual([v.$('leaderKicker').textContent,v.$('leaderName').textContent],['Group co-winners','D.C. / DJS']);
+    assert.match(v.$('leaderNote').textContent,/no tiebreak/);
+    assert.deepEqual(race(v).map(([name,status,note])=>[name,status,note]),[['D.C.','WINNER','Co-winner · no tiebreak (tiebreak game void)'],['DJS','WINNER','Co-winner · no tiebreak (tiebreak game void)']]);
+    assert.deepEqual(standingCells(v).map(r=>r[r.length-1]),['41','44'],'no tiebreak difference is computed');
+    assert.doesNotMatch(`${v.$('tbNote').textContent} ${v.$('mnf').textContent} ${v.$('leaderNote').textContent}`,/\b40\b/,'the DEN-KC total is never used as a fallback tiebreak');
+    assert.doesNotMatch(v.html(),/unresolved tiebreak not projected|after the configured tiebreak|exact tiebreak tied/);
+  });
+  await regression('a later NFL final, live or scheduled game, or a new event id never reverses the void; the slot is UNDER REVIEW',async()=>{
+    for(const [label,event,pattern] of [
+      ['final',{...espnFinal({away:'BUF',home:'CIN',awayScore:'27',homeScore:'24'}),id:'401437947'},/completed final/],
+      ['live',midGame(bufCin(espnStatus('STATUS_IN_PROGRESS','in','6:12 - 1st'))),/live/],
+      ['scheduled',bufCin(espnStatus('STATUS_SCHEDULED','pre','Sun 8:15 PM')),/scheduled/],
+      ['a new event id at first load',{...bufCin(),id:'401999999'},/different event/]
+    ]){
+      const v=await page({events:[espnFinal(),event]});
+      assert.deepEqual(records(v),[['D.C.','1','0'],['DJS','0','1']],`${label}: still void`);
+      assert.deepEqual(pickCells(v),['ok','void','bad','void'],label);
+      assert.match(card(v,'BUF'),/VOID/,label);assert.match(card(v,'BUF'),/UNDER REVIEW/,label);
+      assert.equal(syncLabel(v),'UNDER REVIEW',label);
+      assert.match(rules(v),pattern,label);
+    }
+    // After the first load, a changed event id still trips the HDC-09 guard (the new event is never adopted) and the void stays.
+    const v=await page({events:[espnFinal(),bufCin()]});
+    v.setPayload({events:[espnFinal(),{...espnFinal({away:'BUF',home:'CIN',awayScore:'27',homeScore:'24'}),id:'401999999'}]});await v.refresh();
+    assert.match(v.warning(),/BUF-CIN: event identity changed/);
+    assert.deepEqual(pickCells(v),['ok','void','bad','void']);
+    assert.match(card(v,'BUF'),/UNDER REVIEW/);
+  });
+  await regression('withdrawn: after the void is withdrawn the page returns to the NFL fact and HDC-11 (never a FINAL TIE)',async()=>{
+    const v=await page();
+    assert.deepEqual(pickCells(v),['ok','void','bad','void'],'first the void applies');
+    v.store.nfl_incident_rulings=voids(['void','withdrawn']);await v.refresh();
+    assert.equal(v.warning(),'Some feed data was ignored to protect standings: BUF-CIN: game halted (STATUS_CANCELED), not graded; awaiting a pool ruling or official resolution');
+    assert.equal(syncLabel(v),'INCOMPLETE');
+    assert.deepEqual(pickCells(v),['ok','pending','bad','pending']);
+    assert.equal(v.$('finals').textContent,'1/2');
+    assert.doesNotMatch(v.$('gamegrid').innerHTML,/FINAL TIE|VOID/);
+    assert.match(rules(v),/WITHDRAWN/);
+  });
+  await regression('all games void: complete, 100%, nothing remaining, no tiebreak, co-winners, no NaN, Infinity or 0/0',async()=>{
+    const cfg=haltConfig(1);cfg.participants.push({id:'thaddeus',displayName:'Thaddeus',pickNumbers:[null,null],tiebreak:null});
+    const v=await page({weekConfig:cfg,events:[canceledGame('DEN','KC','401437900'),bufCin()],rulings:[...voids(['void']),...voids(['void'],{away_team:'DEN',home_team:'KC',event_id:'401437900'},10)]});
+    assert.equal(v.$('finals').textContent,'0/2 · 2 void');
+    assert.equal(v.$('left').textContent,'0');
+    assert.deepEqual([v.$('progressText').textContent,v.$('progressBar').style.width],['100%','100%']);
+    assert.equal(v.$('mnf').textContent,'VOID');
+    assert.deepEqual([v.$('leaderKicker').textContent,v.$('leaderName').textContent,v.$('leaderRecord').textContent],['Group co-winners','D.C. / DJS','0–0'],'the no-submission entry is never a co-winner');
+    assert.deepEqual(race(v).map(([name,status])=>[name,status]),[['D.C.','WINNER'],['DJS','WINNER'],['Thaddeus','OUT']]);
+    assert.equal(v.warning(),'');assert.equal(syncLabel(v),'LIVE');
+    assert.doesNotMatch(v.html(),/NaN|Infinity|\b0\/0\b/);
+  });
+  await regression('an invalid ruling holds only its slot; the other game still grades',async()=>{
+    const broken=voids(['void','void']);broken[1].parent_ruling_id=42;
+    const v=await page({rulings:broken});
+    assert.deepEqual(pickCells(v),['ok','hold','bad','hold']);
+    assert.deepEqual(records(v),[['D.C.','1','0'],['DJS','0','1']]);
+    assert.match(card(v,'BUF'),/HOLD/);assert.doesNotMatch(card(v,'BUF'),/VOID/);
+    assert.match(v.warning(),/BUF-CIN: ruling on hold/);assert.equal(syncLabel(v),'INCOMPLETE');
+    const wrong=await page({rulings:voids(['void'],{away_team:'BUF',home_team:'KC'})});
+    assert.deepEqual(pickCells(wrong),['hold','hold','hold','hold'],'a ruling that matches no published game holds every slot whose team it names');
+  });
+  await regression('a canceled-game void whose game the feed now reports as a forfeit holds',async()=>{
+    const v=await page({events:[espnFinal(),bufCin(espnStatus('STATUS_FORFEIT','post','Forfeit'))]});
+    assert.deepEqual(pickCells(v),['ok','hold','bad','hold']);assert.match(card(v,'BUF'),/HOLD/);
+  });
+  await regression('global: when the ruling data cannot be loaded at all, no game is graded from the NFL feed alone (ON HOLD)',async()=>{
+    for(const [label,o] of [['rulings unavailable',{nfl_incident_rulings:503}],['tables absent',{nfl_contests:404,nfl_contest_policies:404,nfl_incident_rulings:404}],
+      ['contest not provisioned',{nfl_contests:[]}],['policy history unusable',{nfl_contest_policies:[pkPolicyRow({halted_game_policy:'eliminate'})]}]]){
+      const v=await page({store:pickemStore(o)});
+      assert.equal(syncLabel(v),'ON HOLD',label);
+      assert.deepEqual(records(v),[['D.C.','0','0'],['DJS','0','0']],`${label}: the DEN-KC final is not graded`);
+      assert.deepEqual(pickCells(v),['hold','hold','hold','hold'],label);
+      assert.equal(v.$('leaderKicker').textContent,'ON HOLD',label);
+      assert.match(banner(v),/Ruling data unavailable/,label);
+      assert.match(rules(v),/ON HOLD · Ruling data unavailable/,label);
+    }
+    // A request that never answers is abandoned at the refresh time limit and holds, rather than freezing the page.
+    const realSetTimeout=globalThis.setTimeout;globalThis.setTimeout=(fn,ms,...a)=>realSetTimeout(fn,ms>=10000?5:ms,...a);
+    try{
+      const v=await page({store:pickemStore({nfl_incident_rulings:()=>new Promise(()=>{})})});
+      await new Promise(r=>realSetTimeout(r,30));await v.refresh();
+      assert.equal(syncLabel(v),'ON HOLD','a hung ruling request');
+    }finally{globalThis.setTimeout=realSetTimeout}
+  });
+  await regression('a ruling refresh that fails after a verified load keeps the verified rulings (stale); a feed failure keeps last-good results',async()=>{
+    const v=await page();
+    v.store.nfl_incident_rulings=503;await v.refresh();
+    assert.deepEqual(pickCells(v),['ok','void','bad','void']);assert.match(rules(v),/could not be refreshed/);
+    v.store.nfl_incident_rulings=voids(['void']);v.setFailure(true);await v.refresh();
+    assert.match(v.$('sync').textContent,/^FEED UNAVAILABLE/);
+    assert.deepEqual(records(v),[['D.C.','1','0'],['DJS','0','1']]);assert.deepEqual(pickCells(v),['ok','void','bad','void']);
+  });
+  await regression("Rules & rulings: contest type, void policy, revision, effective week, confirmation, rulings, history and notes; never private fields",async()=>{
+    const rows=voids(['void','void']);rows[1].public_note='Reaffirmed after review.';
+    const v=await page({rulings:rows}),html=rules(v);
+    for(const text of ["Pick'em contest","Pool Center 2026 Pick'em",'Void','Policy revision 1','in force from Week 1','Approved policy for this contest.','Commissioner confirmation is required',
+      'BUF @ CIN','APPLIED','Ruled VOID','Reaffirmed VOID','League canceled the game; voided for this contest.','Reaffirmed after review.'])
+      assert(html.includes(esc(text)),`the card shows: ${text}`);
+    const leaky=pickemStore({nfl_contest_policies:()=>({ok:true,status:200,json:async()=>[pkPolicyRow()]}),nfl_incident_rulings:()=>({ok:true,status:200,json:async()=>voids(['void'])})});
+    const l=await page({store:leaky});
+    assert.doesNotMatch(`${html}\n${l.html()}`,/PRIVATE ADMIN NOTE|auth-user-7f3a/);
+  });
+
+  assert.equal(failures.length,0,`HDC-12 Pick'em regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+}
+
+console.log("weekly HDC-12 contest-ruling load, privacy, void, voided tiebreak, under-review, withdrawn, all-void, hold, fail-closed and Rules & rulings regressions passed");

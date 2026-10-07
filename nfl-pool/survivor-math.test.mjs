@@ -598,3 +598,539 @@ console.log('survivor Week-ahead market NFL-code allowlist regressions passed');
 }
 
 console.log('survivor HDC-11 halted-game awaiting-ruling classification, ordinary-pending, HDC-10 completed-final, forfeit-boundary, recovery, projection-parity, field-count and Admin-compatibility regressions passed');
+
+
+// ---- HDC-12: contest-scoped halted-game rulings. Three layers stay apart: the NFL fact (the feed), the contest policy (the
+// commissioner's halted-game rule, which never changes a standing by itself) and the incident ruling (a commissioner-
+// confirmed consequence for one incident, the only thing that changes a pool result). The pure evaluator
+// (contest-rulings.js) validates policy history and ruling chains and answers with explicit states; survivor-math.js takes
+// its Survivor overlay as an optional last argument, so the frozen Admin guard, which never passes one, is unchanged.
+// Every regression below runs through one collector, so each failing one is reported; the block fails at its end if any did.
+{
+  const failures=[];
+  const regression=async(name,check)=>{try{await check()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+  let CR=null;
+  try{CR=await import('./contest-rulings.js')}catch{CR=null}
+  const evaluator=()=>{assert(CR,'nfl-pool/contest-rulings.js (the HDC-12 ruling evaluator) is missing');return CR};
+  const SM=await import('./survivor-math.js');
+  const {scoreEntry,tiebreakState}=await import('./public-math.js');
+  const {readFileSync,existsSync}=await import('node:fs');
+  const {createHash}=await import('node:crypto');
+
+  // Fixture rows shaped like the Data API's public columns. TEST_START is a fixture value, not a real kickoff.
+  const TEST_START='2026-09-01T00:00:00+00:00',WRITTEN='2026-10-08T12:00:00+00:00',PRE_START='2026-08-15T12:00:00+00:00';
+  const NAME={pickem:"Pool Center 2026 Pick'em",survivor:'Pool Center 2026 Survivor'},DEFAULT_POLICY={pickem:'void',survivor:'advance_team_used'};
+  const cid=type=>`pool-center-2026-${type}`;
+  const contestRow=(type,o={})=>({contest_id:cid(type),season:2026,contest_type:type,display_name:NAME[type],starts_at:TEST_START,created_at:WRITTEN,...o});
+  const policyRow=(type,revision,effective_week,halted_game_policy,o={})=>({contest_id:cid(type),contest_type:type,revision,effective_week,halted_game_policy,public_note:null,created_at:revision===1?WRITTEN:PRE_START,...o});
+  // One incident chain: the consequences in order, each row naming the one before it as its predecessor.
+  const chain=(type,consequences,o={},firstId=1)=>consequences.map((consequence,i)=>({ruling_id:firstId+i,contest_id:cid(type),contest_type:type,week:3,away_team:'BUF',home_team:'CIN',
+    policy_revision:1,chain_seq:i+1,parent_ruling_id:i?firstId+i-1:null,consequence,incident_status:'STATUS_CANCELED',event_id:'401437947',evidence_source:'nflscores2',public_note:null,created_at:WRITTEN,...o}));
+  const evaluate=(type,{contests=[contestRow(type)],policies=[policyRow(type,1,1,DEFAULT_POLICY[type])],rulings=[]}={})=>
+    evaluator().evaluateContestRulings({contestId:cid(type),contestType:type,season:2026,data:{contests,policies,rulings}});
+  const slot=(ds,away='BUF',home='CIN',week=3)=>evaluator().rulingForSlot(ds,{week,away,home});
+  const team=(ds,t='BUF',week=3)=>evaluator().rulingForTeam(ds,{week,team:t});
+  // The ESPN 2022 Week 17 BUF at CIN shape (event 401437947: STATUS_CANCELED, state post, completed:false, 0-0), in Week 3.
+  const feedEvent=({away='BUF',home='CIN',id='401437947',name='STATUS_CANCELED',state='post',completed=false}={})=>({id,season:{year:2026,type:2},week:{number:3},
+    status:{type:{name,state,completed}},competitions:[{status:{type:{name,state,completed}},competitors:[{homeAway:'home',team:{abbreviation:home},score:'0'},{homeAway:'away',team:{abbreviation:away},score:'0'}]}]});
+  const pickemSlot=(ds,events,away='BUF',home='CIN')=>evaluator().pickemSlotRuling(ds,{week:3,season:2026,away,home,events});
+  const survivorPick=(ds,events,t='BUF')=>evaluator().survivorRulingLookup(ds,{eventsByWeek:[null,null,events],season:2026}).forPick(3,t);
+
+  // ---- policy values and consequences
+  await regression('Survivor policy values: advance_team_used, eliminate and commissioner_decides; advance, advance_team_not_used and awarded rejected',()=>{
+    const {validatePolicyValue,HALTED_GAME_POLICIES}=evaluator();
+    assert.deepEqual([...HALTED_GAME_POLICIES.survivor],['advance_team_used','eliminate','commissioner_decides']);
+    for(const v of HALTED_GAME_POLICIES.survivor)assert.equal(validatePolicyValue('survivor',v).ok,true,v);
+    for(const v of ['advance','advance_team_not_used','awarded','void','reaffirm','ADVANCE_TEAM_USED','',null,undefined,1])assert.equal(validatePolicyValue('survivor',v).ok,false,`${String(v)} is not a Survivor policy`);
+    for(const v of ['advance','advance_team_not_used','awarded'])assert.equal(evaluate('survivor',{policies:[policyRow('survivor',1,1,v)]}).status,'hold',`a published ${v} policy holds the contest`);
+    assert.equal(evaluate('survivor').status,'ready','advance_team_used is the approved Survivor default');
+  });
+  await regression("Pick'em policy: void only",()=>{
+    const {validatePolicyValue,HALTED_GAME_POLICIES}=evaluator();
+    assert.deepEqual([...HALTED_GAME_POLICIES.pickem],['void']);
+    assert.equal(validatePolicyValue('pickem','void').ok,true);
+    for(const v of ['advance_team_used','eliminate','commissioner_decides','awarded','tie','loss','',null])assert.equal(validatePolicyValue('pickem',v).ok,false,`${String(v)} is not a Pick'em policy`);
+    assert.equal(evaluate('pickem',{policies:[policyRow('pickem',1,1,'eliminate')]}).status,'hold');
+  });
+  await regression('consequences: no reaffirm, awarded or generic advance consequence; policy/consequence compatibility',()=>{
+    const {RULING_CONSEQUENCES,WITHDRAWN,policyAllowsConsequence}=evaluator();
+    assert.deepEqual([...RULING_CONSEQUENCES.survivor],['advance_team_used','eliminate']);
+    assert.deepEqual([...RULING_CONSEQUENCES.pickem],['void']);
+    assert.equal(WITHDRAWN,'withdrawn');
+    const matrix=(type,policy)=>Object.fromEntries(['advance_team_used','eliminate','void','withdrawn','reaffirm','advance','awarded'].map(c=>[c,policyAllowsConsequence(type,policy,c)]));
+    const none={advance_team_used:false,eliminate:false,void:false,withdrawn:false,reaffirm:false,advance:false,awarded:false};
+    assert.deepEqual(matrix('survivor','advance_team_used'),{...none,advance_team_used:true});
+    assert.deepEqual(matrix('survivor','eliminate'),{...none,eliminate:true});
+    assert.deepEqual(matrix('survivor','commissioner_decides'),{...none,advance_team_used:true,eliminate:true});
+    assert.deepEqual(matrix('pickem','void'),{...none,void:true});
+  });
+
+  // ---- policy revisions
+  await regression('policy revision in force is selected by effective week; same-week pre-start revisions: the highest wins',()=>{
+    const {policyForWeek}=evaluator();
+    const ds=evaluate('survivor',{policies:[policyRow('survivor',1,1,'advance_team_used',{created_at:'2026-08-01T00:00:00Z'}),policyRow('survivor',2,1,'eliminate',{created_at:'2026-08-10T00:00:00Z'}),
+      policyRow('survivor',3,1,'commissioner_decides',{created_at:PRE_START,public_note:'Replaced before the season'}),policyRow('survivor',4,8,'eliminate',{created_at:WRITTEN})]});
+    assert.equal(ds.status,'ready');
+    assert.deepEqual([1,4,7,8,12].map(w=>[policyForWeek(ds,w).revision,policyForWeek(ds,w).policy]),[[3,'commissioner_decides'],[3,'commissioner_decides'],[3,'commissioner_decides'],[4,'eliminate'],[4,'eliminate']]);
+    assert.equal(policyForWeek(ds,1).publicNote,'Replaced before the season');
+    assert.equal(policyForWeek(ds,8).effectiveWeek,8);
+  });
+  await regression('the bootstrap revision 1 written after the start is the initial policy, in force from Week 1',()=>{
+    const {policyForWeek}=evaluator();
+    const ds=evaluate('pickem',{policies:[policyRow('pickem',1,1,'void',{created_at:WRITTEN})]});
+    assert.equal(ds.status,'ready');assert.equal(policyForWeek(ds,1).revision,1);assert.equal(policyForWeek(ds,17).revision,1);
+  });
+  await regression('malformed, gapped, regressive or retroactive policy history holds the whole contest',()=>{
+    const p1=policyRow('survivor',1,1,'advance_team_used');
+    for(const [label,policies] of [
+      ['regressive effective week',[p1,policyRow('survivor',2,4,'eliminate'),policyRow('survivor',3,2,'commissioner_decides')]],
+      ['a gap',[p1,policyRow('survivor',3,5,'eliminate')]],
+      ['a duplicated revision',[p1,{...p1}]],
+      ['revision 1 not in force from Week 1',[policyRow('survivor',1,2,'advance_team_used')]],
+      ['revision 0',[policyRow('survivor',0,1,'advance_team_used')]],
+      ['a non-integer revision',[policyRow('survivor','1',1,'advance_team_used')]],
+      ['no effective week',[policyRow('survivor',1,null,'advance_team_used')]],
+      ['an effective week out of range',[p1,policyRow('survivor',2,23,'eliminate')]],
+      ['another contest',[policyRow('survivor',1,1,'advance_team_used',{contest_id:cid('pickem')})]],
+      ['no policy at all',[]],
+      ['a retroactive revision written after the start',[p1,policyRow('survivor',2,3,'eliminate',{created_at:WRITTEN})]],
+      ['a later revision with no creation time',[p1,policyRow('survivor',2,10,'eliminate',{created_at:null})]]
+    ]){
+      const ds=evaluate('survivor',{policies});
+      assert.deepEqual([ds.status,ds.scope],['hold','contest'],`${label}: the contest holds`);
+      assert.match(ds.reason,/policy/i,`${label}: the reason names the policy history`);
+      assert.deepEqual(team(ds,'BUF').state,'hold',`${label}: no slot is evaluated`);
+    }
+    for(const [label,contests] of [['no contest record',[]],['two contest records',[contestRow('survivor'),contestRow('survivor')]],['another contest type',[contestRow('survivor',{contest_type:'pickem'})]],
+      ['another season',[contestRow('survivor',{season:2027})]],['no verified start',[contestRow('survivor',{starts_at:null})]]]){
+      assert.deepEqual([evaluate('survivor',{contests}).status,evaluate('survivor',{contests}).scope],['hold','contest'],`${label}: the contest holds`);
+    }
+  });
+
+  // ---- incident identity, published slots and isolation
+  await regression('a ruling citing a policy revision other than the one in force holds; other incidents are unaffected',()=>{
+    const policies=[policyRow('survivor',1,1,'advance_team_used'),policyRow('survivor',2,6,'eliminate')];
+    const rows=[...chain('survivor',['advance_team_used']),...chain('survivor',['advance_team_used'],{week:6,away_team:'NYG',home_team:'NYJ'},10),
+      ...chain('survivor',['eliminate'],{week:6,away_team:'DAL',home_team:'PHI',policy_revision:2},20),...chain('survivor',['eliminate'],{away_team:'KC',home_team:'DEN',policy_revision:2},30)];
+    const ds=evaluate('survivor',{policies,rulings:rows});
+    assert.equal(team(ds,'BUF').state,'effective');
+    assert.equal(team(ds,'NYG',6).state,'hold');assert.match(team(ds,'NYG',6).reason,/revision 2 is in force/);
+    assert.equal(team(ds,'DAL',6).state,'effective');
+    assert.equal(team(ds,'KC',3).state,'hold');assert.match(team(ds,'KC',3).reason,/revision 1 is in force/);
+  });
+  await regression('a ruling row from another contest holds the coverage it names',()=>{
+    for(const o of [{contest_id:cid('pickem')},{contest_type:'pickem'}]){
+      const ds=evaluate('survivor',{rulings:[...chain('survivor',['advance_team_used'],o),...chain('survivor',['advance_team_used'],{away_team:'NYG',home_team:'NYJ'},10)]});
+      assert.equal(team(ds,'BUF').state,'hold');assert.equal(team(ds,'CIN').state,'hold');
+      assert.equal(team(ds,'NYG').state,'effective','an unrelated incident still applies');
+    }
+  });
+  await regression("Pick'em: a ruling that does not match the published game holds that slot (other opponent, inverted pair); unrelated rulings change nothing",()=>{
+    const other=evaluate('pickem',{rulings:chain('pickem',['void'],{away_team:'BUF',home_team:'KC'})});
+    assert.equal(slot(other).state,'hold');assert.match(slot(other).reason,/does not match the published game BUF @ CIN/);
+    assert.equal(slot(other,'DEN','KC').state,'hold','the other team named is held too');
+    const inverted=evaluate('pickem',{rulings:chain('pickem',['void'],{away_team:'CIN',home_team:'BUF'})});
+    assert.equal(slot(inverted).state,'hold','an inverted pair never matches silently');
+    const unrelated=evaluate('pickem',{rulings:chain('pickem',['void'],{away_team:'NYG',home_team:'NYJ'})});
+    assert.deepEqual([slot(unrelated).state,slot(unrelated,'DEN','KC').state],['none','none']);
+    const exact=evaluate('pickem',{rulings:chain('pickem',['void'])});
+    assert.deepEqual([slot(exact).state,slot(exact).consequence],['effective','void']);
+    const alias=evaluate('pickem',{rulings:chain('pickem',['void'],{away_team:'WAS',home_team:'JAX'})});
+    assert.equal(slot(alias,'WSH','JAC').state,'effective','feed aliases normalize to the same published pair');
+  });
+  await regression('event_id is evidence, not identity: a ruling without one applies',()=>{
+    const ds=evaluate('pickem',{rulings:chain('pickem',['void'],{event_id:null,evidence_source:null})});
+    assert.equal(slot(ds).state,'effective');
+    const checked=pickemSlot(ds,[feedEvent()]);
+    assert.deepEqual([checked.state,checked.underReview],['effective',null],'the feed still reports the canceled game');
+  });
+  await regression('a changed event id after a valid ruling is UNDER REVIEW, never a removed ruling (first load included)',()=>{
+    const ds=evaluate('pickem',{rulings:chain('pickem',['void'])});
+    const p=pickemSlot(ds,[feedEvent({id:'401999999'})]);
+    assert.deepEqual([p.state,p.consequence],['effective','void']);assert.match(p.underReview,/different event/);
+    const sds=evaluate('survivor',{rulings:chain('survivor',['advance_team_used'])});
+    const s=survivorPick(sds,[feedEvent({id:'401999999'})]);
+    assert.deepEqual([s.state,s.outcome],['effective','alive']);assert.match(s.underReview,/different event/);
+  });
+  await regression('a different opponent after a valid ruling is UNDER REVIEW, never a removed ruling',()=>{
+    const ds=evaluate('pickem',{rulings:chain('pickem',['void'])});
+    for(const events of [[feedEvent({home:'KC'})],[feedEvent({home:'KC',id:'401999999'})]]){
+      const p=pickemSlot(ds,events);assert.equal(p.state,'effective');assert.match(p.underReview,/BUF @ KC/);
+    }
+    // Survivor publishes no matchup, so the recorded event is what ties the ruling to a game whose facts changed.
+    const s=survivorPick(evaluate('survivor',{rulings:chain('survivor',['advance_team_used'])}),[feedEvent({home:'KC'})]);
+    assert.equal(s.state,'effective');assert.match(s.underReview,/BUF @ KC/);
+  });
+  await regression("Survivor: a ruling matchup the feed contradicts, with no recorded event tying it to a changed game, holds (wrong pair, inverted pair, bye team)",()=>{
+    const ds=evaluate('survivor',{rulings:chain('survivor',['advance_team_used'],{event_id:null,evidence_source:null})});
+    for(const [label,events] of [['other opponent',[feedEvent({home:'KC',id:'5'})]],['inverted',[feedEvent({away:'CIN',home:'BUF',id:'5'})]],
+      ['BUF on bye, CIN playing NYJ',[feedEvent({away:'NYJ',home:'CIN',id:'5'})]],['re-paired in two games',[feedEvent({home:'KC',id:'5'}),feedEvent({away:'NYJ',home:'CIN',id:'6'})]]]){
+      for(const t of ['BUF','CIN']){const s=survivorPick(ds,events,t);assert.equal(s.state,'hold',`${label}: ${t} pickers hold`);assert.match(s.reason,/does not match the feed/,label)}
+    }
+    assert.equal(survivorPick(ds,[feedEvent({id:'5'})]).state,'effective','the matching game corroborates it');
+  });
+  await regression('team double coverage holds every incident involved; unrelated incidents still apply',()=>{
+    const ds=evaluate('pickem',{rulings:[...chain('pickem',['void']),...chain('pickem',['void'],{away_team:'BUF',home_team:'KC',event_id:'402'},10),...chain('pickem',['void'],{away_team:'NYG',home_team:'NYJ',event_id:'403'},20)]});
+    assert.equal(slot(ds).state,'hold');assert.match(slot(ds).reason,/BUF|more than one/);
+    assert.equal(slot(ds,'DEN','KC').state,'hold');
+    assert.equal(slot(ds,'NYG','NYJ').state,'effective');
+    assert.equal(ds.incidents.filter(x=>x.doubleCoverage).length,2);
+    const s=evaluate('survivor',{rulings:[...chain('survivor',['advance_team_used']),...chain('survivor',['advance_team_used'],{away_team:'KC',home_team:'BUF',event_id:'402'},10)]});
+    assert.equal(team(s,'BUF').state,'hold');assert.equal(team(s,'CIN').state,'hold');assert.equal(team(s,'KC').state,'hold');
+  });
+  await regression('rows of one chain are one incident, never double coverage',()=>{
+    const ds=evaluate('pickem',{rulings:chain('pickem',['void','void'])});
+    assert.equal(ds.incidents.length,1);assert.equal(slot(ds).state,'effective');
+    assert.deepEqual(ds.incidents[0].history.map(h=>h.action),['ruled','reaffirmed']);
+  });
+  await regression('isolation: an unattributable row holds the contest; one unknown team holds only the known team; two hold only that week',()=>{
+    assert.deepEqual([evaluate('pickem',{rulings:[{...chain('pickem',['void'])[0],week:null}]}).status],['hold']);
+    const one=evaluate('pickem',{rulings:[...chain('pickem',['void'],{away_team:'XYZ'}),...chain('pickem',['void'],{away_team:'NYG',home_team:'NYJ'},10)]});
+    assert.deepEqual([slot(one).state,slot(one,'DEN','KC').state,slot(one,'NYG','NYJ').state],['hold','none','effective']);
+    const two=evaluate('pickem',{rulings:[...chain('pickem',['void'],{away_team:'XYZ',home_team:'ABC'}),...chain('pickem',['void'],{week:4,away_team:'NYG',home_team:'NYJ'},10)]});
+    assert.deepEqual([slot(two).state,slot(two,'DEN','KC').state,slot(two,'NYG','NYJ',4).state],['hold','hold','effective']);
+    assert.equal(slot(two).scope,'week');
+  });
+
+  // ---- ruling chains
+  await regression('chain: original advance_team_used, eliminate and void apply',()=>{
+    const adv=team(evaluate('survivor',{rulings:chain('survivor',['advance_team_used'])}));
+    assert.deepEqual([adv.state,adv.consequence,adv.outcome,adv.teamUsed],['effective','advance_team_used','alive',true]);
+    assert.equal(team(evaluate('survivor',{rulings:chain('survivor',['advance_team_used'])}),'CIN').outcome,'alive','both sides of a canceled game advance; neither is an NFL winner');
+    const elim=team(evaluate('survivor',{policies:[policyRow('survivor',1,1,'eliminate')],rulings:chain('survivor',['eliminate'])}));
+    assert.deepEqual([elim.state,elim.consequence,elim.outcome],['effective','eliminate','out']);
+    const v=slot(evaluate('pickem',{rulings:chain('pickem',['void'])}));
+    assert.deepEqual([v.state,v.consequence],['effective','void']);
+  });
+  await regression('chain: reaffirm, withdraw, and re-rule after withdrawal',()=>{
+    const policies=[policyRow('survivor',1,1,'commissioner_decides')];
+    const reaffirmed=evaluate('survivor',{policies,rulings:chain('survivor',['advance_team_used','advance_team_used'])});
+    assert.deepEqual([team(reaffirmed).state,team(reaffirmed).consequence],['effective','advance_team_used']);
+    const withdrawn=evaluate('survivor',{policies,rulings:chain('survivor',['advance_team_used','withdrawn'])});
+    assert.equal(team(withdrawn).state,'withdrawn','withdrawn: there is no active ruling');
+    const rerule=evaluate('survivor',{policies,rulings:chain('survivor',['advance_team_used','withdrawn','eliminate'])});
+    assert.deepEqual([team(rerule).state,team(rerule).consequence,team(rerule).outcome],['effective','eliminate','out']);
+    assert.deepEqual(rerule.incidents[0].history.map(h=>h.action),['ruled','withdrawn','re-ruled']);
+    const back=evaluate('survivor',{policies,rulings:chain('survivor',['eliminate','withdrawn','advance_team_used'])});
+    assert.deepEqual([team(back).state,team(back).consequence],['effective','advance_team_used']);
+    const pk=evaluate('pickem',{rulings:chain('pickem',['void','withdrawn','void'])});
+    assert.deepEqual([slot(pk).state,slot(pk).consequence],['effective','void']);
+  });
+  await regression('chain: direct advance_team_used -> eliminate and eliminate -> advance_team_used are rejected (HOLD)',()=>{
+    const policies=[policyRow('survivor',1,1,'commissioner_decides')];
+    for(const seq of [['advance_team_used','eliminate'],['eliminate','advance_team_used'],['advance_team_used','advance_team_used','eliminate']]){
+      const s=team(evaluate('survivor',{policies,rulings:chain('survivor',seq)}));
+      assert.equal(s.state,'hold',seq.join(' -> '));assert.match(s.reason,/without a withdrawal/);
+    }
+  });
+  await regression('chain: broken predecessor, multiple roots, cross-incident predecessor, first-row withdrawal, repeated withdrawal, gap and cycle hold',()=>{
+    const base=chain('pickem',['void','withdrawn','void']);
+    const cases=[
+      ['broken predecessor',[base[0],{...base[1],parent_ruling_id:99},base[2]]],
+      ['a predecessor that skips a row',[base[0],base[1],{...base[2],parent_ruling_id:1}]],
+      ['two original rulings',[base[0],{...base[1],chain_seq:1,parent_ruling_id:null,consequence:'void'}]],
+      ['a second row with no predecessor',[base[0],{...base[1],parent_ruling_id:null}]],
+      ['first row withdrawn',chain('pickem',['withdrawn'])],
+      ['repeated withdrawal',chain('pickem',['void','withdrawn','withdrawn'])],
+      ['a gap in the chain',[base[0],{...base[2],chain_seq:3,parent_ruling_id:1}]],
+      ['a self-referencing cycle',[base[0],{...base[1],parent_ruling_id:2}]],
+      ['an original ruling that names a predecessor',[{...base[0],parent_ruling_id:3},base[1],base[2]]],
+      ['a duplicated row identity',[base[0],{...base[1],ruling_id:1}]]
+    ];
+    for(const [label,rows] of cases){const s=slot(evaluate('pickem',{rulings:rows}));assert.equal(s.state,'hold',label)}
+    // A predecessor from another incident holds both incidents.
+    const cross=evaluate('pickem',{rulings:[...chain('pickem',['void']),...chain('pickem',['void'],{away_team:'DEN',home_team:'KC',event_id:'402'},10),
+      {...chain('pickem',['withdrawn'],{away_team:'DEN',home_team:'KC',event_id:'402'},12)[0],chain_seq:2,parent_ruling_id:1}]});
+    assert.deepEqual([slot(cross).state,slot(cross,'DEN','KC').state],['hold','hold']);
+  });
+  await regression('chain: a malformed chain is isolated to its own incident',()=>{
+    const ds=evaluate('pickem',{rulings:[...chain('pickem',['void','void']).map((r,i)=>i?{...r,parent_ruling_id:42}:r),...chain('pickem',['void'],{away_team:'DEN',home_team:'KC',event_id:'402'},10)]});
+    assert.equal(ds.status,'ready','one bad chain never freezes the contest');
+    assert.deepEqual([slot(ds).state,slot(ds,'DEN','KC').state,slot(ds,'NYG','NYJ').state],['hold','effective','none']);
+  });
+  await regression('chain: consequences the cited policy does not permit hold',()=>{
+    assert.equal(team(evaluate('survivor',{rulings:chain('survivor',['eliminate'])})).state,'hold','advance_team_used permits only advance_team_used');
+    assert.equal(team(evaluate('survivor',{policies:[policyRow('survivor',1,1,'eliminate')],rulings:chain('survivor',['advance_team_used'])})).state,'hold','eliminate permits only eliminate');
+    assert.equal(team(evaluate('survivor',{rulings:chain('survivor',['void'])})).state,'hold');
+    assert.equal(slot(evaluate('pickem',{rulings:chain('pickem',['advance_team_used'])})).state,'hold');
+  });
+  await regression('chain: a later row naming another event (a makeup game) holds; the original evidence is kept',()=>{
+    const rows=chain('pickem',['void','void']);rows[1].event_id='401999999';
+    assert.equal(slot(evaluate('pickem',{rulings:rows})).state,'hold');
+    const ok=evaluate('pickem',{rulings:chain('pickem',['void','void'],{}).map((r,i)=>i?{...r,event_id:null,incident_status:'STATUS_POSTPONED'}:r)});
+    assert.deepEqual(ok.incidents[0].evidence,{incidentStatus:'STATUS_CANCELED',eventId:'401437947',source:'nflscores2'});
+  });
+
+  // ---- forfeit boundary
+  await regression('an unsupported FORFEIT incident never receives a v1 cancellation consequence',()=>{
+    for(const status of ['STATUS_FORFEIT','STATUS_FINAL_FORFEIT','STATUS_FINAL',null]){
+      assert.equal(slot(evaluate('pickem',{rulings:chain('pickem',['void'],{incident_status:status})})).state,'hold',`stored ${status}: void is not applied`);
+      assert.equal(team(evaluate('survivor',{rulings:chain('survivor',['advance_team_used'],{incident_status:status})})).state,'hold',`stored ${status}: advance is not applied`);
+    }
+    assert.match(slot(evaluate('pickem',{rulings:chain('pickem',['void'],{incident_status:'STATUS_FORFEIT'})})).reason,/forfeit/i);
+    // A valid canceled-game ruling whose game the feed now reports as a forfeit holds rather than stay applied.
+    for(const name of ['STATUS_FORFEIT','STATUS_FINAL_FORFEIT']){
+      const event=feedEvent({name,completed:name==='STATUS_FINAL_FORFEIT'});
+      assert.equal(pickemSlot(evaluate('pickem',{rulings:chain('pickem',['void'])}),[event]).state,'hold',`feed ${name}: Pick'em slot holds`);
+      assert.equal(survivorPick(evaluate('survivor',{rulings:chain('survivor',['advance_team_used'])}),[event]).state,'hold',`feed ${name}: Survivor pick holds`);
+    }
+  });
+
+  // ---- later NFL facts never reverse a ruling
+  await regression('later final, live, scheduled or missing NFL evidence keeps the ruling applied and UNDER REVIEW',()=>{
+    const ds=evaluate('pickem',{rulings:chain('pickem',['void'])}),sds=evaluate('survivor',{rulings:chain('survivor',['advance_team_used'])});
+    for(const [label,events,pattern] of [['final',[feedEvent({name:'STATUS_FINAL',completed:true})],/completed final/],['live',[feedEvent({name:'STATUS_IN_PROGRESS',state:'in'})],/live/],
+      ['scheduled',[feedEvent({name:'STATUS_SCHEDULED',state:'pre'})],/scheduled/],['postponed instead of canceled',[feedEvent({name:'STATUS_POSTPONED'})],/STATUS_POSTPONED/],['missing',[feedEvent({away:'NYG',home:'NYJ',id:'9'})],/no longer/]]){
+      const p=pickemSlot(ds,events);assert.deepEqual([p.state,p.consequence],['effective','void'],`${label}: void stays`);assert.match(p.underReview,pattern,label);
+      const s=survivorPick(sds,events);assert.deepEqual([s.state,s.outcome],['effective','alive'],`${label}: advance stays`);assert.match(s.underReview,pattern,label);
+    }
+    for(const [label,events] of [['unavailable',undefined],['duplicate events',[feedEvent(),feedEvent({id:'7'})]]]){
+      const p=pickemSlot(ds,events);assert.deepEqual([p.state,p.underReview],['effective',null],`${label}: no usable evidence, no review`);
+    }
+  });
+
+  // ---- global failure, empty set, inactive seasons
+  await regression('global: an unreadable or unusable ruling store holds the contest; a valid empty ruling set is not an error',()=>{
+    const {evaluateContestRulings,survivorRulingLookup}=evaluator();
+    const id={contestId:cid('pickem'),contestType:'pickem',season:2026};
+    for(const [label,input] of [['request failed',{error:new Error('nfl_incident_rulings 503')}],['no data',{}],['not arrays',{data:{contests:{},policies:[],rulings:[]}}]]){
+      const ds=evaluateContestRulings({...id,...input});
+      assert.deepEqual([ds.status,ds.scope],['hold','contest'],label);
+      assert.deepEqual([slot(ds).state,slot(ds).scope],['hold','contest'],label);
+      assert.equal(survivorRulingLookup(ds).status,'hold');
+    }
+    const empty=evaluate('pickem');
+    assert.deepEqual([empty.status,slot(empty).state],['ready','none']);
+    assert.equal(survivorRulingLookup(evaluate('survivor')).forPick(3,'BUF').state,'none');
+    const old=evaluateContestRulings({contestId:'pool-center-2025-pickem',contestType:'pickem',season:2025,error:new Error('no store')});
+    assert.deepEqual([old.status,slot(old).state],['inactive','none'],'seasons before 2026 have no contest-scoped rulings');
+  });
+  await regression('a refresh failure keeps the dataset already validated this session (stale); invalid new data never falls back',()=>{
+    const {evaluateContestRulings}=evaluator();
+    const good=evaluate('pickem',{rulings:chain('pickem',['void'])});
+    const stale=evaluateContestRulings({contestId:cid('pickem'),contestType:'pickem',season:2026,error:new Error('offline'),previous:good});
+    assert.deepEqual([stale.status,stale.stale,slot(stale).state],['ready',true,'effective']);
+    const bad=evaluateContestRulings({contestId:cid('pickem'),contestType:'pickem',season:2026,data:{contests:[],policies:[],rulings:[]},previous:good});
+    assert.equal(bad.status,'hold');
+    const otherContest=evaluateContestRulings({contestId:cid('survivor'),contestType:'survivor',season:2026,error:new Error('offline'),previous:good});
+    assert.equal(otherContest.status,'hold','a dataset from another contest is never reused');
+  });
+
+  // ---- Pick'em void interpretation
+  await regression("Pick'em void: no win, no loss, not remaining, no tiebreak total, never an NFL tie",()=>{
+    const {pickemEffectiveGame,pickemSlotEffect}=evaluator();
+    const fact={away:'BUF',home:'CIN',state:'post',completed:false,winner:null,awayScore:0,homeScore:0,detail:'Canceled',eventId:'401437947'},before=structuredClone(fact);
+    const v=pickemEffectiveGame(fact,pickemSlotEffect(slot(evaluate('pickem',{rulings:chain('pickem',['void'])}))));
+    assert.deepEqual(fact,before,'the NFL fact is not modified');
+    assert.deepEqual([v.void,v.completed,v.winner,v.awayScore,v.homeScore],[true,true,null,null,null]);
+    for(const pick of ['BUF','CIN',null])assert.deepEqual(scoreEntry([pick],[v]),{w:0,l:0,left:0},`a ${pick} pick: no win, no loss, nothing remaining`);
+    assert.deepEqual(tiebreakState(v),{final:false,total:null},'a void game has no tiebreak total');
+    const tie={...fact,state:'post',completed:true,awayScore:20,homeScore:20,detail:'Final'};
+    assert.equal(tie.void,undefined,'an NFL tie carries no void marker');
+    const held=pickemEffectiveGame(fact,pickemSlotEffect({state:'hold',scope:'incident',reason:'x'}));
+    assert.deepEqual([held.completed,held.hold,scoreEntry(['BUF'],[held])],[false,'x',{w:0,l:0,left:1}],'a held slot is never graded');
+    assert.equal(pickemEffectiveGame(fact,pickemSlotEffect({state:'none'})),fact,'no ruling: the NFL fact itself');
+    assert.equal(pickemEffectiveGame(fact,pickemSlotEffect({state:'withdrawn'})),fact,'withdrawn: the NFL fact itself');
+  });
+
+  // ---- privacy and participant-visible text
+  await regression('public columns exclude created_by and admin_note; private fields never reach the evaluator output or the rules text',()=>{
+    const {PUBLIC_COLUMNS,rulesModel}=evaluator();
+    const expected={contests:['contest_id','season','contest_type','display_name','starts_at','created_at'],
+      policies:['contest_id','contest_type','revision','effective_week','halted_game_policy','public_note','created_at'],
+      rulings:['ruling_id','contest_id','contest_type','week','away_team','home_team','policy_revision','chain_seq','parent_ruling_id','consequence','incident_status','event_id','evidence_source','public_note','created_at']};
+    assert.deepEqual(JSON.parse(JSON.stringify(PUBLIC_COLUMNS)),expected);
+    const leak={admin_note:'PRIVATE-ADMIN-NOTE',created_by:'PRIVATE-AUTH-ID'};
+    const ds=evaluate('pickem',{contests:[contestRow('pickem',leak)],policies:[policyRow('pickem',1,1,'void',{...leak,public_note:'Visible policy note'})],rulings:chain('pickem',['void'],{...leak,public_note:'Visible ruling note'})});
+    const text=JSON.stringify({ds,incidents:ds.incidents,model:rulesModel(ds,{week:3})});
+    assert.doesNotMatch(text,/PRIVATE-ADMIN-NOTE|PRIVATE-AUTH-ID/);
+    assert.match(text,/Visible policy note/);assert.match(text,/Visible ruling note/);
+  });
+  await regression('Rules & rulings model: contest type, policy, revision, effective week, confirmation, rulings, history, withdrawn and review states',()=>{
+    const {rulesModel,evaluateContestRulings}=evaluator();
+    const ds=evaluate('survivor',{policies:[policyRow('survivor',1,1,'commissioner_decides',{public_note:'Commissioner rules each incident'})],
+      rulings:[...chain('survivor',['advance_team_used','withdrawn','eliminate'],{public_note:'Ruled after the league update'}),...chain('survivor',['advance_team_used','withdrawn'],{away_team:'NYG',home_team:'NYJ',event_id:'402'},10)]});
+    const m=rulesModel(ds,{week:3,slotState:x=>x.away==='BUF'?{state:'effective',underReview:'the feed now reports a completed final'}:null});
+    assert.equal(m.contestType,'Survivor contest');
+    assert.equal(m.contestName,'Pool Center 2026 Survivor');
+    assert.deepEqual([m.policy.revision,m.policy.effectiveWeek,m.policy.name],[1,1,'Commissioner decides']);
+    assert.equal(m.policy.publicNote,'Commissioner rules each incident');
+    assert.match(m.confirmation,/Commissioner confirmation is required/);
+    assert.match(m.confirmation,/policy alone never changes standings/);
+    const buf=m.incidents.find(x=>x.matchup==='BUF @ CIN'),nyg=m.incidents.find(x=>x.matchup==='NYG @ NYJ');
+    assert.equal(buf.status,'UNDER REVIEW');assert.match(buf.review,/stays applied/);
+    assert.deepEqual(buf.history.map(h=>h.label),['Ruled ADVANCE','Withdrawn','Re-ruled ELIMINATE']);
+    assert.equal(buf.history[0].note,'Ruled after the league update');
+    assert.equal(nyg.status,'WITHDRAWN');assert.match(nyg.detail,/no active ruling/);
+    assert.doesNotMatch(JSON.stringify(m),/"ruling_id"|ruling 1[0-9]? /);
+    const hold=rulesModel(evaluateContestRulings({contestId:cid('survivor'),contestType:'survivor',season:2026,error:new Error('x')}),{week:3});
+    assert.deepEqual([hold.state,hold.heading],['hold','ON HOLD · Ruling data unavailable']);
+  });
+
+  // ---- Survivor effect through survivor-math (a duck-typed overlay: {status, reason, forPick(week, team)})
+  const lookup=(byPick,{status='ready',reason=null}={})=>({status,reason,forPick:(week,t)=>byPick[`${week}|${t}`]||{state:'none'}});
+  const incident={week:2,away:'SF',home:'ARI',evidence:{incidentStatus:'STATUS_CANCELED',eventId:'402'}};
+  const advance=(o={})=>({state:'effective',consequence:'advance_team_used',outcome:'alive',teamUsed:true,underReview:null,incident,...o});
+  const eliminate=(o={})=>({state:'effective',consequence:'eliminate',outcome:'out',underReview:null,incident,...o});
+  const both=s=>({'2|SF':s,'2|ARI':s});
+  const haltedEvent=(a,h,id)=>{const e=ev(a,h,{as:'0',hs:'0',completed:false,state:'post',id});e.status.type.name='STATUS_CANCELED';e.competitions[0].status={type:{...e.status.type}};return e};
+  const w1=SM.survivorBuildResults([ev('PIT','CLE',{as:'24',hs:'10'}),ev('LV','NE',{as:'20',hs:'13'}),ev('KC','LAC',{as:'27',hs:'21'}),ev('JAX','CAR',{as:'30',hs:'3'})],{season:2026,week:1});
+  const w2=SM.survivorBuildResults([haltedEvent('SF','ARI','402'),ev('BUF','CIN',{as:'24',hs:'10'})],{season:2026,week:2});
+  const w3=SM.survivorBuildResults([ev('DEN','KC',{as:'10',hs:'27'}),ev('NE','LV',{as:'24',hs:'10'})],{season:2026,week:3});
+  const R12=[w1,w2],R123=[w1,w2,w3];
+  // a and d..f picked SF (away) or ARI (home) in the canceled Week-2 game; c won with BUF.
+  const E={a:{picks:['PIT','SF']},b:{picks:['LV','ARI']},c:{picks:['KC','BUF']},d:{picks:['JAX','SF','SF']},e:{picks:['PIT','SF','DEN']},f:{picks:['LV','ARI','NE']}};
+  const all=Object.values(E);
+  const awaiting={status:'pending',pick:'SF',week:2,reason:'Week 2 SF game halted (STATUS_CANCELED): awaiting pool ruling',type:'pending',halted:'STATUS_CANCELED'};
+  await regression('Survivor preservation guard: an empty ruling set changes nothing, halted games still await a ruling',()=>{
+    const none=lookup({});
+    assert.deepEqual(SM.survivorEntryState(E.a,1,R12,none),awaiting);
+    for(const wi of [0,1,2])for(const entry of all)assert.deepEqual(SM.survivorEntryState(entry,wi,R123,none),SM.survivorEntryState(entry,wi,R123));
+    assert.deepEqual(SM.survivorSummary(all,1,R12,none),SM.survivorSummary(all,1,R12));
+    assert.deepEqual(SM.survivorWeekProgress(all,2,R123,none),SM.survivorWeekProgress(all,2,R123));
+  });
+  await regression('Survivor advance_team_used: alive by applied commissioner ruling, team stays burned, both sides advance, no NFL winner invented',()=>{
+    const L=lookup(both(advance()));
+    const a=SM.survivorEntryState(E.a,1,R12,L),b=SM.survivorEntryState(E.b,1,R12,L);
+    assert.deepEqual([a.status,a.type,a.ruling?.consequence],['alive','ruling','advance_team_used']);
+    assert.match(a.reason,/applied commissioner ruling/);
+    assert.equal(b.status,'alive','the other side of the canceled game advances too');
+    assert.deepEqual([w2.get('SF').winner,w2.get('ARI').winner,w2.get('SF').completed],[null,null,false],'the NFL fact keeps no winner');
+    assert.equal(SM.survivorEligibleEntering(E.a,2,R12,L),true);
+    const support=SM.survivorDecisionOptions(E.a,2,R12,[{away:'SF',home:'SEA'},{away:'KC',home:'DEN',favorite:'KC',spread:3}],[],L);
+    assert.equal(support.eligible,true,'next-week decision support');
+    assert(support.burned.includes('SF'),'the advanced team stays burned');
+    assert(!support.options.some(o=>o.team==='SF'),'the advanced team is never offered again');
+    assert.deepEqual(SM.survivorFieldAvailability(all,2,R12,['SF','KC'],L),[{team:'KC',available:5,denominator:6,pct:83},{team:'SF',available:3,denominator:6,pct:50}]);
+    const s=SM.survivorSummary(all,1,R12,L);assert.deepEqual([s.active,s.pending,s.eliminatedThisWeek],[6,0,0]);
+  });
+  await regression('Survivor advance_team_used: later weeks are evaluated, and repeating the advanced team later is a repeat elimination',()=>{
+    const L=lookup(both(advance()));
+    assert.deepEqual(SM.survivorEntryState(E.d,2,R123,L),{status:'out',pick:'SF',week:3,eliminatedWeek:3,reason:'Repeated SF in Week 3',type:'repeat'});
+    assert.deepEqual(SM.survivorEntryState(E.e,2,R123,L),{status:'out',pick:'DEN',week:3,eliminatedWeek:3,reason:'DEN lost in Week 3',type:'loss'});
+    const f=SM.survivorEntryState(E.f,2,R123,L);
+    assert.deepEqual([f.status,f.type,f.reason],['alive','win','Alive through Week 3']);
+    assert.deepEqual(f.rulings?.map(r=>[r.week,r.team,r.consequence]),[[2,'ARI','advance_team_used']],'the Week-2 ruling it survived through is carried');
+  });
+  await regression('Survivor eliminate: out in the affected week by applied commissioner ruling; later weeks never revive',()=>{
+    const L=lookup(both(eliminate()));
+    const a=SM.survivorEntryState(E.a,1,R12,L);
+    assert.deepEqual([a.status,a.eliminatedWeek,a.type],['out',2,'ruling']);assert.match(a.reason,/applied commissioner ruling/);
+    const f=SM.survivorEntryState(E.f,2,R123,L);
+    assert.deepEqual([f.status,f.eliminatedWeek],['out',2],'a Week-3 win does not revive');
+    const s=SM.survivorSummary(all,1,R12,L);assert.deepEqual([s.active,s.eliminatedThisWeek,s.pending],[1,5,0]);
+  });
+  await regression('Survivor withdrawn: an applied ruling, once withdrawn, returns to the NFL fact and HDC-11 awaiting',()=>{
+    assert.equal(SM.survivorEntryState(E.a,1,R12,lookup(both(advance()))).status,'alive','first the ruling applies');
+    assert.deepEqual(SM.survivorEntryState(E.a,1,R12,lookup(both({state:'withdrawn',incident}))),awaiting,'then, withdrawn, the pick awaits a ruling again');
+  });
+  await regression('Survivor: a later NFL final neither overrides an advance nor undoes an elimination (UNDER REVIEW carried)',()=>{
+    const final2=SM.survivorBuildResults([ev('SF','ARI',{as:'10',hs:'24',id:'402'}),ev('BUF','CIN',{as:'24',hs:'10'})],{season:2026,week:2}),Rf=[w1,final2];
+    const review='the feed now reports a completed final';
+    const a=SM.survivorEntryState(E.a,1,Rf,lookup(both(advance({underReview:review}))));
+    assert.equal(a.status,'alive','SF lost the later final, but the advance ruling stands');assert.equal(a.ruling.underReview,review);
+    const b=SM.survivorEntryState(E.b,1,Rf,lookup(both(eliminate({underReview:review}))));
+    assert.deepEqual([b.status,b.eliminatedWeek],['out',2],'ARI won the later final, but the elimination stands');
+  });
+  await regression('Survivor HOLD: isolated to the affected coverage, never alive, out or pending; global store failure holds every entry',()=>{
+    assert.equal(typeof SM.survivorOnHold,'function','survivor-math exports survivorOnHold');
+    const L=lookup(both({state:'hold',scope:'incident',reason:'the ruling chain changes advance_team_used to eliminate without a withdrawal'}));
+    const a=SM.survivorEntryState(E.a,1,R12,L);
+    assert.deepEqual([a.status,a.type,a.hold],['hold','hold','incident']);assert.match(a.reason,/on hold/i);
+    assert.equal(SM.survivorEntryState(E.c,1,R12,L).status,'alive','unrelated coverage still resolves');
+    assert.equal(SM.survivorOnHold(all,1,R12,L),5);
+    const s=SM.survivorSummary(all,1,R12,L);assert.deepEqual([s.active,s.pending,s.eliminatedThisWeek],[1,0,0]);
+    assert.equal(SM.survivorAwaitingRuling(all,1,R12,L),0,'HOLD is not awaiting a ruling');
+    assert.equal(SM.survivorDecisionOptions(E.a,2,R12,[{away:'KC',home:'DEN'}],[],L).eligible,false);
+    const G={status:'hold',reason:'ruling data unavailable',forPick:()=>({state:'hold',scope:'contest',reason:'ruling data unavailable'})};
+    for(const entry of all)assert.equal(SM.survivorEntryState(entry,1,R12,G).status,'hold','no result is graded from the NFL feed alone');
+    assert.equal(SM.survivorOnHold(all,1,R12,G),6);
+    assert.deepEqual(SM.survivorEntryState({picks:[null,'SF']},1,R12,G),{status:'out',pick:null,week:1,eliminatedWeek:1,reason:'No pick in Week 1',type:'no-pick'},'a missing pick is a pick-sheet fact');
+    const gs=SM.survivorSummary(all,1,R12,G);assert.deepEqual([gs.active,gs.pending,gs.eliminatedBefore,gs.eliminatedThisWeek],[0,0,0,0]);
+  });
+
+  // ---- migration contract (static). The executable behaviour of 002 and 003 is exercised against a throwaway local
+  // PostgreSQL in the candidate review, never against Neon; these checks pin what the files must and must not say.
+  const migration=name=>{const url=new URL(`./migrations/${name}`,import.meta.url);assert(existsSync(url),`migrations/${name} must exist`);return readFileSync(url,'utf8')};
+  const statements=sql=>sql.replace(/--[^\n]*/g,'').replace(/\$\$[\s\S]*?\$\$/g,()=>'$$body$$').replace(/'(?:[^']|'')*'/g,()=>"'s'").split(';').map(s=>s.replace(/\s+/g,' ').trim()).filter(Boolean);
+  const TABLES=['nfl_contests','nfl_contest_policies','nfl_incident_rulings'];
+  const PUBLIC={nfl_contests:['contest_id','season','contest_type','display_name','starts_at','created_at'],
+    nfl_contest_policies:['contest_id','contest_type','revision','effective_week','halted_game_policy','public_note','created_at'],
+    nfl_incident_rulings:['ruling_id','contest_id','contest_type','week','away_team','home_team','policy_revision','chain_seq','parent_ruling_id','consequence','incident_status','event_id','evidence_source','public_note','created_at']};
+  await regression('migration files: 002 and 003 exist and 001 is unchanged',()=>{
+    migration('002-contest-rulings.sql');migration('003-pool-center-2026-contests.sql');
+    assert.equal(createHash('sha256').update(readFileSync(new URL('./migrations/001-survivor-weeks.sql',import.meta.url))).digest('hex'),'9a143b13e9e0f3ff0b5c06c1c9e813625f0500822b202a39565d7a585cbd348d','migration 001 is frozen');
+  });
+  await regression('migration 002: column-level SELECT on public columns only; created_by and admin_note never granted; no write grant',()=>{
+    const st=statements(migration('002-contest-rulings.sql'));
+    const toDataApi=s=>/\bTO\b[^;]*\b(anonymous|authenticated|PUBLIC)\b/i.test(s);
+    const grants=st.filter(s=>/^GRANT\b/i.test(s)&&toDataApi(s));
+    for(const table of TABLES){
+      const mine=grants.filter(s=>new RegExp(`\\bON (TABLE )?public\\.${table}\\b`,'i').test(s));
+      assert.equal(mine.length,1,`${table}: exactly one grant to the Data API roles`);
+      const m=mine[0].match(/^GRANT SELECT \(([^)]*)\) ON public\.(\w+) TO anonymous, authenticated$/i);
+      assert(m&&m[2]===table,`${table}: the grant must be a column-level SELECT to anonymous and authenticated: ${mine[0]}`);
+      const cols=m[1].split(',').map(c=>c.trim());
+      assert.deepEqual(cols,PUBLIC[table],`${table}: granted columns`);
+      assert(!cols.includes('created_by')&&!cols.includes('admin_note'),`${table}: private columns are never granted`);
+      // REVOKE ALL also clears column privileges, so it must precede the grant.
+      const revoke=st.findIndex(s=>/^REVOKE ALL ON TABLE\b/i.test(s)&&s.includes(`public.${table}`)&&/FROM PUBLIC, anonymous, authenticated$/i.test(s));
+      assert(revoke>=0&&revoke<st.indexOf(mine[0]),`${table}: REVOKE ALL from PUBLIC, anonymous and authenticated precedes its column grant`);
+    }
+    assert.equal(grants.length,TABLES.length,'no other grant reaches anonymous, authenticated or PUBLIC (no write, EXECUTE or sequence grant)');
+    assert(!st.some(s=>/^GRANT\b/i.test(s)&&/\b(INSERT|UPDATE|DELETE|TRUNCATE|ALL|USAGE|EXECUTE)\b/i.test(s.split(/\bON\b/i)[0])),'no write, usage or execute privilege is granted to anyone');
+    assert(st.some(s=>/^REVOKE ALL ON SEQUENCE public\.nfl_incident_rulings_ruling_id_seq FROM PUBLIC, anonymous, authenticated$/i.test(s)),'the identity sequence is revoked');
+    assert(!st.some(s=>/ALTER DEFAULT PRIVILEGES/i.test(s)),'no default privileges are changed');
+  });
+  await regression('migration 002: RLS on every table with SELECT-only policies; no RPC; append-only triggers; public_note and admin_note distinct',()=>{
+    const raw=migration('002-contest-rulings.sql'),st=statements(raw);
+    for(const table of TABLES){
+      assert(st.includes(`ALTER TABLE public.${table} ENABLE ROW LEVEL SECURITY`),`${table}: RLS enabled`);
+      const policies=st.filter(s=>new RegExp(`^CREATE POLICY \\w+ ON public\\.${table}\\b`,'i').test(s));
+      assert(policies.length>=1&&policies.every(s=>/ FOR SELECT TO anonymous, authenticated USING \(true\)$/i.test(s)),`${table}: SELECT-only read policies`);
+      assert(st.some(s=>new RegExp(`^CREATE TRIGGER \\w+ BEFORE UPDATE OR DELETE ON public\\.${table} FOR EACH ROW EXECUTE FUNCTION public\\.nfl_contest_history_reject_change\\(\\)$`,'i').test(s)),`${table}: UPDATE and DELETE are rejected`);
+      assert(st.some(s=>new RegExp(`^CREATE TRIGGER \\w+ BEFORE TRUNCATE ON public\\.${table} FOR EACH STATEMENT EXECUTE FUNCTION public\\.nfl_contest_history_reject_change\\(\\)$`,'i').test(s)),`${table}: TRUNCATE is rejected`);
+    }
+    assert(!st.some(s=>/^CREATE POLICY\b.*\bFOR (INSERT|UPDATE|DELETE|ALL)\b/i.test(s)),'no write policy');
+    const fns=st.filter(s=>/^CREATE (OR REPLACE )?FUNCTION\b/i.test(s));
+    assert(fns.length>=1&&fns.every(s=>/^CREATE FUNCTION public\.\w+\(\) RETURNS trigger\b.*\bSET search_path = pg_catalog AS \$\$body\$\$$/i.test(s)),'only trigger functions (never callable as RPC), each with a fixed search_path');
+    for(const s of fns){const name=s.match(/FUNCTION (public\.\w+)\(\)/)[1];assert(st.includes(`REVOKE ALL ON FUNCTION ${name}() FROM PUBLIC, anonymous, authenticated`),`${name}: EXECUTE revoked`)}
+    assert.match(raw,/CREATE FUNCTION public\.nfl_contest_history_reject_change\(\)[\s\S]*?RAISE EXCEPTION[\s\S]*?append-only/,'the append-only guard raises');
+    for(const table of ['nfl_contest_policies','nfl_incident_rulings']){
+      const create=st.find(s=>s.startsWith(`CREATE TABLE public.${table} (`));
+      assert(/\bpublic_note text\b/.test(create)&&/\badmin_note text\b/.test(create),`${table}: public_note and admin_note are separate columns`);
+    }
+    const rulings=st.find(s=>s.startsWith('CREATE TABLE public.nfl_incident_rulings ('));
+    assert.match(rulings,/ruling_id bigint GENERATED ALWAYS AS IDENTITY .*PRIMARY KEY/,'stable ruling row identity');
+    assert.match(rulings,/UNIQUE \(contest_id, week, away_team, home_team, policy_revision, chain_seq\)/,'one row per chain position of a logical incident');
+    assert.match(rulings,/parent_ruling_id bigint REFERENCES public\.nfl_incident_rulings \(ruling_id\)/,'explicit predecessor link');
+    assert.match(rulings,/CHECK \(\(chain_seq = 1\) = \(parent_ruling_id IS NULL\)\)/,'one root per chain');
+    assert.match(rulings,/CHECK \(chain_seq > 1 OR consequence <> 's'\)/,'a chain never starts with a withdrawal');
+    assert.match(rulings,/incident_status text NOT NULL CHECK \(incident_status IN \('s','s','s'\)\)/,'three supported incident statuses');
+    assert.doesNotMatch(raw.replace(/--[^\n]*/g,''),/STATUS_FORFEIT/,'forfeit is not a supported incident status');
+    assert.doesNotMatch(rulings,/PRIMARY KEY \([^)]*event_id/,'event_id is never the identity');
+    assert.doesNotMatch(raw,/\bINSERT INTO\b/i,'002 inserts no data');
+  });
+  await regression('migration 003: exactly the two 2026 contests with revision-1 policies, verified start required, no ruling, no guessed kickoff, never overwrites',()=>{
+    const raw=migration('003-pool-center-2026-contests.sql'),code=raw.replace(/--[^\n]*/g,'');
+    assert.doesNotMatch(raw,/\b\d{4}-\d{2}-\d{2}\b/,'no date literal anywhere, comments included');
+    assert.doesNotMatch(code,/\b(now|transaction_timestamp|statement_timestamp)\s*\(|\bcurrent_timestamp\b|\blocaltimestamp\b/i,'the start is never taken from the clock');
+    assert.deepEqual([...code.matchAll(/clock_timestamp\(\)/g)].length,1,'the clock is read once, to refuse a start in the future');
+    assert.match(code,/IF kickoff > clock_timestamp\(\) THEN\s+RAISE EXCEPTION/);
+    assert.match(code,/current_setting\('nfl_pool\.contest_start_2026', true\)/,'the verified start is an explicit session input');
+    assert.match(code,/IF supplied IS NULL OR btrim\(supplied\) = '' THEN\s+RAISE EXCEPTION/,'a missing input raises');
+    assert.match(code,/kickoff := supplied::timestamptz;/);
+    assert.match(code,/INSERT INTO public\.nfl_contests \(contest_id, season, contest_type, display_name, starts_at\)\s+VALUES \(spec\.contest_id, 2026, spec\.contest_type, spec\.display_name, kickoff\)/,'starts_at is the verified input');
+    assert.deepEqual([...new Set(code.match(/pool-center-\d{4}-[a-z]+/g))].sort(),['pool-center-2026-pickem','pool-center-2026-survivor']);
+    assert.match(code,/\('pool-center-2026-pickem', 'pickem', 'Pool Center 2026 Pick''em', 'void',/);
+    assert.match(code,/\('pool-center-2026-survivor', 'survivor', 'Pool Center 2026 Survivor', 'advance_team_used',/);
+    assert.match(code,/INSERT INTO public\.nfl_contest_policies \(contest_id, contest_type, revision, effective_week, halted_game_policy, public_note, admin_note\)\s+VALUES \(spec\.contest_id, spec\.contest_type, 1, 1,/,'revision 1, in force from Week 1');
+    assert.doesNotMatch(code,/nfl_incident_rulings/,'the bootstrap creates no incident ruling');
+    assert.doesNotMatch(code,/ON CONFLICT|\bUPDATE\s+public\.|\bDELETE\s+FROM\b|\bTRUNCATE\b|\bMERGE\b/i,'nothing is ever overwritten');
+    assert.equal([...code.matchAll(/IS DISTINCT FROM/g)].length,2,'an existing contest or revision-1 row must equal the bootstrap exactly');
+  });
+
+  assert.equal(failures.length,0,`HDC-12 contest-ruling regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+}
+
+console.log('survivor HDC-12 contest policy, revision selection, ruling chain, published-slot, double-coverage, forfeit-boundary, conflict, fail-safe, Survivor-effect, Pick\'em-void, privacy and migration-contract regressions passed');
