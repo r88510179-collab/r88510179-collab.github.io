@@ -1011,6 +1011,12 @@ console.log('weekly HDC-11 halted-game warning, ungraded halted game, unchanged 
     const fixed=await page({rulings:[...misKeyed,...voids(['void'],{},10)]});
     assert.deepEqual(pickCells(fixed),['ok','void','bad','void']);
   });
+  await regression('the Rules & rulings card shows a withdrawn ruling as WITHDRAWN even when another ruling holds its game',async()=>{
+    const v=await page({rulings:[...voids(['void','withdrawn']),...voids(['void'],{away_team:'BUF',home_team:'KC',event_id:'401437990'},10)]});
+    assert.deepEqual(pickCells(v),['hold','hold','hold','hold'],'the active mis-keyed ruling holds both published games');
+    assert.match(rules(v),/BUF @ CIN<\/b><span class="rules-status">WITHDRAWN</);
+    assert.match(rules(v),/BUF @ KC<\/b><span class="rules-status">HOLD</);
+  });
 
   assert.equal(failures.length,0,`HDC-12 Pick'em regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
 }

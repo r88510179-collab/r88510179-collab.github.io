@@ -1111,6 +1111,16 @@ console.log('survivor HDC-11 halted-game awaiting-ruling classification, ordinar
     assert.doesNotThrow(()=>{ds=evaluate('pickem',{rulings:[{get week(){throw new TypeError('trap')}}]})},'a row that throws when read');
     assert.deepEqual([ds.status,ds.scope],['hold','contest']);
   });
+  await regression('Rules & rulings model: a withdrawn incident is WITHDRAWN even when another incident holds its team',()=>{
+    const ds=evaluate('survivor',{rulings:[...chain('survivor',['advance_team_used','withdrawn']),...chain('survivor',['advance_team_used'],{away_team:'BUF',home_team:'KC',incident_status:'STATUS_FORFEIT',event_id:'402'},10)]});
+    const lookup=evaluator().survivorRulingLookup(ds,{eventsByWeek:[null,null,[feedEvent()]],season:2026});
+    // Built the way survivor-app.js builds it: the slot of the incident's first-named team.
+    const m=evaluator().rulesModel(ds,{week:3,slotState:x=>lookup.forPick(x.week,x.away||x.home)});
+    const row=matchup=>m.incidents.find(x=>x.matchup===matchup);
+    assert.equal(row('BUF @ CIN').status,'WITHDRAWN');assert.match(row('BUF @ CIN').detail,/no active ruling/);
+    assert.equal(row('BUF @ KC').status,'HOLD');assert.match(row('BUF @ KC').detail,/forfeit/);
+    assert.equal(lookup.forPick(3,'CIN').state,'withdrawn','CIN pickers have no active ruling');
+  });
   await regression('Rules & rulings model: a ruling that matches no published game is HOLD, never APPLIED',()=>{
     const m=evaluator().rulesModel(evaluate('pickem',{rulings:chain('pickem',['void'],{away_team:'NYJ',home_team:'NE'})}),{week:3,slotState:()=>({state:'none',unmatched:true})});
     assert.equal(m.incidents[0].status,'HOLD');

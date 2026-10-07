@@ -905,10 +905,17 @@ await hdc12('HDC-12 runtime cache generation',()=>assert.deepEqual([...new Set(o
   // Review-driven regression (added after the implementation's adversarial review): both apps render their Rules & rulings
   // card into a container the page must actually have; the app harnesses create any element they are asked for.
   await hdc12('index.html has exactly one Rules & rulings container in each contest panel',()=>{
-    const panels=Object.fromEntries(index.split('<section class="view-panel" data-view-panel="').slice(1).map(chunk=>[chunk.slice(0,chunk.indexOf('"')),chunk]));
+    // A panel runs from its opening tag to its own matching </section>, never into the markup that follows it.
+    const panelOf=name=>{
+      const start=index.indexOf(`<section class="view-panel" data-view-panel="${name}"`),tags=/<section\b[^>]*>|<\/section>/g;
+      if(start<0)return'';
+      tags.lastIndex=start;let depth=0,m;
+      while((m=tags.exec(index))){depth+=m[0][1]==='/'?-1:1;if(!depth)return index.slice(start,m.index)}
+      return'';
+    };
     for(const [id,panel] of [['pickemRules','games'],['svRules','survivor']]){
       assert.equal(index.split(`id="${id}"`).length-1,1,`index.html has exactly one #${id}`);
-      assert(panels[panel]?.includes(`id="${id}"`),`#${id} is inside the ${panel} panel`);
+      assert(panelOf(panel).includes(`id="${id}"`),`#${id} is inside the ${panel} panel`);
     }
   });
 }

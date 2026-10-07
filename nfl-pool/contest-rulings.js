@@ -452,8 +452,9 @@ export function rulesModel(dataset,{week,slotState=null}={}){
   const current=policyForWeek(dataset,week);
   const incidents=dataset.incidents.filter(x=>!Number.isInteger(week)||x.week<=week).map(x=>{
     const slot=slotState?slotState(x):null;
+    // A withdrawn incident is WITHDRAWN whatever now decides its teams (another incident's hold is shown on that incident).
     // A ruling that matches no published game is invalid stored ruling information for this contest: HOLD, never APPLIED.
-    const slotHold=slot?.state==='hold'?slot.reason:slot?.unmatched?'it does not match a published game in this contest':null;
+    const slotHold=x.state==='withdrawn'?null:slot?.state==='hold'?slot.reason:slot?.unmatched?'it does not match a published game in this contest':null;
     const held=x.state==='hold'||Boolean(slotHold),review=!held&&x.state==='effective'?slot?.underReview||null:null;
     const status=held?'HOLD':x.state==='withdrawn'?'WITHDRAWN':review?'UNDER REVIEW':'APPLIED';
     const detail=held?`On hold: ${slotHold||x.reason}. No consequence is applied.`
