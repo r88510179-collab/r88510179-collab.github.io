@@ -58,8 +58,10 @@ test('participant Sign out and signed-in errors live in the shell, outside every
   assert.match(js,/async function openSession\(\)\{\n  const session=state\.session,report=e=>\{if\(state\.session===session\)message\('sessionError',e\.message\)\};\n  setAuthVisible\(\);message\('sessionError',''\);\n  let claimFailed=false;\n  try\{await claimInviteIfPresent\(\)\}catch\(e\)\{claimFailed=true;report\(e\)\}\n  try\{await loadLiveContext\(\)\}catch\(e\)\{if\(!claimFailed\)report\(e\)\}\n\}/);
   assert.match(js,/state\.session=await client\.getSession\(\);setAuthVisible\(\);\n  if\(state\.session\)await openSession\(\);/);
   assert.match(js,/state\.session=await client\.verifyOtp\(state\.pendingEmail\|\|\$\('email'\)\.value,\$\('otp'\)\.value\)\}catch\(e\)\{message\('authError',e\.message\);return\}await openSession\(\)/);
-  // A failed claim throws before the token is dropped, so the invited account can still claim it.
-  assert.match(js,/await client\.claimInvite\(inviteToken\);inviteToken='';cleanInviteFromUrl\(\)/);
+  // A failed claim throws before the token is dropped, so the invited account can still claim it. The URL is not
+  // touched here: the invite left it when the page first read it.
+  assert.match(js,/await client\.claimInvite\(inviteToken\);inviteToken=''\}/);
+  assert.doesNotMatch(js,/cleanInviteFromUrl/);
   const signOut=/\$\('signOut'\)\.addEventListener\('click',async\(\)=>\{\n([\s\S]*?)\n\}\);/.exec(js)?.[1];
   assert.ok(signOut);
   assert.match(signOut,/Object\.assign\(state,\{session:null,context:null,entry:null,pendingEmail:''\}\)/);
@@ -75,6 +77,39 @@ test('participant Sign out and signed-in errors live in the shell, outside every
   assert.match(submit,/catch\(e\)\{if\(state\.session===session\)\{message\('validation',e\.message\)/,'no stale error after sign out');
   assert.match(submit,/finally\{if\(state\.context&&state\.entry\)\$\('submitBtn'\)/);
   assert.match(js,/catch\(e\)\{if\(!String\(e\?\.message\)\.includes\('pool_not_found'\)\)throw e\}/,'no readable pool means the empty state');
+});
+
+// Invite tokens travel only in the URL fragment, which no HTTP request carries, so Netlify's request logs and
+// observability never see one. The commissioner page builds links that way, and the participant page reads the
+// invite, scrubs it from the address bar and keeps it only in memory before it does anything else.
+test('invite links carry the token only in the fragment; the participant page reads, scrubs and holds it before anything else runs',()=>{
+  const cjs=read('commissioner.js'),pjs=read('participant.js'),core=read('auth-core.js');
+  assert.match(cjs,/^import \{participantInviteUrl\} from '\.\/auth-core\.js';$/m);
+  assert.match(cjs,/const url=participantInviteUrl\(new URL\('\.\/participant\.html',location\.href\),state\.context\.pool\.slug,result\.invite_token\);\n    msg\('inviteResult',`Invite ready: \$\{url\} · /);
+  // Nothing anywhere puts an invite into a query string, or reads one from it.
+  for(const [name,source] of [['commissioner.js',cjs],['participant.js',pjs],['auth-core.js',core]]){
+    assert.doesNotMatch(source,/[?&]invite=|searchParams\.(set|append)\(\s*['"]invite['"]/,name);
+  }
+  assert.doesNotMatch(pjs,/\.get\(\s*['"]invite['"]\s*\)|\.has\(\s*['"]invite['"]\s*\)|location\.hash/);
+  // Read and scrubbed first: before the configuration import, the first thing the page awaits.
+  assert.match(pjs,/^import \{authErrorMessage,readInviteFromUrl\} from '\.\/auth-core\.js';$/m);
+  const capture=pjs.indexOf('\nconst invite=readInviteFromUrl(location.href);\n');
+  assert.ok(capture>0,'the invite is read from the page URL');
+  assert.ok(capture<pjs.indexOf('await '),'and before the page awaits anything');
+  assert.match(pjs,/\nconst invite=readInviteFromUrl\(location\.href\);\nif\(invite\.found\)history\.replaceState\(null,'',invite\.cleanUrl\);\nlet inviteToken=invite\.token;\nconst inviteError=invite\.error\?authErrorMessage\(invite\.error\):'';\nif\(inviteError\)message\('sessionError',inviteError\);\n/);
+  assert.equal(pjs.match(/history\.replaceState\(/g).length,1);
+  // An invite link opened over this page changes only the fragment and loads nothing: the page reloads to read it.
+  assert.match(pjs,/\nwindow\.addEventListener\('hashchange',\(\)=>\{if\(readInviteFromUrl\(location\.href\)\.found\)location\.reload\(\)\}\);\n/);
+  // In memory only: set from the fragment, sent only to claimInvite, cleared only by a successful claim. A refused
+  // link fails like a claim, before any token could be sent, so the account's own entries still load.
+  assert.deepEqual(pjs.split('\n').filter(line=>line.includes('inviteToken')&&!line.trim().startsWith('//')),[
+    'let inviteToken=invite.token;',
+    "async function claimInviteIfPresent(){if(!state.session)return;if(inviteError)throw new Error(inviteError);if(!inviteToken)return;await client.claimInvite(inviteToken);inviteToken=''}"
+  ]);
+  // Never persisted and never logged.
+  for(const [name,source] of [['commissioner.js',cjs],['participant.js',pjs],['auth-core.js',core]]){
+    assert.doesNotMatch(source,/localStorage|sessionStorage|indexedDB|document\.cookie|caches\.|console\./,name);
+  }
 });
 
 test('participant Survivor choices submit the stable key and show the escaped display name that tells shared labels apart',()=>{
@@ -242,6 +277,31 @@ test('invite and other query-string navigations are never cache keys; offline th
   }
 });
 
+// The fragment never leaves the browser in a request, but FetchEvent.request.url keeps it, and Cache Storage keeps a
+// stored request's URL as given: Chromium stored participant.html#invite=<token> when a link had no query string.
+test('an invite fragment is never a cache key: with or without a query, online or offline, the worker stores nothing for it',async()=>{
+  const token='ab'.repeat(32);
+  const links=[`${ORIGIN}/pool-platform/participant.html?pool=demo#invite=${token}`,`${ORIGIN}/pool-platform/participant.html#invite=${token}`];
+  const online=await installedWorker();
+  for(const url of links){
+    const result=await online.dispatch('fetch',{request:request(url,{mode:'navigate'})});
+    assert.equal(result.responded,true,url);
+    assert.equal(result.response.body,'network',url);
+  }
+  assert.deepEqual(online.log.puts,[],'neither navigation is stored');
+  assert.equal((await online.dispatch('fetch',{request:request(`${ORIGIN}/pool-platform/auth-core.js#invite=${token}`)})).responded,false,'a module URL with a fragment is not stored either');
+  assert.deepEqual(online.log.puts,[]);
+  const offline=await installedWorker({network:async()=>{throw new TypeError('offline')}});
+  for(const url of links){
+    const result=await offline.dispatch('fetch',{request:request(url,{mode:'navigate'})});
+    assert.equal(result.response.body,'precached /pool-platform/participant.html',url);
+  }
+  assert.deepEqual(offline.log.puts,[]);
+  for(const worker of [online,offline]){
+    for(const store of worker.stores.values())for(const key of store.keys())assert.ok(!key.includes('#')&&!key.includes(token),key);
+  }
+});
+
 test('cross-origin, auth, Data API, non-GET, Authorization-bearing and query requests are left to the network',async()=>{
   const worker=await installedWorker();
   const untouched=[
@@ -369,6 +429,7 @@ const textAsHtml=value=>value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace
 function serveDirectory(root){
   const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.webmanifest':'application/manifest+json'};
   const server=http.createServer((req,res)=>{
+    server.targets.push(req.url); // each request target exactly as the browser sent it
     const name=decodeURIComponent(new URL(req.url,'http://localhost').pathname).replace(/^\/+/,'')||'index.html';
     if(name.includes('/')||name.includes('..')){res.writeHead(404).end();return}
     fs.readFile(new URL(name,root),(error,body)=>{
@@ -376,6 +437,7 @@ function serveDirectory(root){
       res.writeHead(200,{'content-type':types[path.extname(name)]||'application/octet-stream','content-security-policy':PAGE_CSP}).end(body);
     });
   });
+  server.targets=[];
   return new Promise(resolve=>server.listen(0,'127.0.0.1',()=>resolve(server)));
 }
 
@@ -499,9 +561,11 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
   async function openPage({world=null,signedInAs=null,query='',width=390,height=844,path='participant.html',poolSlug='it-pool'}={}){
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width,height}});
     contexts.push(context);
-    const page=await context.newPage(),seen={dialogs:[],errors:[]};
+    const page=await context.newPage(),seen={dialogs:[],errors:[],requests:[],console:[]};
     page.on('dialog',dialog=>{seen.dialogs.push(dialog.message());dialog.dismiss().catch(()=>{})});
     page.on('pageerror',error=>seen.errors.push(error.message));
+    page.on('request',request=>seen.requests.push({method:request.method(),url:request.url(),headers:request.headers()}));
+    page.on('console',message=>seen.console.push(message.text()));
     await recordCsp(page);
     if(world){
       await page.addInitScript(email=>{window.__fakeAuth={email}},signedInAs);
@@ -531,6 +595,24 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     await page.fill('#otp','123456');await page.click('#verifyCode');
   };
   const summaryTiebreak=page=>page.locator('#summary .summary-row').last().locator('strong');
+  // A fragment invite token may travel in one place only: the body of the claim RPC. Never in a request target the
+  // host saw, a URL or header the browser sent, any other RPC, a console message, the page, the address bar or a store.
+  const inviteContained=async(page,world,seen,token)=>{
+    assert.equal(server.targets.some(target=>target.includes(token)||target.includes('#')),false,'a request target the host saw');
+    assert.equal(seen.requests.some(request=>JSON.stringify(request).includes(token)),false,'a request URL or header the browser sent');
+    for(const {args,body,...call} of world.calls){
+      assert.equal(JSON.stringify(call).includes(token),false,`${call.name}: its URL or headers`);
+      if(call.name==='pool_platform_claim_entry_invite'&&args.p_invite_token===token)assert.equal(body,JSON.stringify({p_invite_token:token}));
+      else assert.equal(String(body).includes(token),false,`${call.name}: its body`);
+    }
+    assert.equal(seen.console.some(text=>text.includes(token)),false,'a console message');
+    assert.equal(page.url().includes(token)||page.url().includes('invite'),false,`the address bar: ${page.url()}`);
+    assert.equal((await page.content()).includes(token),false,'the page');
+    const stores=await page.evaluate(async()=>JSON.stringify({local:{...localStorage},session:{...sessionStorage},cookie:document.cookie,
+      history:history.state,databases:await indexedDB.databases(),caches:await caches.keys()}));
+    assert.equal(stores.includes(token),false,stores);
+    assert.equal(JSON.stringify(await page.context().cookies()).includes(token),false,'a cookie');
+  };
 
   test('sandbox: hostile tiebreak text is displayed literally and never interpreted; 47 and 0 are kept, blank is not 0',async()=>{
     const {page,seen}=await openPage();
@@ -557,15 +639,15 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     await clean(page,seen);
   });
 
-  test('live: wrong account opens an email-bound invite → mismatch beside Sign out → sign out → invited account claims it',async()=>{
+  test('live: wrong account opens an email-bound invite → mismatch beside Sign out → sign out → invited account claims it from page memory',async()=>{
     const world=liveWorld({invites:{[INVITE]:{email:'invited@example.test',entryId:'entry-1'}}});
-    const {page,seen}=await openPage({world,signedInAs:'wrong@example.test',query:`?pool=it-pool&invite=${INVITE}`});
+    const {page,seen}=await openPage({world,signedInAs:'wrong@example.test',query:`?pool=it-pool#invite=${INVITE}`});
     await page.locator('#sessionError').waitFor({state:'visible'});
     assert.match(await page.textContent('#sessionError'),/different email address/);
     await page.locator('#emptyCard').waitFor({state:'visible'});
     await visible(page,{signOut:true,authCard:false,entryCard:false,pickForm:false,sessionError:true});
     assert.equal(world.invites[INVITE].claimedBy,undefined,'a rejected claim does not consume the invite');
-    assert.ok(page.url().includes(`invite=${INVITE}`),'the invite stays in the URL');
+    assert.equal(page.url(),`${base}/participant.html?pool=it-pool`,'the invite left the address bar when the page read it; the pool stays');
 
     await page.click('#signOut');
     await page.locator('#authCard').waitFor({state:'visible'});
@@ -577,25 +659,105 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     await page.locator('#entryCard').waitFor({state:'visible'});
     await visible(page,{signOut:true,authCard:false,sessionError:false,pickForm:true,emptyCard:false});
     assert.equal(world.invites[INVITE].claimedBy,'invited@example.test');
-    assert.ok(!page.url().includes('invite='),'a claimed invite leaves the URL');
+    assert.equal(page.url(),`${base}/participant.html?pool=it-pool`);
     assert.deepEqual(world.calls.filter(c=>c.name==='pool_platform_claim_entry_invite').map(c=>[c.email,c.args.p_invite_token]),
       [['wrong@example.test',INVITE],['invited@example.test',INVITE]]);
+    // A successful claim drops the token: the next account to sign in on this page claims nothing.
+    await page.click('#signOut');await page.locator('#authCard').waitFor({state:'visible'});
+    await signIn(page,'wrong@example.test');
+    await page.locator('#emptyCard').waitFor({state:'visible'});
+    await visible(page,{signOut:true,sessionError:false});
+    assert.equal(world.calls.filter(c=>c.name==='pool_platform_claim_entry_invite').length,2);
+    await inviteContained(page,world,seen,INVITE);
     await clean(page,seen);
   });
 
   test('live: reopening an invite link this account already claimed reports it but still loads the entry, before and after signing in again',async()=>{
     const world=liveWorld({owners:{'entry-1':'player@example.test'},invites:{[INVITE]:{email:'player@example.test',entryId:'entry-1',claimedBy:'player@example.test'}}});
-    const {page,seen}=await openPage({world,signedInAs:'player@example.test',query:`?pool=it-pool&invite=${INVITE}`});
+    const {page,seen}=await openPage({world,signedInAs:'player@example.test',query:`?pool=it-pool#invite=${INVITE}`});
     for(const round of ['opened','signed in again']){
       await page.locator('#entryCard').waitFor({state:'visible'});
       assert.match(await page.textContent('#sessionError'),/expired, already used/,round);
       await visible(page,{signOut:true,sessionError:true,pickForm:true,authCard:false,emptyCard:false});
+      assert.equal(page.url(),`${base}/participant.html?pool=it-pool`,round);
       if(round==='opened'){
         await page.click('#signOut');await page.locator('#authCard').waitFor({state:'visible'});
         await signIn(page,'player@example.test');
       }
     }
     assert.deepEqual(world.calls.filter(c=>c.name==='pool_platform_claim_entry_invite').map(c=>c.email),['player@example.test','player@example.test']);
+    await inviteContained(page,world,seen,INVITE);
+    await clean(page,seen);
+  });
+
+  test('live: a signed-out participant opens an invite, which leaves the address bar at once and is claimed from page memory after sign-in',async()=>{
+    const world=liveWorld({invites:{[INVITE]:{email:'invited@example.test',entryId:'entry-1'}}});
+    const {page,seen}=await openPage({world,query:`?pool=it-pool#invite=${INVITE}`});
+    await page.locator('#authCard').waitFor({state:'visible'});
+    assert.equal(page.url(),`${base}/participant.html?pool=it-pool`);
+    await visible(page,{signOut:false,sessionError:false,entryCard:false});
+    assert.deepEqual(world.calls,[],'nothing is claimed or loaded before sign-in');
+    await signIn(page,'invited@example.test');
+    await page.locator('#entryCard').waitFor({state:'visible'});
+    await visible(page,{signOut:true,sessionError:false,pickForm:true});
+    assert.deepEqual(world.calls.map(c=>[c.name,c.email]),[['pool_platform_claim_entry_invite','invited@example.test'],['pool_platform_participant_context','invited@example.test']]);
+    assert.equal(world.invites[INVITE].claimedBy,'invited@example.test');
+    await inviteContained(page,world,seen,INVITE);
+    await clean(page,seen);
+  });
+
+  test('live: an invite link opened over an already open participant page changes only the fragment; the page reloads, reads and scrubs it',async()=>{
+    const world=liveWorld({invites:{[INVITE]:{email:'invited@example.test',entryId:'entry-1'}}});
+    const {page,seen}=await openPage({world,signedInAs:'invited@example.test',query:'?pool=it-pool'});
+    await page.locator('#emptyCard').waitFor({state:'visible'});
+    await page.goto(`${base}/participant.html?pool=it-pool#invite=${INVITE}`);
+    await page.locator('#entryCard').waitFor({state:'visible'});
+    assert.equal(page.url(),`${base}/participant.html?pool=it-pool`);
+    assert.deepEqual(world.calls.filter(c=>c.name==='pool_platform_claim_entry_invite').map(c=>[c.email,c.args.p_invite_token]),[['invited@example.test',INVITE]]);
+    await inviteContained(page,world,seen,INVITE);
+    await clean(page,seen);
+  });
+
+  test('live: a query-string invite (the retired link format) is never claimed; it leaves the URL, the participant is told to ask for a new link, and their own entries still load',async()=>{
+    // Each token here would claim entry-1 if it were ever sent; the participant owns entry-2.
+    const LEGACY='ef'.repeat(32);
+    for(const [label,query,copy] of [
+      ['query',`?pool=it-pool&invite=${LEGACY}`,/retired format/],
+      ['query and fragment',`?pool=it-pool&invite=${LEGACY}#invite=${INVITE}`,/not valid/],
+      ['fragment twice',`?pool=it-pool#invite=${INVITE}&invite=${INVITE}`,/not valid/]
+    ]){
+      const world=liveWorld({owners:{'entry-2':'player@example.test'},invites:{[LEGACY]:{entryId:'entry-1'},[INVITE]:{entryId:'entry-1'}}});
+      const {page,seen}=await openPage({world,signedInAs:'player@example.test',query});
+      for(const round of ['opened','signed in again']){
+        await page.locator('#entryCard').waitFor({state:'visible'});
+        await page.locator('#sessionError').waitFor({state:'visible'});
+        assert.match(await page.textContent('#sessionError'),copy,`${label}, ${round}`);
+        assert.match(await page.textContent('#sessionError'),/Ask your commissioner for a new invitation link\.$/,`${label}, ${round}`);
+        await visible(page,{signOut:true,pickForm:true,authCard:false,emptyCard:false});
+        assert.equal(page.url(),`${base}/participant.html?pool=it-pool`,`${label}, ${round}`);
+        if(round==='opened'){
+          await page.click('#signOut');await page.locator('#authCard').waitFor({state:'visible'});
+          await signIn(page,'player@example.test');
+        }
+      }
+      assert.deepEqual(world.calls.filter(c=>c.name==='pool_platform_claim_entry_invite'),[],`${label}: no claim was sent`);
+      assert.deepEqual(world.calls.map(c=>c.name),['pool_platform_participant_context','pool_platform_participant_context'],label);
+      assert.equal(Object.values(world.invites).some(invite=>invite.claimedBy),false,label);
+      for(const token of [LEGACY,INVITE])assert.equal(JSON.stringify(world.calls).includes(token),false,`${label}: no RPC carried a token`);
+      await inviteContained(page,world,seen,INVITE);
+      assert.equal(seen.console.some(text=>text.includes(LEGACY)),false,label);
+      await clean(page,seen);
+    }
+    // Signed out, the refusal shows beside the sign-in card at once and again after sign-in.
+    const world=liveWorld({invites:{[LEGACY]:{entryId:'entry-1'}}});
+    const {page,seen}=await openPage({world,query:`?pool=it-pool&invite=${LEGACY}`});
+    await page.locator('#authCard').waitFor({state:'visible'});
+    assert.match(await page.textContent('#sessionError'),/retired format/);
+    assert.equal(page.url(),`${base}/participant.html?pool=it-pool`);
+    await signIn(page,'invited@example.test');
+    await page.locator('#emptyCard').waitFor({state:'visible'});
+    assert.match(await page.textContent('#sessionError'),/retired format/);
+    assert.deepEqual(world.calls.map(c=>c.name),['pool_platform_participant_context']);
     await clean(page,seen);
   });
 
@@ -605,7 +767,7 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     for(const name of ['pool_platform_claim_entry_invite','pool_platform_participant_context']){
       const world=liveWorld({owners:{'entry-2':'wrong@example.test'},invites:{[INVITE]:{email:'invited@example.test',entryId:'entry-1'}}});
       const held=gate(world,name);
-      const {page,seen}=await openPage({world,signedInAs:'wrong@example.test',query:`?invite=${INVITE}`});
+      const {page,seen}=await openPage({world,signedInAs:'wrong@example.test',query:`#invite=${INVITE}`});
       await held.arrived;
       await page.click('#signOut');await page.locator('#authCard').waitFor({state:'visible'});
       const reply=page.waitForResponse(response=>response.url().endsWith(`/rpc/${name}`));
@@ -618,7 +780,7 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     {
       const world=liveWorld({invites:{[INVITE]:{email:'invited@example.test',entryId:'entry-1'}}});
       const held=gate(world,'pool_platform_claim_entry_invite');
-      const {page,seen}=await openPage({world,signedInAs:'wrong@example.test',query:`?invite=${INVITE}`});
+      const {page,seen}=await openPage({world,signedInAs:'wrong@example.test',query:`#invite=${INVITE}`});
       await held.arrived;
       await page.evaluate(()=>{window.__signOutGate=new Promise(resolve=>{window.__finishSignOut=resolve})});
       await page.click('#signOut');
@@ -750,7 +912,7 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
   test('mobile widths: no horizontal overflow and Sign out stays on screen in every signed-in state',async()=>{
     for(const width of [320,360,375,384,390,412]){
       const states=[
-        {world:liveWorld({invites:{[INVITE]:{email:'invited@example.test',entryId:'entry-1'}}}),signedInAs:'wrong@example.test',query:`?invite=${INVITE}`,ready:'#sessionError'},
+        {world:liveWorld({invites:{[INVITE]:{email:'invited@example.test',entryId:'entry-1'}}}),signedInAs:'wrong@example.test',query:`#invite=${INVITE}`,ready:'#sessionError'},
         {world:liveWorld(),signedInAs:'loner@example.test',ready:'#emptyCard'},
         {world:liveWorld({owners:{'entry-1':'player@example.test'}}),signedInAs:'player@example.test',ready:'#pickForm'},
         {world:survivorWorld(),signedInAs:'player@example.test',ready:'#pickForm',survivor:true}
@@ -897,7 +1059,7 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     assert.equal(await page.textContent('#poolName'),'Private Console Pool');
     await page.fill('#inviteEmail','invitee@example.test');await page.click('#createInvite');
     await page.locator('#inviteResult').waitFor({state:'visible'});
-    assert.ok((await page.textContent('#inviteResult')).includes(`invite=${INVITE_OUT}`));
+    assert.match(await page.textContent('#inviteResult'),new RegExp(`^Invite ready: ${`${base}/participant.html?pool=it-pool#invite=${INVITE_OUT}`.replace(/[.*+?^${}()|[\]\\/]/g,'\\$&')} · expires `));
     const reloaded=page.waitForResponse(response=>response.url().endsWith('/rpc/pool_platform_commissioner_context'));
     await page.fill('#importText',IMPORT_CSV);await page.click('#runImport');
     await page.locator('#importResult').waitFor({state:'visible'});
@@ -912,6 +1074,26 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     await signIn(page,'player@example.test');
     await page.locator('#sessionError').waitFor({state:'visible'});
     await noConsoleLeft(page,'next account',{signedOut:false});
+    await clean(page,seen);
+  });
+
+  test('commissioner live → participant: the link shown carries the pool in its query and the token only in its fragment, and opening it claims that token',async()=>{
+    const {page:consolePage,seen:consoleSeen}=await openConsole({world:consoleWorld(),signedInAs:'commish@example.test'});
+    await consolePage.locator('#importCard').waitFor({state:'visible'});
+    await consolePage.click('#createInvite');
+    await consolePage.locator('#inviteResult').waitFor({state:'visible'});
+    const link=new URL(/^Invite ready: (\S+) · expires /.exec(await consolePage.textContent('#inviteResult'))?.[1]);
+    assert.equal(link.href,`${base}/participant.html?pool=it-pool#invite=${INVITE_OUT}`);
+    assert.deepEqual([...link.searchParams],[['pool','it-pool']]);
+    assert.equal(consolePage.url(),`${base}/commissioner.html`,'the commissioner page URL never holds a token');
+    await clean(consolePage,consoleSeen);
+    // The participant opens exactly that link.
+    const world=liveWorld({invites:{[INVITE_OUT]:{email:'invited@example.test',entryId:'entry-1'}}});
+    const {page,seen}=await openPage({world,signedInAs:'invited@example.test',query:link.href.slice(`${base}/participant.html`.length)});
+    await page.locator('#entryCard').waitFor({state:'visible'});
+    assert.equal(page.url(),`${base}/participant.html?pool=it-pool`);
+    assert.deepEqual(world.calls.filter(c=>c.name==='pool_platform_claim_entry_invite').map(c=>[c.email,c.args.p_invite_token]),[['invited@example.test',INVITE_OUT]]);
+    await inviteContained(page,world,seen,INVITE_OUT);
     await clean(page,seen);
   });
 
@@ -1065,6 +1247,50 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
       await page.locator('#pickForm').waitFor({state:'visible'});
       assert.equal(await page.textContent('#modePill'),'SANDBOX · synthetic');
       assert.deepEqual(await cached(),{'pool-platform-commercial-v4':listed});
+      assert.equal(errors.length,1,'only the offline configuration import failed');
+      assert.deepEqual(await page.evaluate(()=>window.__csp),[]);
+    }finally{if(own.listening)await stop()}
+  });
+
+  test('service worker in Chromium: an invite fragment never reaches the host, a cache key or the address bar, online or offline',async()=>{
+    const own=await serveDirectory(new URL('./',import.meta.url)),port=own.address().port,origin=`http://127.0.0.1:${port}`;
+    const stop=()=>new Promise(resolve=>{own.close(()=>resolve());own.closeAllConnections()});
+    try{
+      const context=await browser.newContext();contexts.push(context);
+      const page=await context.newPage(),errors=[],requests=[];
+      page.on('pageerror',error=>errors.push(error.message));
+      context.on('request',request=>requests.push(request.url())); // the page's requests and its worker's
+      await recordCsp(page);
+      await page.goto(`${origin}/index.html`);
+      await page.evaluate(()=>navigator.serviceWorker.ready);
+      await page.reload();
+      assert.equal(await page.evaluate(()=>navigator.serviceWorker.controller?.scriptURL),`${origin}/service-worker.js`);
+      const cached=()=>page.evaluate(async()=>{
+        const out={};for(const name of await caches.keys())out[name]=(await (await caches.open(name)).keys()).map(r=>r.url).sort();return out;
+      });
+      const listed=['','index.html','participant.html','commissioner.html','styles.css','sw-register.js','participant.js','commissioner.js',
+        'submission-core.js','participant-core.js','import-core.js','auth-core.js','platform-client.js','manifest.webmanifest'].map(asset=>`${origin}/${asset}`).sort();
+      // Each link is opened from another page, so it is a real navigation through the worker, with and without a query.
+      for(const [link,scrubbed] of [[`${origin}/participant.html?pool=demo#invite=${INVITE}`,`${origin}/participant.html?pool=demo`],
+        [`${origin}/participant.html#invite=${INVITE}`,`${origin}/participant.html`]]){
+        await page.goto(`${origin}/index.html`);
+        await page.goto(link);
+        await page.locator('#pickForm').waitFor({state:'visible'});
+        assert.equal(page.url(),scrubbed);
+      }
+      assert.deepEqual(await cached(),{'pool-platform-commercial-v4':listed},'no invite link was stored');
+      // The host unreachable: the worker serves the bare cached page, which scrubs the invite before its configuration
+      // import fails.
+      await page.goto(`${origin}/index.html`);
+      await stop();
+      await page.goto(`${origin}/participant.html#invite=${INVITE}`);
+      await page.locator('#sessionError').waitFor({state:'visible'});
+      assert.equal(await page.textContent('#sessionError'),CONFIG_UNAVAILABLE);
+      assert.equal(page.url(),`${origin}/participant.html`);
+      assert.deepEqual(await cached(),{'pool-platform-commercial-v4':listed});
+      assert.equal(own.targets.some(target=>target.includes(INVITE)||target.includes('#')),false,JSON.stringify(own.targets));
+      assert.ok(own.targets.includes('/participant.html?pool=demo')&&own.targets.includes('/participant.html'));
+      assert.equal(requests.some(url=>url.includes(INVITE)||url.includes('#')),false,JSON.stringify(requests));
       assert.equal(errors.length,1,'only the offline configuration import failed');
       assert.deepEqual(await page.evaluate(()=>window.__csp),[]);
     }finally{if(own.listening)await stop()}
@@ -1292,6 +1518,103 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
       await new Promise(resolve=>{planter.close(()=>resolve());planter.closeAllConnections()});
       fs.rmSync(work,{recursive:true,force:true});
     }
+  });
+
+  // The invite telemetry finding end to end: the real page, SDK, local server and Auth proxy core (the one the Netlify
+  // functions mount), with stand-ins for Neon Auth and the Data API only.
+  test('real bundled SDK: an invite link opened at scripts/serve.mjs and signed in through the same-origin Auth proxy keeps its token out of every request target, Auth call, log line, header and store; only the claim RPC body carries it',{skip:ESBUILD?false:'run npm ci in pool-platform to bundle the real SDK'},async()=>{
+    const work=fs.mkdtempSync(path.join(os.tmpdir(),'pool-platform-invite-')),dist=path.join(work,'dist');
+    const UPSTREAM='https://ep-example-000000.neonauth.c-0.us-east-2.aws.neon.tech/neondb/auth',DATA='https://data.pool.test/neondb/rest/v1';
+    // Synthetic shapes only, answered as in the cookie test above: one accepted code, one session.
+    const TOKEN='SynthSessTokenAbcdefghijklmn0123',SIGNED=`${TOKEN}.c3ludGhldGljLXNpZ25hdHVyZQ%3D%3D`;
+    const b64=value=>Buffer.from(JSON.stringify(value)).toString('base64url');
+    const JWT=`${b64({alg:'EdDSA',typ:'JWT'})}.${b64({sub:'user-1',role:'authenticated'})}.c2hhcGUtb25seS1zaWduYXR1cmU`;
+    const USER={id:'user-1',email:'invited@example.test',emailVerified:true,name:'Invited'};
+    const neonCookie=value=>`${UPSTREAM_SESSION_COOKIE}=${value}; Max-Age=${value?604800:0}; Path=/; HttpOnly; Secure; SameSite=None; Partitioned`;
+    const upstream=[];
+    const upstreamFetch=async(url,init)=>{
+      const call={url,method:init.method,headers:Object.fromEntries(new Headers(init.headers)),body:init.body??null},route=url.slice(UPSTREAM.length);
+      upstream.push(call);
+      const headers=new Headers({'content-type':'application/json'});
+      if(route==='/get-session'){
+        if(call.headers.cookie!==`${UPSTREAM_SESSION_COOKIE}=${SIGNED}`)return new Response('null',{status:200,headers});
+        headers.set('set-auth-jwt',JWT);headers.set('set-auth-token',TOKEN);headers.append('set-cookie',neonCookie(SIGNED));
+        return new Response(JSON.stringify({session:{id:'sess-1',userId:'user-1',token:TOKEN,expiresAt:'2030-01-01T00:00:00.000Z'},user:USER}),{status:200,headers});
+      }
+      if(route==='/email-otp/send-verification-otp')return new Response('{"success":true}',{status:200,headers});
+      if(route==='/sign-in/email-otp'){
+        if(JSON.parse(call.body).otp!=='123456')return new Response('{"code":"INVALID_OTP","message":"Invalid OTP"}',{status:400,headers});
+        headers.set('set-auth-token',TOKEN);headers.append('set-cookie',neonCookie(SIGNED));
+        return new Response(JSON.stringify({token:TOKEN,user:USER}),{status:200,headers});
+      }
+      if(route==='/sign-out'){headers.append('set-cookie',neonCookie(''));return new Response('{"success":true}',{status:200,headers})}
+      return new Response('{}',{status:404,headers});
+    };
+    try{
+      await buildCommercialFrontend({outDir:dist,env:{POOL_PLATFORM_MODE:'live',POOL_PLATFORM_DATA_URL:DATA,POOL_PLATFORM_DEFAULT_POOL_SLUG:'it-pool'}});
+      const lines=[];
+      const local=await startServer({dir:dist,port:0,log:line=>lines.push(line),env:{POOL_PLATFORM_MODE:'live',POOL_PLATFORM_AUTH_UPSTREAM_URL:UPSTREAM},upstreamFetch});
+      try{
+        const origin=new URL(local.url).origin,{context:poolContext,entries}=liveWorld();
+        const context=await browser.newContext({serviceWorkers:'block'});contexts.push(context);
+        const page=await context.newPage(),errors=[],requests=[],messages=[],data=[];
+        page.on('pageerror',error=>errors.push(error.message));
+        page.on('console',message=>messages.push(message.text()));
+        context.on('request',request=>requests.push({method:request.method(),url:request.url(),headers:request.headers()}));
+        await context.route(/neonauth/,route=>route.abort());
+        // The Data API (cross-origin): this invite claims entry-1 once; the context then holds that entry.
+        let claimed=false;
+        await context.route('https://data.pool.test/**',route=>{
+          const request=route.request(),cors={'access-control-allow-origin':origin,'access-control-allow-headers':'authorization, content-type, accept','access-control-allow-methods':'POST'};
+          if(request.method()==='OPTIONS')return route.fulfill({status:204,headers:cors});
+          data.push({url:request.url(),headers:request.headers(),body:request.postData()});
+          const reply=(status,body)=>route.fulfill({status,contentType:'application/json',headers:cors,body:JSON.stringify(body)});
+          if(request.url()===`${DATA}/rpc/pool_platform_claim_entry_invite`){
+            if(claimed||request.postDataJSON()?.p_invite_token!==INVITE)return reply(400,{message:'invite_unavailable'});
+            claimed=true;return reply(200,{entry_id:'entry-1',claimed:true});
+          }
+          if(request.url()===`${DATA}/rpc/pool_platform_participant_context`)return claimed?reply(200,{...poolContext,entries:[entries[0]]}):reply(400,{message:'pool_not_found'});
+          return reply(400,{message:'unexpected_rpc'});
+        });
+        const signIn=async()=>{
+          await page.fill('#email','invited@example.test');await page.click('#sendCode');
+          await page.locator('#otpWrap').waitFor({state:'visible'});
+          await page.fill('#otp','123456');await page.click('#verifyCode');
+          await page.locator('#entryCard').waitFor({state:'visible'});
+        };
+        await page.goto(`${local.url}participant.html?pool=it-pool#invite=${INVITE}`);
+        await page.locator('#authCard').waitFor({state:'visible'});
+        assert.equal(page.url(),`${local.url}participant.html?pool=it-pool`,'scrubbed before sign-in');
+        await signIn();
+        assert.equal(await page.isVisible('#sessionError'),false);
+        // Signed out and in again on the same page: the claimed token is gone, so nothing is claimed twice.
+        await page.click('#signOut');await page.locator('#authCard').waitFor({state:'visible'});
+        await signIn();
+        assert.equal(await page.isVisible('#sessionError'),false);
+        // The one place the token travels: the claim RPC body, once, under the session's JWT.
+        const claims=data.filter(call=>call.url===`${DATA}/rpc/pool_platform_claim_entry_invite`);
+        assert.deepEqual(claims.map(call=>[call.body,call.headers.authorization]),[[JSON.stringify({p_invite_token:INVITE}),`Bearer ${JWT}`]]);
+        for(const call of data)assert.equal(JSON.stringify(claims.includes(call)?{...call,body:null}:call).includes(INVITE),false,call.url);
+        // Nowhere else: no request URL or header (the page, the Auth proxy, the Data API), nothing the proxy sent to Neon
+        // Auth, no server or proxy log line, no console message, store or cookie, not the page and not the address bar.
+        const auth=requests.filter(r=>new URL(r.url).pathname.startsWith('/api/auth/'));
+        assert.deepEqual([...new Set(auth.map(r=>`${r.method} ${new URL(r.url).pathname}`))].sort(),
+          ['GET /api/auth/get-session','POST /api/auth/email-otp/send-verification-otp','POST /api/auth/sign-in/email-otp','POST /api/auth/sign-out']);
+        assert.ok(requests.some(r=>r.url===`${local.url}participant.html?pool=it-pool`),'the page was requested by its path and pool only');
+        for(const [label,value] of [['browser requests',requests],['Neon Auth upstream',upstream],['server and proxy log',lines],['console',messages]]){
+          assert.equal(JSON.stringify(value).includes(INVITE),false,label);
+        }
+        assert.ok(lines.includes('GET /participant.html 200')&&lines.includes('AUTH POST verify-otp 200'),JSON.stringify(lines));
+        assert.equal(lines.some(line=>line.includes('#')||line.includes('invite')),false,JSON.stringify(lines));
+        const stores=await page.evaluate(async()=>JSON.stringify({local:{...localStorage},session:{...sessionStorage},cookie:document.cookie,
+          history:history.state,databases:await indexedDB.databases(),caches:await caches.keys()}));
+        assert.equal(stores.includes(INVITE),false,stores);
+        assert.equal(JSON.stringify(await context.cookies()).includes(INVITE),false);
+        assert.equal((await page.content()).includes(INVITE),false);
+        assert.equal(page.url(),`${local.url}participant.html?pool=it-pool`);
+        assert.deepEqual(errors,[]);
+      }finally{await local.close()}
+    }finally{fs.rmSync(work,{recursive:true,force:true})}
   });
 
   // Finding 1 (Corrective 2) in real Chromium: a sibling host plants a cookie whose raw name carries a leading

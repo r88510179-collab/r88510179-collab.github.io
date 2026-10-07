@@ -1,6 +1,7 @@
 import {CONFIG_UNAVAILABLE,PlatformClient} from './platform-client.js';
 import {SUBMISSION_SOURCES} from './submission-core.js';
 import {prepareCommissionerImport,describeImportError,summarizeBatchResults} from './import-core.js';
+import {participantInviteUrl} from './auth-core.js';
 import './sw-register.js';
 
 const $=id=>document.getElementById(id),params=new URLSearchParams(location.search);
@@ -74,8 +75,9 @@ $('createInvite').addEventListener('click',async()=>{
     const entryId=$('inviteEntry').value,email=$('inviteEmail').value.trim()||null;
     const result=client.live?await client.createInvite({entryId,email,expiresHours:168}):{invite_token:'a'.repeat(64),entry_id:entryId,expires_at:new Date(Date.now()+7*86400000).toISOString()};
     if(state.session!==session)return; // signed out while creating: show no link for the previous account
-    const url=new URL('./participant.html',location.href);url.searchParams.set('pool',state.context.pool.slug);url.searchParams.set('invite',result.invite_token);
-    msg('inviteResult',`Invite ready: ${url.href} · expires ${new Date(result.expires_at).toLocaleString()}`);
+    // The token goes only in the link's fragment, which no request to the host carries; the pool stays in the query.
+    const url=participantInviteUrl(new URL('./participant.html',location.href),state.context.pool.slug,result.invite_token);
+    msg('inviteResult',`Invite ready: ${url} · expires ${new Date(result.expires_at).toLocaleString()}`);
   }catch(e){if(state.session===session)msg('importError',e.message)}
 });
 $('sampleImport').addEventListener('click',()=>{

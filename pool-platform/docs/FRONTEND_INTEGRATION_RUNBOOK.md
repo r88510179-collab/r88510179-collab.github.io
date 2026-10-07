@@ -33,7 +33,7 @@ until then only the signed-out checks in "Auth proxy checks, before any code is 
 - The pages run under `script-src 'self'` and `style-src 'self'`: no inline script, no inline style.
 - The service worker is registered from `sw-register.js` with scope `./`, caches only the allow-listed app shell
   (`pool-platform-commercial-v4`) and never stores or answers `platform-config.js`, Auth or Data API traffic,
-  `Authorization`-bearing requests or query-string URLs (invites).
+  `Authorization`-bearing requests or URLs with a query string or a fragment (invites).
 - `npm run serve` (`scripts/serve.mjs`) serves `dist/` at `http://localhost:4173/` only, with the production CSP, and
   for a live build mounts the Auth proxy at `/api/auth` (POST is accepted only there).
 
@@ -91,8 +91,8 @@ Open exactly `http://localhost:4173/participant.html`, never `http://127.0.0.1:4
     location.hostname === 'localhost'
     location.origin === 'http://localhost:4173'
 
-and that the mode pill reads `LIVE · secure`. The server log lists paths without query strings, so invite tokens
-never appear in it; Auth proxy lines read `AUTH <method> <route> <status> [reason]` and never hold an email, code,
+and that the mode pill reads `LIVE · secure`. Invite tokens travel only in the URL fragment, which the browser never
+sends, so they never reach the server; its log also lists paths without query strings. Auth proxy lines read `AUTH <method> <route> <status> [reason]` and never hold an email, code,
 cookie or token. Every page response carries the build's CSP (`connect-src 'self' <Data API origin>`: no Neon Auth
 origin), and the server prints `Auth: same-origin proxy at http://localhost:4173/api/auth/* (4 routes)`.
 
@@ -201,15 +201,24 @@ data, an overwritten source lock, a secret in a URL or log) and record it.
 
 1. The commissioner creates a synthetic invite for an unclaimed synthetic entry (with and without an email
    restriction); record the result, never the token.
-2. The participant opens the invite link; the invite is claimed only after sign-in.
-3. Email restriction: the wrong signed-in account sees "This invitation was issued to a different email address.",
-   the link stays in the address bar and the invite is not consumed.
-4. Successful claim with the invited account: the entry loads and the `invite=` parameter leaves the URL.
-5. Reload after claim: the entry still loads; nothing is claimed twice.
+2. The link the commissioner page shows has the shape `participant.html?pool=<slug>#invite=<token>`: the token only
+   after `#`, never in the query string. The participant opens it signed out: the `#invite=` part leaves the address
+   bar at once (the pool stays), DevTools' Network panel shows the page requested as `participant.html?pool=<slug>`
+   with no invite, and the invite is claimed only after sign-in. Nothing about the invite is in Local Storage,
+   Session Storage, IndexedDB, Cookies or Cache Storage (Application panel).
+3. Email restriction: the wrong signed-in account sees "This invitation was issued to a different email address."
+   and the invite is not consumed; it is held in page memory, not the address bar.
+4. Successful claim with the invited account: the entry loads.
+5. Reload after claim: the entry still loads; nothing is claimed twice. (A reload before the claim drops the invite,
+   which lives only in page memory: reopen the original link.)
 6. Reopened, already-used invite: "expired, already used, or no longer available", and the account's own entry
    still loads.
-7. Wrong-account behaviour: sign out, sign in as the invited account, claim succeeds.
+7. Wrong-account behaviour: sign out, sign in as the invited account on the same page, claim succeeds.
 8. Sign-out/account switch: nothing of the first account remains after switching.
+9. Retired link format: the same link with `?pool=<slug>&invite=<token>` in place of `#invite=` shows "This
+   invitation link uses a retired format and can no longer be used. Ask your commissioner for a new invitation
+   link.", the `invite` parameter leaves the address bar, and no claim request is made. Use a synthetic invite that
+   is not needed afterwards: a token sent in a query string has reached the server.
 
 ### Commissioner
 

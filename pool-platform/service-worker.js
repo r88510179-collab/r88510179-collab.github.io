@@ -1,6 +1,7 @@
 // The commercial app may share its origin, and so Cache Storage, with other apps. This worker only ever deletes
 // caches in its own namespace and only stores an explicit list of same-origin static files at their bare
-// paths: never auth or Data API traffic, cross-origin requests, or any URL with a query string (invites).
+// paths: never auth or Data API traffic, cross-origin requests, or any URL with a query string or a fragment
+// (invites: FetchEvent.request.url keeps the fragment, and Cache Storage would keep it in the stored key).
 // platform-config.js is deliberately not listed, so the worker neither stores nor answers it: the runtime
 // configuration always comes from the network and no cached copy can pin a page to an old backend. v3 cached
 // it; activating this version deletes v3. The bundled SDK (vendor/neon-js.js) is left to the network as well.
@@ -14,7 +15,7 @@ const ASSETS=[
 const STATIC_PATHS=new Set(ASSETS.map(asset=>new URL(asset,self.location).pathname));
 
 function isStaticAsset(request,url){
-  return request.method==='GET'&&url.origin===self.location.origin&&url.search===''&&
+  return request.method==='GET'&&url.origin===self.location.origin&&url.search===''&&url.hash===''&&
     STATIC_PATHS.has(url.pathname)&&!request.headers.has('authorization');
 }
 
@@ -46,8 +47,8 @@ self.addEventListener('fetch',event=>{
     }
     return response;
   }).catch(()=>{
-    // Offline: serve the cached copy of the same page with any query string dropped (the query itself is
-    // never a cache key), falling back to the landing page.
+    // Offline: serve the cached copy of the same page with any query string and fragment dropped (neither is
+    // ever part of a cache key), falling back to the landing page.
     const bare=url.origin+url.pathname;
     return (STATIC_PATHS.has(url.pathname)?fromOwnCache(bare):Promise.resolve(undefined))
       .then(hit=>hit||(request.mode==='navigate'?fromOwnCache(new URL('./index.html',self.location).href):undefined))

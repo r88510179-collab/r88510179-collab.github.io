@@ -277,14 +277,65 @@ OTP is sent and no sign-in is made for any of them.
 9. Each rate limit answers 429 near its threshold, and that 429 carries no CORS grant.
 10. The functions run on Node 22, and each function bundle holds only its file, the adapter, the core and the core's
     two modules.
-11. What Netlify's request logs and observability record for a URL with a query string (see the invite issue below).
+11. What Netlify's request logs and observability record for a URL with a query string. Stage A: Netlify
+    Observability records request URLs with their query parameters (the invite finding below).
 
 ### Carried issues (unchanged by the Netlify adapter)
 
-- **Invite-query observability: unresolved, must be settled before customers.** Invite links carry their token in
-  the query string. Whether Netlify's request logs or observability features record query strings is not known.
+- **Invite-query telemetry exposure: MEDIUM, carried from Stage A; the remediation below is an implementation
+  candidate, not deployed.** Stage A showed that Netlify Observability records request URLs with their query
+  parameters, and the deployed `d23448b3` builds invite links as `participant.html?pool=<slug>&invite=<token>`, so
+  opening one would put its bearer token in Netlify telemetry. The production deployment is unchanged until the
+  candidate is independently reviewed, merged and deployed; until then, every invite link it issues has that shape.
 - **Neon pre-registration takeover: HIGH, a customer blocker.** Not addressed here.
 - Neon question I (how Email OTP limits are keyed) remains a hosting blocker.
+
+### Invite links: the token travels in the fragment (implementation candidate)
+
+Branch `commercial-v1-invite-fragment-remediation`, built on `d23448b3`; not reviewed and not deployed.
+
+- **Old transport.** `participant.html?pool=<slug>&invite=<token>`, read by the participant page from the query
+  string. The query string is part of the HTTP request target, so the token reached Netlify's CDN, and its
+  request logs and Observability, before any script ran. (The local server's log already dropped query strings;
+  Netlify's do not.)
+- **New transport.** `participant.html?pool=<slug>#invite=<token>`, built by `participantInviteUrl()` in
+  `auth-core.js`. The pool slug is not secret and stays in the query string; the token is form-encoded into the
+  fragment only.
+- **Why the fragment stays in the browser.** A URL's fragment is never part of an HTTP request: the browser strips
+  it before sending the request target, and it is never part of a `Referer` (the pages send `no-referrer` in any
+  case). Netlify's CDN, request logs, Observability and functions, the Auth proxy and the Data API therefore never
+  receive it. The headless Chromium tests check the request targets a server actually received.
+- **Read once, scrubbed at once.** The first statement of `participant.js`'s module body, before it awaits anything
+  (the configuration import included), reads the invite with `readInviteFromUrl(location.href)` and calls
+  `history.replaceState` with the same URL minus the invite (the whole fragment goes; the pool stays). An invite
+  link opened over an already open participant page changes only the fragment, which loads nothing, so the page
+  reloads on `hashchange` and reads it the same way.
+- **Page memory only.** The token is then held only in a module variable for the life of that page: never in
+  `localStorage`, `sessionStorage`, IndexedDB, a cookie or Cache Storage, and never logged. A reload before the claim
+  loses it; the participant reopens the original link. A failed claim (wrong account, used or expired invite) keeps
+  it, so the participant can sign out and sign in as the invited account on the same page; a successful claim clears
+  it. The claim protocol is unchanged: `pool_platform_claim_entry_invite` receives `p_invite_token` in the body of
+  the authenticated Data API request, as before.
+- **Service worker.** `FetchEvent.request.url` keeps the fragment, and Chromium's Cache Storage stored
+  `participant.html#invite=<token>` when a link had no query string (seen in headless Chromium while building this
+  candidate). The worker now treats a URL with a fragment as it treats one with a query string: handed to the
+  network, never stored, and offline answered with the bare cached page. The cache name stays
+  `pool-platform-commercial-v4`: no released build produced a fragment invite link, and a link with `?pool=` was
+  never cacheable.
+- **Retired query-string links fail closed.** If the participant page finds an `invite` parameter in the query
+  string it never uses its value, removes it from the address bar at once, makes no claim, and says the link uses a
+  retired format and a new invitation link is needed. A link with both a query and a fragment invite, or the
+  fragment invite twice, is refused the same way rather than resolved by guessing. Every link issued in the old
+  format must be reissued.
+- **What the page cannot undo.** Refusing a query-string link does not revoke its token: the claim RPC does not know
+  how a token travelled. A token that was already sent in a query string (and so may be in Netlify telemetry) stays
+  claimable by a signed-in account that holds it until it is claimed or expires (168 hours as the commissioner page
+  issues them). Revoking one needs a database action outside this change (`revoked_at` exists but has no workflow).
+- **Remaining browser-side exposure, by design.** The invite is a bearer link: whoever holds the original URL holds
+  the token, including a recipient who copies or forwards it, and the channel that delivered it. The fragment shows
+  in the address bar until the module runs; the browser's own history may keep the URL as first opened. The fragment
+  is no protection against a compromised browser, a malicious extension, XSS, screenshots or screen sharing, or the
+  recipient sharing the link.
 
 ## Configuration per environment
 

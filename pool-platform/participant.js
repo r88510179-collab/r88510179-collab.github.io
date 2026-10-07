@@ -1,16 +1,27 @@
 import {CONFIG_UNAVAILABLE,PlatformClient} from './platform-client.js';
 import {SUBMISSION_SOURCES,validatePickPayload} from './submission-core.js';
 import {normalizeGames,pickemPayloadFromSelections,survivorLegalTeams,validateSurvivorSelection,entrySubmissionAccess} from './participant-core.js';
+import {authErrorMessage,readInviteFromUrl} from './auth-core.js';
 import './sw-register.js';
 
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+// An invite link carries its token only in the fragment, which the browser never sends to the host. It is read here,
+// before anything else runs, and scrubbed from the address bar at once; from then on it is kept only in this page's
+// memory, never in a store, a log or another URL, so a reload before the claim needs the link again. A link with an
+// invite in its query string (the retired format) or with two invites is refused and never claimed.
+const invite=readInviteFromUrl(location.href);
+if(invite.found)history.replaceState(null,'',invite.cleanUrl);
+let inviteToken=invite.token;
+const inviteError=invite.error?authErrorMessage(invite.error):'';
+if(inviteError)message('sessionError',inviteError);
+// An invite link opened over this page changes only the fragment, which loads nothing: reload so it is read as above.
+window.addEventListener('hashchange',()=>{if(readInviteFromUrl(location.href).found)location.reload()});
 // The service worker never stores platform-config.js, so no cached copy can pin this page to an old backend. When it
 // cannot be read (offline, or missing from the deployment) the page says so and stops: it never falls back to the sandbox.
 const {PLATFORM_CONFIG}=await import('./platform-config.js').catch(e=>{$('modePill').textContent='UNAVAILABLE';message('sessionError',CONFIG_UNAVAILABLE);throw e});
 const params=new URLSearchParams(location.search);
 const poolSlug=params.get('pool')||PLATFORM_CONFIG.defaultPoolSlug;
-let inviteToken=params.get('invite')||'';
 const sandboxType=params.get('type')==='survivor'?'survivor':'pickem';
 const client=new PlatformClient(PLATFORM_CONFIG);
 const state={context:null,entry:null,session:null,pendingEmail:'',sandbox:!client.live};
@@ -41,11 +52,6 @@ function message(id,text){$(id).textContent=text;show(id,!!text)}
 function formatDeadline(value){
   const d=new Date(value);return Number.isFinite(d.getTime())?d.toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'—';
 }
-function cleanInviteFromUrl(){
-  if(!params.has('invite'))return;
-  params.delete('invite');
-  history.replaceState(null,'',params.toString()?`${location.pathname}?${params.toString()}`:location.pathname);
-}
 function setAuthVisible(){show('authCard',client.live&&!state.session);show('signOut',client.live&&!!state.session)}
 async function loadLiveContext(){
   const selectedId=state.entry?.id||null,session=state.session;let context=null;
@@ -56,11 +62,11 @@ async function loadLiveContext(){
   if(state.session!==session)return; // signed out while loading: render nothing for the previous account
   state.context=context;renderContext(selectedId);
 }
-async function claimInviteIfPresent(){if(!inviteToken||!state.session)return;await client.claimInvite(inviteToken);inviteToken='';cleanInviteFromUrl()}
+async function claimInviteIfPresent(){if(!state.session)return;if(inviteError)throw new Error(inviteError);if(!inviteToken)return;await client.claimInvite(inviteToken);inviteToken=''}
 // Runs once a session exists. Sign out is already showing in the shell. A failed invite claim (wrong account,
 // used or expired link) is reported beside it and the account's own entries still load, so reopening an invite
 // link that was already claimed never hides the entry. The token survives a failed claim, so the invited
-// account can still claim it after switching.
+// account can still claim it after switching. A refused link is reported the same way, and nothing is claimed.
 async function openSession(){
   const session=state.session,report=e=>{if(state.session===session)message('sessionError',e.message)};
   setAuthVisible();message('sessionError','');
@@ -81,7 +87,7 @@ $('verifyCode').addEventListener('click',async()=>{message('authError','');try{s
 $('otp').addEventListener('keydown',e=>{if(e.key==='Enter')$('verifyCode').click()});
 // Sign out lives in the shell, so it stays reachable with no entry, after a failed invite claim and after any
 // load error. It drops the session and everything loaded for it but keeps an invite that was not claimed
-// (inviteToken and the URL), so the invited account can still claim it after signing in.
+// (in page memory), so the invited account can still claim it after signing in.
 $('signOut').addEventListener('click',async()=>{
   try{await client.signOut()}catch(e){message('sessionError',e.message);return}
   Object.assign(state,{session:null,context:null,entry:null,pendingEmail:''});

@@ -16,6 +16,32 @@ export function normalizeInviteToken(value){
   return /^[0-9a-f]{64}$/.test(token)?token:null;
 }
 
+// An invite link carries its bearer token only in the URL fragment. A browser never sends a fragment in an HTTP
+// request, so no host, proxy, request log or observability tool sees the token. The pool slug is not secret and
+// stays in the query string. Any query or fragment already on pageUrl is replaced.
+export function participantInviteUrl(pageUrl,poolSlug,token){
+  const url=new URL(pageUrl);
+  url.search='';url.searchParams.set('pool',poolSlug);
+  url.hash=new URLSearchParams({invite:token}).toString();
+  return url.href;
+}
+
+// Reads the invite from a participant page URL. Only a single invite in the fragment is a token. An invite in the
+// query string is the retired link format: its token reached the host before any script ran, so it is never used,
+// whatever else the link holds. The fragment invite given twice is refused rather than guessed at. cleanUrl is the
+// page's path and query with every invite removed, for history.replaceState: the query loses only its invite
+// parameter, and a fragment that held an invite is dropped whole.
+export function readInviteFromUrl(href){
+  const url=new URL(href),fragment=new URLSearchParams(url.hash.slice(1));
+  const queried=url.searchParams.has('invite'),values=fragment.getAll('invite');
+  if(queried)url.searchParams.delete('invite');
+  if(values.length)url.hash='';
+  const read={found:queried||values.length>0,cleanUrl:url.pathname+url.search+url.hash};
+  if(queried)return{...read,token:'',error:values.length?'invite_link_ambiguous':'invite_link_retired'};
+  if(values.length>1)return{...read,token:'',error:'invite_link_ambiguous'};
+  return{...read,token:values[0]??'',error:''};
+}
+
 // Compact JWS: three non-empty base64url segments. The Data API only accepts a Neon Auth JWT, so an opaque
 // session token is never sent to it as a bearer credential.
 const JWT_SHAPE=/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
@@ -39,6 +65,8 @@ export function authErrorMessage(code){
   if(raw.includes('team_already_used'))return'That team has already been used by this entry.';
   if(raw.includes('entry_not_active'))return'This entry is not active, so picks cannot be submitted for it.';
   if(raw.includes('invite_unavailable'))return'This invitation is expired, already used, or no longer available.';
+  if(raw.includes('invite_link_retired'))return'This invitation link uses a retired format and can no longer be used. Ask your commissioner for a new invitation link.';
+  if(raw.includes('invite_link_ambiguous'))return'This invitation link is not valid. Ask your commissioner for a new invitation link.';
   if(raw.includes('entry_already_claimed'))return'This pool entry has already been claimed.';
   if(raw.includes('source_conflict:participant'))return'This entry was already submitted directly by the participant.';
   if(raw.includes('source_conflict:commissioner_'))return'This entry was already submitted through the commissioner channel.';

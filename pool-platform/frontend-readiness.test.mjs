@@ -8,6 +8,7 @@ import path from 'node:path';
 import test,{describe} from 'node:test';
 import {fileURLToPath} from 'node:url';
 import vm from 'node:vm';
+import {participantInviteUrl} from './auth-core.js';
 import {PLATFORM_CONFIG} from './platform-config.js';
 import {APP_DIR,OUTPUT_FILES,STATIC_FILES,buildCommercialFrontend,bundleNeonSdk,listFiles,verifySdkBundle} from './scripts/build.mjs';
 import {HEADERS_FILE,writeNetlifyHeaders} from './scripts/netlify-headers.mjs';
@@ -431,6 +432,12 @@ test('the local server answers only http://localhost:<port>, only built files, w
   }
   assert.equal((await get(port,'/platform-config.js')).body,serializeRuntimeConfig(runtimeConfigFromEnv({})));
   const invite='ab'.repeat(32);
+  // An invite link carries its token only in the fragment, and a browser requests only a URL's path and query, so
+  // the host is asked for the page and the pool and never sees the token.
+  const link=new URL(participantInviteUrl(server.url+'participant.html','demo',invite));
+  assert.equal(link.pathname+link.search,'/participant.html?pool=demo');
+  assert.equal((await get(port,link.pathname+link.search)).status,200);
+  // A retired query-string link still reaches the host with its token, and the log still drops the query.
   assert.equal((await get(port,`/participant.html?pool=demo&invite=${invite}`)).status,200);
   assert.ok(lines.includes('GET /participant.html 200'));
   assert.ok(lines.every(line=>!line.includes('?')&&!line.includes(invite)),'no query string or invite token is logged');
