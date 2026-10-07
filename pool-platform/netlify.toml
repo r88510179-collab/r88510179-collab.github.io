@@ -9,8 +9,11 @@
   # branch deploy or local context, is skipped. Netlify runs this with Bash: exit 1 builds, exit 0 skips.
   ignore = 'if [ "$CONTEXT" = "production" ] && [ "$BRANCH" = "commercial-v1-netlify-adapter" ]; then exit 1; else exit 0; fi'
   # The same check again, failing instead of skipping, because an ignore command never cancels a build that a build
-  # hook started. Then the locked install, the existing build, and the response headers for that build.
-  command = 'if [ "$CONTEXT" = "production" ] && [ "$BRANCH" = "commercial-v1-netlify-adapter" ]; then npm ci && npm run build && node scripts/netlify-headers.mjs; else echo "Refusing to build: only a production deploy of commercial-v1-netlify-adapter builds." >&2; exit 1; fi'
+  # hook started. Only past that check, rm -rf dist: Netlify's cache can restore the previous build's git-ignored output
+  # with the working tree (its _headers, or a file this build no longer writes), and scripts/build.mjs and
+  # scripts/netlify-headers.mjs stay fail-closed, refusing output they did not write. Then the locked install, the
+  # existing build, and the response headers for that build.
+  command = 'if [ "$CONTEXT" = "production" ] && [ "$BRANCH" = "commercial-v1-netlify-adapter" ]; then rm -rf dist && npm ci && npm run build && node scripts/netlify-headers.mjs; else echo "Refusing to build: only a production deploy of commercial-v1-netlify-adapter builds." >&2; exit 1; fi'
   publish = "dist"
 
 [build.processing.html]

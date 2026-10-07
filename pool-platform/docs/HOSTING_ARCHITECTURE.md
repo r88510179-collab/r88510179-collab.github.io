@@ -20,9 +20,9 @@ there: its `platform-config.js` is the sandbox, no live URL is committed, and `d
   same-origin Neon Auth proxy (below) through one thin adapter (`server/netlify-adapter.mjs`) around the one reviewed
   core (`server/auth-proxy-core.mjs`). No other function, no edge function, no redirect rule and no build plugin.
 - **The site's base directory is `pool-platform/`**, where Netlify reads `netlify.toml`: the build command
-  `npm ci && npm run build && node scripts/netlify-headers.mjs` behind a deploy-context guard, publish directory
-  `dist`, functions directory `netlify/functions`, Pretty URLs off, and Node 22 from `.nvmrc` (the version the lockfile
-  and build were verified with). See **Netlify** below.
+  `rm -rf dist && npm ci && npm run build && node scripts/netlify-headers.mjs` behind a deploy-context guard, publish
+  directory `dist`, functions directory `netlify/functions`, Pretty URLs off, and Node 22 from `.nvmrc` (the version
+  the lockfile and build were verified with). See **Netlify** below.
 - **Only the build output is published as static files**: the 14 allow-listed files, the generated
   `platform-config.js` and `vendor/neon-js.js`, plus `_headers`, generated after the build. Tests, docs, migrations,
   validation, scripts, `node_modules`, the Netlify and Vercel configuration, the functions and anything outside
@@ -155,7 +155,7 @@ function runtime is verified. What only a deploy can show is listed under **Stag
 | Setting | Value | Set in |
 | --- | --- | --- |
 | Base directory | `pool-platform` | the site (how Netlify finds `pool-platform/netlify.toml`) |
-| Build command | `npm ci && npm run build && node scripts/netlify-headers.mjs`, behind the deploy-context guard | `netlify.toml` |
+| Build command | `rm -rf dist && npm ci && npm run build && node scripts/netlify-headers.mjs`, behind the deploy-context guard | `netlify.toml` |
 | Publish directory | `dist` | `netlify.toml` |
 | Functions directory | `netlify/functions` | `netlify.toml` |
 | Pretty URLs | off: `[build.processing.html] pretty_urls = false` | `netlify.toml` (overrides the site setting) |
@@ -166,6 +166,14 @@ own `npm ci` installs exactly `package-lock.json` whatever that left, and `scrip
 differs from the lockfile. Pretty URLs stay off because that post-processing rewrites link URLs in the built pages,
 and the served pages must be the built bytes. `netlify.toml` sets no environment variable, URL, origin, secret,
 header rule or redirect (`netlify-hosting.test.mjs`).
+
+Netlify can restore the repository working tree from its build cache between builds, and with it the previous build's
+git-ignored `dist/`: its `_headers`, and any file a later build no longer produces. `dist/` is generated output, so the
+production build command removes it first: `rm -rf dist`, a fixed relative path, run only once the deploy-context
+guard has passed and before `npm ci`, and a failed removal stops the build. A warm-cache build therefore publishes the
+same bytes as a clear-cache build. `scripts/build.mjs` and `scripts/netlify-headers.mjs` are unchanged and keep
+refusing output they did not write, so a local or manual build over a stale `dist/` still stops
+(`netlify-hosting.test.mjs`).
 
 ### Functions and routing
 
@@ -211,7 +219,8 @@ sources (a stale build), a configuration or SDK bundle the build could not have 
 host, and an existing `_headers`, which it never overwrites. Same build, same bytes; it prints the file's SHA-256.
 Netlify documents that custom headers apply only to files served from its own store and never to a function's
 response, so the proxy's responses carry only the core's own headers and depend on nothing in `_headers`.
-`scripts/build.mjs` refuses to rebuild into a `dist/` that holds `_headers`: remove `dist/` first.
+`scripts/build.mjs` refuses to rebuild into a `dist/` that holds `_headers`: a manual rebuild needs `dist/` removed
+first, and the Netlify production build command removes it itself (**Build and publish**, above).
 
 ### Environment variables (set on the site, never in `netlify.toml`)
 

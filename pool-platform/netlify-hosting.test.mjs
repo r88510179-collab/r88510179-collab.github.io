@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test,{describe} from 'node:test';
 import {fileURLToPath} from 'node:url';
-import {APP_DIR,OUTPUT_FILES,buildCommercialFrontend,listFiles} from './scripts/build.mjs';
+import {APP_DIR,OUTPUT_FILES,STATIC_FILES,buildCommercialFrontend,listFiles} from './scripts/build.mjs';
 import {HEADERS_FILE,netlifyHeaders,writeNetlifyHeaders} from './scripts/netlify-headers.mjs';
 import {ConfigError,contentSecurityPolicy,parseRuntimeConfig,runtimeConfigFromEnv} from './scripts/runtime-config.mjs';
 import {startServer} from './scripts/serve.mjs';
@@ -85,16 +85,23 @@ const TOML=parseNetlifyToml(read('netlify.toml'));
 // The generator's code without its full-line comments, for checks on what it does rather than what it says.
 const GENERATOR_CODE=read('scripts/netlify-headers.mjs').split('\n').filter(line=>!line.trim().startsWith('//')).join('\n');
 
-// Runs a netlify.toml command as Netlify does (Bash, from the base directory) with only the given build metadata,
-// and with npm and node replaced by stubs that record their arguments, so nothing is installed or built.
+// Runs a netlify.toml command as Netlify does (Bash, from a base directory) with only the given build metadata, and
+// with rm, npm and node replaced by stubs that record their arguments, so nothing is deleted, installed or built.
+// PATH holds the stubs alone and is set last, so no test's environment can put a real tool in reach. The base
+// directory is a scratch stand-in, never pool-platform/, holding a dist/ with a sentinel file that must survive every
+// run: whatever a command runs, the developer's tree is never its target, and the rm stub deletes nothing.
 const BASH=spawnSync('bash',['-c','command -v bash'],{encoding:'utf8'}).stdout.trim();
 function runCommand(t,command,env,{fail}={}){
-  const bin=path.join(scratch(t),'bin'),log=path.join(bin,'calls.log');
+  const root=scratch(t),bin=path.join(root,'bin'),base=path.join(root,'base'),log=path.join(bin,'calls.log');
+  const sentinel=path.join(base,'dist','sentinel');
   fs.mkdirSync(bin);
-  for(const tool of ['npm','node']){
+  fs.mkdirSync(path.dirname(sentinel),{recursive:true});
+  fs.writeFileSync(sentinel,'');
+  for(const tool of ['rm','npm','node']){
     fs.writeFileSync(path.join(bin,tool),`#!/bin/sh\nprintf '%s\\n' "${tool} $*" >> "$STUB_LOG"\nif [ "${tool} $1" = "$STUB_FAIL" ]; then exit 7; fi\nexit 0\n`,{mode:0o755});
   }
-  const run=spawnSync(BASH,['-c',command],{cwd:HERE,encoding:'utf8',env:{PATH:bin,STUB_LOG:log,...(fail?{STUB_FAIL:fail}:{}),...env}});
+  const run=spawnSync(BASH,['-c',command],{cwd:base,encoding:'utf8',env:{STUB_LOG:log,...(fail?{STUB_FAIL:fail}:{}),...env,PATH:bin}});
+  assert.ok(fs.existsSync(sentinel),'the rm stub deleted nothing');
   return{status:run.status,stderr:run.stderr,calls:fs.existsSync(log)?fs.readFileSync(log,'utf8').split('\n').filter(Boolean):[]};
 }
 const ALLOWED={CONTEXT:'production',BRANCH:TARGET_BRANCH};
@@ -104,12 +111,39 @@ const REFUSED=[
   {CONTEXT:'deploy-preview',BRANCH:TARGET_BRANCH},{CONTEXT:'branch-deploy',BRANCH:TARGET_BRANCH},{CONTEXT:'dev',BRANCH:TARGET_BRANCH},
   {CONTEXT:'Production',BRANCH:TARGET_BRANCH},{CONTEXT:'',BRANCH:TARGET_BRANCH},{BRANCH:TARGET_BRANCH},{}
 ];
+const GUARD=`if [ "$CONTEXT" = "production" ] && [ "$BRANCH" = "${TARGET_BRANCH}" ]; then `;
+const PRODUCTION_STEPS=['rm -rf dist','npm ci','npm run build','node scripts/netlify-headers.mjs'];
 
-test('netlify.toml holds exactly the reviewed settings: npm ci, the existing build, the headers generator, dist, netlify/functions, Pretty URLs off',()=>{
+// The command's only deletion: the guard first, then exactly rm -rf dist as the first step, written statically (no
+// variable, glob, quote, trailing slash or other path), and no other rm or deleting tool anywhere in the command.
+function assertCleanupIsExactlyDist(command){
+  assert.ok(command.startsWith(GUARD),'the guard runs before anything else');
+  const [first,...rest]=command.slice(GUARD.length).split(' && ');
+  assert.equal(first,'rm -rf dist','the first step after the guard removes exactly dist');
+  assert.doesNotMatch(rest.join(' && '),/\b(?:rm|rmdir|unlink|find|git|mv)\b/,'nothing else is deleted');
+}
+
+// What each call of the production command does, done in-process inside a scratch copy of pool-platform: rm -rf dist
+// removes that copy's dist/, npm ci is the installed tree, and the build and headers generator are the real ones with
+// the SDK stand-in. A call with no equivalent here fails, so the replay follows the command as written.
+async function replay(calls,app){
+  const steps={
+    'rm -rf dist':()=>fs.rmSync(path.join(app,'dist'),{recursive:true,force:true}),
+    'npm ci':()=>{},
+    'npm run build':()=>buildCommercialFrontend({appDir:app,env:LIVE,bundleSdk:async()=>SDK_STAND_IN}),
+    'node scripts/netlify-headers.mjs':()=>writeNetlifyHeaders({appDir:app})
+  };
+  for(const call of calls){
+    assert.ok(Object.hasOwn(steps,call),`no in-process equivalent for ${call}`);
+    await steps[call]();
+  }
+}
+
+test('netlify.toml holds exactly the reviewed settings: rm -rf dist, npm ci, the existing build, the headers generator, dist, netlify/functions, Pretty URLs off',()=>{
   assert.deepEqual(TOML,{
     build:{
       ignore:`if [ "$CONTEXT" = "production" ] && [ "$BRANCH" = "${TARGET_BRANCH}" ]; then exit 1; else exit 0; fi`,
-      command:`if [ "$CONTEXT" = "production" ] && [ "$BRANCH" = "${TARGET_BRANCH}" ]; then npm ci && npm run build && node scripts/netlify-headers.mjs; else echo "Refusing to build: only a production deploy of ${TARGET_BRANCH} builds." >&2; exit 1; fi`,
+      command:`if [ "$CONTEXT" = "production" ] && [ "$BRANCH" = "${TARGET_BRANCH}" ]; then rm -rf dist && npm ci && npm run build && node scripts/netlify-headers.mjs; else echo "Refusing to build: only a production deploy of ${TARGET_BRANCH} builds." >&2; exit 1; fi`,
       publish:'dist'
     },
     'build.processing.html':{pretty_urls:false},
@@ -138,18 +172,63 @@ test('the deploy-context guard: only a production deploy of the candidate branch
   for(const env of REFUSED)assert.equal(runCommand(t,TOML.build.ignore,env).status,0,`skipped: ${JSON.stringify(env)}`);
 });
 
-test('the build command repeats the guard (an ignore command never cancels a build-hook build), then runs npm ci, the build and the headers generator in order',t=>{
+test('the build command repeats the guard (an ignore command never cancels a build-hook build), then removes dist and runs npm ci, the build and the headers generator in order',t=>{
   const allowed=runCommand(t,TOML.build.command,ALLOWED);
-  assert.deepEqual([allowed.status,allowed.calls],[0,['npm ci','npm run build','node scripts/netlify-headers.mjs']]);
+  assert.deepEqual([allowed.status,allowed.calls],[0,PRODUCTION_STEPS]);
+  // Refused before the cleanup: no rm, npm or node runs for any other branch or context.
   for(const env of REFUSED){
     const refusedRun=runCommand(t,TOML.build.command,env);
     assert.deepEqual([refusedRun.status,refusedRun.calls],[1,[]],`refused, nothing run: ${JSON.stringify(env)}`);
     assert.match(refusedRun.stderr,/Refusing to build: only a production deploy of commercial-v1-netlify-adapter builds\./);
   }
-  // A failing step stops the chain: nothing is built from an install that failed, and no headers without a build.
-  assert.deepEqual(runCommand(t,TOML.build.command,ALLOWED,{fail:'npm ci'}),{status:7,stderr:'',calls:['npm ci']});
-  assert.deepEqual(runCommand(t,TOML.build.command,ALLOWED,{fail:'npm run'}),{status:7,stderr:'',calls:['npm ci','npm run build']});
-  assert.equal(runCommand(t,TOML.build.command,ALLOWED,{fail:'node scripts/netlify-headers.mjs'}).status,7);
+  // A failing step stops the chain: nothing is installed if dist could not be removed, nothing is built from an
+  // install that failed, and no headers without a build.
+  assert.deepEqual(runCommand(t,TOML.build.command,ALLOWED,{fail:'rm -rf'}),{status:7,stderr:'',calls:['rm -rf dist']});
+  assert.deepEqual(runCommand(t,TOML.build.command,ALLOWED,{fail:'npm ci'}),{status:7,stderr:'',calls:['rm -rf dist','npm ci']});
+  assert.deepEqual(runCommand(t,TOML.build.command,ALLOWED,{fail:'npm run'}),{status:7,stderr:'',calls:['rm -rf dist','npm ci','npm run build']});
+  assert.deepEqual(runCommand(t,TOML.build.command,ALLOWED,{fail:'node scripts/netlify-headers.mjs'}),{status:7,stderr:'',calls:PRODUCTION_STEPS});
+});
+
+test('the cleanup target is statically exactly dist: no broader path, variable, glob or trailing slash, and nothing before the guard or in the ignore command',t=>{
+  assertCleanupIsExactlyDist(TOML.build.command);
+  assert.doesNotMatch(TOML.build.ignore,/\brm\b/,'the ignore command deletes nothing');
+  // The check has teeth: each broadening, a cleanup moved before the guard or into the refusal, and a second one fail it.
+  for(const target of ['.','*','$VARIABLE','dist/','"$SOME_DYNAMIC_VALUE"','"dist"','./dist','dist dist','../dist','/dist','~/dist','dist*']){
+    const command=TOML.build.command.replace('rm -rf dist ',`rm -rf ${target} `);
+    assert.notEqual(command,TOML.build.command);
+    assert.throws(()=>assertCleanupIsExactlyDist(command),assert.AssertionError,target);
+  }
+  const early=`rm -rf dist; ${TOML.build.command.replace('rm -rf dist && ','')}`;
+  for(const command of [early,TOML.build.command.replace('exit 1; fi','rm -rf dist; exit 1; fi'),
+    TOML.build.command.replace('&& npm run build','&& rm -rf . && npm run build'),TOML.build.command.replace('npm ci &&','/bin/rm -rf dist && npm ci &&')]){
+    assert.notEqual(command,TOML.build.command);
+    assert.throws(()=>assertCleanupIsExactlyDist(command),assert.AssertionError,command);
+  }
+  // And the harness sees it: a cleanup before the guard would run for a refused deploy, where none may.
+  assert.deepEqual(runCommand(t,early,REFUSED[0]).calls,['rm -rf dist']);
+});
+
+test('a warm working tree: the production command rebuilds over the previous deploy\'s dist/, _headers and a stale file included, to the same bytes as a clean build',async t=>{
+  const app=path.join(scratch(t),'pool-platform'),dist=path.join(app,'dist');
+  fs.mkdirSync(app);
+  for(const name of STATIC_FILES)fs.copyFileSync(path.join(HERE,name),path.join(app,name));
+  const {calls}=runCommand(t,TOML.build.command,ALLOWED);
+  const published=()=>Object.fromEntries(listFiles(dist).map(name=>[name,sha256(fs.readFileSync(path.join(dist,name)))]));
+  await replay(calls,app);
+  const clean=published();
+  assert.deepEqual(Object.keys(clean),[...OUTPUT_FILES,HEADERS_FILE].sort(),'a clean build');
+  // Netlify's cache restores the previous working tree, generated dist/ and its _headers included.
+  await replay(calls,app);
+  assert.deepEqual(published(),clean,'a warm build publishes the clean build\'s bytes');
+  fs.writeFileSync(path.join(dist,'stale.js'),'// from an older build\n');
+  fs.mkdirSync(path.join(dist,'retired'));
+  fs.writeFileSync(path.join(dist,'retired','page.html'),'<!-- removed from the allow-list -->\n');
+  await replay(calls,app);
+  assert.deepEqual(published(),clean,'a stale output file never survives into a new build');
+  // The builders themselves still refuse that tree: only the hosting command's cleanup makes it buildable.
+  fs.writeFileSync(path.join(dist,'stale.js'),'// from an older build\n');
+  await assert.rejects(replay(calls.filter(call=>call!=='rm -rf dist'),app),/holds _headers, which this build does not produce/);
+  assert.ok(fs.existsSync(path.join(dist,'stale.js'))&&fs.existsSync(path.join(dist,HEADERS_FILE)),'the refusing build deleted nothing');
 });
 
 test('.nvmrc pins Node 22 and nothing else',()=>{
