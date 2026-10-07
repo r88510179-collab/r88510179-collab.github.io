@@ -1072,6 +1072,78 @@ console.log('weekly HDC-11 halted-game warning, ungraded halted game, unchanged 
     assert.doesNotMatch(banner(v),/RULINGS STALE/);assert.doesNotMatch(rules(v),/could not be refreshed/);
   });
 
+  // ---- HDC-12 second review remediation (the independent review of 84108339). Copies of one feed event are one logical
+  // event: a repeated recorded event can neither hide the ruled pair under another event id (UNDER REVIEW) nor hide a forfeit
+  // (HOLD), and copies of one event id that disagree are never decided by the copy that comes first. Every feed order counts.
+  const orders=list=>list.length<2?[list]:list.flatMap((x,i)=>orders([...list.slice(0,i),...list.slice(i+1)]).map(rest=>[x,...rest]));
+  const named=events=>events.map(e=>e.id==='401437999'?'B':'A').join('+');
+  const forfeitB={...bufCin(espnStatus('STATUS_FORFEIT','post','Forfeit')),id:'401437999'};
+  const DUPLICATE='Some feed data was ignored to protect standings: BUF-CIN: duplicate events ignored';
+  const voidUnderReview=(v,label,notice)=>{
+    assert.deepEqual(records(v),[['D.C.','1','0'],['DJS','0','1']],`${label}: still void: no win and no loss; no other listing grades the game`);
+    assert.deepEqual(pickCells(v),['ok','void','bad','void'],`${label}: void pick cells`);
+    assert.deepEqual([v.$('left').textContent,v.$('finals').textContent],['0','1/2 · 1 void'],`${label}: not remaining, never an NFL final`);
+    assert.match(card(v,'BUF'),/VOID · Commissioner ruling · UNDER REVIEW/,`${label}: the game card is VOID and UNDER REVIEW`);
+    assert.doesNotMatch(card(v,'BUF'),/FINAL TIE|final tie/,`${label}: never an NFL tie`);
+    assert.match(rules(v),/BUF @ CIN<\/b><span class="rules-status">UNDER REVIEW</,`${label}: Rules & rulings says UNDER REVIEW`);
+    assert.match(banner(v),notice,`${label}: the participant notice names the conflict`);
+  };
+  const heldGame=(v,label)=>{
+    assert.deepEqual(pickCells(v),['ok','hold','bad','hold'],`${label}: HOLD, never VOID`);
+    assert.deepEqual([records(v),v.$('finals').textContent],[[['D.C.','1','0'],['DJS','0','1']],'1/2'],`${label}: the held game is never graded or voided`);
+    assert.match(card(v,'BUF'),/HOLD · Ruling information unusable/,`${label}: the game card says HOLD`);assert.doesNotMatch(card(v,'BUF'),/VOID/,`${label}: never VOID`);
+    assert.match(v.warning(),/BUF-CIN: ruling on hold \(the feed now reports STATUS_FORFEIT; a forfeit is not covered by v1 rulings\), not graded/,`${label}: the warning names the forfeit hold`);
+    assert.match(rules(v),/BUF @ CIN<\/b><span class="rules-status">HOLD</,`${label}: Rules & rulings says HOLD`);
+    assert.equal(syncLabel(v),'INCOMPLETE',label);
+  };
+  await regression('second review: the recorded event listed twice plus the same pair under another event id (A+A+B) keeps the VOID and is UNDER REVIEW everywhere in every feed order, with the HDC-09 duplicate warning; A+A alone is no conflict',async()=>{
+    const notice=/UNDER REVIEW · BUF-CIN: VOID by commissioner ruling stays applied; the feed also lists BUF @ CIN under another event \(feed event 401437999\)/;
+    for(const events of orders([bufCin(),bufCin(),relistedFinal])){
+      const v=await page({events:[espnFinal(),...events]}),label=`${named(events)} (B final)`;
+      voidUnderReview(v,label,notice);
+      assert.equal(v.warning(),DUPLICATE,`${label}: the HDC-09 duplicate warning stays`);
+      assert.equal(syncLabel(v),'INCOMPLETE',`${label}: the feed-integrity warning keeps precedence`);
+    }
+    for(const [label,second] of [['a live game',{...midGame(bufCin(espnStatus('STATUS_IN_PROGRESS','in','6:12 - 1st'))),id:'401437999'}],
+      ['a scheduled game',{...bufCin(espnStatus('STATUS_SCHEDULED','pre','Sun 8:15 PM')),id:'401437999'}],['another halted state',{...bufCin(espnStatus('STATUS_POSTPONED','post','Postponed')),id:'401437999'}]])
+      voidUnderReview(await page({events:[espnFinal(),bufCin(),bufCin(),second]}),`A+A+B (B ${label})`,notice);
+    // As the tiebreak game: still no tiebreak, and tied leaders stay co-winners.
+    const t=await page({tiebreakGameIndex:1,events:[espnFinal({awayScore:'20',homeScore:'20'}),bufCin(),bufCin(),relistedFinal]});
+    assert.equal(t.$('mnf').textContent,'VOID');assert.match(t.$('tbNote').textContent,/no tiebreak this week/);
+    assert.deepEqual([t.$('leaderKicker').textContent,t.$('leaderName').textContent],['Group co-winners','D.C. / DJS']);
+    assert.match(card(t,'BUF'),/VOID · Commissioner ruling · UNDER REVIEW/,'tiebreak game: VOID and UNDER REVIEW');
+    // Control: the recorded event listed twice and nothing else is no conflict; only the HDC-09 duplicate warning remains.
+    const twice=await page({events:[espnFinal(),bufCin(),bufCin()]});
+    assert.deepEqual(pickCells(twice),['ok','void','bad','void'],'A+A: the VOID applies');
+    assert.match(card(twice,'BUF'),/VOID · Commissioner ruling/);assert.doesNotMatch(`${card(twice,'BUF')}\n${banner(twice)}\n${rules(twice)}`,/UNDER REVIEW/,'A+A: never UNDER REVIEW');
+    assert.match(rules(twice),/BUF @ CIN<\/b><span class="rules-status">APPLIED</,'A+A: Rules & rulings says APPLIED');
+    assert.equal(twice.warning(),DUPLICATE,'A+A: the HDC-09 duplicate warning stays');
+  });
+  await regression('second review: a forfeit of the ruled pair beside the repeated recorded event (A+A+forfeit B) holds the game in every feed order, never VOID; as the tiebreak game it is no voided tiebreak',async()=>{
+    for(const events of orders([bufCin(),bufCin(),forfeitB])){
+      const v=await page({events:[espnFinal(),...events]}),label=`${named(events)} (B forfeit)`;
+      heldGame(v,label);
+      assert.match(v.warning(),/BUF-CIN: duplicate events ignored/,`${label}: the HDC-09 duplicate warning stays`);
+    }
+    const t=await page({tiebreakGameIndex:1,events:[espnFinal({awayScore:'20',homeScore:'20'}),bufCin(),bufCin(),forfeitB]});
+    assert.deepEqual(pickCells(t),['neutral','hold','neutral','hold'],'tiebreak game: HOLD, never VOID');
+    assert.notEqual(t.$('mnf').textContent,'VOID','tiebreak game: no voided tiebreak');
+    assert.doesNotMatch(`${t.$('tbNote').textContent} ${t.$('footerRule').textContent} ${t.$('leaderNote').textContent}`,/no tiebreak this week|tiebreak game voided|tiebreak game void/,'tiebreak game: never resolved as a voided tiebreak');
+  });
+  await regression('second review: the recorded event gone and the same pair listed twice under one other event id (B+B) is the accepted event-id change: the VOID stays, UNDER REVIEW, B never adopted; B+B forfeit holds',async()=>{
+    const v=await page({events:[espnFinal(),relistedFinal,relistedFinal]});
+    voidUnderReview(v,'B+B final',/UNDER REVIEW · BUF-CIN: VOID by commissioner ruling stays applied; the feed now reports a completed final \(feed event 401437999; the ruling recorded event 401437947\)/);
+    assert.equal(v.warning(),DUPLICATE,'B+B final: the HDC-09 duplicate warning stays');
+    heldGame(await page({events:[espnFinal(),forfeitB,forfeitB]}),'B+B forfeit');
+  });
+  await regression('second review: copies of the recorded event that disagree are never decided by the first copy: a final and a forfeit hold the game, a final and a live game keep the VOID UNDER REVIEW, in either order',async()=>{
+    const final={...espnFinal({away:'BUF',home:'CIN',awayScore:'27',homeScore:'24'}),id:'401437947'},forfeit=bufCin(espnStatus('STATUS_FORFEIT','post','Forfeit'));
+    const live=midGame(bufCin(espnStatus('STATUS_IN_PROGRESS','in','6:12 - 1st')));
+    for(const events of orders([final,forfeit]))heldGame(await page({events:[espnFinal(),...events]}),`same id: ${events[0]===final?'final, forfeit':'forfeit, final'}`);
+    for(const events of orders([final,live]))voidUnderReview(await page({events:[espnFinal(),...events]}),`same id: ${events[0]===final?'final, live':'live, final'}`,
+      /UNDER REVIEW · BUF-CIN: VOID by commissioner ruling stays applied; the feed lists event 401437947 more than once with conflicting information/);
+  });
+
   assert.equal(failures.length,0,`HDC-12 Pick'em regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
 }
 

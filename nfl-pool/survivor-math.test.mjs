@@ -1208,6 +1208,136 @@ console.log('survivor HDC-11 halted-game awaiting-ruling classification, ordinar
     assert.deepEqual([twice.state,twice.underReview],['effective',null],'no recorded event: the same event listed twice is no evidence');
   });
 
+  // ---- HDC-12 second review remediation (the independent review of 84108339). Copies of one feed event are one logical
+  // event: same-id duplication is never independent evidence, so it neither raises a conflict by itself nor hides one. The
+  // ruled pair under a second event id stays UNDER REVIEW however often either listing appears, a forfeit of the ruled pair
+  // holds whatever copy or listing comes with it, and copies of one event id that disagree are a conflict, never decided by
+  // the copy that comes first. Every case is checked in every feed order.
+  const permutations=list=>list.length<2?[list]:list.flatMap((x,i)=>permutations([...list.slice(0,i),...list.slice(i+1)]).map(rest=>[x,...rest]));
+  const FINAL={name:'STATUS_FINAL',completed:true},LIVE={name:'STATUS_IN_PROGRESS',state:'in'},SCHEDULED={name:'STATUS_SCHEDULED',state:'pre'},POSTPONED={name:'STATUS_POSTPONED'},FORFEIT={name:'STATUS_FORFEIT'};
+  // A is the recorded event (401437947); B and C list the same BUF at CIN pair under other event ids.
+  const A=(o={})=>feedEvent(o),B=(o={})=>feedEvent({id:'401437999',...o}),C=(o={})=>feedEvent({id:'401437998',...o}),BARE={event_id:null,evidence_source:null};
+  // Every consequence the feed is checked against: the Pick'em void, and the Survivor advance and elimination for the
+  // pickers of either team.
+  const rulingSlots=(events,o={})=>{
+    const pk=evaluate('pickem',{rulings:chain('pickem',['void'],o)}),adv=evaluate('survivor',{rulings:chain('survivor',['advance_team_used'],o)});
+    const elim=evaluate('survivor',{policies:[policyRow('survivor',1,1,'eliminate')],rulings:chain('survivor',['eliminate'],o)});
+    return[["Pick'em void",pickemSlot(pk,events),{consequence:'void'}],
+      ...['BUF','CIN'].flatMap(t=>[[`${t} advance`,survivorPick(adv,events,t),{consequence:'advance_team_used',outcome:'alive',teamUsed:true}],[`${t} eliminate`,survivorPick(elim,events,t),{consequence:'eliminate',outcome:'out'}]])];
+  };
+  const outcome=s=>({state:s.state,consequence:s.consequence??null,outcome:s.outcome??null,teamUsed:s.teamUsed??null,feed:s.feed?.status??null,underReview:s.underReview??null,
+    reason:s.state==='hold'?s.reason:null,recorded:s.incident?.evidence?.eventId??null});
+  const judged=(events,o={})=>rulingSlots(events,o).map(([name,s,applied])=>[name,outcome(s),applied]);
+  // One result for every feed order of the same listings; returned per consequence.
+  const orderFree=(events,o,label)=>{
+    const [first,...rest]=permutations(events).map(p=>judged(p,o));
+    for(const r of rest)assert.deepEqual(r,first,`${label}: the result never depends on the feed order`);
+    return first;
+  };
+  const expectReview=(events,pattern,label,o={})=>{
+    for(const [name,s,applied] of orderFree(events,o,label)){
+      assert.deepEqual([s.state,s.consequence,s.outcome,s.teamUsed],['effective',applied.consequence,applied.outcome??null,applied.teamUsed??null],`${label}: ${name} stays applied (${s.reason})`);
+      assert.match(s.underReview||'',pattern,`${label}: ${name} is UNDER REVIEW (${s.underReview})`);
+      assert.equal(s.recorded,o.event_id===null?null:'401437947',`${label}: ${name} keeps the recorded evidence; no listing is adopted`);
+    }
+  };
+  const expectHold=(events,label,o={})=>{
+    for(const [name,s] of orderFree(events,o,label)){
+      assert.equal(s.state,'hold',`${label}: ${name} holds, never applied (${s.feed}: ${s.underReview})`);
+      assert.match(s.reason||'',/forfeit/i,`${label}: ${name} names the forfeit`);
+    }
+  };
+  const RELISTED=/^the feed also lists BUF @ CIN under another event \(feed event 401437999\)$/;
+  await regression('second review: the recorded event repeated, the other listing repeated, or both (A+A+B, A+B+B, A+A+B+B) is UNDER REVIEW in every feed order, whether B is final, live, scheduled or halted; the ruling stays applied',()=>{
+    for(const [label,o] of [['final',FINAL],['live',LIVE],['scheduled',SCHEDULED],['halted',POSTPONED],['the same halted state',{}]])
+      for(const [shape,events] of [['A+A+B',[A(),A(),B(o)]],['A+B+B',[A(),B(o),B(o)]],['A+A+B+B',[A(),A(),B(o),B(o)]]])expectReview(events,RELISTED,`${shape} (B ${label})`);
+  });
+  await regression('second review: a forfeit of the ruled pair holds whatever copies or other listings come with it, in every feed order, with or without a recorded event',()=>{
+    for(const [shape,events] of [['A+forfeit B',[A(),B(FORFEIT)]],['A+A+forfeit B',[A(),A(),B(FORFEIT)]],['A+forfeit B+forfeit B',[A(),B(FORFEIT),B(FORFEIT)]],
+      ['A+A+forfeit B+forfeit B',[A(),A(),B(FORFEIT),B(FORFEIT)]],['forfeit A+forfeit A',[A(FORFEIT),A(FORFEIT)]],['forfeit A+forfeit A+B final',[A(FORFEIT),A(FORFEIT),B(FINAL)]]]){
+      expectHold(events,shape);
+      expectHold(events,`${shape}, no recorded event`,BARE);
+    }
+  });
+  await regression('second review: the recorded event gone and the ruled pair listed twice under one other event id is the accepted single event-id change, judged exactly as one listing (UNDER REVIEW); listed twice as a forfeit it holds',()=>{
+    const recorded='; the ruling recorded event 401437947\\)$';
+    for(const [label,o,pattern] of [['final',FINAL,new RegExp(`^the feed now reports a completed final \\(feed event 401437999${recorded}`)],['live',LIVE,new RegExp(`^the feed now reports the game live \\(feed event 401437999${recorded}`)],
+      ['scheduled',SCHEDULED,new RegExp(`^the feed now reports the game scheduled \\(feed event 401437999${recorded}`)],['canceled',{},new RegExp(`^the feed now reports a different event \\(feed event 401437999${recorded}`)]]){
+      expectReview([B(o),B(o)],pattern,`B+B ${label}`);
+      assert.deepEqual(judged([B(o),B(o)]),judged([B(o)]),`B+B ${label}: judged exactly as B listed once`);
+    }
+    expectHold([B(FORFEIT),B(FORFEIT)],'B+B forfeit');
+  });
+  await regression('second review: A+A is the one logical event A: copies of the recorded canceled event agree (no relisted conflict, no review), and copies of a later final are UNDER REVIEW exactly as one copy',()=>{
+    for(const [label,o] of [['recorded event',{}],['no recorded event',BARE]]){
+      const once=judged([A()],o);
+      for(const [name,s] of once)assert.deepEqual([s.state,s.feed,s.underReview],['effective','agrees',null],`${label}: ${name}: A listed once agrees`);
+      assert.deepEqual(judged([A(),A()],o),once,`${label}: A+A is judged exactly as A (agrees: no relisted conflict, no review)`);
+      const final=judged([A(FINAL)],o);
+      for(const [name,s] of final)assert.match(s.underReview||'',/completed final/,`${label}: ${name}: a later final is UNDER REVIEW`);
+      assert.deepEqual(judged([A(FINAL),A(FINAL)],o),final,`${label}: copies of a later final are judged exactly as one copy`);
+    }
+  });
+  await regression('second review: copies of one event id that disagree are never decided by the copy that comes first: a final and a forfeit hold; a final and a live game, or the canceled game and a live one, are UNDER REVIEW',()=>{
+    for(const [label,o] of [['recorded event',{}],['no recorded event',BARE]]){
+      expectHold([A(FINAL),A(FORFEIT)],`${label}: A final+A forfeit`,o);
+      expectReview([A(FINAL),A(LIVE)],/^the feed lists event 401437947 more than once with conflicting information$/,`${label}: A final+A live`,o);
+      expectReview([A(),A(LIVE)],/^the feed lists event 401437947 more than once with conflicting information$/,`${label}: A canceled+A live`,o);
+    }
+    expectHold([B(FINAL),B(FORFEIT)],'the recorded event gone: B final+B forfeit');
+    expectReview([B(FINAL),B(LIVE)],/^the feed lists event 401437999 more than once with conflicting information; the ruling recorded event 401437947$/,'the recorded event gone: B final+B live');
+  });
+  await regression('second review: X final, X forfeit and Y hold in all six feed orders, whether X is the recorded event, another listing with the recorded event gone, or the ruling recorded no event',()=>{
+    for(const [label,x,y,o] of [['X the recorded event',A,B,{}],['X another listing, the recorded event gone',B,C,{}],['no recorded event',A,B,BARE]])expectHold([x(FINAL),x(FORFEIT),y()],label,o);
+  });
+  await regression('second review: a copy that cannot be read (malformed, or outside the week) is no evidence: it never hides the ruled pair under another event id, a later final or a forfeit',()=>{
+    for(const [label,broken] of [['malformed',e=>{e.competitions[0].competitors.pop();return e}],['outside the week',e=>({...e,week:{number:4}})]]){
+      expectReview([A(),broken(A()),B(FINAL)],RELISTED,`A+A ${label}+B final`);
+      expectReview([A(FINAL),broken(A())],/^the feed now reports a completed final$/,`A final+A ${label}`);
+      expectReview([B(FINAL),broken(B())],/^the feed now reports a completed final \(feed event 401437999; the ruling recorded event 401437947\)$/,`the recorded event gone: B final+B ${label}`);
+      expectHold([A(),broken(A()),B(FORFEIT)],`A+A ${label}+forfeit B`);
+      assert.deepEqual(judged([A(),broken(A())]),judged([A()]),`A+A ${label}: judged exactly as A (agrees, no review)`);
+    }
+  });
+  await regression('second review: adversarial matrix: every evidence set gives one result in every feed order, and that result is the one listed (agrees, UNDER REVIEW or HOLD)',()=>{
+    const matrix=[['A','agrees',[A()]],['A+A','agrees',[A(),A()]],['same id: canceled+canceled','agrees',[A(),A()]],['B only','review',[B()]],['B+B','review',[B(),B()]],
+      ...[['final',FINAL],['live',LIVE],['scheduled',SCHEDULED],['halted',POSTPONED]].flatMap(([s,o])=>[[`A+B ${s}`,'review',[A(),B(o)]],[`A+A+B ${s}`,'review',[A(),A(),B(o)]],
+        [`A+B+B ${s}`,'review',[A(),B(o),B(o)]],[`A+A+B+B ${s}`,'review',[A(),A(),B(o),B(o)]],[`B+B ${s}`,'review',[B(o),B(o)]],[`A+B+C ${s}`,'review',[A(),B(o),C()]]]),
+      ['A+forfeit B','hold',[A(),B(FORFEIT)]],['A+A+forfeit B','hold',[A(),A(),B(FORFEIT)]],['A+forfeit B+forfeit B','hold',[A(),B(FORFEIT),B(FORFEIT)]],
+      ['the recorded event a forfeit','hold',[A(FORFEIT)]],['same id: final+forfeit','hold',[A(FINAL),A(FORFEIT)]],['same id: final+live','review',[A(FINAL),A(LIVE)]]];
+    for(const [label,expected,events] of matrix)for(const [name,s] of orderFree(events,{},label)){
+      const got=s.state==='hold'?'hold':s.state==='effective'&&s.underReview?'review':s.state==='effective'&&s.feed==='agrees'?'agrees':`${s.state}/${s.feed}`;
+      assert.equal(got,expected,`${label}: ${name}`);
+    }
+  });
+  await regression('second review (survivor-math): A+A+B final keeps the entry ALIVE with its team used, or OUT, the UNDER REVIEW conflict carried; A+A+B forfeit is HOLD, never ALIVE or OUT',()=>{
+    const entry={picks:['PIT','SF','BUF']},before=[SM.survivorBuildResults([ev('PIT','CLE',{as:'24',hs:'10'})],{season:2026,week:1}),SM.survivorBuildResults([ev('SF','SEA',{as:'24',hs:'10'})],{season:2026,week:2})];
+    for(const [label,second] of [['final',B(FINAL)],['forfeit',B(FORFEIT)]]){
+      const events=[A(),A(),second],results=[...before,SM.survivorBuildResults(events,{season:2026,week:3})];
+      const overlay=ds=>evaluator().survivorRulingLookup(ds,{eventsByWeek:[null,null,events],season:2026});
+      const adv=overlay(evaluate('survivor',{rulings:chain('survivor',['advance_team_used'])}));
+      const elim=overlay(evaluate('survivor',{policies:[policyRow('survivor',1,1,'eliminate')],rulings:chain('survivor',['eliminate'])}));
+      const a=SM.survivorEntryState(entry,2,results,adv),e=SM.survivorEntryState(entry,2,results,elim);
+      if(label==='final'){
+        assert.deepEqual([a.status,a.type,a.ruling?.consequence],['alive','ruling','advance_team_used'],`A+A+B final: ALIVE by applied commissioner ruling (${a.reason})`);
+        assert.match(a.ruling?.underReview||'',RELISTED,'A+A+B final: the UNDER REVIEW conflict is carried');
+        assert.equal(SM.survivorEligibleEntering(entry,3,results,adv),true,'A+A+B final: eligible entering Week 4');
+        const support=SM.survivorDecisionOptions(entry,3,results,[{away:'BUF',home:'MIA'},{away:'KC',home:'DEN',favorite:'KC',spread:3}],[],adv);
+        assert(support.burned.includes('BUF')&&!support.options.some(o=>o.team==='BUF'),'A+A+B final: BUF stays used');
+        assert.deepEqual([e.status,e.eliminatedWeek,e.type],['out',3,'ruling'],`A+A+B final: OUT by applied commissioner ruling (${e.reason})`);
+        assert.match(e.ruling?.underReview||'',RELISTED,'A+A+B final: the elimination carries the UNDER REVIEW conflict');
+        assert.equal(SM.survivorOnHold([entry],2,results,adv)+SM.survivorOnHold([entry],2,results,elim),0,'A+A+B final: never on HOLD');
+      }else{
+        for(const [name,s,L] of [['advance',a,adv],['eliminate',e,elim]]){
+          assert.deepEqual([s.status,s.type],['hold','hold'],`A+A+B forfeit: the ${name} ruling is HOLD, never ALIVE or OUT (${s.status}: ${s.reason})`);
+          assert.match(s.reason,/forfeit/i,`A+A+B forfeit: the ${name} hold names the forfeit`);
+          assert.equal(SM.survivorOnHold([entry],2,results,L),1,`A+A+B forfeit: counted on HOLD (${name})`);
+          assert.equal(SM.survivorEligibleEntering(entry,3,results,L),false,`A+A+B forfeit: not eligible entering Week 4 (${name})`);
+        }
+      }
+    }
+  });
+
   // ---- migration contract (static). The executable behaviour of 002 and 003 is exercised against a throwaway local
   // PostgreSQL in the candidate review, never against Neon; these checks pin what the files must and must not say.
   const migration=name=>{const url=new URL(`./migrations/${name}`,import.meta.url);assert(existsSync(url),`migrations/${name} must exist`);return readFileSync(url,'utf8')};

@@ -752,6 +752,57 @@ console.log('survivor HDC-11 halted-game ruling, unfrozen board, ordinary-pendin
     assert.equal(v.$('svFeed').textContent,'LIVE · NFL results');assert.doesNotMatch(rules(v),/could not be refreshed/);
   });
 
+  // ---- HDC-12 second review remediation (the independent review of 84108339). Copies of one feed event are one logical
+  // event: the recorded canceled event (401547001) listed twice can neither hide SF at ARI under another event id (UNDER
+  // REVIEW) nor hide a forfeit (HOLD). The extra listings go after the week's events, or before them.
+  const withListings=(listings,first=false)=>{const f=feeds(),extra=listings.map(make=>make('SF','ARI',2));f[2].events=first?[...extra,...f[2].events]:[...f[2].events,...extra];return f};
+  await regression('second review: the recorded canceled event listed twice plus SF at ARI as a final under another event id keeps the advance ALIVE (SF used) and the elimination OUT, UNDER REVIEW in either order; never a clean LIVE; A+A alone is no conflict',async()=>{
+    for(const first of [false,true]){
+      const order=first?'B+A+A':'A+A+B';
+      const v=await view(withListings([canceled(),finalSF('10','24','401547002')],first),rulingRows,patched,store('advance_team_used',rulings(['advance_team_used'])));
+      assert.deepEqual(pill(v,'D.C.'),['ALIVE','UNDER REVIEW'],`${order}: SF lost the other listing, but the advance stands and is under review`);
+      assert.match(small(v,'D.C.'),/applied commissioner ruling/,`${order}: alive by the ruling`);
+      assert.match(small(v,'D.C.'),/UNDER REVIEW: the feed also lists SF @ ARI under another event \(feed event 401547002\)/,`${order}: the row names the conflict`);
+      assert.equal(v.$('svFeed').textContent,'LIVE · 2 TEAM RESULTS UNDER REVIEW',`${order}: never a clean LIVE · NFL results`);assert.match(v.$('svFeed').className,/warn/);
+      assert.match(rules(v),/rules-status">UNDER REVIEW</,`${order}: Rules & rulings says UNDER REVIEW`);
+      assert.equal(v.$('svStillIn').textContent,4,`${order}: no NFL final replaces the ruling consequence`);
+      const html=v.$('svDecisionEntries').innerHTML;
+      assert.equal(heads(html)['D.C.'],'Week 3 Board',`${order}: D.C. keeps next-week decision support`);
+      assert.deepEqual(board(html)['D.C.'].burned,['PIT','SF'],`${order}: SF stays used`);
+      const e=await view(withListings([canceled(),finalSF('24','10','401547002')],first),rulingRows,patched,store('eliminate',rulings(['eliminate'])));
+      assert.deepEqual(pill(e,'D.C.'),['OUT','UNDER REVIEW'],`${order}: SF won the other listing, but the elimination stands and is under review`);
+      assert.equal(heads(e.$('svDecisionEntries').innerHTML)['D.C.'],'Out of Survivor');
+      assert.equal(e.$('svFeed').textContent,'LIVE · 2 TEAM RESULTS UNDER REVIEW',`${order}: elimination: never a clean LIVE`);
+      assert.match(rules(e),/rules-status">UNDER REVIEW</);
+    }
+    // Control: the recorded event listed twice and nothing else is no conflict.
+    const twice=await view(withListings([canceled()]),rulingRows,patched,store('advance_team_used',rulings(['advance_team_used'])));
+    assert.deepEqual(pill(twice,'D.C.'),['ALIVE'],'A+A: the advance applies, never UNDER REVIEW');
+    assert.doesNotMatch(`${twice.row('D.C.')}\n${twice.$('svFeed').textContent}\n${rules(twice)}`,/UNDER REVIEW/,'A+A: no conflict anywhere');
+    assert.match(rules(twice),/rules-status">APPLIED</);
+  });
+  await regression('second review: a forfeit of SF at ARI beside the repeated recorded event is HOLD in either order, never ALIVE or OUT from the advance or the elimination',async()=>{
+    for(const first of [false,true])for(const consequence of ['advance_team_used','eliminate']){
+      const label=`${first?'forfeit B+A+A':'A+A+forfeit B'} (${consequence})`;
+      const v=await view(withListings([canceled(),canceled('STATUS_FORFEIT','401547002')],first),rulingRows,patched,store(consequence,rulings([consequence])));
+      assert.deepEqual(pill(v,'D.C.'),['HOLD'],`${label}: HOLD, never ALIVE or OUT`);
+      assert.match(small(v,'D.C.'),/on hold.*forfeit/i,`${label}: the row names the forfeit hold`);
+      assert.equal(v.$('svStillIn').textContent,2,`${label}: the held pickers are not counted as still in`);
+      assert.match(v.$('svFeed').textContent,/ON HOLD/,`${label}: the feed status says ON HOLD`);
+      assert.equal(heads(v.$('svDecisionEntries').innerHTML)['D.C.'],'On hold',`${label}: no board, not out`);
+      assert.match(rules(v),/rules-status">HOLD</,`${label}: Rules & rulings says HOLD`);
+    }
+  });
+  await regression('second review: the recorded event gone and SF at ARI listed twice under one other event id is the accepted event-id change (ALIVE, UNDER REVIEW); listed twice as a forfeit it is HOLD',async()=>{
+    const twice=sf=>{const f=feeds(sf);f[2].events.push(sf('SF','ARI',2));return f};
+    const v=await view(twice(canceled('STATUS_CANCELED','401547999')),rulingRows,patched,store('advance_team_used',rulings(['advance_team_used'])));
+    assert.deepEqual(pill(v,'D.C.'),['ALIVE','UNDER REVIEW'],'B+B: the advance stands and is under review');
+    assert.match(small(v,'D.C.'),/UNDER REVIEW: the feed now reports a different event \(feed event 401547999; the ruling recorded event 401547001\)/);
+    assert.equal(v.$('svFeed').textContent,'LIVE · 2 TEAM RESULTS UNDER REVIEW');
+    const h=await view(twice(canceled('STATUS_FORFEIT','401547999')),rulingRows,patched,store('advance_team_used',rulings(['advance_team_used'])));
+    assert.deepEqual(pill(h,'D.C.'),['HOLD'],'B+B forfeit: HOLD, never ALIVE');
+  });
+
   assert.equal(failures.length,0,`HDC-12 Survivor view regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
 }
 
