@@ -682,6 +682,23 @@ console.log('survivor HDC-11 halted-game ruling, unfrozen board, ordinary-pendin
     assert.doesNotMatch(`${html}\n${page}`,/PRIVATE ADMIN NOTE|auth-user-7f3a/);
   });
 
+  // Review-driven regression (added after the implementation's adversarial review).
+  await regression('switching weeks never reuses rulings verified for another week: a failed load after the switch holds',async()=>{
+    const week3=structuredClone(rulingConfig);week3.week=3;week3.label='Survivor Week 3';
+    const third={dc:'DEN',djs:'MIA',thaddeus:null,'survivor-001':'PIT','survivor-002':null,'survivor-003':'NE'};
+    for(const e of [...week3.trackedEntries,...week3.fieldEntries])e.picks.push(third[e.id]);
+    week3.currentWeekEntryCount=4;
+    // The last row is the week shown first (Week 2); Week 3 is then chosen from the selector.
+    const v=await view(feeds(),[{season:2026,week:3,status:'locked',revision:10,config:week3},...rulingRows],patched,store('advance_team_used',rulings(['advance_team_used'])));
+    assert.deepEqual(pill(v,'D.C.'),['ALIVE'],'Week 2: the verified ruling applies');
+    v.store.nfl_incident_rulings=503;
+    const sel=v.$('survivorWeekSelect');sel.value='2026-3';sel.listeners.change[0]();await flush();await flush();
+    assert.equal(sel.value,'2026-3');
+    for(const name of ['D.C.','DJS','Thaddeus'])assert.deepEqual(pill(v,name),['HOLD'],`Week 3: ${name} is on hold, never graded from the feed alone`);
+    assert.equal(v.$('svFeed').textContent,'ON HOLD · RULING DATA UNAVAILABLE');
+    assert.doesNotMatch(rules(v),/could not be refreshed/,'the Week-2 rulings are not shown as stale Week-3 rulings');
+  });
+
   assert.equal(failures.length,0,`HDC-12 Survivor view regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
 }
 

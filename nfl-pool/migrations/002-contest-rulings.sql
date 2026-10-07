@@ -117,14 +117,17 @@ $$;
 
 -- Policy revisions: contiguous from 1, effective week never backward, never reaching a week that already has a ruling (so
 -- a later revision can never reinterpret an existing ruling), and once the contest has started only prospective: the
--- revision's week must nominally start (verified Week-1 kickoff + 7 days per week) more than 3 days from now. Revision 1,
--- the contest's initial policy, is exempt from the timing rule, so it can record the policy in force from Week 1.
+-- revision's week must nominally start (verified Week-1 kickoff + 168 hours per week) more than 72 hours from now: absolute
+-- time, never calendar days in the session time zone, so the rule is the evaluator's exactly. Revision 1, the contest's
+-- initial policy, is exempt from the timing rule, so it can record the policy in force from Week 1. A revision is never
+-- dated before the revision it follows.
 CREATE FUNCTION public.nfl_contest_policies_check_insert() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE
   contest_start timestamptz;
   latest_revision integer;
   latest_week integer;
+  latest_created timestamptz;
   ruled_week integer;
 BEGIN
   IF current_setting('transaction_isolation') <> 'read committed' THEN
@@ -137,7 +140,7 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'no % contest %', NEW.contest_type, NEW.contest_id USING ERRCODE = 'foreign_key_violation';
   END IF;
-  SELECT p.revision, p.effective_week INTO latest_revision, latest_week
+  SELECT p.revision, p.effective_week, p.created_at INTO latest_revision, latest_week, latest_created
     FROM public.nfl_contest_policies p WHERE p.contest_id = NEW.contest_id ORDER BY p.revision DESC LIMIT 1;
   IF NOT FOUND THEN
     IF NEW.revision <> 1 THEN
@@ -147,6 +150,10 @@ BEGIN
   END IF;
   IF NEW.revision <> latest_revision + 1 THEN
     RAISE EXCEPTION 'policy revisions of % are contiguous: the next revision is %', NEW.contest_id, latest_revision + 1
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF NEW.created_at < latest_created THEN
+    RAISE EXCEPTION 'policy revision % of % would be dated before revision %', NEW.revision, NEW.contest_id, latest_revision
       USING ERRCODE = 'check_violation';
   END IF;
   IF NEW.effective_week < latest_week THEN
@@ -159,7 +166,7 @@ BEGIN
       ruled_week USING ERRCODE = 'check_violation';
   END IF;
   IF NEW.created_at >= contest_start
-     AND contest_start + (NEW.effective_week - 1) * interval '7 days' - interval '3 days' <= NEW.created_at THEN
+     AND contest_start + (NEW.effective_week - 1) * interval '168 hours' - interval '72 hours' <= NEW.created_at THEN
     RAISE EXCEPTION 'after % starts a policy revision is prospective only: Week % may already be under way',
       NEW.contest_id, NEW.effective_week USING ERRCODE = 'check_violation';
   END IF;
@@ -168,9 +175,11 @@ END
 $$;
 
 -- Ruling rows: the policy revision named must be the one in force for the incident week and must permit the consequence;
--- one team is covered by at most one incident per contest week; each row extends its own incident's chain by exactly one
--- step from the current last row and names no event other than the one the chain already records; a consequence changes
--- only through a withdrawal, and only an active ruling can be withdrawn.
+-- one team is covered by at most one active incident per contest week (an incident whose last row is a withdrawal has no
+-- active ruling and covers nothing, so a mistaken ruling, once withdrawn, never blocks the correct one, and is re-ruled
+-- only while no other incident covers its teams); each row extends its own incident's chain by exactly one step from the
+-- current last row; a later row names no event other than the one the chain's first row recorded (none at all when the
+-- first row recorded none); a consequence changes only through a withdrawal, and only an active ruling can be withdrawn.
 CREATE FUNCTION public.nfl_incident_rulings_check_insert() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE
@@ -179,6 +188,7 @@ DECLARE
   last_seq integer;
   prior_id bigint;
   prior_consequence text;
+  root_event text;
 BEGIN
   IF current_setting('transaction_isolation') <> 'read committed' THEN
     RAISE EXCEPTION 'contest history is written only under READ COMMITTED' USING ERRCODE = 'invalid_transaction_state';
@@ -197,10 +207,14 @@ BEGIN
       OR (allowed_policy = 'commissioner_decides' AND NEW.consequence IN ('advance_team_used','eliminate'))) THEN
     RAISE EXCEPTION 'policy % does not permit consequence %', allowed_policy, NEW.consequence USING ERRCODE = 'check_violation';
   END IF;
-  IF EXISTS (SELECT 1 FROM public.nfl_incident_rulings r
+  IF NEW.consequence <> 'withdrawn' AND EXISTS (SELECT 1 FROM public.nfl_incident_rulings r
       WHERE r.contest_id = NEW.contest_id AND r.week = NEW.week
         AND (r.away_team IN (NEW.away_team, NEW.home_team) OR r.home_team IN (NEW.away_team, NEW.home_team))
-        AND (r.away_team, r.home_team, r.policy_revision) IS DISTINCT FROM (NEW.away_team, NEW.home_team, NEW.policy_revision)) THEN
+        AND (r.away_team, r.home_team, r.policy_revision) IS DISTINCT FROM (NEW.away_team, NEW.home_team, NEW.policy_revision)
+        AND r.consequence <> 'withdrawn'
+        AND r.chain_seq = (SELECT max(l.chain_seq) FROM public.nfl_incident_rulings l
+          WHERE l.contest_id = r.contest_id AND l.week = r.week AND l.away_team = r.away_team
+            AND l.home_team = r.home_team AND l.policy_revision = r.policy_revision)) THEN
     RAISE EXCEPTION 'Week % of %: % or % is already covered by another incident', NEW.week, NEW.contest_id, NEW.away_team,
       NEW.home_team USING ERRCODE = 'check_violation';
   END IF;
@@ -224,11 +238,11 @@ BEGIN
     IF prior_consequence <> 'withdrawn' AND NEW.consequence NOT IN (prior_consequence, 'withdrawn') THEN
       RAISE EXCEPTION 'change % to % by withdrawing it first', prior_consequence, NEW.consequence USING ERRCODE = 'check_violation';
     END IF;
-    IF NEW.event_id IS NOT NULL AND EXISTS (SELECT 1 FROM public.nfl_incident_rulings r
-        WHERE r.contest_id = NEW.contest_id AND r.week = NEW.week AND r.away_team = NEW.away_team
-          AND r.home_team = NEW.home_team AND r.policy_revision = NEW.policy_revision
-          AND r.event_id IS NOT NULL AND r.event_id <> NEW.event_id) THEN
-      RAISE EXCEPTION 'this incident already records another event; a makeup game is never linked to it'
+    SELECT r.event_id INTO root_event FROM public.nfl_incident_rulings r
+      WHERE r.contest_id = NEW.contest_id AND r.week = NEW.week AND r.away_team = NEW.away_team
+        AND r.home_team = NEW.home_team AND r.policy_revision = NEW.policy_revision AND r.chain_seq = 1;
+    IF NEW.event_id IS NOT NULL AND NEW.event_id IS DISTINCT FROM root_event THEN
+      RAISE EXCEPTION 'a later row may only repeat the event the incident''s first row recorded; a makeup game is never linked to it'
         USING ERRCODE = 'check_violation';
     END IF;
   END IF;

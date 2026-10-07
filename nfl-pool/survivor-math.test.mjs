@@ -618,11 +618,11 @@ console.log('survivor HDC-11 halted-game awaiting-ruling classification, ordinar
   const {createHash}=await import('node:crypto');
 
   // Fixture rows shaped like the Data API's public columns. TEST_START is a fixture value, not a real kickoff.
-  const TEST_START='2026-09-01T00:00:00+00:00',WRITTEN='2026-10-08T12:00:00+00:00',PRE_START='2026-08-15T12:00:00+00:00';
+  const TEST_START='2026-09-01T00:00:00+00:00',WRITTEN='2026-10-08T12:00:00+00:00',PRE_START='2026-08-15T12:00:00+00:00',INITIAL='2026-08-01T00:00:00+00:00';
   const NAME={pickem:"Pool Center 2026 Pick'em",survivor:'Pool Center 2026 Survivor'},DEFAULT_POLICY={pickem:'void',survivor:'advance_team_used'};
   const cid=type=>`pool-center-2026-${type}`;
   const contestRow=(type,o={})=>({contest_id:cid(type),season:2026,contest_type:type,display_name:NAME[type],starts_at:TEST_START,created_at:WRITTEN,...o});
-  const policyRow=(type,revision,effective_week,halted_game_policy,o={})=>({contest_id:cid(type),contest_type:type,revision,effective_week,halted_game_policy,public_note:null,created_at:revision===1?WRITTEN:PRE_START,...o});
+  const policyRow=(type,revision,effective_week,halted_game_policy,o={})=>({contest_id:cid(type),contest_type:type,revision,effective_week,halted_game_policy,public_note:null,created_at:revision===1?INITIAL:PRE_START,...o});
   // One incident chain: the consequences in order, each row naming the one before it as its predecessor.
   const chain=(type,consequences,o={},firstId=1)=>consequences.map((consequence,i)=>({ruling_id:firstId+i,contest_id:cid(type),contest_type:type,week:3,away_team:'BUF',home_team:'CIN',
     policy_revision:1,chain_seq:i+1,parent_ruling_id:i?firstId+i-1:null,consequence,incident_status:'STATUS_CANCELED',event_id:'401437947',evidence_source:'nflscores2',public_note:null,created_at:WRITTEN,...o}));
@@ -1049,6 +1049,74 @@ console.log('survivor HDC-11 halted-game awaiting-ruling classification, ordinar
     const gs=SM.survivorSummary(all,1,R12,G);assert.deepEqual([gs.active,gs.pending,gs.eliminatedBefore,gs.eliminatedThisWeek],[0,0,0,0]);
   });
 
+  // ---- review-driven regressions (added after the implementation's adversarial review)
+  await regression('Survivor: a ruling that recorded an event stays applied and UNDER REVIEW when the feed drops that event and re-pairs the team',()=>{
+    const sds=evaluate('survivor',{rulings:chain('survivor',['advance_team_used'])});
+    for(const [t,events,pattern] of [['BUF',[feedEvent({home:'KC',id:'401999999',name:'STATUS_SCHEDULED',state:'pre'})],/BUF @ KC/],['CIN',[feedEvent({away:'NYJ',id:'401999998',name:'STATUS_SCHEDULED',state:'pre'})],/NYJ @ CIN/]]){
+      const s=survivorPick(sds,events,t);
+      assert.deepEqual([s.state,s.outcome],['effective','alive'],`${t}: the corroborated ruling still applies (conflict B, never HOLD)`);
+      assert.match(s.underReview||'',pattern,t);assert.match(s.underReview||'',/401437947/,`${t}: the review names the recorded event`);
+    }
+    // Without a recorded event nothing ties the ruling to a changed game: the same feed holds it, and says why.
+    const bare=survivorPick(evaluate('survivor',{rulings:chain('survivor',['advance_team_used'],{event_id:null,evidence_source:null})}),[feedEvent({home:'KC',id:'401999999',name:'STATUS_SCHEDULED',state:'pre'})]);
+    assert.equal(bare.state,'hold');assert.match(bare.reason,/recorded no event/);
+  });
+  await regression('evidence comes from the first row: a later row cannot add an event the original ruling did not record',()=>{
+    const rows=chain('survivor',['advance_team_used','advance_team_used'],{event_id:null,evidence_source:null});rows[1].event_id='401437947';
+    const s=team(evaluate('survivor',{rulings:rows}));
+    assert.equal(s.state,'hold');assert.match(s.reason,/did not record/);
+    const ok=chain('survivor',['advance_team_used','advance_team_used']);ok[1].event_id=null;
+    assert.equal(team(evaluate('survivor',{rulings:ok})).incident.evidence.eventId,'401437947');
+  });
+  await regression('a ruled team the feed also places against another opponent that week is UNDER REVIEW; the ruling stays applied',()=>{
+    const repaired=[feedEvent(),feedEvent({home:'KC',id:'9',name:'STATUS_FINAL',completed:true})];
+    for(const [label,o] of [['recorded event present',{}],['no recorded event',{event_id:null,evidence_source:null}]]){
+      const p=pickemSlot(evaluate('pickem',{rulings:chain('pickem',['void'],o)}),repaired);
+      assert.deepEqual([p.state,p.consequence],['effective','void'],`${label}: void stays`);assert.match(p.underReview||'',/also lists BUF @ KC/,`${label}: Pick'em review`);
+      const s=survivorPick(evaluate('survivor',{rulings:chain('survivor',['advance_team_used'],o)}),repaired);
+      assert.deepEqual([s.state,s.outcome],['effective','alive'],`${label}: advance stays`);assert.match(s.underReview||'',/also lists BUF @ KC/,`${label}: Survivor review`);
+    }
+    // A forfeit of the recorded incident still holds, whatever else the feed lists.
+    const forfeit=[feedEvent({name:'STATUS_FORFEIT'}),feedEvent({home:'KC',id:'9'})];
+    assert.equal(pickemSlot(evaluate('pickem',{rulings:chain('pickem',['void'])}),forfeit).state,'hold');
+    assert.equal(survivorPick(evaluate('survivor',{rulings:chain('survivor',['advance_team_used'])}),forfeit).state,'hold');
+  });
+  await regression('a withdrawn mis-keyed ruling has no active ruling: it holds no published slot and never blocks the correct incident',()=>{
+    const misKeyed=chain('pickem',['void','withdrawn'],{away_team:'BUF',home_team:'KC'});
+    const alone=evaluate('pickem',{rulings:misKeyed});
+    assert.deepEqual([slot(alone).state,slot(alone,'DEN','KC').state],['none','none'],'both published slots return to the NFL fact');
+    assert.equal(slot(alone,'BUF','KC').state,'withdrawn');
+    const fixed=evaluate('pickem',{rulings:[...misKeyed,...chain('pickem',['void'],{},10)]});
+    assert.deepEqual([slot(fixed).state,slot(fixed).consequence],['effective','void'],'the correct incident applies');
+    assert.equal(fixed.incidents.some(x=>x.doubleCoverage),false);
+    const s=evaluate('survivor',{rulings:[...chain('survivor',['advance_team_used','withdrawn'],{away_team:'BUF',home_team:'KC'}),...chain('survivor',['advance_team_used'],{},10)]});
+    assert.deepEqual([team(s,'BUF').state,team(s,'BUF').outcome,team(s,'KC').state],['effective','alive','withdrawn']);
+    // An active mis-keyed ruling still holds (an invalid stored ruling), including one re-ruled after its withdrawal.
+    assert.equal(slot(evaluate('pickem',{rulings:chain('pickem',['void','withdrawn','void'],{away_team:'BUF',home_team:'KC'})})).state,'hold');
+  });
+  await regression('policy revisions dated out of order hold the contest; revision 1 needs a verifiable creation time',()=>{
+    const ds=evaluate('survivor',{policies:[policyRow('survivor',1,1,'advance_team_used',{created_at:WRITTEN}),policyRow('survivor',2,1,'eliminate',{created_at:PRE_START})]});
+    assert.deepEqual([ds.status,ds.scope],['hold','contest']);assert.match(ds.reason,/dated before revision 1/);
+    assert.equal(evaluate('survivor',{policies:[policyRow('survivor',1,1,'advance_team_used',{created_at:'not a date'})]}).status,'hold');
+  });
+  await regression('hostile JSON values never throw: the evaluator holds instead',()=>{
+    const hostile=JSON.parse('{"toString":null}');
+    let ds;
+    assert.doesNotThrow(()=>{ds=evaluate('pickem',{rulings:chain('pickem',[hostile])})},'a hostile consequence');
+    assert.equal(slot(ds).state,'hold');
+    assert.doesNotThrow(()=>{ds=evaluate('pickem',{rulings:chain('pickem',['void'],{policy_revision:hostile})})},'a hostile policy revision');
+    assert.equal(slot(ds).state,'hold');
+    assert.doesNotThrow(()=>{ds=evaluate('survivor',{policies:[policyRow('survivor',1,1,hostile)]})},'a hostile policy value');
+    assert.deepEqual([ds.status,ds.scope],['hold','contest']);
+    assert.doesNotThrow(()=>{ds=evaluate('pickem',{rulings:[{get week(){throw new TypeError('trap')}}]})},'a row that throws when read');
+    assert.deepEqual([ds.status,ds.scope],['hold','contest']);
+  });
+  await regression('Rules & rulings model: a ruling that matches no published game is HOLD, never APPLIED',()=>{
+    const m=evaluator().rulesModel(evaluate('pickem',{rulings:chain('pickem',['void'],{away_team:'NYJ',home_team:'NE'})}),{week:3,slotState:()=>({state:'none',unmatched:true})});
+    assert.equal(m.incidents[0].status,'HOLD');
+    assert.doesNotMatch(m.incidents[0].detail,/Applied by commissioner ruling/);assert.match(m.incidents[0].detail,/does not match a published game/);
+  });
+
   // ---- migration contract (static). The executable behaviour of 002 and 003 is exercised against a throwaway local
   // PostgreSQL in the candidate review, never against Neon; these checks pin what the files must and must not say.
   const migration=name=>{const url=new URL(`./migrations/${name}`,import.meta.url);assert(existsSync(url),`migrations/${name} must exist`);return readFileSync(url,'utf8')};
@@ -1130,6 +1198,18 @@ console.log('survivor HDC-11 halted-game awaiting-ruling classification, ordinar
     assert.equal([...code.matchAll(/IS DISTINCT FROM/g)].length,2,'an existing contest or revision-1 row must equal the bootstrap exactly');
   });
 
+  await regression('migration review fixes: absolute-time prospective rule, dated revisions, first-row event evidence, withdrawn incidents cover nothing, 003 compares created_by',()=>{
+    const code=migration('002-contest-rulings.sql').replace(/--[^\n]*/g,'');
+    assert.match(code,/\(NEW\.effective_week - 1\) \* interval '168 hours' - interval '72 hours' <= NEW\.created_at/,'the same absolute-time rule as the evaluator');
+    assert.doesNotMatch(code,/interval '\d+ days?'/i,'no calendar-day interval: the rule never depends on the session time zone');
+    assert.match(code,/IF NEW\.created_at < latest_created THEN/);
+    assert.match(code,/r\.chain_seq = 1;\s*IF NEW\.event_id IS NOT NULL AND NEW\.event_id IS DISTINCT FROM root_event THEN/);
+    assert.match(code,/IF NEW\.consequence <> 'withdrawn' AND EXISTS/);
+    assert.match(code,/AND r\.consequence <> 'withdrawn'\s+AND r\.chain_seq = \(SELECT max\(l\.chain_seq\)/);
+    const boot=migration('003-pool-center-2026-contests.sql').replace(/--[^\n]*/g,'');
+    assert.match(boot,/existing\.starts_at, existing\.created_by\)\s+IS DISTINCT FROM \(2026, spec\.contest_type, spec\.display_name, kickoff, NULL::text\)/);
+    assert.match(boot,/existing\.admin_note,\s+existing\.created_by\)\s+IS DISTINCT FROM[^;]*?, NULL::text\) THEN/);
+  });
   assert.equal(failures.length,0,`HDC-12 contest-ruling regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
 }
 

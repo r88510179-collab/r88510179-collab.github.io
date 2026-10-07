@@ -40,6 +40,8 @@ const isPositive=n=>Number.isInteger(n)&&n>0;
 const text=v=>typeof v==='string'?v:null;
 const absent=v=>v===null||v===undefined;
 const aliasCode=code=>{const c=typeof code==='string'?code.trim().toUpperCase():'';return TEAM_ALIASES[c]||c};
+// Unchecked values reach reason text only through this: never String() on an arbitrary object (which can throw).
+const shown=v=>typeof v==='string'||typeof v==='number'||typeof v==='boolean'?String(v):v===null?'null':typeof v;
 
 export function contestIdFor(season,contestType){
   return Number.isInteger(season)&&CONTEST_TYPES.includes(contestType)?`pool-center-${season}-${contestType}`:null;
@@ -49,8 +51,8 @@ export function contestIdFor(season,contestType){
 export function rulingTeamCode(code){const c=aliasCode(code);return TEAM_CODES.has(c)?c:null}
 
 export function validatePolicyValue(contestType,policy){
-  if(!CONTEST_TYPES.includes(contestType))return{ok:false,reason:`unknown contest type ${String(contestType)}`};
-  if(typeof policy!=='string'||!HALTED_GAME_POLICIES[contestType].includes(policy))return{ok:false,reason:`"${String(policy)}" is not a ${CONTEST_LABEL[contestType]} halted-game policy`};
+  if(!CONTEST_TYPES.includes(contestType))return{ok:false,reason:`unknown contest type ${shown(contestType)}`};
+  if(typeof policy!=='string'||!HALTED_GAME_POLICIES[contestType].includes(policy))return{ok:false,reason:`"${shown(policy)}" is not a ${CONTEST_LABEL[contestType]} halted-game policy`};
   return{ok:true,policy};
 }
 
@@ -96,10 +98,12 @@ function validatePolicies(rows,{contestId,contestType},contest){
   for(let i=0;i<out.length;i++){
     const p=out[i];
     if(p.revision!==i+1)return{reason:p.revision===out[i-1]?.revision?`policy revision ${p.revision} appears more than once`:`policy revisions skip revision ${i+1}`};
-    if(i===0){if(p.effectiveWeek!==1)return{reason:'policy revision 1 must be in force from Week 1'};continue}
-    if(p.effectiveWeek<out[i-1].effectiveWeek)return{reason:`policy revision ${p.revision} moves the effective week backward`};
     const written=Date.parse(p.createdAt??'');
     if(!Number.isFinite(written))return{reason:`policy revision ${p.revision} has no verifiable creation time`};
+    if(i===0){if(p.effectiveWeek!==1)return{reason:'policy revision 1 must be in force from Week 1'};continue}
+    if(p.effectiveWeek<out[i-1].effectiveWeek)return{reason:`policy revision ${p.revision} moves the effective week backward`};
+    // Revisions are appended in order, so a revision can never have been written before the one it follows.
+    if(written<Date.parse(out[i-1].createdAt))return{reason:`policy revision ${p.revision} is dated before revision ${out[i-1].revision}`};
     if(written>=contest.startMs&&contest.startMs+(p.effectiveWeek-1)*7*DAY_MS-3*DAY_MS<=written)return{reason:`policy revision ${p.revision} was written after the contest started but reaches Week ${p.effectiveWeek}, which may already have been under way`};
   }
   return{policies:out};
@@ -129,7 +133,7 @@ function resolveIncident(rows,ctx){
     if(!isPositive(r.policyRevision))return hold('a ruling row has no valid policy revision');
     if(!isPositive(r.chainSeq))return hold('a ruling row has no valid chain position');
     if(r.away===r.home)return hold('the ruling names the same team twice');
-    if(r.consequence!==WITHDRAWN&&!RULING_CONSEQUENCES[contestType].includes(r.consequence))return hold(`"${String(r.consequence)}" is not a ${CONTEST_LABEL[contestType]} ruling consequence`);
+    if(r.consequence!==WITHDRAWN&&!RULING_CONSEQUENCES[contestType].includes(r.consequence))return hold(`"${shown(r.consequence)}" is not a ${CONTEST_LABEL[contestType]} ruling consequence`);
     if(typeof r.incidentStatus==='string'&&FORFEIT_NAME.test(r.incidentStatus))return hold('a forfeit is not a supported halted-game incident; no v1 ruling applies to it');
     if(!SUPPORTED_INCIDENT_STATUSES.includes(r.incidentStatus))return hold('the incident evidence is not a supported halted status (canceled, postponed or suspended)');
     if(r.eventId!==null&&!(typeof r.eventId==='string'&&/^[0-9]{1,20}$/.test(r.eventId)))return hold('the recorded event evidence is invalid');
@@ -157,8 +161,8 @@ function resolveIncident(rows,ctx){
   }
   // Evidence: the first row records the original incident. A later row may repeat its event id but never name another
   // event, so a makeup game is never followed.
-  const eventId=sorted.find(r=>r.eventId!==null)?.eventId??null;
-  if(sorted.some(r=>r.eventId!==null&&r.eventId!==eventId))return hold('a later ruling row names a different event than the original incident; makeup games are never followed');
+  const eventId=sorted[0].eventId;
+  if(sorted.some(r=>r.eventId!==null&&r.eventId!==eventId))return hold('a later ruling row names an event the original ruling did not record; makeup games are never followed');
   // Policy: the revision named must be the one in force for the incident week, and must permit every consequence.
   const cited=policies.find(p=>p.revision===first.policyRevision),current=inForce(policies,first.week);
   if(!cited)return hold(`the ruling cites policy revision ${first.policyRevision}, which does not exist`);
@@ -184,7 +188,13 @@ function resolveIncident(rows,ctx){
 // public columns. error means the store could not be read: the contest holds, unless this session already validated the
 // same contest's data (previous), which is then kept and marked stale rather than dropped on a passing network failure.
 // Data that loads but does not validate always holds; it never falls back to an older dataset.
-export function evaluateContestRulings({contestId,contestType,season,data,error,previous=null}={}){
+// Unexpected input that still gets past the checks below (for example a hostile JSON value) holds the contest: the
+// evaluator never throws, so a caller can never fall back to older rulings because of it.
+export function evaluateContestRulings(input={}){
+  try{return evaluate(input)}
+  catch{const {contestId,contestType,season}=input||{};return holdDataset({contestId,contestType,season},'ruling data could not be validated')}
+}
+function evaluate({contestId,contestType,season,data,error,previous=null}={}){
   const base={contestId,contestType,season};
   if(!CONTEST_TYPES.includes(contestType)||typeof contestId!=='string'||!Number.isInteger(season))return holdDataset(base,'the contest identity is invalid');
   if(season<FIRST_RULING_SEASON)return{...base,status:'inactive',scope:null,reason:`contest-scoped rulings begin with the ${FIRST_RULING_SEASON} season`,contest:null,policies:[],incidents:[],weekHolds:new Map()};
@@ -206,7 +216,7 @@ export function evaluateContestRulings({contestId,contestType,season,data,error,
       else if(!weekHolds.has(raw.week))weekHolds.set(raw.week,`a Week ${raw.week} ruling names no valid team`);
       continue;
     }
-    const row=sanitizeRow(raw,away,home),key=`${row.week}|${away}|${home}|${String(row.policyRevision)}`;
+    const row=sanitizeRow(raw,away,home),key=`${row.week}|${away}|${home}|${isPositive(row.policyRevision)?row.policyRevision:'invalid'}`;
     if(!groups.has(key))groups.set(key,[]);
     groups.get(key).push(row);
     if(row.id!==null){idCounts.set(row.id,(idCounts.get(row.id)||0)+1);if(!idOwner.has(row.id))idOwner.set(row.id,key)}
@@ -215,9 +225,10 @@ export function evaluateContestRulings({contestId,contestType,season,data,error,
   const tainted=new Set();
   for(const [key,rows] of groups)for(const r of rows)if(r.parentId!==null&&idOwner.has(r.parentId)&&idOwner.get(r.parentId)!==key){tainted.add(key);tainted.add(idOwner.get(r.parentId))}
   const incidents=[...[...groups].map(([key,rows])=>resolveIncident(rows,{contestId,contestType,policies:policy.policies,idCounts,idOwner,tainted,key})),...partial];
-  // One team, one incident per contest week. The rows of one chain are one incident and never count twice.
+  // One team, one incident per contest week. The rows of one chain are one incident and never count twice, and a withdrawn
+  // incident (no active ruling) covers nothing, so a mistaken ruling, once withdrawn, never blocks the correct one.
   const cover=new Map();
-  for(const x of incidents)for(const team of teamsOf(x)){const k=`${x.week}|${team}`;if(!cover.has(k))cover.set(k,[]);cover.get(k).push(x)}
+  for(const x of incidents.filter(i=>i.state!=='withdrawn'))for(const team of teamsOf(x)){const k=`${x.week}|${team}`;if(!cover.has(k))cover.set(k,[]);cover.get(k).push(x)}
   for(const [k,list] of cover)if(list.length>1){
     const team=k.split('|')[1];
     for(const x of list){x.doubleCoverage=true;if(x.state!=='hold'){x.state='hold';x.consequence=null;x.reason=`${team} is covered by more than one Week ${x.week} incident`}}
@@ -251,11 +262,14 @@ export function rulingForSlot(dataset,{week,away,home}={}){
   const pre=slotPrecheck(dataset,week);if(pre)return pre;
   const a=aliasCode(away),h=aliasCode(home);
   const touching=dataset.incidents.filter(x=>x.week===week&&teamsOf(x).some(t=>t===a||t===h));
-  if(!touching.length)return{state:'none'};
-  const other=touching.find(x=>!(x.away===a&&x.home===h));
+  // A withdrawn incident has no active ruling: it neither holds nor decides the slot.
+  const active=touching.filter(x=>x.state!=='withdrawn');
+  const other=active.find(x=>!(x.away===a&&x.home===h));
   if(other)return{state:'hold',scope:'incident',reason:other.away&&other.home?`a Week ${week} ruling for ${other.away} @ ${other.home} does not match the published game ${a} @ ${h}`:other.reason,incident:other};
-  if(touching.length>1)return{state:'hold',scope:'incident',reason:`more than one Week ${week} incident covers ${a} @ ${h}`,incident:touching[0]};
-  return fromIncident(touching[0]);
+  if(active.length>1)return{state:'hold',scope:'incident',reason:`more than one Week ${week} incident covers ${a} @ ${h}`,incident:active[0]};
+  if(active.length)return fromIncident(active[0]);
+  const withdrawn=touching.find(x=>x.away===a&&x.home===h);
+  return withdrawn?fromIncident(withdrawn):{state:'none'};
 }
 
 // Survivor: the published slot is the picked team in that week. advance_team_used keeps the entry alive with the team
@@ -264,9 +278,11 @@ export function rulingForTeam(dataset,{week,team}={}){
   const pre=slotPrecheck(dataset,week);if(pre)return pre;
   const t=aliasCode(team);
   const touching=dataset.incidents.filter(x=>x.week===week&&teamsOf(x).includes(t));
-  if(!touching.length)return{state:'none'};
-  if(touching.length>1)return{state:'hold',scope:'incident',reason:`${t} is covered by more than one Week ${week} incident`,incident:touching[0]};
-  return withOutcome(fromIncident(touching[0]));
+  // A withdrawn incident has no active ruling: it neither holds nor decides the pick.
+  const active=touching.filter(x=>x.state!=='withdrawn');
+  if(active.length>1)return{state:'hold',scope:'incident',reason:`${t} is covered by more than one Week ${week} incident`,incident:active[0]};
+  if(active.length)return withOutcome(fromIncident(active[0]));
+  return touching.length?fromIncident(touching[0]):{state:'none'};
 }
 const withOutcome=slot=>slot.state!=='effective'?slot:slot.consequence==='advance_team_used'?{...slot,outcome:'alive',teamUsed:true}:{...slot,outcome:'out'};
 
@@ -299,21 +315,32 @@ function describeEvent(e,{a,h,season,week,seasonType},tied){
 
 // What the raw feed says now about an incident's teams, read separately from the protected grading path (HDC-09/10/11 stay
 // untouched). The event the ruling recorded, when present in the feed, is the incident (tied); otherwise the one event that
-// involves either team is described.
+// involves either team is described. A ruled team the feed also places in another game that week is a re-pairing the
+// ruling never covered, reported as 'repaired' (UNDER REVIEW) unless the incident itself is now a forfeit.
 export function observeIncident(events,{away,home,eventId=null,season,week,seasonType=2}={}){
   if(!Array.isArray(events))return{kind:'unavailable'};
   const ctx={a:aliasCode(away),h:aliasCode(home),season,week,seasonType};
+  const involved=events.filter(e=>eventCodes(e).some(t=>t===ctx.a||t===ctx.h));
+  const repaired=(incident,other)=>({...incident,kind:'repaired',incidentKind:incident.kind,otherAway:other.away,otherHome:other.home,otherEventId:other.eventId});
   if(eventId){
     const recorded=events.filter(e=>eventIdOf(e)===eventId);
-    if(recorded.length===1)return describeEvent(recorded[0],ctx,true);
     if(recorded.length>1)return{kind:'ambiguous',tied:true};
+    if(recorded.length===1){
+      const d=describeEvent(recorded[0],ctx,true);
+      // Another event with the same pair is a feed duplicate the protected path reports; only another opponent re-pairs.
+      const other=involved.filter(e=>eventIdOf(e)!==eventId).map(e=>describeEvent(e,ctx,false)).find(x=>x.kind==='opponent');
+      return other&&d.kind!=='forfeit'?repaired(d,other):d;
+    }
   }
-  const involved=events.filter(e=>eventCodes(e).some(t=>t===ctx.a||t===ctx.h));
   if(!involved.length)return{kind:'missing',tied:false};
   if(involved.length===1)return describeEvent(involved[0],ctx,false);
-  // Several events: the same pair twice is a feed duplicate (no usable evidence); the teams in separate games is a re-pairing.
+  // Several events. The ruled pair once plus a ruled team against another opponent is a re-pairing; the same pair twice is
+  // a feed duplicate, and an event that cannot be read leaves no usable evidence.
   const described=involved.map(e=>describeEvent(e,ctx,false));
-  if(described.some(d=>d.kind!=='opponent'))return{kind:'ambiguous',tied:false};
+  if(described.some(d=>d.kind==='context'||d.kind==='malformed'))return{kind:'ambiguous',tied:false};
+  const exact=described.filter(d=>d.kind!=='opponent');
+  if(exact.length>1)return{kind:'ambiguous',tied:false};
+  if(exact.length===1)return exact[0].kind==='forfeit'?exact[0]:repaired(exact[0],described.find(d=>d.kind==='opponent'));
   return described[0];
 }
 
@@ -323,21 +350,24 @@ export function observeIncident(events,{away,home,eventId=null,season,week,seaso
 //             the protected grading path already reports); the ruling stays applied
 //   review  - the feed changed after confirmation (final, live, scheduled, other status, other event id, other opponent,
 //             gone, malformed): the ruling STAYS APPLIED and is UNDER REVIEW; nothing is withdrawn or re-slotted
+//   review  - also when the feed places a ruled team in another game that week (a re-pairing)
 //   hold    - the ruling cannot be applied: the feed now reports a forfeit (out of scope for v1), or, where the contest
-//             publishes no matchup (Survivor, slot:'team'), the feed contradicts the ruling's own matchup and no recorded
-//             event ties the ruling to a since-changed event
+//             publishes no matchup (Survivor, slot:'team'), the feed contradicts the ruling's own matchup and the ruling
+//             recorded no event: nothing then ties it to a since-changed game. A ruling that recorded an event was
+//             corroborated at confirmation, so a later contradiction is a change (review), even once that event is gone.
 export function incidentFeedCheck(incident,observation,{slot='published'}={}){
   if(!incident||incident.state!=='effective')return{status:'none'};
   const o=observation||{kind:'unavailable'},stored=incident.evidence||{};
   const changedId=stored.eventId&&o.eventId&&o.eventId!==stored.eventId?` (feed event ${o.eventId}; the ruling recorded event ${stored.eventId})`:'';
   const review=reason=>({status:'review',kind:o.kind,reason});
-  const uncorroborated=slot==='team'&&!o.tied;
+  const uncorroborated=slot==='team'&&!o.tied&&!stored.eventId;
   switch(o.kind){
     case 'unavailable':return{status:'unknown'};
     case 'forfeit':return{status:'hold',kind:'forfeit',reason:`the feed now reports ${o.status}; a forfeit is not covered by v1 rulings`};
     case 'opponent':
-      if(uncorroborated)return{status:'hold',kind:'matchup',reason:`the ruling's matchup ${incident.away} @ ${incident.home} does not match the feed (${o.away} @ ${o.home}) and no recorded event ties it to a changed game`};
-      return review(`the feed now lists ${o.away} @ ${o.home}`);
+      if(uncorroborated)return{status:'hold',kind:'matchup',reason:`the ruling's matchup ${incident.away} @ ${incident.home} does not match the feed (${o.away} @ ${o.home}), and the ruling recorded no event that ties it to a changed game`};
+      return review(`the feed now lists ${o.away} @ ${o.home}${changedId}`);
+    case 'repaired':return review(`the feed also lists ${o.otherAway} @ ${o.otherHome} this week${o.otherEventId?` (feed event ${o.otherEventId})`:''}`);
     case 'ambiguous':case 'malformed':case 'context':return{status:'unknown',kind:o.kind};
     case 'halted':
       if(o.status!==stored.incidentStatus)return review(`the feed now reports ${o.status}; the ruling recorded ${stored.incidentStatus}${changedId}`);
@@ -422,14 +452,15 @@ export function rulesModel(dataset,{week,slotState=null}={}){
   const current=policyForWeek(dataset,week);
   const incidents=dataset.incidents.filter(x=>!Number.isInteger(week)||x.week<=week).map(x=>{
     const slot=slotState?slotState(x):null;
-    const held=x.state==='hold'||slot?.state==='hold',review=!held&&x.state==='effective'?slot?.underReview||null:null;
+    // A ruling that matches no published game is invalid stored ruling information for this contest: HOLD, never APPLIED.
+    const slotHold=slot?.state==='hold'?slot.reason:slot?.unmatched?'it does not match a published game in this contest':null;
+    const held=x.state==='hold'||Boolean(slotHold),review=!held&&x.state==='effective'?slot?.underReview||null:null;
     const status=held?'HOLD':x.state==='withdrawn'?'WITHDRAWN':review?'UNDER REVIEW':'APPLIED';
-    const detail=held?`On hold: ${slot?.state==='hold'?slot.reason:x.reason}. No consequence is applied.`
+    const detail=held?`On hold: ${slotHold||x.reason}. No consequence is applied.`
       :x.state==='withdrawn'?'The ruling was withdrawn: there is no active ruling, so the NFL result or the awaiting-ruling state applies.'
       :`${consequenceText(x.consequence)}. Applied by commissioner ruling under policy revision ${x.policyRevision}.`;
     return{key:x.key,week:x.week,matchup:x.away&&x.home?`${x.away} @ ${x.home}`:(x.away||x.home||'Unknown teams'),status,detail,
       review:review?`UNDER REVIEW: ${review}. The ruling stays applied until the commissioner changes it.`:null,
-      unmatched:slot?.unmatched?'This ruling does not match a published game in this contest, so it changes nothing.':null,
       evidence:x.evidence?`Recorded incident: ${x.evidence.incidentStatus}${x.evidence.eventId?` · event ${x.evidence.eventId}`:''}`:null,
       history:x.history.map(h=>({label:`${ACTION_TEXT[h.action]}${h.action==='withdrawn'?'':` ${CONSEQUENCE_NAME[h.consequence]||h.consequence}`}`,date:h.createdAt?h.createdAt.slice(0,10):null,note:h.publicNote||null}))};
   });

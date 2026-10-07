@@ -902,6 +902,15 @@ await hdc12('HDC-12 runtime cache generation',()=>assert.deepEqual([...new Set(o
       }
     }
   });
+  // Review-driven regression (added after the implementation's adversarial review): both apps render their Rules & rulings
+  // card into a container the page must actually have; the app harnesses create any element they are asked for.
+  await hdc12('index.html has exactly one Rules & rulings container in each contest panel',()=>{
+    const panels=Object.fromEntries(index.split('<section class="view-panel" data-view-panel="').slice(1).map(chunk=>[chunk.slice(0,chunk.indexOf('"')),chunk]));
+    for(const [id,panel] of [['pickemRules','games'],['svRules','survivor']]){
+      assert.equal(index.split(`id="${id}"`).length-1,1,`index.html has exactly one #${id}`);
+      assert(panels[panel]?.includes(`id="${id}"`),`#${id} is inside the ${panel} panel`);
+    }
+  });
 }
 
 assert.equal(hdc12Failures.length,0,`HDC-12 service-worker regressions failed (${hdc12Failures.length}):\n  ${hdc12Failures.join('\n  ')}`);

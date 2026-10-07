@@ -238,15 +238,16 @@ function rulesHtml(m){
   if(m.state!=='ready')return`<div class="rules-alert rules-${m.state}"><b>${esc(m.heading)}</b><p>${esc(m.text)}</p></div><p class="rules-confirm">${esc(m.confirmation)}</p>`;
   const policy=m.policy?`<div class="rules-block"><span class="rules-label">Halted-game policy</span><b>${esc(m.policy.name)}</b><small>Policy revision ${m.policy.revision} · in force from Week ${m.policy.effectiveWeek}</small><p>${esc(m.policy.text)}</p>${m.policy.publicNote?`<p class="rules-note">${esc(m.policy.publicNote)}</p>`:''}</div>`:'';
   const revisions=m.revisions.length>1?`<p class="rules-meta">Policy history: ${m.revisions.map(r=>`revision ${r.revision}, ${esc(r.name)}, from Week ${r.effectiveWeek}`).join(' · ')}</p>`:'';
-  const incidents=m.incidents.length?m.incidents.map(x=>`<div class="rules-incident rules-${x.status.toLowerCase().replace(/\s+/g,'-')}"><div class="rules-incident-head"><b>Week ${x.week} · ${esc(x.matchup)}</b><span class="rules-status">${esc(x.status)}</span></div><p>${esc(x.detail)}</p>${x.review?`<p class="rules-review">${esc(x.review)}</p>`:''}${x.unmatched?`<p class="rules-meta">${esc(x.unmatched)}</p>`:''}${x.evidence?`<small>${esc(x.evidence)}</small>`:''}${x.history.length?`<ol class="rules-history">${x.history.map(h=>`<li>${esc(h.label)}${h.date?` · ${esc(h.date)}`:''}${h.note?` · ${esc(h.note)}`:''}</li>`).join('')}</ol>`:''}</div>`).join(''):`<div class="empty">${esc(m.empty)}</div>`;
+  const incidents=m.incidents.length?m.incidents.map(x=>`<div class="rules-incident rules-${x.status.toLowerCase().replace(/\s+/g,'-')}"><div class="rules-incident-head"><b>Week ${x.week} · ${esc(x.matchup)}</b><span class="rules-status">${esc(x.status)}</span></div><p>${esc(x.detail)}</p>${x.review?`<p class="rules-review">${esc(x.review)}</p>`:''}${x.evidence?`<small>${esc(x.evidence)}</small>`:''}${x.history.length?`<ol class="rules-history">${x.history.map(h=>`<li>${esc(h.label)}${h.date?` · ${esc(h.date)}`:''}${h.note?` · ${esc(h.note)}`:''}</li>`).join('')}</ol>`:''}</div>`).join(''):`<div class="empty">${esc(m.empty)}</div>`;
   return`<div class="rules-grid"><div class="rules-block"><span class="rules-label">Contest</span><b>${esc(m.contestName)}</b><small>${esc(m.contestType)}</small></div>${policy}</div>${revisions}<p class="rules-confirm">${esc(m.confirmation)}</p>${m.stale?`<p class="rules-stale">${esc(m.stale)}</p>`:''}${incidents}`;
 }
-// A ruling's state as the card shows it: its published game's slot, a hold where it names a published team with another
-// opponent, or no published game at all.
+// A ruling's state as the card shows it: its published game's slot; withdrawn, which has no consequence anywhere; otherwise
+// HOLD, because a ruling that matches no published game (another opponent, or no published team at all) is invalid here.
 function cardSlot(x){
   const i=M.findIndex(([a,h])=>a===x.away&&h===x.home);
   if(i>=0)return SLOTS[i].ruling;
-  return M.some(([a,h])=>[a,h].some(t=>t===x.away||t===x.home))?{state:'hold',reason:'it does not match the published game'}:{state:'none',unmatched:true};
+  if(x.state==='withdrawn')return{state:'withdrawn'};
+  return{state:'hold',reason:M.some(([a,h])=>[a,h].some(t=>t===x.away||t===x.home))?'it does not match the published game':'it does not match a published game in this contest'};
 }
 function render(){
   if(!CFG)return;

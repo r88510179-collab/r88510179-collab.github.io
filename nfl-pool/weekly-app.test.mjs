@@ -992,6 +992,26 @@ console.log('weekly HDC-11 halted-game warning, ungraded halted game, unchanged 
     assert.doesNotMatch(`${html}\n${l.html()}`,/PRIVATE ADMIN NOTE|auth-user-7f3a/);
   });
 
+  // Review-driven regressions (added after the implementation's adversarial review).
+  await regression('a ruling that matches no published game is HOLD on the Rules & rulings card, never APPLIED, and changes no slot',async()=>{
+    const v=await page({rulings:voids(['void'],{away_team:'NYJ',home_team:'NE',event_id:'401437990'})});
+    assert.deepEqual(pickCells(v),['ok','pending','bad','pending'],'BUF-CIN still awaits a ruling (HDC-11)');
+    const html=rules(v);
+    assert(html.includes('NYJ @ NE'),'the card lists the ruling');
+    assert.match(html,/rules-status">HOLD</);assert.match(html,/does not match a published game/);
+    assert.doesNotMatch(html,/APPLIED|Applied by commissioner ruling/);
+  });
+  await regression('a withdrawn mis-keyed ruling releases the published slots it named; the correct ruling then applies',async()=>{
+    const misKeyed=voids(['void','withdrawn'],{away_team:'BUF',home_team:'KC'});
+    const v=await page({rulings:misKeyed,events:[espnFinal(),{...espnFinal({away:'BUF',home:'CIN',awayScore:'27',homeScore:'24'}),id:'401437947'}]});
+    assert.deepEqual(pickCells(v),['ok','ok','bad','bad'],'both games grade from the NFL fact');
+    assert.deepEqual(records(v),[['D.C.','2','0'],['DJS','0','2']]);
+    assert.equal(syncLabel(v),'LIVE');
+    assert.match(rules(v),/rules-status">WITHDRAWN</);assert.doesNotMatch(rules(v),/rules-status">HOLD</);
+    const fixed=await page({rulings:[...misKeyed,...voids(['void'],{},10)]});
+    assert.deepEqual(pickCells(fixed),['ok','void','bad','void']);
+  });
+
   assert.equal(failures.length,0,`HDC-12 Pick'em regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
 }
 

@@ -17,8 +17,9 @@
 -- start, not a rule change after the start; every later revision is prospective only (002's insert check). The bootstrap
 -- creates no incident ruling, rewrites no NFL fact and changes no standing by itself.
 --
--- Nothing is ever updated or overwritten. A row that already exists must equal the bootstrap row field for field, or the
--- script raises and changes nothing, so re-running it after a successful run is a no-op.
+-- Nothing is ever updated or overwritten. A row that already exists must equal the bootstrap row field for field (its
+-- private created_by included, which the bootstrap leaves NULL; created_at is the server clock and is not compared), or
+-- the script raises and changes nothing, so re-running it after a successful run is a no-op.
 
 BEGIN;
 
@@ -57,11 +58,11 @@ BEGIN
        'Approved halted-game policy for this contest, in force from Week 1: when the commissioner confirms a ruling for a canceled, postponed or suspended game that is never completed, its pickers advance and the team still counts as used. Recorded as revision 1 when Pool Center moved to contest-scoped rulings.')
     ) AS v(contest_id, contest_type, display_name, halted_game_policy, public_note)
   LOOP
-    SELECT c.season, c.contest_type, c.display_name, c.starts_at INTO existing
+    SELECT c.season, c.contest_type, c.display_name, c.starts_at, c.created_by INTO existing
       FROM public.nfl_contests c WHERE c.contest_id = spec.contest_id;
     IF FOUND THEN
-      IF (existing.season, existing.contest_type, existing.display_name, existing.starts_at)
-         IS DISTINCT FROM (2026, spec.contest_type, spec.display_name, kickoff) THEN
+      IF (existing.season, existing.contest_type, existing.display_name, existing.starts_at, existing.created_by)
+         IS DISTINCT FROM (2026, spec.contest_type, spec.display_name, kickoff, NULL::text) THEN
         RAISE EXCEPTION 'contest % already exists and differs from the bootstrap; nothing was changed', spec.contest_id;
       END IF;
     ELSE
@@ -69,12 +70,13 @@ BEGIN
         VALUES (spec.contest_id, 2026, spec.contest_type, spec.display_name, kickoff);
     END IF;
 
-    SELECT p.contest_type, p.effective_week, p.halted_game_policy, p.public_note, p.admin_note INTO existing
+    SELECT p.contest_type, p.effective_week, p.halted_game_policy, p.public_note, p.admin_note, p.created_by INTO existing
       FROM public.nfl_contest_policies p WHERE p.contest_id = spec.contest_id AND p.revision = 1;
     IF FOUND THEN
-      IF (existing.contest_type, existing.effective_week, existing.halted_game_policy, existing.public_note, existing.admin_note)
+      IF (existing.contest_type, existing.effective_week, existing.halted_game_policy, existing.public_note, existing.admin_note,
+          existing.created_by)
          IS DISTINCT FROM (spec.contest_type, 1, spec.halted_game_policy, spec.public_note,
-           'HDC-12 migration 003: approved 2026 baseline policy captured as revision 1.') THEN
+           'HDC-12 migration 003: approved 2026 baseline policy captured as revision 1.', NULL::text) THEN
         RAISE EXCEPTION 'policy revision 1 of % already exists and differs from the bootstrap; nothing was changed', spec.contest_id;
       END IF;
     ELSE
