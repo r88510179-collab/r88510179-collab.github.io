@@ -645,9 +645,12 @@ console.log('survivor HDC-11 halted-game ruling, unfrozen board, ordinary-pendin
     assert.equal(heads(html).DJS,'Week 3 Board');
     assert.match(rules(v),/HOLD/);
   });
-  await regression("Survivor: a ruling whose matchup the feed contradicts (inverted, no recorded event) holds",async()=>{
+  // HDC-12 review remediation, MAJOR-1: a ruling that recorded no event is still the commissioner's confirmed ruling. A feed
+  // that pairs its teams differently is a conflict: the ruling stays applied and is UNDER REVIEW, never HOLD.
+  await regression("Survivor: a ruling whose matchup the feed contradicts (inverted, no recorded event) stays applied and UNDER REVIEW, never HOLD",async()=>{
     const v=await view(feeds(),rulingRows,patched,store('advance_team_used',rulings(['advance_team_used'],{away_team:'ARI',home_team:'SF',event_id:null,evidence_source:null})));
-    assert.deepEqual(pill(v,'D.C.'),['HOLD']);
+    assert.deepEqual(pill(v,'D.C.'),['ALIVE','UNDER REVIEW']);
+    assert.match(small(v,'D.C.'),/UNDER REVIEW: the feed now lists SF @ ARI/);
   });
   await regression('global: when the ruling data cannot be loaded at all, nothing is graded from the NFL feed alone (ON HOLD)',async()=>{
     for(const [label,o] of [['rulings unavailable',{nfl_incident_rulings:503}],['tables absent',{nfl_contests:404,nfl_contest_policies:404,nfl_incident_rulings:404}],
@@ -697,6 +700,56 @@ console.log('survivor HDC-11 halted-game ruling, unfrozen board, ordinary-pendin
     for(const name of ['D.C.','DJS','Thaddeus'])assert.deepEqual(pill(v,name),['HOLD'],`Week 3: ${name} is on hold, never graded from the feed alone`);
     assert.equal(v.$('svFeed').textContent,'ON HOLD · RULING DATA UNAVAILABLE');
     assert.doesNotMatch(rules(v),/could not be refreshed/,'the Week-2 rulings are not shown as stale Week-3 rulings');
+  });
+
+  // ---- HDC-12 review remediation (the independent review of 4333347).
+  // MAJOR-1: no recorded event, and the feed later pairs both ruled teams with other opponents (SF at TB, SEA at ARI).
+  await regression('MAJOR-1: a no-event ruling whose teams the feed re-pairs keeps the advance ALIVE (SF burned, Week-3 board) or the elimination OUT, UNDER REVIEW, never HOLD',async()=>{
+    const repaired={1:week(W1,1),2:week(W2,2,{SF:(a,h,n)=>game('SF','TB',n,{completed:false}),SEA:(a,h,n)=>game('SEA','ARI',n,{completed:false})}),3:week(W3,3)};
+    const bare={event_id:null,evidence_source:null};
+    const v=await view(repaired,rulingRows,patched,store('advance_team_used',rulings(['advance_team_used'],bare)));
+    assert.deepEqual(pill(v,'D.C.'),['ALIVE','UNDER REVIEW'],'the advance stays applied and is under review');
+    assert.match(small(v,'D.C.'),/applied commissioner ruling/);assert.match(small(v,'D.C.'),/UNDER REVIEW: the feed now lists SF @ TB/);
+    assert.equal(v.$('svStillIn').textContent,4,'D.C. and survivor-003 stay in');assert.equal(v.$('svPending').textContent,0);
+    assert.equal(v.$('svFeed').textContent,'LIVE · 2 TEAM RESULTS UNDER REVIEW');
+    const html=v.$('svDecisionEntries').innerHTML;
+    assert.equal(heads(html)['D.C.'],'Week 3 Board','D.C. keeps next-week decision support');
+    assert.deepEqual(board(html)['D.C.'].burned,['PIT','SF'],'SF stays burned');
+    assert.match(rules(v),/rules-status">UNDER REVIEW</);assert.doesNotMatch(rules(v),/rules-status">HOLD</);
+    const e=await view(repaired,rulingRows,patched,store('eliminate',rulings(['eliminate'],bare)));
+    assert.deepEqual(pill(e,'D.C.'),['OUT','UNDER REVIEW'],'the elimination stays applied and is under review');
+    assert.equal(heads(e.$('svDecisionEntries').innerHTML)['D.C.'],'Out of Survivor');
+    assert.equal(e.$('svFeed').textContent,'LIVE · 2 TEAM RESULTS UNDER REVIEW');
+  });
+  // MAJOR-2: the recorded canceled event (401547001) still in the feed, plus SF at ARI under another event id as a final.
+  const relisted=([as,hs])=>{const f=feeds();f[2].events.push(finalSF(as,hs,'401547002')('SF','ARI',2));return f};
+  await regression('MAJOR-2: the recorded canceled event plus the same pair as a final under another event id keeps the advance ALIVE and the elimination OUT, UNDER REVIEW; the feed status is never a clean LIVE',async()=>{
+    const v=await view(relisted(['10','24']),rulingRows,patched,store('advance_team_used',rulings(['advance_team_used'])));
+    assert.deepEqual(pill(v,'D.C.'),['ALIVE','UNDER REVIEW'],'SF lost the second listing, but the advance stands and is under review');
+    assert.match(small(v,'D.C.'),/UNDER REVIEW: the feed also lists SF @ ARI under another event \(feed event 401547002\)/);
+    assert.notEqual(v.$('svFeed').textContent,'LIVE · NFL results','never a clean LIVE · NFL results');
+    assert.equal(v.$('svFeed').textContent,'LIVE · 2 TEAM RESULTS UNDER REVIEW');assert.match(v.$('svFeed').className,/warn/);
+    assert.match(rules(v),/rules-status">UNDER REVIEW</);
+    assert.equal(v.$('svStillIn').textContent,4,'no NFL final replaces the ruling consequence');
+    const e=await view(relisted(['24','10']),rulingRows,patched,store('eliminate',rulings(['eliminate'])));
+    assert.deepEqual(pill(e,'D.C.'),['OUT','UNDER REVIEW'],'SF won the second listing, but the elimination stands and is under review');
+    assert.equal(e.$('svFeed').textContent,'LIVE · 2 TEAM RESULTS UNDER REVIEW');
+  });
+  // MAJOR-3: rulings kept after a failed refresh are stale, and the main Survivor status says so.
+  await regression('MAJOR-3: rulings kept after a failed refresh still apply, and the main feed status says RULINGS STALE (never a clean LIVE · NFL results) until a refresh succeeds',async()=>{
+    const v=await view(feeds(),rulingRows,patched,store('advance_team_used',rulings(['advance_team_used'])));
+    assert.equal(v.$('svFeed').textContent,'LIVE · NFL results','verified: a clean LIVE');
+    v.store.nfl_incident_rulings=503;await v.refresh();
+    assert.deepEqual(pill(v,'D.C.'),['ALIVE'],'the last verified ruling still applies');
+    assert.notEqual(v.$('svFeed').textContent,'LIVE · NFL results','never a clean LIVE · NFL results while the rulings are stale');
+    assert.equal(v.$('svFeed').textContent,'LIVE · RULINGS STALE');assert.match(v.$('svFeed').className,/warn/);
+    assert.match(rules(v),/could not be refreshed/,'the Rules & rulings card keeps its stale note');
+    // The current week's score feed failing as well: the status still says the rulings are stale.
+    const current=v.feeds[2];delete v.feeds[2];await v.refresh();
+    assert.equal(v.$('svFeed').textContent,'RESULT FEED UNAVAILABLE · RULINGS STALE');
+    // A refresh that loads the rulings again clears it.
+    v.feeds[2]=current;v.store.nfl_incident_rulings=rulings(['advance_team_used']);await v.refresh();
+    assert.equal(v.$('svFeed').textContent,'LIVE · NFL results');assert.doesNotMatch(rules(v),/could not be refreshed/);
   });
 
   assert.equal(failures.length,0,`HDC-12 Survivor view regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);

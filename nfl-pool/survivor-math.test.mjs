@@ -757,17 +757,30 @@ console.log('survivor HDC-11 halted-game awaiting-ruling classification, ordinar
     for(const events of [[feedEvent({home:'KC'})],[feedEvent({home:'KC',id:'401999999'})]]){
       const p=pickemSlot(ds,events);assert.equal(p.state,'effective');assert.match(p.underReview,/BUF @ KC/);
     }
-    // Survivor publishes no matchup, so the recorded event is what ties the ruling to a game whose facts changed.
+    // Survivor too, whether or not the ruling recorded an event: event_id is evidence, never identity (see below).
     const s=survivorPick(evaluate('survivor',{rulings:chain('survivor',['advance_team_used'])}),[feedEvent({home:'KC'})]);
     assert.equal(s.state,'effective');assert.match(s.underReview,/BUF @ KC/);
   });
-  await regression("Survivor: a ruling matchup the feed contradicts, with no recorded event tying it to a changed game, holds (wrong pair, inverted pair, bye team)",()=>{
-    const ds=evaluate('survivor',{rulings:chain('survivor',['advance_team_used'],{event_id:null,evidence_source:null})});
-    for(const [label,events] of [['other opponent',[feedEvent({home:'KC',id:'5'})]],['inverted',[feedEvent({away:'CIN',home:'BUF',id:'5'})]],
-      ['BUF on bye, CIN playing NYJ',[feedEvent({away:'NYJ',home:'CIN',id:'5'})]],['re-paired in two games',[feedEvent({home:'KC',id:'5'}),feedEvent({away:'NYJ',home:'CIN',id:'6'})]]]){
-      for(const t of ['BUF','CIN']){const s=survivorPick(ds,events,t);assert.equal(s.state,'hold',`${label}: ${t} pickers hold`);assert.match(s.reason,/does not match the feed/,label)}
+  // HDC-12 review remediation, MAJOR-1: a valid ruling that recorded no event is still the commissioner's confirmed ruling.
+  // A feed that later pairs its teams differently is a conflict: the ruling stays applied and is UNDER REVIEW, never HOLD.
+  await regression("Survivor: a ruling with no recorded event stays applied and UNDER REVIEW when the feed contradicts its matchup (wrong pair, inverted pair, bye team), never HOLD",()=>{
+    const bare={event_id:null,evidence_source:null};
+    const advance=evaluate('survivor',{rulings:chain('survivor',['advance_team_used'],bare)});
+    const eliminate=evaluate('survivor',{policies:[policyRow('survivor',1,1,'eliminate')],rulings:chain('survivor',['eliminate'],bare)});
+    for(const [label,events,pattern] of [['other opponent',[feedEvent({home:'KC',id:'5'})],/BUF @ KC/],['inverted',[feedEvent({away:'CIN',home:'BUF',id:'5'})],/CIN @ BUF/],
+      ['BUF on bye, CIN playing NYJ',[feedEvent({away:'NYJ',home:'CIN',id:'5'})],/NYJ @ CIN/],['re-paired in two games',[feedEvent({home:'KC',id:'5'}),feedEvent({away:'NYJ',home:'CIN',id:'6'})],/BUF @ KC|NYJ @ CIN/]]){
+      for(const t of ['BUF','CIN']){
+        const a=survivorPick(advance,events,t);
+        assert.deepEqual([a.state,a.consequence,a.outcome,a.teamUsed],['effective','advance_team_used','alive',true],`${label}: ${t} advance stays applied (never HOLD: ${a.reason})`);
+        assert.match(a.underReview||'',pattern,`${label}: ${t} advance is UNDER REVIEW`);
+        assert.equal(a.incident.evidence.eventId,null,`${label}: no event id is invented`);
+        const e=survivorPick(eliminate,events,t);
+        assert.deepEqual([e.state,e.consequence,e.outcome],['effective','eliminate','out'],`${label}: ${t} elimination stays applied (never HOLD: ${e.reason})`);
+        assert.match(e.underReview||'',pattern,`${label}: ${t} elimination is UNDER REVIEW`);
+      }
     }
-    assert.equal(survivorPick(ds,[feedEvent({id:'5'})]).state,'effective','the matching game corroborates it');
+    const agrees=survivorPick(advance,[feedEvent({id:'5'})]);
+    assert.deepEqual([agrees.state,agrees.underReview],['effective',null],'the matching game agrees: no review');
   });
   await regression('team double coverage holds every incident involved; unrelated incidents still apply',()=>{
     const ds=evaluate('pickem',{rulings:[...chain('pickem',['void']),...chain('pickem',['void'],{away_team:'BUF',home_team:'KC',event_id:'402'},10),...chain('pickem',['void'],{away_team:'NYG',home_team:'NYJ',event_id:'403'},20)]});
@@ -884,7 +897,8 @@ console.log('survivor HDC-11 halted-game awaiting-ruling classification, ordinar
       const p=pickemSlot(ds,events);assert.deepEqual([p.state,p.consequence],['effective','void'],`${label}: void stays`);assert.match(p.underReview,pattern,label);
       const s=survivorPick(sds,events);assert.deepEqual([s.state,s.outcome],['effective','alive'],`${label}: advance stays`);assert.match(s.underReview,pattern,label);
     }
-    for(const [label,events] of [['unavailable',undefined],['duplicate events',[feedEvent(),feedEvent({id:'7'})]]]){
+    // The same event listed twice is no usable evidence. The same pair under another event id is a conflict (MAJOR-2, below).
+    for(const [label,events] of [['unavailable',undefined],['the recorded event listed twice',[feedEvent(),feedEvent()]]]){
       const p=pickemSlot(ds,events);assert.deepEqual([p.state,p.underReview],['effective',null],`${label}: no usable evidence, no review`);
     }
   });
@@ -1050,16 +1064,17 @@ console.log('survivor HDC-11 halted-game awaiting-ruling classification, ordinar
   });
 
   // ---- review-driven regressions (added after the implementation's adversarial review)
-  await regression('Survivor: a ruling that recorded an event stays applied and UNDER REVIEW when the feed drops that event and re-pairs the team',()=>{
+  await regression('Survivor: a ruling stays applied and UNDER REVIEW when the feed drops its recorded event and re-pairs the team, and so does one that recorded no event',()=>{
     const sds=evaluate('survivor',{rulings:chain('survivor',['advance_team_used'])});
     for(const [t,events,pattern] of [['BUF',[feedEvent({home:'KC',id:'401999999',name:'STATUS_SCHEDULED',state:'pre'})],/BUF @ KC/],['CIN',[feedEvent({away:'NYJ',id:'401999998',name:'STATUS_SCHEDULED',state:'pre'})],/NYJ @ CIN/]]){
       const s=survivorPick(sds,events,t);
       assert.deepEqual([s.state,s.outcome],['effective','alive'],`${t}: the corroborated ruling still applies (conflict B, never HOLD)`);
       assert.match(s.underReview||'',pattern,t);assert.match(s.underReview||'',/401437947/,`${t}: the review names the recorded event`);
     }
-    // Without a recorded event nothing ties the ruling to a changed game: the same feed holds it, and says why.
+    // MAJOR-1: without a recorded event the ruling is still the commissioner's. The same feed is a conflict, never a HOLD.
     const bare=survivorPick(evaluate('survivor',{rulings:chain('survivor',['advance_team_used'],{event_id:null,evidence_source:null})}),[feedEvent({home:'KC',id:'401999999',name:'STATUS_SCHEDULED',state:'pre'})]);
-    assert.equal(bare.state,'hold');assert.match(bare.reason,/recorded no event/);
+    assert.deepEqual([bare.state,bare.outcome],['effective','alive'],`no recorded event: still applied (never HOLD: ${bare.reason})`);
+    assert.match(bare.underReview||'',/BUF @ KC/,'no recorded event: UNDER REVIEW');
   });
   await regression('evidence comes from the first row: a later row cannot add an event the original ruling did not record',()=>{
     const rows=chain('survivor',['advance_team_used','advance_team_used'],{event_id:null,evidence_source:null});rows[1].event_id='401437947';
@@ -1125,6 +1140,72 @@ console.log('survivor HDC-11 halted-game awaiting-ruling classification, ordinar
     const m=evaluator().rulesModel(evaluate('pickem',{rulings:chain('pickem',['void'],{away_team:'NYJ',home_team:'NE'})}),{week:3,slotState:()=>({state:'none',unmatched:true})});
     assert.equal(m.incidents[0].status,'HOLD');
     assert.doesNotMatch(m.incidents[0].detail,/Applied by commissioner ruling/);assert.match(m.incidents[0].detail,/does not match a published game/);
+  });
+
+  // ---- HDC-12 review remediation (the independent review of 4333347)
+  // MAJOR-1 end to end through survivor-math: the applied consequence, and its UNDER REVIEW conflict, reach the entry.
+  await regression('MAJOR-1 (survivor-math): a no-event ruling the feed contradicts keeps the entry ALIVE, its team burned and eligible next week, or OUT; never HOLD',()=>{
+    const bare={event_id:null,evidence_source:null},events=[feedEvent({home:'KC',id:'5',name:'STATUS_SCHEDULED',state:'pre'})];
+    const results=[SM.survivorBuildResults([ev('PIT','CLE',{as:'24',hs:'10'})],{season:2026,week:1}),SM.survivorBuildResults([ev('SF','SEA',{as:'24',hs:'10'})],{season:2026,week:2}),SM.survivorBuildResults(events,{season:2026,week:3})];
+    const overlay=ds=>evaluator().survivorRulingLookup(ds,{eventsByWeek:[null,null,events],season:2026}),entry={picks:['PIT','SF','BUF']};
+    const adv=overlay(evaluate('survivor',{rulings:chain('survivor',['advance_team_used'],bare)}));
+    const a=SM.survivorEntryState(entry,2,results,adv);
+    assert.deepEqual([a.status,a.type,a.ruling?.consequence],['alive','ruling','advance_team_used'],`ALIVE by applied commissioner ruling, never HOLD (${a.reason})`);
+    assert.match(a.ruling?.underReview||'',/BUF @ KC/,'the UNDER REVIEW conflict is carried');
+    assert.equal(SM.survivorOnHold([entry],2,results,adv),0,'not on HOLD');
+    assert.equal(SM.survivorEligibleEntering(entry,3,results,adv),true,'eligible entering Week 4');
+    const support=SM.survivorDecisionOptions(entry,3,results,[{away:'BUF',home:'MIA'},{away:'KC',home:'DEN',favorite:'KC',spread:3}],[],adv);
+    assert.equal(support.eligible,true,'next-week decision support');
+    assert(support.burned.includes('BUF'),'BUF stays burned');assert(!support.options.some(o=>o.team==='BUF'),'BUF is never offered again');
+    const elim=overlay(evaluate('survivor',{policies:[policyRow('survivor',1,1,'eliminate')],rulings:chain('survivor',['eliminate'],bare)}));
+    const e=SM.survivorEntryState(entry,2,results,elim);
+    assert.deepEqual([e.status,e.eliminatedWeek,e.type],['out',3,'ruling'],`OUT by applied commissioner ruling, never HOLD (${e.reason})`);
+    assert.match(e.ruling?.underReview||'',/BUF @ KC/,'the UNDER REVIEW conflict is carried');
+    assert.equal(SM.survivorEligibleEntering(entry,3,results,elim),false);
+  });
+  // MAJOR-2: the recorded event still in the feed plus the ruled pair under another event id is material conflict evidence.
+  // The ruling stays applied and is UNDER REVIEW; the second event is never adopted, never withdraws the ruling and never
+  // grades the game.
+  await regression('MAJOR-2: the recorded event plus the same pair under another event id (final, live, scheduled or halted) is UNDER REVIEW; the ruling stays applied',()=>{
+    const pk=evaluate('pickem',{rulings:chain('pickem',['void'])}),adv=evaluate('survivor',{rulings:chain('survivor',['advance_team_used'])});
+    const elim=evaluate('survivor',{policies:[policyRow('survivor',1,1,'eliminate')],rulings:chain('survivor',['eliminate'])});
+    for(const [label,o] of [['final',{name:'STATUS_FINAL',completed:true}],['live',{name:'STATUS_IN_PROGRESS',state:'in'}],['scheduled',{name:'STATUS_SCHEDULED',state:'pre'}],
+      ['another halted state',{name:'STATUS_POSTPONED'}],['the same halted state',{}]]){
+      const events=[feedEvent(),feedEvent({id:'401437999',...o})];
+      const p=pickemSlot(pk,events);
+      assert.deepEqual([p.state,p.consequence],['effective','void'],`${label}: the void stays applied`);
+      assert.match(p.underReview||'',/also lists BUF @ CIN.*401437999/,`${label}: the Pick'em slot is UNDER REVIEW`);
+      assert.equal(p.incident.evidence.eventId,'401437947',`${label}: the recorded event is kept; the second event is never adopted`);
+      for(const t of ['BUF','CIN']){
+        const a=survivorPick(adv,events,t);
+        assert.deepEqual([a.state,a.outcome,a.teamUsed],['effective','alive',true],`${label}: ${t} advance stays applied`);
+        assert.match(a.underReview||'',/also lists BUF @ CIN.*401437999/,`${label}: ${t} advance is UNDER REVIEW`);
+        const e=survivorPick(elim,events,t);
+        assert.deepEqual([e.state,e.outcome],['effective','out'],`${label}: ${t} elimination stays applied`);
+        assert.match(e.underReview||'',/also lists BUF @ CIN.*401437999/,`${label}: ${t} elimination is UNDER REVIEW`);
+      }
+    }
+  });
+  await regression('MAJOR-2: the same pair under two event ids is UNDER REVIEW for a ruling that recorded no event, or whose recorded event is gone',()=>{
+    const second=feedEvent({id:'401437999',name:'STATUS_FINAL',completed:true});
+    for(const [label,o,events] of [['no recorded event',{event_id:null,evidence_source:null},[feedEvent(),second]],['the recorded event gone',{},[feedEvent({id:'401437998'}),second]]]){
+      const p=pickemSlot(evaluate('pickem',{rulings:chain('pickem',['void'],o)}),events);
+      assert.deepEqual([p.state,p.consequence],['effective','void'],`${label}: the void stays applied`);
+      assert.match(p.underReview||'',/also lists BUF @ CIN.*401437999/,`${label}: Pick'em UNDER REVIEW`);
+      const s=survivorPick(evaluate('survivor',{rulings:chain('survivor',['advance_team_used'],o)}),events);
+      assert.deepEqual([s.state,s.outcome],['effective','alive'],`${label}: the advance stays applied`);
+      assert.match(s.underReview||'',/also lists BUF @ CIN.*401437999/,`${label}: Survivor UNDER REVIEW`);
+    }
+  });
+  await regression('MAJOR-2 boundaries: a forfeit listed for the ruled pair under another event id holds (v1 never covers a forfeit); the same event listed twice is no evidence',()=>{
+    const forfeit=[feedEvent(),feedEvent({id:'401437999',name:'STATUS_FORFEIT'})];
+    const p=pickemSlot(evaluate('pickem',{rulings:chain('pickem',['void'])}),forfeit);
+    assert.equal(p.state,'hold',"Pick'em: a forfeit listed for the ruled pair holds");assert.match(p.reason||'',/forfeit/i);
+    assert.equal(survivorPick(evaluate('survivor',{rulings:chain('survivor',['advance_team_used'])}),forfeit).state,'hold','Survivor: a forfeit listed for the ruled pair holds');
+    const bare=evaluate('pickem',{rulings:chain('pickem',['void'],{event_id:null,evidence_source:null})});
+    assert.equal(pickemSlot(bare,forfeit).state,'hold','no recorded event: a forfeit listed for the ruled pair holds');
+    const twice=pickemSlot(bare,[feedEvent(),feedEvent()]);
+    assert.deepEqual([twice.state,twice.underReview],['effective',null],'no recorded event: the same event listed twice is no evidence');
   });
 
   // ---- migration contract (static). The executable behaviour of 002 and 003 is exercised against a throwaway local

@@ -1018,6 +1018,60 @@ console.log('weekly HDC-11 halted-game warning, ungraded halted game, unchanged 
     assert.match(rules(v),/BUF @ KC<\/b><span class="rules-status">HOLD</);
   });
 
+  // ---- HDC-12 review remediation (the independent review of 4333347).
+  // MAJOR-2: the recorded canceled event (401437947) still in the feed, plus BUF at CIN under another event id (401437999).
+  const relistedFinal={...espnFinal({away:'BUF',home:'CIN',awayScore:'27',homeScore:'24'}),id:'401437999'};
+  await regression("MAJOR-2: the recorded canceled event plus the same pair under another event id keeps the VOID, is UNDER REVIEW everywhere, and keeps the HDC-09 duplicate warning",async()=>{
+    for(const [label,second] of [['a final',relistedFinal],['a live game',{...midGame(bufCin(espnStatus('STATUS_IN_PROGRESS','in','6:12 - 1st'))),id:'401437999'}],
+      ['a scheduled game',{...bufCin(espnStatus('STATUS_SCHEDULED','pre','Sun 8:15 PM')),id:'401437999'}],['another halted state',{...bufCin(espnStatus('STATUS_POSTPONED','post','Postponed')),id:'401437999'}]]){
+      const v=await page({events:[espnFinal(),bufCin(),second]});
+      assert.deepEqual(records(v),[['D.C.','1','0'],['DJS','0','1']],`${label}: still void, no win and no loss`);
+      assert.deepEqual(pickCells(v),['ok','void','bad','void'],`${label}: void pick cells`);
+      assert.equal(v.$('left').textContent,'0',`${label}: not remaining`);
+      assert.match(card(v,'BUF'),/VOID · Commissioner ruling · UNDER REVIEW/,`${label}: the game card is VOID and UNDER REVIEW`);
+      assert.match(rules(v),/BUF @ CIN<\/b><span class="rules-status">UNDER REVIEW</,`${label}: Rules & rulings says UNDER REVIEW`);
+      assert.match(banner(v),/UNDER REVIEW · BUF-CIN: VOID by commissioner ruling stays applied; the feed also lists BUF @ CIN under another event \(feed event 401437999\)/,`${label}: the participant notice names the conflict`);
+      assert.equal(v.warning(),'Some feed data was ignored to protect standings: BUF-CIN: duplicate events ignored',`${label}: the HDC-09 duplicate warning stays`);
+      assert.equal(syncLabel(v),'INCOMPLETE',`${label}: the feed-integrity warning keeps precedence`);
+    }
+    // As the tiebreak game: still no tiebreak, and tied leaders stay co-winners.
+    const t=await page({tiebreakGameIndex:1,events:[espnFinal({awayScore:'20',homeScore:'20'}),bufCin(),relistedFinal]});
+    assert.equal(t.$('mnf').textContent,'VOID');assert.match(t.$('tbNote').textContent,/no tiebreak this week/);
+    assert.deepEqual([t.$('leaderKicker').textContent,t.$('leaderName').textContent],['Group co-winners','D.C. / DJS']);
+    assert.match(card(t,'BUF'),/VOID · Commissioner ruling · UNDER REVIEW/,'tiebreak game: VOID and UNDER REVIEW');
+  });
+  // Preserved (accepted by the review): one other event id in place of the recorded one after the first load.
+  await regression('preserved: after the first load, the recorded event replaced by one other event id keeps the HDC-09 identity warning (INCOMPLETE), the VOID and the UNDER REVIEW notice; the new event is never adopted',async()=>{
+    const v=await page();
+    v.setPayload({events:[espnFinal(),relistedFinal]});await v.refresh();
+    assert.equal(v.warning(),'Some feed data was ignored to protect standings: BUF-CIN: event identity changed','the HDC-09 identity warning stays');
+    assert.equal(syncLabel(v),'INCOMPLETE','the feed-integrity warning keeps precedence');
+    assert.deepEqual(pickCells(v),['ok','void','bad','void']);assert.deepEqual(records(v),[['D.C.','1','0'],['DJS','0','1']],'the new event never grades the game');
+    assert.match(card(v,'BUF'),/VOID · Commissioner ruling · UNDER REVIEW/);
+    assert.match(banner(v),/UNDER REVIEW · BUF-CIN: VOID by commissioner ruling stays applied; the feed now reports a completed final \(feed event 401437999; the ruling recorded event 401437947\)/);
+    assert.match(rules(v),/BUF @ CIN<\/b><span class="rules-status">UNDER REVIEW</);
+  });
+  // MAJOR-3: rulings kept after a failed refresh are stale, and the always-visible header says so (scores stay separate).
+  await regression('MAJOR-3: rulings kept after a failed refresh still apply, and the header and a notice say RULINGS STALE (never a clean LIVE) until a refresh succeeds',async()=>{
+    const v=await page();
+    assert.match(v.$('sync').textContent,/^LIVE · data \d+s old$/,'verified: a clean LIVE');assert.equal(v.$('dot').style.background,'var(--green)');
+    v.store.nfl_incident_rulings=503;await v.refresh();
+    assert.deepEqual(pickCells(v),['ok','void','bad','void'],'the last verified void still applies');
+    assert.deepEqual(records(v),[['D.C.','1','0'],['DJS','0','1']]);
+    assert.match(v.$('sync').textContent,/^LIVE · RULINGS STALE · data \d+s old$/,'the header says the rulings, not the scores, are stale');
+    assert.equal(v.$('dot').style.background,'var(--gold)','never the clean LIVE dot');
+    assert.match(banner(v),/RULINGS STALE · /,'a persistent notice says so');assert.doesNotMatch(banner(v),/ON HOLD/,'not a global hold');
+    assert.match(rules(v),/could not be refreshed/,'the Rules & rulings card keeps its stale note');
+    // The score feed failing as well: the header and the notice still say the rulings are stale.
+    v.setFailure(true);await v.refresh();
+    assert.match(v.$('sync').textContent,/^FEED UNAVAILABLE · RULINGS STALE · last good \d+s ago$/);assert.match(banner(v),/RULINGS STALE · /);
+    assert.deepEqual(pickCells(v),['ok','void','bad','void']);
+    // A refresh that loads the rulings again clears it.
+    v.setFailure(false);v.store.nfl_incident_rulings=voids(['void']);await v.refresh();
+    assert.match(v.$('sync').textContent,/^LIVE · data \d+s old$/);assert.equal(v.$('dot').style.background,'var(--green)');
+    assert.doesNotMatch(banner(v),/RULINGS STALE/);assert.doesNotMatch(rules(v),/could not be refreshed/);
+  });
+
   assert.equal(failures.length,0,`HDC-12 Pick'em regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
 }
 
