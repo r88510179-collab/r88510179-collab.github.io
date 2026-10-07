@@ -1,6 +1,7 @@
 'use strict';
 
 import {competitionRanks,ownershipShare,scoreEntry,tiebreakState} from './public-math.js?v=2';
+import {PUBLIC_COLUMNS,FIRST_RULING_SEASON,contestIdFor,evaluateContestRulings,pickemSlotRuling,pickemSlotEffect,pickemEffectiveGame,rulesModel} from './contest-rulings.js?v=1';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
@@ -10,6 +11,12 @@ const ALIAS={JAC:'JAX',WSH:'WAS'};
 const ESPN_LOGO_CODE={WAS:'wsh'};
 
 let CFG=null,M=[],P=[],S=[],F=[],TIEBREAK_INDEX=0,G=[],gen=0,ctl=null,lastFetchedAt=null,anonToken=null,anonExpiresAt=0,anonRequest=null;
+// HDC-12. NFL holds the NFL facts per game, exactly as the protected feed path (HDC-09/10/11) accepts them; G is the scoring
+// view derived from those facts and the contest's confirmed rulings (pickemEffectiveGame): a void game scores nothing, a
+// held game is never graded, every other game is its NFL fact. RULINGS is the validated contest dataset (null until the
+// first load), SLOTS the ruling state of each game, LAST_EVENTS the raw feed used only to check an applied ruling against
+// what the feed says now, and FEED_ISSUES the protected path's warnings by game.
+let NFL=[],RULINGS=null,SLOTS=[],LAST_EVENTS=null,FEED_ISSUES=[];
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const norm=x=>ALIAS[x]||x;
@@ -33,7 +40,38 @@ function setupViewNavigation(){
 }
 
 function jwtExpiry(token){try{const part=token.split('.')[1],json=atob(part.replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(part.length/4)*4,'=')),exp=Number(JSON.parse(json)?.exp);return Number.isFinite(exp)?exp*1000:0}catch{return 0}}
-async function anonymousToken(){if(anonToken&&Date.now()<anonExpiresAt-60000)return anonToken;if(!anonRequest){anonRequest=fetch(`${NEON_AUTH_URL}/token/anonymous`,{cache:'no-store',headers:{Accept:'application/json'}}).then(async r=>{if(!r.ok)throw new Error(`anonymous auth ${r.status}`);const j=await r.json();if(!j?.token)throw new Error('anonymous auth returned no token');anonToken=j.token;anonExpiresAt=jwtExpiry(anonToken)||Date.now()+5*60*1000;return anonToken}).finally(()=>{anonRequest=null})}return anonRequest}
+// The token and the rules and rulings are read on every refresh, so neither may hold a refresh up: each request is
+// abandoned after RULINGS_TIMEOUT_MS (a refresh then holds or keeps the rulings already verified) and retried next time.
+const RULINGS_TIMEOUT_MS=15000;
+async function anonymousToken(){if(anonToken&&Date.now()<anonExpiresAt-60000)return anonToken;if(!anonRequest){const c=new AbortController,t=setTimeout(()=>c.abort(),RULINGS_TIMEOUT_MS);anonRequest=fetch(`${NEON_AUTH_URL}/token/anonymous`,{cache:'no-store',headers:{Accept:'application/json'},signal:c.signal}).then(async r=>{if(!r.ok)throw new Error(`anonymous auth ${r.status}`);const j=await r.json();if(!j?.token)throw new Error('anonymous auth returned no token');anonToken=j.token;anonExpiresAt=jwtExpiry(anonToken)||Date.now()+5*60*1000;return anonToken}).finally(()=>{clearTimeout(t);anonRequest=null})}return anonRequest}
+// HDC-12: read-only public load of the Pick'em contest, its policy history and the selected week's rulings. Only the public
+// columns are requested (never created_by or admin_note); the pure evaluator validates what comes back.
+async function loadRulings(signal){
+  const c=new AbortController,abort=()=>c.abort(),t=setTimeout(abort,RULINGS_TIMEOUT_MS);
+  if(signal){if(signal.aborted)abort();else signal.addEventListener('abort',abort,{once:true})}
+  const fail=new Promise((_,reject)=>c.signal.addEventListener('abort',()=>{const e=new Error(signal?.aborted?'Aborted':'rules and rulings timed out');e.name=signal?.aborted?'AbortError':'TimeoutError';reject(e)},{once:true}));
+  try{
+    const token=await Promise.race([anonymousToken(),fail]),headers={Authorization:`Bearer ${token}`,Accept:'application/json'},id=encodeURIComponent(contestIdFor(CFG.season,'pickem'));
+    const get=async(table,columns,query)=>{
+      const r=await Promise.race([fetch(`${NEON_DATA_URL}/${table}?select=${columns.join(',')}&${query}`,{cache:'no-store',headers,signal:c.signal}),fail]);
+      if(!r.ok)throw new Error(`${table} ${r.status}`);
+      const data=await Promise.race([r.json(),fail]);if(!Array.isArray(data))throw new Error(`${table} returned no rows`);return data;
+    };
+    const [contests,policies,rulings]=await Promise.all([
+      get('nfl_contests',PUBLIC_COLUMNS.contests,`contest_id=eq.${id}`),
+      get('nfl_contest_policies',PUBLIC_COLUMNS.policies,`contest_id=eq.${id}&order=revision.asc`),
+      get('nfl_incident_rulings',PUBLIC_COLUMNS.rulings,`contest_id=eq.${id}&week=eq.${CFG.week}&order=chain_seq.asc`)
+    ]);
+    return{contests,policies,rulings};
+  }finally{clearTimeout(t);signal?.removeEventListener?.('abort',abort)}
+}
+function rulingsUnavailable(){return RULINGS!==null&&RULINGS.status==='hold'}
+// The ruling state of every game, then the scoring view. Before the first load (RULINGS null) nothing has been fetched,
+// so every game is still the configured, ungraded one.
+function deriveGames(){
+  SLOTS=M.map(([away,home])=>{const ruling=RULINGS?pickemSlotRuling(RULINGS,{week:CFG.week,season:CFG.season,away,home,events:LAST_EVENTS}):{state:'none'};return{ruling,effect:pickemSlotEffect(ruling)}});
+  G=NFL.map((game,i)=>pickemEffectiveGame(game,SLOTS[i].effect));
+}
 
 // A tracked entry that proves no submission: the full pick list with every pick null, and a null tiebreak.
 const isNoSubmission=(p,gameCount)=>Array.isArray(p?.pickNumbers)&&p.pickNumbers.length===gameCount&&p.pickNumbers.every(n=>n===null)&&p?.tiebreak===null;
@@ -87,7 +125,8 @@ function applyConfig(c){
   // Only tracked entries that submitted picks take part in the group race while games remain.
   S=P.filter(p=>!p.noSubmission);
   F=(CFG.fieldEntries||[]).map(mapField);
-  TIEBREAK_INDEX=CFG.tiebreakGameIndex;G=M.map(([away,home])=>({away,home,state:'pre',completed:false,winner:null,awayScore:null,homeScore:null,detail:'Scheduled',eventId:null}));renderStaticLabels();
+  TIEBREAK_INDEX=CFG.tiebreakGameIndex;NFL=M.map(([away,home])=>({away,home,state:'pre',completed:false,winner:null,awayScore:null,homeScore:null,detail:'Scheduled',eventId:null}));
+  RULINGS=null;LAST_EVENTS=null;FEED_ISSUES=[];deriveGames();renderStaticLabels();
 }
 function formatWeekDates(){
   const dates=(CFG.games||[]).map(g=>g.date||g.sourceDate).filter(Boolean).map(v=>new Date(`${String(v).slice(0,10)}T12:00:00Z`)).filter(d=>!Number.isNaN(d.valueOf()));
@@ -96,8 +135,11 @@ function formatWeekDates(){
 function tiebreakGuess(p){return Number.isInteger(p?.mnf)?String(p.mnf):'NO PICK'}
 function tiebreakDiff(p,t){return t.final?(Number.isInteger(p?.mnf)?Math.abs(p.mnf-t.total):Number.POSITIVE_INFINITY):null}
 function renderStaticLabels(){
-  $('weekLine').textContent=`Week ${CFG.week} · ${formatWeekDates()} · ${P.map(p=>p.name).join(' · ')}`;$('pulseWeek').textContent=`Week ${CFG.week}`;$('entryCount').textContent=fieldAvailable()?CFG.competitionSize:P.length;$('gameCount').textContent=M.length;$('finals').textContent=`0/${M.length}`;$('left').textContent=M.length;$('tbNote').textContent=`Tiebreak guesses: ${P.map(p=>`${p.name} ${tiebreakGuess(p)}`).join(' · ')}.`;const [a,h]=M[TIEBREAK_INDEX];$('footerRule').textContent=`Final NFL outcomes only · NFL ties = 0 points · ${a}–${h} tiebreak activates when that game is final.${fieldAvailable()?' Full-field entries are stored without competitor names.':''}`;
+  $('weekLine').textContent=`Week ${CFG.week} · ${formatWeekDates()} · ${P.map(p=>p.name).join(' · ')}`;$('pulseWeek').textContent=`Week ${CFG.week}`;$('entryCount').textContent=fieldAvailable()?CFG.competitionSize:P.length;$('gameCount').textContent=M.length;$('finals').textContent=`0/${M.length}`;$('left').textContent=M.length;$('tbNote').textContent=`Tiebreak guesses: ${P.map(p=>`${p.name} ${tiebreakGuess(p)}`).join(' · ')}.`;$('footerRule').textContent=footerText();
 }
+// HDC-12: a voided tiebreak game means no tiebreak that week; another game is never chosen after the fact.
+const tiebreakVoid=(games=G)=>games[TIEBREAK_INDEX]?.void===true;
+function footerText(){const [a,h]=M[TIEBREAK_INDEX];return`Final NFL outcomes only · NFL ties = 0 points · ${tiebreakVoid()?`${a}–${h} tiebreak game voided by commissioner ruling: no tiebreak this week.`:`${a}–${h} tiebreak activates when that game is final.`}${G.some(g=>g.void)?' VOID = removed from scoring by commissioner ruling.':''}${fieldAvailable()?' Full-field entries are stored without competitor names.':''}`}
 function stats(p,games=G){return scoreEntry(p.picks,games)}
 function tiebreak(games=G){return tiebreakState(games[TIEBREAK_INDEX])}
 function rows(games=G){const t=tiebreak(games);return P.map((p,i)=>({...p,...stats(p,games),diff:tiebreakDiff(p,t),i})).sort((a,b)=>b.w-a.w||a.l-b.l||(t.final?a.diff-b.diff:0)||a.i-b.i)}
@@ -143,7 +185,13 @@ function fieldShareText(gameIndex,team){
 }
 function fieldShareClass(gameIndex,team){const share=fieldShare(gameIndex,team);return share&&share.pct<=35?' contrarian':''}
 function gameIndexForTeam(team){return M.findIndex(([a,h])=>a===team||h===team)}
-function state(g){return g.completed?(g.winner?'FINAL':'FINAL TIE'):g.state==='in'?(g.detail||'LIVE'):(g.detail||'SCHEDULED')}
+function state(g){return g.void?'VOID':g.hold?'HOLD':g.completed?(g.winner?'FINAL':'FINAL TIE'):g.state==='in'?(g.detail||'LIVE'):(g.detail||'SCHEDULED')}
+// The winners of a resolved week. Only entries that submitted picks can win while any did (an entry that proved no
+// submission is never a co-winner, which an all-void week would otherwise allow); with none, every tracked entry, as before.
+function finalWinnerIndices(games,t){
+  if(!S.length)return topIndices(P.map(p=>stats(p,games).w),t);
+  return topIndices(S.map(p=>stats(p,games).w),t,S).map(si=>P.indexOf(S[si]));
+}
 function teamLogoUrl(t){const team=norm(String(t||'').toUpperCase()),code=ESPN_LOGO_CODE[team]||team.toLowerCase();return`https://a.espncdn.com/i/teamlogos/nfl/500/${encodeURIComponent(code)}.png`}
 function badge(t,size=''){const team=norm(String(t||'').toUpperCase());return`<span class="badge${size?` ${size}`:''}" style="--tc:${TEAM_COLORS[team]||'#33465f'}" aria-hidden="true"><span class="badge-fallback">${esc(team)}</span>${team?`<img class="team-logo" src="${teamLogoUrl(team)}" alt="" loading="lazy" decoding="async" onerror="this.hidden=true">`:''}</span>`}
 function pickTeam(t){if(!t)return'<span class="pick-team no-pick"><span>NO PICK</span></span>';const team=norm(String(t).toUpperCase());return`<span class="pick-team">${badge(team,'mini')}<span>${esc(team)}</span></span>`}
@@ -151,7 +199,7 @@ function swingIndexes(unfinishedOnly=false,games=G){return M.map((_,i)=>i).filte
 function addState(map,wins,count){const key=wins.join(',');map.set(key,(map.get(key)||0)+count)}
 function raceStatus(games=G){
   const unfinished=games.map((g,i)=>!g.completed?i:-1).filter(i=>i>=0),swings=swingIndexes(true,games),t=tiebreak(games);
-  if(!unfinished.length){const base=P.map(p=>stats(p,games).w),winners=topIndices(base,t),co=winners.length>1;return{outcomes:1,racePaths:1,items:P.map((p,i)=>({name:p.name,status:winners.includes(i)?'WINNER':'OUT',ceiling:base[i],roots:[],topPaths:winners.includes(i)?1:0,note:winners.includes(i)?(co?'Co-winner · exact tiebreak tied':'Pool winner'):'Slate complete'}))}}
+  if(!unfinished.length){const base=P.map(p=>stats(p,games).w),winners=finalWinnerIndices(games,t),co=winners.length>1,coNote=tiebreakVoid(games)?'Co-winner · no tiebreak (tiebreak game void)':'Co-winner · exact tiebreak tied';return{outcomes:1,racePaths:1,items:P.map((p,i)=>({name:p.name,status:winners.includes(i)?'WINNER':'OUT',ceiling:base[i],roots:[],topPaths:winners.includes(i)?1:0,note:winners.includes(i)?(co?coNote:'Pool winner'):'Slate complete'}))}}
   // While games remain the race is run over the submitters alone, exactly as if no-submission entries were not tracked. A
   // no-submission entry has no possible picks: it is OUT, with no ceiling and no rooting chips.
   const outcomes=3**unfinished.length,noPicks=p=>({name:p.name,status:'OUT',ceiling:null,roots:[],topPaths:0,note:'No picks submitted'});
@@ -184,16 +232,36 @@ function renderSwings(race){
   }).join('');
 }
 function gameOrder(){const rank=g=>g.state==='in'?0:!g.completed?1:2;return G.map((g,i)=>({g,i})).sort((a,b)=>rank(a.g)-rank(b.g)||a.i-b.i)}
+// HDC-12: the participant-visible Rules & rulings card.
+function rulesHtml(m){
+  if(!m)return'<div class="empty">Loading contest rules and rulings…</div>';
+  if(m.state!=='ready')return`<div class="rules-alert rules-${m.state}"><b>${esc(m.heading)}</b><p>${esc(m.text)}</p></div><p class="rules-confirm">${esc(m.confirmation)}</p>`;
+  const policy=m.policy?`<div class="rules-block"><span class="rules-label">Halted-game policy</span><b>${esc(m.policy.name)}</b><small>Policy revision ${m.policy.revision} · in force from Week ${m.policy.effectiveWeek}</small><p>${esc(m.policy.text)}</p>${m.policy.publicNote?`<p class="rules-note">${esc(m.policy.publicNote)}</p>`:''}</div>`:'';
+  const revisions=m.revisions.length>1?`<p class="rules-meta">Policy history: ${m.revisions.map(r=>`revision ${r.revision}, ${esc(r.name)}, from Week ${r.effectiveWeek}`).join(' · ')}</p>`:'';
+  const incidents=m.incidents.length?m.incidents.map(x=>`<div class="rules-incident rules-${x.status.toLowerCase().replace(/\s+/g,'-')}"><div class="rules-incident-head"><b>Week ${x.week} · ${esc(x.matchup)}</b><span class="rules-status">${esc(x.status)}</span></div><p>${esc(x.detail)}</p>${x.review?`<p class="rules-review">${esc(x.review)}</p>`:''}${x.unmatched?`<p class="rules-meta">${esc(x.unmatched)}</p>`:''}${x.evidence?`<small>${esc(x.evidence)}</small>`:''}${x.history.length?`<ol class="rules-history">${x.history.map(h=>`<li>${esc(h.label)}${h.date?` · ${esc(h.date)}`:''}${h.note?` · ${esc(h.note)}`:''}</li>`).join('')}</ol>`:''}</div>`).join(''):`<div class="empty">${esc(m.empty)}</div>`;
+  return`<div class="rules-grid"><div class="rules-block"><span class="rules-label">Contest</span><b>${esc(m.contestName)}</b><small>${esc(m.contestType)}</small></div>${policy}</div>${revisions}<p class="rules-confirm">${esc(m.confirmation)}</p>${m.stale?`<p class="rules-stale">${esc(m.stale)}</p>`:''}${incidents}`;
+}
+// A ruling's state as the card shows it: its published game's slot, a hold where it names a published team with another
+// opponent, or no published game at all.
+function cardSlot(x){
+  const i=M.findIndex(([a,h])=>a===x.away&&h===x.home);
+  if(i>=0)return SLOTS[i].ruling;
+  return M.some(([a,h])=>[a,h].some(t=>t===x.away||t===x.home))?{state:'hold',reason:'it does not match the published game'}:{state:'none',unmatched:true};
+}
 function render(){
   if(!CFG)return;
-  const r=rows(),lead=r[0],f=G.filter(g=>g.completed).length,live=G.filter(g=>g.state==='in'&&!g.completed).length,t=tiebreak(),finalWinners=f===M.length?topIndices(P.map(p=>stats(p).w),t):[],race=raceStatus(),field=fieldSnapshot();
+  deriveGames();
+  // HDC-12: a void game is resolved (complete, not remaining) but is not an NFL final; held games are not resolved.
+  const nflFinals=G.filter(g=>g.completed&&!g.void).length,voids=G.filter(g=>g.void).length,onHold=rulingsUnavailable(),tbVoid=tiebreakVoid();
+  const r=rows(),lead=r[0],f=nflFinals+voids,live=G.filter(g=>g.state==='in'&&!g.completed).length,t=tiebreak(),finalWinners=f===M.length?finalWinnerIndices(G,t):[],race=raceStatus(),field=fieldSnapshot();
+  const unprojected=tbVoid?' · no tiebreak this week (tiebreak game void)':t.final?'':' · unresolved tiebreak not projected';
   let rank=1;
   $('fieldSummary').textContent=field?`${field.size} entries · field names anonymized`:'Full-field data unavailable for this week.';
   $('standings').innerHTML=r.map((p,i)=>{
     if(i&&!tiedWith(p,r[i-1],t))rank=i+1;
     const leadTie=tiedWith(p,lead,t),fm=field?.metrics.get(p.id),overall=fm?fieldRankLabel(fm):'—',back=fm?(fm.behind?fm.behind:'—'):'—',ceiling=fm?ceilingRankLabel(fm):'—';
     const overallSub=fm?`<span class="standing-sub">Top ${fm.topPercent}% · ${fm.tieCount>1?`${fm.tieCount} tied`:'solo'}</span>`:'<span class="standing-sub">field unavailable</span>';
-    const ceilingSub=fm?`<span class="standing-sub">WIN CEILING${t.final?'':' · unresolved tiebreak not projected'}</span>`:'';
+    const ceilingSub=fm?`<span class="standing-sub">WIN CEILING${unprojected}</span>`:'';
     const tb=Number.isInteger(p.mnf)?String(p.mnf):'—',tbDelta=Number.isFinite(p.diff)?`<span class="standing-sub">Δ ${p.diff}</span>`:'';return`<tr class="${leadTie?'leadrow':''}"><td>${rank}</td><td class="entry">${esc(p.name)}</td><td class="c"><span class="standing-overall">${overall}</span>${overallSub}</td><td class="c w">${p.w}</td><td class="c l">${p.l}</td><td class="c">${p.left}</td><td class="c">${back}</td><td class="c"><span class="standing-overall">${ceiling}</span>${ceilingSub}</td><td class="c">${tb}${tbDelta}</td></tr>`;
   }).join('');
 
@@ -202,36 +270,57 @@ function render(){
     $('homeStandings').innerHTML=r.map((p,i)=>{
       if(i&&!tiedWith(p,r[i-1],t))hrank=i+1;
       const leadTie=tiedWith(p,lead,t),fm=field?.metrics.get(p.id);
-      const fieldHtml=fm?`<span class="home-field"><b>${fieldRankLabel(fm)} / ${field.size}</b><small>Top ${fm.topPercent}% · ${fm.behind?`${fm.behind} back`:'field lead'} · win ceiling ${ceilingRankLabel(fm)}${t.final?'':' · unresolved tiebreak not projected'}</small></span>`:`<span class="home-left">${p.left} left</span>`;
+      const fieldHtml=fm?`<span class="home-field"><b>${fieldRankLabel(fm)} / ${field.size}</b><small>Top ${fm.topPercent}% · ${fm.behind?`${fm.behind} back`:'field lead'} · win ceiling ${ceilingRankLabel(fm)}${unprojected}</small></span>`:`<span class="home-left">${p.left} left</span>`;
       return`<div class="home-standing-row ${leadTie?'lead':''}"><span class="home-rank">${hrank}</span><span class="home-entry">${esc(p.name)}</span><span class="home-record">${p.w}–${p.l}</span>${fieldHtml}</div>`;
     }).join('');
   }
 
   const orderedGames=gameOrder();
-  const gameMarkup=g=>{const show=g.state==='in'||g.completed,cl=g.completed?(g.winner?'final':'final tie'):g.state==='in'?'live':'pre',as=score(g.awayScore),hs=score(g.homeScore);return`<div class="game ${cl}"><div class="team ${g.winner===g.away?'winner':''}">${badge(g.away)}<span class="abbr">${esc(g.away)}</span>${show?`<span class="score">${as??'—'}</span>`:''}</div><div class="status">${esc(state(g))}</div><div class="team home ${g.winner===g.home?'winner':''}">${show?`<span class="score">${hs??'—'}</span>`:''}<span class="abbr">${esc(g.home)}</span>${badge(g.home)}</div></div>`};
-  $('gamegrid').innerHTML=orderedGames.map(({g})=>gameMarkup(g)).join('');
-  if($('homeGamePreview'))$('homeGamePreview').innerHTML=orderedGames.slice(0,3).map(({g})=>gameMarkup(g)).join('');
+  // A void or held game shows the NFL fact (scores where the feed has them) with the pool's ruling state, never a winner
+  // and never FINAL TIE.
+  const ruled=(g,i)=>{const fact=NFL[i],show=fact.state==='in'||fact.completed,as=score(fact.awayScore),hs=score(fact.homeScore);
+    const label=g.void?`VOID · Commissioner ruling${g.underReview?' · UNDER REVIEW':''}`:`HOLD · ${SLOTS[i].effect.scope==='contest'?'Ruling data unavailable':'Ruling information unusable'}`;
+    return`<div class="game ${g.void?`void${g.underReview?' review':''}`:'hold'}"><div class="team">${badge(g.away)}<span class="abbr">${esc(g.away)}</span>${show?`<span class="score">${as??'—'}</span>`:''}</div><div class="status">${esc(label)}</div><div class="team home">${show?`<span class="score">${hs??'—'}</span>`:''}<span class="abbr">${esc(g.home)}</span>${badge(g.home)}</div></div>`};
+  const gameMarkup=(g,i)=>{if(g.void||g.hold)return ruled(g,i);const show=g.state==='in'||g.completed,cl=g.completed?(g.winner?'final':'final tie'):g.state==='in'?'live':'pre',as=score(g.awayScore),hs=score(g.homeScore);return`<div class="game ${cl}"><div class="team ${g.winner===g.away?'winner':''}">${badge(g.away)}<span class="abbr">${esc(g.away)}</span>${show?`<span class="score">${as??'—'}</span>`:''}</div><div class="status">${esc(state(g))}</div><div class="team home ${g.winner===g.home?'winner':''}">${show?`<span class="score">${hs??'—'}</span>`:''}<span class="abbr">${esc(g.home)}</span>${badge(g.home)}</div></div>`};
+  $('gamegrid').innerHTML=orderedGames.map(({g,i})=>gameMarkup(g,i)).join('');
+  if($('homeGamePreview'))$('homeGamePreview').innerHTML=orderedGames.slice(0,3).map(({g,i})=>gameMarkup(g,i)).join('');
 
   $('pickHead').innerHTML='<tr><th class="name">Entry</th>'+M.map(([a,h],i)=>{
     const away=fieldShare(i,a),home=fieldShare(i,h),ownership=away&&home?`<div class="matchup-ownership"><span>${away.pct}%</span><span>${home.pct}%</span></div>`:'';
     return`<th class="c matchup-head"><span class="matchup-team">${badge(a,'tiny')}${esc(a)}</span><span class="matchup-slash">/</span><span class="matchup-team">${badge(h,'tiny')}${esc(h)}</span>${ownership}</th>`;
   }).join('')+'</tr>';
-  $('pickBody').innerHTML=P.map(p=>'<tr><td class="name">'+esc(p.name)+'</td>'+p.picks.map((pick,i)=>{const g=G[i],done=g.completed,ok=done&&g.winner&&pick===g.winner,tie=done&&!g.winner;return`<td class="c ${tie?'neutral':done?(ok?'ok':'bad'):'pending'}"><span class="pick-choice">${pickTeam(pick)}<span class="pick-result">${tie?'0':done?(ok?'✓':'✕'):''}</span></span></td>`}).join('')+'</tr>').join('');
+  $('pickBody').innerHTML=P.map(p=>'<tr><td class="name">'+esc(p.name)+'</td>'+p.picks.map((pick,i)=>{const g=G[i];if(g.void||g.hold)return`<td class="c ${g.void?'void':'hold'}"><span class="pick-choice">${pickTeam(pick)}<span class="pick-result">${g.void?'VOID':'HOLD'}</span></span></td>`;const done=g.completed,ok=done&&g.winner&&pick===g.winner,tie=done&&!g.winner;return`<td class="c ${tie?'neutral':done?(ok?'ok':'bad'):'pending'}"><span class="pick-choice">${pickTeam(pick)}<span class="pick-result">${tie?'0':done?(ok?'✓':'✕'):''}</span></span></td>`}).join('')+'</tr>').join('');
 
-  $('finals').textContent=`${f}/${M.length}`;$('liveCount').textContent=live;$('left').textContent=M.length-f;$('mnf').textContent=t.total==null?'—':t.total+(t.final?'':'*');
-  if(f===M.length&&finalWinners.length>1){
-    $('leaderName').textContent=finalWinners.map(i=>P[i].name).join(' / ');$('leaderRecord').textContent=`${lead.w}–${lead.l}`;$('leaderKicker').textContent='Group co-winners';$('leaderNote').textContent='Your tracked entries are tied after the configured tiebreak.';
+  $('finals').textContent=voids?`${nflFinals}/${M.length} · ${voids} void`:`${nflFinals}/${M.length}`;$('liveCount').textContent=live;$('left').textContent=M.length-f;$('mnf').textContent=tbVoid?'VOID':t.total==null?'—':t.total+(t.final?'':'*');
+  if(onHold){
+    $('leaderKicker').textContent='ON HOLD';$('leaderName').textContent='Ruling data unavailable';$('leaderRecord').textContent='—';
+    $('leaderNote').textContent='Standings are on hold: the contest rules and rulings could not be loaded or verified, so no game is graded from the NFL feed alone.';
+  }else if(f===M.length&&finalWinners.length>1){
+    $('leaderName').textContent=finalWinners.map(i=>P[i].name).join(' / ');$('leaderRecord').textContent=`${lead.w}–${lead.l}`;$('leaderKicker').textContent='Group co-winners';$('leaderNote').textContent=tbVoid?'Your tracked entries are tied. The tiebreak game was voided by commissioner ruling, so there is no tiebreak this week: tied leaders are co-winners.':'Your tracked entries are tied after the configured tiebreak.';
   }else{
     const tiedLeaders=lead?r.filter(x=>tiedWith(x,lead,t)):[],ties=tiedLeaders.length,fm=lead&&field?field.metrics.get(lead.id):null;
     $('leaderName').textContent=ties>1?tiedLeaders.map(x=>x.name).join(' / '):(lead?.name||'—');$('leaderRecord').textContent=lead?`${lead.w}–${lead.l}`:'0–0';$('leaderKicker').textContent=f===M.length?'Group winner':ties>1?'Tracked leaders':'Group leader';
-    $('leaderNote').textContent=fm?`${ties>1?`${ties} tracked entries tied · `:''}Overall ${fieldRankLabel(fm)} of ${field.size} · Top ${fm.topPercent}% · ${fm.behind?`${fm.behind} back`:'at the field lead'} · win ceiling ${ceilingRankLabel(fm)}${t.final?'.':' · unresolved tiebreak not projected.'}`:ties>1&&!t.final?`${ties} tracked entries are tied. Full-field data is not published for this week.`:`${f} of ${M.length} games are final. Full-field data is not published for this week.`;
+    $('leaderNote').textContent=fm?`${ties>1?`${ties} tracked entries tied · `:''}Overall ${fieldRankLabel(fm)} of ${field.size} · Top ${fm.topPercent}% · ${fm.behind?`${fm.behind} back`:'at the field lead'} · win ceiling ${ceilingRankLabel(fm)}${unprojected}.`:ties>1&&!t.final?`${ties} tracked entries are tied${tbVoid?' and there is no tiebreak this week (tiebreak game void)':''}. Full-field data is not published for this week.`:`${nflFinals} of ${M.length} games are final${voids?` · ${voids} void by commissioner ruling`:''}. Full-field data is not published for this week.`;
   }
   $('bestWins').textContent=field?.bestWins??lead?.w??0;
   const pc=Math.round(f/M.length*100);$('progressText').textContent=`${pc}%`;$('progressBar').style.width=`${pc}%`;
-  $('tbNote').textContent=t.final?`Tiebreak final total: ${t.total}. Tiebreak differences are active.`:`Tiebreak guesses: ${P.map(p=>`${p.name} ${tiebreakGuess(p)}`).join(' · ')}.`;
+  $('tbNote').textContent=tbVoid?'Tiebreak game voided by commissioner ruling: no tiebreak this week. Standings use the scored record only, and tied leaders are co-winners.':t.final?`Tiebreak final total: ${t.total}. Tiebreak differences are active.`:`Tiebreak guesses: ${P.map(p=>`${p.name} ${tiebreakGuess(p)}`).join(' · ')}.`;
+  $('footerRule').textContent=footerText();
+  const rulesBox=$('pickemRules');
+  if(rulesBox)rulesBox.innerHTML=rulesHtml(RULINGS?rulesModel(RULINGS,{week:CFG.week,slotState:cardSlot}):null);
   renderRace(race);renderSwings(race);
 }
-function warn(list){const e=$('error');e.replaceChildren();if(!list.length)return;const b=document.createElement('div');b.className='error';b.textContent=`Some feed data was ignored to protect standings: ${list.join(' · ')}`;e.appendChild(b)}
+function warn(list,{hold=null,notes=[]}={}){const e=$('error');e.replaceChildren();const add=(cls,text)=>{const b=document.createElement('div');b.className=cls;b.textContent=text;e.appendChild(b)};if(list.length)add('error',`Some feed data was ignored to protect standings: ${list.join(' · ')}`);if(hold)add('error rules-hold-banner',`ON HOLD · Ruling data unavailable (${hold}). Standings are on hold until the contest rules and rulings load; no game is graded from the NFL feed alone.`);if(notes.length)add('notice rules-review-banner',`UNDER REVIEW · ${notes.join(' · ')}`)}
+// HDC-12: the warnings, hold and review notes for this refresh. A void game is resolved by its ruling, so its HDC-11
+// "awaiting a pool ruling" warning no longer applies; every other HDC-09/10 warning stays, protection unchanged. A held game
+// is ungraded and says why. A void the feed now contradicts stays applied and is UNDER REVIEW.
+function report(fetchedAt){
+  const warnings=[],notes=[];
+  for(const x of FEED_ISSUES)if(!(x.halted&&SLOTS[x.i]?.effect.kind==='void'))warnings.push(x.text);
+  SLOTS.forEach(({effect},i)=>{const [a,h]=M[i];if(effect.kind==='hold'&&effect.scope!=='contest')warnings.push(`${a}-${h}: ruling on hold (${effect.reason}), not graded`);if(effect.kind==='void'&&effect.underReview)notes.push(`${a}-${h}: VOID by commissioner ruling stays applied; ${effect.underReview}`)});
+  const hold=rulingsUnavailable()?RULINGS.reason:null;
+  warn(warnings,{hold,notes});setSync(fetchedAt,warnings,{hold:!!hold,review:notes.length>0});
+}
 function exactCompetitorPair(e){
   const competitions=Array.isArray(e?.competitions)?e.competitions:[];
   if(competitions.length!==1)return null;
@@ -259,7 +348,7 @@ function finalEvidenceIssue(e,away,home,as,hs){
 // the status, so the sync label reads INCOMPLETE while the week awaits a pool ruling or official resolution. Absent or
 // non-string names never halt a game, and a completed event is judged only as a final (finalEvidenceIssue).
 function haltedStatus(e){for(const name of [e.status?.type?.name,e.competitions[0].status?.type?.name])if(typeof name==='string'&&HALTED_STATUS.test(name))return name;return null}
-function parseEvent(e,a,h,old,tiebreakGame=false){const pair=exactCompetitorPair(e);if(!pair)return{game:old,warning:`${a}-${h}: malformed competitor data ignored`};const {away,home}=pair,st=e.status?.type?.state||'pre',done=e.status?.type?.completed===true,as=score(away.score),hs=score(home.score);if((st==='in'||done)&&(as===null||hs===null))return{game:old,warning:`${a}-${h}: invalid score ignored`};const issue=done?finalEvidenceIssue(e,away,home,as,hs):null;if(issue)return{game:old,warning:`${a}-${h}: final with contradictory ${issue} ignored`};const tied=done&&as===hs,halted=done?null:haltedStatus(e);return{game:{away:a,home:h,state:st,completed:done,winner:done&&!tied?(as>hs?a:h):null,awayScore:as,homeScore:hs,detail:String(e.status?.type?.shortDetail||e.status?.type?.detail||(done?(tied?'Final · Tie':'Final'):'Scheduled')),eventId:e.id?String(e.id):old.eventId},warning:halted?`${a}-${h}: ${tiebreakGame?'tiebreak game':'game'} halted (${halted}), not graded; awaiting a pool ruling or official resolution`:null}}
+function parseEvent(e,a,h,old,tiebreakGame=false){const pair=exactCompetitorPair(e);if(!pair)return{game:old,warning:`${a}-${h}: malformed competitor data ignored`};const {away,home}=pair,st=e.status?.type?.state||'pre',done=e.status?.type?.completed===true,as=score(away.score),hs=score(home.score);if((st==='in'||done)&&(as===null||hs===null))return{game:old,warning:`${a}-${h}: invalid score ignored`};const issue=done?finalEvidenceIssue(e,away,home,as,hs):null;if(issue)return{game:old,warning:`${a}-${h}: final with contradictory ${issue} ignored`};const tied=done&&as===hs,halted=done?null:haltedStatus(e);return{halted:!!halted,game:{away:a,home:h,state:st,completed:done,winner:done&&!tied?(as>hs?a:h):null,awayScore:as,homeScore:hs,detail:String(e.status?.type?.shortDetail||e.status?.type?.detail||(done?(tied?'Final · Tie':'Final'):'Scheduled')),eventId:e.id?String(e.id):old.eventId},warning:halted?`${a}-${h}: ${tiebreakGame?'tiebreak game':'game'} halted (${halted}), not graded; awaiting a pool ruling or official resolution`:null}}
 function eventContextWarning(e,a,h){
   const season=e?.season?.year,seasonType=e?.season?.type,week=e?.week?.number;
   if(season!=null&&Number(season)!==CFG.season)return `${a}-${h}: feed season ${season} does not match ${CFG.season}`;
@@ -269,9 +358,13 @@ function eventContextWarning(e,a,h){
 }
 function selectEvent(events,a,h,old){const q=events.filter(e=>{const c=e?.competitions?.[0],competitors=Array.isArray(c?.competitors)?c.competitors:[],x=competitors.find(v=>v?.homeAway==='away'),y=competitors.find(v=>v?.homeAway==='home');return norm(x?.team?.abbreviation)===a&&norm(y?.team?.abbreviation)===h});if(!q.length)return{event:null,warning:`${a}-${h}: expected game missing from feed`};if(q.length!==1)return{event:null,warning:`${a}-${h}: duplicate events ignored`};const e=q[0],pair=exactCompetitorPair(e);if(!pair||norm(pair.away?.team?.abbreviation)!==a||norm(pair.home?.team?.abbreviation)!==h)return{event:null,warning:`${a}-${h}: malformed competitor data ignored`};const contextWarning=eventContextWarning(e,a,h);if(contextWarning)return{event:null,warning:contextWarning};if(old.eventId&&e.id&&String(e.id)!==String(old.eventId))return{event:null,warning:`${a}-${h}: event identity changed`};return{event:e,warning:null}}
 function ageSeconds(ts){const ms=Date.parse(ts);if(!Number.isFinite(ms))return null;const delta=Date.now()-ms;if(delta<-60000)return null;return Math.max(0,Math.floor(delta/1000))}
-function setSync(fetchedAt,warnings=[]){lastFetchedAt=typeof fetchedAt==='string'?fetchedAt:null;const age=ageSeconds(lastFetchedAt),delayed=age===null||age>30,incomplete=warnings.length>0,label=incomplete?'INCOMPLETE':delayed?'DELAYED':'LIVE',ageText=age===null?'age unknown':`data ${age}s old`;$('sync').textContent=`${label} · ${ageText}${warnings.length?` · ${warnings.length} warning${warnings.length===1?'':'s'}`:''}`;$('dot').style.background=incomplete||delayed?'var(--gold)':'var(--green)'}
+function setSync(fetchedAt,warnings=[],{hold=false,review=false}={}){lastFetchedAt=typeof fetchedAt==='string'?fetchedAt:null;const age=ageSeconds(lastFetchedAt),delayed=age===null||age>30,incomplete=warnings.length>0,label=hold?'ON HOLD':incomplete?'INCOMPLETE':review?'UNDER REVIEW':delayed?'DELAYED':'LIVE',ageText=age===null?'age unknown':`data ${age}s old`;$('sync').textContent=`${label} · ${ageText}${warnings.length?` · ${warnings.length} warning${warnings.length===1?'':'s'}`:''}`;$('dot').style.background=hold?'var(--red)':incomplete||delayed||review?'var(--gold)':'var(--green)'}
 async function feed(signal){const url=`${ESPN_SCOREBOARD}?dates=${CFG.season}&seasontype=2&week=${CFG.week}&limit=100&_=${Date.now()}`,r=await fetch(url,{signal,cache:'no-store',headers:{Accept:'application/json'}});if(!r.ok)throw new Error(`ESPN ${r.status}`);const j=await r.json();if(!j||!Array.isArray(j.events))throw new Error('invalid ESPN payload');return{fetchedAt:new Date().toISOString(),events:j.events}}
-async function update(){if(!CFG)return;const id=++gen;if(ctl)ctl.abort();const c=new AbortController;ctl=c;$('refresh').disabled=true;$('sync').textContent='Updating…';try{const j=await feed(c.signal);if(id!==gen)return;const warnings=[],next=M.map(([a,h],i)=>{const s=selectEvent(j.events,a,h,G[i]);if(s.warning)warnings.push(s.warning);if(!s.event)return G[i];const p=parseEvent(s.event,a,h,G[i],i===TIEBREAK_INDEX);if(p.warning)warnings.push(p.warning);return p.game});if(id!==gen)return;G=next;render();warn(warnings);setSync(j.fetchedAt,warnings)}catch(e){if(e?.name==='AbortError'||id!==gen)return;$('sync').textContent=lastFetchedAt?`FEED UNAVAILABLE · last good ${ageSeconds(lastFetchedAt)??'?'}s ago`:'FEED UNAVAILABLE';$('dot').style.background='var(--red)';warn(['Automatic score refresh failed. Existing results are preserved; tap REFRESH to retry.'])}finally{if(id===gen){$('refresh').disabled=false;if(ctl===c)ctl=null}}}
+// Each refresh reads the scores and the contest's rules and rulings together. The protected feed path reads and writes
+// only the NFL facts (NFL[i] is the last verified game and carries the event id the HDC-09 guard compares); the scoring
+// view is derived again on every render. A rulings load that fails keeps rulings already verified this session (stale);
+// with none, the contest holds and nothing is graded from the NFL feed alone.
+async function update(){if(!CFG)return;const id=++gen;if(ctl)ctl.abort();const c=new AbortController;ctl=c;$('refresh').disabled=true;$('sync').textContent='Updating…';try{const [scores,rulings]=await Promise.allSettled([feed(c.signal),CFG.season<FIRST_RULING_SEASON?Promise.resolve(null):loadRulings(c.signal)]);if(id!==gen)return;if(rulings.status==='rejected')console.warn(rulings.reason);RULINGS=evaluateContestRulings({contestId:contestIdFor(CFG.season,'pickem'),contestType:'pickem',season:CFG.season,...(rulings.status==='fulfilled'?{data:rulings.value}:{error:rulings.reason}),previous:RULINGS});if(scores.status==='rejected')throw scores.reason;const j=scores.value,issues=[],next=M.map(([a,h],i)=>{const s=selectEvent(j.events,a,h,NFL[i]);if(s.warning)issues.push({i,text:s.warning});if(!s.event)return NFL[i];const p=parseEvent(s.event,a,h,NFL[i],i===TIEBREAK_INDEX);if(p.warning)issues.push({i,text:p.warning,halted:p.halted});return p.game});if(id!==gen)return;NFL=next;LAST_EVENTS=j.events;FEED_ISSUES=issues;render();report(j.fetchedAt)}catch(e){if(e?.name==='AbortError'||id!==gen)return;render();$('sync').textContent=lastFetchedAt?`FEED UNAVAILABLE · last good ${ageSeconds(lastFetchedAt)??'?'}s ago`:'FEED UNAVAILABLE';$('dot').style.background='var(--red)';warn(['Automatic score refresh failed. Existing results are preserved; tap REFRESH to retry.'],{hold:rulingsUnavailable()?RULINGS.reason:null})}finally{if(id===gen){$('refresh').disabled=false;if(ctl===c)ctl=null}}}
 async function loadWeeks(){
   const token=await anonymousToken(),url=`${NEON_DATA_URL}/nfl_pool_weeks?select=season,week,status,config,revision,published_at,locked_at&status=eq.locked&order=season.asc,week.asc`,r=await fetch(url,{cache:'no-store',headers:{Authorization:`Bearer ${token}`,Accept:'application/json'}});if(!r.ok)throw new Error(`week data ${r.status}`);const data=await r.json();if(!Array.isArray(data)||!data.length)throw new Error('No published pool weeks found');
   const select=$('weekSelect');select.innerHTML=data.map(x=>`<option value="${x.season}-${x.week}">${x.season} · Week ${x.week}</option>`).join('');const qs=new URLSearchParams(location.search),requested=Number(qs.get('week')),season=Number(qs.get('season'))||Math.max(...data.map(x=>x.season));let chosen=requested?data.find(x=>x.season===season&&x.week===requested):null;if(!chosen)chosen=data[data.length-1];select.value=`${chosen.season}-${chosen.week}`;select.addEventListener('change',()=>{const [s,w]=select.value.split('-');const u=new URL(location.href);u.searchParams.set('season',s);u.searchParams.set('week',w);location.href=u.toString()});applyConfig(chosen.config);render();await update();

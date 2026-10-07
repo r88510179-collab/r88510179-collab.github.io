@@ -547,7 +547,8 @@ console.log('survivor HDC-11 halted-game ruling, unfrozen board, ordinary-pendin
     public_note:i?null:'Game canceled by the league; commissioner ruling applied.',created_at:'2026-10-08T12:00:00+00:00',...PRIVATE,...o}));
   const store=(policy,rows)=>rulingStore({nfl_contest_policies:[svPolicyRow(policy)],nfl_incident_rulings:rows});
   const pill=(v,name)=>(v.row(name).match(/<span class="status-pill [^"]*">([^<]*)<\/span>/g)||[]).map(x=>x.replace(/<[^>]+>/g,''));
-  const small=(v,name)=>v.row(name).match(/<small>([^<]*)<\/small>/)?.[1]||'';
+  // The status line is the row's last <small> (the history chips carry their own week labels in <small> too).
+  const small=(v,name)=>[...v.row(name).matchAll(/<small>([^<]*)<\/small>/g)].pop()?.[1]||'';
   const heads=html=>Object.fromEntries(Object.entries(board(html)).map(([name,b])=>[name,b.head]));
   const rules=v=>v.$('svRules').innerHTML;
 

@@ -103,13 +103,36 @@ function teamResult(results,pick){
   return results instanceof Map?results.get(pick):results?.[pick];
 }
 
-export function survivorEntryState(entry,weekIndex,resultsByWeek){
-  const picks=entry?.picks||[],used=new Set();
+// HDC-12: the optional last argument of every entry evaluation below is the contest's ruling overlay (contest-rulings.js
+// survivorRulingLookup): {status, reason, forPick(week, team)}. Without it (the frozen Admin publish guard never passes
+// one) every result is exactly the HDC-11 result. With it, a pick's ruling state is read before the NFL result:
+//   hold      - the ruling information for that pick is unusable or unavailable: status 'hold', neither alive, out nor
+//               pending, and no later week is applied
+//   effective - eliminate puts the entry out in that week; advance_team_used keeps it alive for that week with the team
+//               still used, and later weeks are evaluated as usual. Neither reads the NFL result, so a later final never
+//               reverses it, and neither invents an NFL winner (the results map is never touched)
+//   none, withdrawn - the NFL fact decides, including the HDC-11 awaiting-ruling state for a halted game
+// A missing or repeated pick is a pick-sheet fact and is decided before any ruling or result.
+function appliedRuling(slot,week,team){
+  return{week,team,consequence:slot.consequence,status:slot.incident?.evidence?.incidentStatus||null,underReview:slot.underReview||null};
+}
+export function survivorEntryState(entry,weekIndex,resultsByWeek,rulings=null){
+  const picks=entry?.picks||[],used=new Set(),ruled=[];
   for(let i=0;i<=weekIndex;i++){
     const pick=picks[i]||null,week=i+1;
     if(!pick)return{status:'out',pick:null,week,eliminatedWeek:week,reason:`No pick in Week ${week}`,type:'no-pick'};
     if(used.has(pick))return{status:'out',pick,week,eliminatedWeek:week,reason:`Repeated ${pick} in Week ${week}`,type:'repeat'};
     used.add(pick);
+    if(rulings){
+      const slot=rulings.forPick(week,pick)||{state:'none'};
+      if(slot.state==='hold')return{status:'hold',pick,week,reason:`Week ${week} ${pick} on hold: ${slot.reason||'ruling information unavailable'}`,type:'hold',hold:slot.scope||'incident'};
+      if(slot.state==='effective'){
+        const ruling=appliedRuling(slot,week,pick),game=`Week ${week} ${pick} game${ruling.status?` ${ruling.status}`:''}`;
+        if(slot.outcome==='out')return{status:'out',pick,week,eliminatedWeek:week,reason:`${game}: eliminated by applied commissioner ruling`,type:'ruling',ruling,rulings:[...ruled,ruling]};
+        if(slot.outcome==='alive'){ruled.push(ruling);continue}
+        return{status:'hold',pick,week,reason:`Week ${week} ${pick} on hold: unsupported ruling consequence`,type:'hold',hold:'incident'};
+      }
+    }
     const results=weekResults(resultsByWeek,i);
     if(!results)return{status:'pending',pick,week,reason:`Week ${week} result unavailable`,type:'unresolved'};
     const result=teamResult(results,pick);
@@ -124,30 +147,41 @@ export function survivorEntryState(entry,weekIndex,resultsByWeek){
     if(typeof result.winner!=='string'||!result.winner||(result.opponent&&result.winner!==pick&&result.winner!==result.opponent))return unverified;
     if(result.winner!==pick)return{status:'out',pick,week,eliminatedWeek:week,reason:`${pick} lost in Week ${week}`,type:'loss'};
   }
-  const pick=picks[weekIndex]||null;
-  return{status:'alive',pick,week:weekIndex+1,reason:`Alive through Week ${weekIndex+1}`,type:'win'};
+  const pick=picks[weekIndex]||null,week=weekIndex+1,last=ruled[ruled.length-1];
+  // Alive through a ruling in this very week: the survival came from the commissioner, not an NFL win. Earlier rulings the
+  // entry survived through stay listed (with any UNDER REVIEW conflict) on later alive states.
+  if(last&&last.week===week)return{status:'alive',pick,week,reason:`Week ${week} ${pick} game${last.status?` ${last.status}`:''}: alive by applied commissioner ruling; ${pick} stays used`,type:'ruling',ruling:last,rulings:ruled};
+  if(ruled.length)return{status:'alive',pick,week,reason:`Alive through Week ${week}`,type:'win',rulings:ruled};
+  return{status:'alive',pick,week,reason:`Alive through Week ${week}`,type:'win'};
 }
 
-export function survivorEligibleEntering(entry,weekIndex,resultsByWeek){
+export function survivorEligibleEntering(entry,weekIndex,resultsByWeek,rulings=null){
   if(weekIndex<=0)return true;
-  const prior=survivorEntryState(entry,weekIndex-1,resultsByWeek);
+  const prior=survivorEntryState(entry,weekIndex-1,resultsByWeek,rulings);
   return prior.status==='alive';
 }
 
-// Ordinary unresolved: pending or live, but not awaiting a pool ruling on a halted game (HDC-11).
+// Ordinary unresolved: pending or live, but not awaiting a pool ruling on a halted game (HDC-11) and not on hold (HDC-12).
 const unresolvedState=state=>(state.status==='pending'||state.status==='live')&&!state.halted;
 
 // Entries whose status entering weekIndex cannot be decided yet (an earlier result is pending, live or unverified).
-export function survivorUnresolvedEntering(entries,weekIndex,resultsByWeek){
+export function survivorUnresolvedEntering(entries,weekIndex,resultsByWeek,rulings=null){
   if(weekIndex<=0)return 0;
-  return (entries||[]).filter(e=>unresolvedState(survivorEntryState(e,weekIndex-1,resultsByWeek))).length;
+  return (entries||[]).filter(e=>unresolvedState(survivorEntryState(e,weekIndex-1,resultsByWeek,rulings))).length;
 }
 
 // HDC-11: entries whose state at weekIndex awaits a pool ruling on a halted game. They are never alive, out or ordinary
 // pending, so the summary and attrition counts leave them out and the page shows them on their own.
-export function survivorAwaitingRuling(entries,weekIndex,resultsByWeek){
+export function survivorAwaitingRuling(entries,weekIndex,resultsByWeek,rulings=null){
   if(!Number.isInteger(weekIndex)||weekIndex<0)return 0;
-  return (entries||[]).filter(e=>survivorEntryState(e,weekIndex,resultsByWeek).halted).length;
+  return (entries||[]).filter(e=>survivorEntryState(e,weekIndex,resultsByWeek,rulings).halted).length;
+}
+
+// HDC-12: entries whose state at weekIndex is on HOLD because the ruling information covering their pick is unusable or
+// unavailable. Like entries awaiting a ruling they are never alive, out or ordinary pending, and are shown on their own.
+export function survivorOnHold(entries,weekIndex,resultsByWeek,rulings=null){
+  if(!rulings||!Number.isInteger(weekIndex)||weekIndex<0)return 0;
+  return (entries||[]).filter(e=>survivorEntryState(e,weekIndex,resultsByWeek,rulings).status==='hold').length;
 }
 
 export function survivorCurrentPickIsLegal(entry,weekIndex){
@@ -155,19 +189,19 @@ export function survivorCurrentPickIsLegal(entry,weekIndex){
   return !(entry.picks||[]).slice(0,weekIndex).includes(pick);
 }
 
-export function survivorPickDistribution(entries,weekIndex,resultsByWeek){
-  const eligible=(entries||[]).filter(e=>survivorEligibleEntering(e,weekIndex,resultsByWeek)&&survivorCurrentPickIsLegal(e,weekIndex));
+export function survivorPickDistribution(entries,weekIndex,resultsByWeek,rulings=null){
+  const eligible=(entries||[]).filter(e=>survivorEligibleEntering(e,weekIndex,resultsByWeek,rulings)&&survivorCurrentPickIsLegal(e,weekIndex));
   const counts=new Map();
   for(const entry of eligible){const team=entry.picks[weekIndex];counts.set(team,(counts.get(team)||0)+1)}
   return[...counts].map(([team,count])=>({team,count,denominator:eligible.length,pct:eligible.length?Math.round(count/eligible.length*100):0}))
     .sort((a,b)=>b.count-a.count||a.team.localeCompare(b.team));
 }
 
-export function survivorSummary(entries,weekIndex,resultsByWeek){
-  const all=entries||[],states=all.map(e=>survivorEntryState(e,weekIndex,resultsByWeek));
-  const eligibleEntering=all.filter(e=>survivorEligibleEntering(e,weekIndex,resultsByWeek)).length;
-  const submitted=all.filter(e=>survivorEligibleEntering(e,weekIndex,resultsByWeek)&&e?.picks?.[weekIndex]).length;
-  const entered=all.filter(e=>survivorEligibleEntering(e,weekIndex,resultsByWeek)&&survivorCurrentPickIsLegal(e,weekIndex)).length;
+export function survivorSummary(entries,weekIndex,resultsByWeek,rulings=null){
+  const all=entries||[],states=all.map(e=>survivorEntryState(e,weekIndex,resultsByWeek,rulings));
+  const eligibleEntering=all.filter(e=>survivorEligibleEntering(e,weekIndex,resultsByWeek,rulings)).length;
+  const submitted=all.filter(e=>survivorEligibleEntering(e,weekIndex,resultsByWeek,rulings)&&e?.picks?.[weekIndex]).length;
+  const entered=all.filter(e=>survivorEligibleEntering(e,weekIndex,resultsByWeek,rulings)&&survivorCurrentPickIsLegal(e,weekIndex)).length;
   const active=states.filter(s=>s.status==='alive'||unresolvedState(s)).length;
   const eliminatedBefore=states.filter(s=>s.status==='out'&&s.eliminatedWeek<weekIndex+1).length;
   const eliminatedThisWeek=states.filter(s=>s.status==='out'&&s.eliminatedWeek===weekIndex+1).length;
@@ -175,13 +209,13 @@ export function survivorSummary(entries,weekIndex,resultsByWeek){
   return{poolSize:all.length,eligibleEntering,submitted,entered,active,eliminatedBefore,eliminatedThisWeek,pending};
 }
 
-export function survivorWeekProgress(entries,currentWeekIndex,resultsByWeek){
+export function survivorWeekProgress(entries,currentWeekIndex,resultsByWeek,rulings=null){
   const all=entries||[],rows=[];
   for(let i=0;i<=currentWeekIndex;i++){
-    const eligibleEntering=all.filter(e=>survivorEligibleEntering(e,i,resultsByWeek)).length;
-    const submitted=all.filter(e=>survivorEligibleEntering(e,i,resultsByWeek)&&e?.picks?.[i]).length;
-    const entered=all.filter(e=>survivorEligibleEntering(e,i,resultsByWeek)&&survivorCurrentPickIsLegal(e,i)).length;
-    const states=all.map(e=>survivorEntryState(e,i,resultsByWeek));
+    const eligibleEntering=all.filter(e=>survivorEligibleEntering(e,i,resultsByWeek,rulings)).length;
+    const submitted=all.filter(e=>survivorEligibleEntering(e,i,resultsByWeek,rulings)&&e?.picks?.[i]).length;
+    const entered=all.filter(e=>survivorEligibleEntering(e,i,resultsByWeek,rulings)&&survivorCurrentPickIsLegal(e,i)).length;
+    const states=all.map(e=>survivorEntryState(e,i,resultsByWeek,rulings));
     const remaining=states.filter(s=>s.status==='alive'||unresolvedState(s)).length;
     const eliminated=states.filter(s=>s.status==='out'&&s.eliminatedWeek===i+1).length;
     rows.push({week:i+1,eligibleEntering,submitted,entered,remaining,eliminated});
@@ -190,8 +224,8 @@ export function survivorWeekProgress(entries,currentWeekIndex,resultsByWeek){
 }
 
 
-export function survivorFieldAvailability(entries,nextWeekIndex,resultsByWeek,teams){
-  const alive=(entries||[]).filter(e=>survivorEligibleEntering(e,nextWeekIndex,resultsByWeek));
+export function survivorFieldAvailability(entries,nextWeekIndex,resultsByWeek,teams,rulings=null){
+  const alive=(entries||[]).filter(e=>survivorEligibleEntering(e,nextWeekIndex,resultsByWeek,rulings));
   const unique=[...new Set((teams||[]).filter(Boolean))];
   return unique.map(team=>{
     const available=alive.filter(e=>!(e?.picks||[]).slice(0,nextWeekIndex).includes(team)).length;
@@ -199,8 +233,8 @@ export function survivorFieldAvailability(entries,nextWeekIndex,resultsByWeek,te
   }).sort((a,b)=>a.team.localeCompare(b.team));
 }
 
-export function survivorDecisionOptions(entry,nextWeekIndex,resultsByWeek,matchups,availabilityRows=[]){
-  const prior=nextWeekIndex<=0?{status:'alive'}:survivorEntryState(entry,nextWeekIndex-1,resultsByWeek);
+export function survivorDecisionOptions(entry,nextWeekIndex,resultsByWeek,matchups,availabilityRows=[],rulings=null){
+  const prior=nextWeekIndex<=0?{status:'alive'}:survivorEntryState(entry,nextWeekIndex-1,resultsByWeek,rulings);
   const burned=[...new Set((entry?.picks||[]).slice(0,nextWeekIndex).filter(Boolean))];
   if(prior.status!=='alive')return{eligible:false,reason:prior.reason||'Entry is not alive',burned,options:[]};
   const availability=new Map((availabilityRows||[]).map(x=>[x.team,x]));
