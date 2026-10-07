@@ -312,6 +312,8 @@ function describeEvent(e,{a,h,season,week,seasonType},tied){
   if(type.state==='pre')return{kind:'scheduled',eventId,status:names[0]??null,tied};
   return{kind:'unfinished',eventId,status:names[0]??null,tied};
 }
+// A listing that can be read (well-formed and in context), and one of exactly the ruled pair.
+const readable=x=>x.kind!=='context'&&x.kind!=='malformed',samePair=x=>readable(x)&&x.kind!=='opponent';
 
 // What the raw feed says now about an incident's teams, read separately from the protected grading path (HDC-09/10/11 stay
 // untouched). The event the ruling recorded, when present in the feed, is the incident (tied); otherwise the one event that
@@ -320,50 +322,61 @@ function describeEvent(e,{a,h,season,week,seasonType},tied){
 // never covered ('repaired'); the ruled pair also listed under another event id is 'relisted' (the HDC-09 duplicate the
 // protected path reports, which is also a conflict for the ruling). Both are UNDER REVIEW, unless the feed reports a forfeit
 // for the ruled pair, which no v1 ruling covers.
+// Copies of one event are one logical event: listings that read alike count once, so a duplicate is never independent
+// evidence and never hides other evidence, while copies of one event id that read differently are a conflict
+// ('conflicting'), never settled by whichever copy comes first. A forfeit of the ruled pair in any well-formed, in-context
+// listing decides before anything else. The ruled pair's own listings are read in a canonical order, so the feed order
+// never changes the result; a re-pairing is still named by the first one the feed lists.
 export function observeIncident(events,{away,home,eventId=null,season,week,seasonType=2}={}){
   if(!Array.isArray(events))return{kind:'unavailable'};
-  const ctx={a:aliasCode(away),h:aliasCode(home),season,week,seasonType};
-  const involved=events.filter(e=>eventCodes(e).some(t=>t===ctx.a||t===ctx.h));
-  const repaired=(incident,other)=>({...incident,kind:'repaired',incidentKind:incident.kind,otherAway:other.away,otherHome:other.home,otherEventId:other.eventId});
-  const relisted=(incident,others)=>[incident,...others].find(x=>x.kind==='forfeit')||{...incident,kind:'relisted',incidentKind:incident.kind,otherEventIds:others.map(x=>x.eventId)};
-  // A well-formed, in-context listing of exactly the ruled pair.
-  const samePair=x=>x.kind!=='opponent'&&x.kind!=='context'&&x.kind!=='malformed';
-  if(eventId){
-    const recorded=events.filter(e=>eventIdOf(e)===eventId);
-    if(recorded.length>1)return{kind:'ambiguous',tied:true};
-    if(recorded.length===1){
-      const d=describeEvent(recorded[0],ctx,true);
-      if(d.kind==='forfeit')return d;
-      const others=involved.filter(e=>eventIdOf(e)!==eventId).map(e=>describeEvent(e,ctx,false)),same=others.filter(samePair);
-      if(same.length)return relisted(d,same);
-      const other=others.find(x=>x.kind==='opponent');
-      return other?repaired(d,other):d;
-    }
+  const ctx={a:aliasCode(away),h:aliasCode(home),season,week,seasonType},seen=new Map();
+  for(const e of events){
+    const tied=Boolean(eventId)&&eventIdOf(e)===eventId;
+    if(!tied&&!eventCodes(e).some(t=>t===ctx.a||t===ctx.h))continue;
+    const d=describeEvent(e,ctx,tied),key=JSON.stringify([d.eventId,d.kind,d.status??null,d.away??null,d.home??null]);
+    if(!seen.has(key))seen.set(key,d);
   }
-  if(!involved.length)return{kind:'missing',tied:false};
-  if(involved.length===1)return describeEvent(involved[0],ctx,false);
-  // Several events. The ruled pair under more than one event id is relisted, whatever else the feed lists; the same event
-  // listed twice is a feed duplicate, and otherwise an event that cannot be read leaves no usable evidence. The ruled pair
-  // once plus a ruled team against another opponent is a re-pairing.
-  const described=involved.map(e=>describeEvent(e,ctx,false)),exact=described.filter(samePair);
-  const others=exact.filter(x=>x.eventId!==exact[0].eventId);
+  const described=[...seen.values()],canonical=[...seen.keys()].sort().map(k=>seen.get(k));
+  if(!described.length)return{kind:'missing',tied:false};
+  const forfeit=canonical.find(x=>x.kind==='forfeit');
+  if(forfeit)return forfeit;
+  if(described.length===1)return described[0];
+  const repaired=(incident,other)=>({...incident,kind:'repaired',incidentKind:incident.kind,otherAway:other.away,otherHome:other.home,otherEventId:other.eventId});
+  const relisted=(incident,others)=>({...incident,kind:'relisted',incidentKind:incident.kind,otherEventIds:others.map(x=>x.eventId)});
+  const conflicting=copies=>({kind:'conflicting',eventId:copies[0].eventId,tied:copies[0].tied});
+  const recorded=canonical.filter(x=>x.tied);
+  if(recorded.length){
+    // The recorded event: a copy that cannot be read is no evidence, readable copies that disagree are a conflict.
+    const copies=recorded.filter(readable),d=(copies.length?copies:recorded)[0],same=canonical.filter(x=>!x.tied&&samePair(x));
+    if(same.length)return relisted(d,same);
+    if(copies.length>1)return conflicting(copies);
+    const other=described.find(x=>!x.tied&&x.kind==='opponent');
+    return other?repaired(d,other):d;
+  }
+  // Several listings, none of them the recorded event. The ruled pair under more than one event id is relisted, whatever
+  // else the feed lists, and copies of its one event id that disagree are a conflict; otherwise an event that cannot be read
+  // leaves no usable evidence, unless it is a copy of the ruled pair's listing (the same event id), which is no evidence.
+  // The ruled pair once plus a ruled team against another opponent is a re-pairing.
+  const exact=canonical.filter(samePair),ids=new Set(exact.map(x=>x.eventId)),others=exact.filter(x=>x.eventId!==exact[0].eventId);
   if(others.length)return relisted(exact[0],others);
-  if(described.some(d=>d.kind==='context'||d.kind==='malformed'))return{kind:'ambiguous',tied:false};
-  if(exact.length>1)return{kind:'ambiguous',tied:false};
-  if(exact.length===1)return exact[0].kind==='forfeit'?exact[0]:repaired(exact[0],described.find(d=>d.kind==='opponent'));
-  return described[0];
+  if(exact.length>1)return conflicting(exact);
+  if(described.some(x=>!readable(x)&&!ids.has(x.eventId)))return{kind:'ambiguous',tied:false};
+  const other=described.find(x=>x.kind==='opponent');
+  return exact.length?(other?repaired(exact[0],other):exact[0]):described[0];
 }
 
 // Compares an effective ruling's recorded incident with what the feed says now. A valid ruling is the commissioner's
 // confirmed decision whether or not it recorded an event (event_id is evidence, never identity), so a later feed change never
 // removes it: only a forfeit, which no v1 ruling covers, makes it unusable.
 //   agrees  - the feed still reports the recorded halted incident
-//   unknown - the feed gives no usable evidence (unavailable, the same event listed twice, malformed or outside the
-//             season/week, all of which the protected grading path already reports); the ruling stays applied
+//   unknown - the feed gives no usable evidence (unavailable, malformed or outside the season/week, which the protected
+//             grading path already reports); the ruling stays applied. Copies of one event that read alike are that one
+//             event, judged as if listed once.
 //   review  - the feed changed after confirmation (final, live, scheduled, other status, other event id, other opponent,
 //             inverted pair, gone, malformed): the ruling STAYS APPLIED and is UNDER REVIEW; nothing is withdrawn or re-slotted
-//   review  - also when the feed places a ruled team in another game that week (a re-pairing) or lists the ruled pair under
-//             another event id as well (relisted); neither event is adopted
+//   review  - also when the feed places a ruled team in another game that week (a re-pairing), lists the ruled pair under
+//             another event id as well (relisted) or lists one event more than once with copies that disagree
+//             (conflicting); no event is adopted
 //   hold    - the ruling cannot be applied: the feed now reports a forfeit for the ruled pair (out of scope for v1)
 export function incidentFeedCheck(incident,observation){
   if(!incident||incident.state!=='effective')return{status:'none'};
@@ -379,6 +392,7 @@ export function incidentFeedCheck(incident,observation){
       const ids=[...new Set((o.otherEventIds||[]).filter(Boolean))];
       return review(`the feed also lists ${incident.away} @ ${incident.home} under another event${ids.length?` (feed event ${ids.join(', ')})`:''}${!o.tied&&stored.eventId?`; the ruling recorded event ${stored.eventId}`:''}`);
     }
+    case 'conflicting':return review(`the feed lists ${o.eventId?`event ${o.eventId}`:`${incident.away} @ ${incident.home}`} more than once with conflicting information${!o.tied&&stored.eventId?`; the ruling recorded event ${stored.eventId}`:''}`);
     case 'ambiguous':case 'malformed':case 'context':return{status:'unknown',kind:o.kind};
     case 'halted':
       if(o.status!==stored.incidentStatus)return review(`the feed now reports ${o.status}; the ruling recorded ${stored.incidentStatus}${changedId}`);
