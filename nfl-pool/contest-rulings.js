@@ -315,59 +315,70 @@ function describeEvent(e,{a,h,season,week,seasonType},tied){
 
 // What the raw feed says now about an incident's teams, read separately from the protected grading path (HDC-09/10/11 stay
 // untouched). The event the ruling recorded, when present in the feed, is the incident (tied); otherwise the one event that
-// involves either team is described. A ruled team the feed also places in another game that week is a re-pairing the
-// ruling never covered, reported as 'repaired' (UNDER REVIEW) unless the incident itself is now a forfeit.
+// involves either team is described. The feed is evidence about a ruling, never its identity: no other event or matchup is
+// ever adopted as the incident. A ruled team the feed also places in another game that week is a re-pairing the ruling
+// never covered ('repaired'); the ruled pair also listed under another event id is 'relisted' (the HDC-09 duplicate the
+// protected path reports, which is also a conflict for the ruling). Both are UNDER REVIEW, unless the feed reports a forfeit
+// for the ruled pair, which no v1 ruling covers.
 export function observeIncident(events,{away,home,eventId=null,season,week,seasonType=2}={}){
   if(!Array.isArray(events))return{kind:'unavailable'};
   const ctx={a:aliasCode(away),h:aliasCode(home),season,week,seasonType};
   const involved=events.filter(e=>eventCodes(e).some(t=>t===ctx.a||t===ctx.h));
   const repaired=(incident,other)=>({...incident,kind:'repaired',incidentKind:incident.kind,otherAway:other.away,otherHome:other.home,otherEventId:other.eventId});
+  const relisted=(incident,others)=>[incident,...others].find(x=>x.kind==='forfeit')||{...incident,kind:'relisted',incidentKind:incident.kind,otherEventIds:others.map(x=>x.eventId)};
+  // A well-formed, in-context listing of exactly the ruled pair.
+  const samePair=x=>x.kind!=='opponent'&&x.kind!=='context'&&x.kind!=='malformed';
   if(eventId){
     const recorded=events.filter(e=>eventIdOf(e)===eventId);
     if(recorded.length>1)return{kind:'ambiguous',tied:true};
     if(recorded.length===1){
       const d=describeEvent(recorded[0],ctx,true);
-      // Another event with the same pair is a feed duplicate the protected path reports; only another opponent re-pairs.
-      const other=involved.filter(e=>eventIdOf(e)!==eventId).map(e=>describeEvent(e,ctx,false)).find(x=>x.kind==='opponent');
-      return other&&d.kind!=='forfeit'?repaired(d,other):d;
+      if(d.kind==='forfeit')return d;
+      const others=involved.filter(e=>eventIdOf(e)!==eventId).map(e=>describeEvent(e,ctx,false)),same=others.filter(samePair);
+      if(same.length)return relisted(d,same);
+      const other=others.find(x=>x.kind==='opponent');
+      return other?repaired(d,other):d;
     }
   }
   if(!involved.length)return{kind:'missing',tied:false};
   if(involved.length===1)return describeEvent(involved[0],ctx,false);
-  // Several events. The ruled pair once plus a ruled team against another opponent is a re-pairing; the same pair twice is
-  // a feed duplicate, and an event that cannot be read leaves no usable evidence.
-  const described=involved.map(e=>describeEvent(e,ctx,false));
+  // Several events. The ruled pair under more than one event id is relisted, whatever else the feed lists; the same event
+  // listed twice is a feed duplicate, and otherwise an event that cannot be read leaves no usable evidence. The ruled pair
+  // once plus a ruled team against another opponent is a re-pairing.
+  const described=involved.map(e=>describeEvent(e,ctx,false)),exact=described.filter(samePair);
+  const others=exact.filter(x=>x.eventId!==exact[0].eventId);
+  if(others.length)return relisted(exact[0],others);
   if(described.some(d=>d.kind==='context'||d.kind==='malformed'))return{kind:'ambiguous',tied:false};
-  const exact=described.filter(d=>d.kind!=='opponent');
   if(exact.length>1)return{kind:'ambiguous',tied:false};
   if(exact.length===1)return exact[0].kind==='forfeit'?exact[0]:repaired(exact[0],described.find(d=>d.kind==='opponent'));
   return described[0];
 }
 
-// Compares an effective ruling's recorded incident with what the feed says now.
+// Compares an effective ruling's recorded incident with what the feed says now. A valid ruling is the commissioner's
+// confirmed decision whether or not it recorded an event (event_id is evidence, never identity), so a later feed change never
+// removes it: only a forfeit, which no v1 ruling covers, makes it unusable.
 //   agrees  - the feed still reports the recorded halted incident
-//   unknown - the feed gives no usable evidence (unavailable, duplicate, malformed or outside the season/week, all of which
-//             the protected grading path already reports); the ruling stays applied
+//   unknown - the feed gives no usable evidence (unavailable, the same event listed twice, malformed or outside the
+//             season/week, all of which the protected grading path already reports); the ruling stays applied
 //   review  - the feed changed after confirmation (final, live, scheduled, other status, other event id, other opponent,
-//             gone, malformed): the ruling STAYS APPLIED and is UNDER REVIEW; nothing is withdrawn or re-slotted
-//   review  - also when the feed places a ruled team in another game that week (a re-pairing)
-//   hold    - the ruling cannot be applied: the feed now reports a forfeit (out of scope for v1), or, where the contest
-//             publishes no matchup (Survivor, slot:'team'), the feed contradicts the ruling's own matchup and the ruling
-//             recorded no event: nothing then ties it to a since-changed game. A ruling that recorded an event was
-//             corroborated at confirmation, so a later contradiction is a change (review), even once that event is gone.
-export function incidentFeedCheck(incident,observation,{slot='published'}={}){
+//             inverted pair, gone, malformed): the ruling STAYS APPLIED and is UNDER REVIEW; nothing is withdrawn or re-slotted
+//   review  - also when the feed places a ruled team in another game that week (a re-pairing) or lists the ruled pair under
+//             another event id as well (relisted); neither event is adopted
+//   hold    - the ruling cannot be applied: the feed now reports a forfeit for the ruled pair (out of scope for v1)
+export function incidentFeedCheck(incident,observation){
   if(!incident||incident.state!=='effective')return{status:'none'};
   const o=observation||{kind:'unavailable'},stored=incident.evidence||{};
   const changedId=stored.eventId&&o.eventId&&o.eventId!==stored.eventId?` (feed event ${o.eventId}; the ruling recorded event ${stored.eventId})`:'';
   const review=reason=>({status:'review',kind:o.kind,reason});
-  const uncorroborated=slot==='team'&&!o.tied&&!stored.eventId;
   switch(o.kind){
     case 'unavailable':return{status:'unknown'};
     case 'forfeit':return{status:'hold',kind:'forfeit',reason:`the feed now reports ${o.status}; a forfeit is not covered by v1 rulings`};
-    case 'opponent':
-      if(uncorroborated)return{status:'hold',kind:'matchup',reason:`the ruling's matchup ${incident.away} @ ${incident.home} does not match the feed (${o.away} @ ${o.home}), and the ruling recorded no event that ties it to a changed game`};
-      return review(`the feed now lists ${o.away} @ ${o.home}${changedId}`);
+    case 'opponent':return review(`the feed now lists ${o.away} @ ${o.home}${changedId}`);
     case 'repaired':return review(`the feed also lists ${o.otherAway} @ ${o.otherHome} this week${o.otherEventId?` (feed event ${o.otherEventId})`:''}`);
+    case 'relisted':{
+      const ids=[...new Set((o.otherEventIds||[]).filter(Boolean))];
+      return review(`the feed also lists ${incident.away} @ ${incident.home} under another event${ids.length?` (feed event ${ids.join(', ')})`:''}${!o.tied&&stored.eventId?`; the ruling recorded event ${stored.eventId}`:''}`);
+    }
     case 'ambiguous':case 'malformed':case 'context':return{status:'unknown',kind:o.kind};
     case 'halted':
       if(o.status!==stored.incidentStatus)return review(`the feed now reports ${o.status}; the ruling recorded ${stored.incidentStatus}${changedId}`);
@@ -381,19 +392,19 @@ export function incidentFeedCheck(incident,observation,{slot='published'}={}){
   }
 }
 
-// Applies the feed check to a slot's ruling state: an effective ruling the feed now makes unusable becomes HOLD; an
-// effective ruling the feed contradicts stays effective with underReview set.
-function checkedSlot(slot,events,{season,week,slotKind}){
+// Applies the feed check to a slot's ruling state: an effective ruling the feed now makes unusable (a forfeit) becomes HOLD;
+// an effective ruling the feed contradicts stays effective with underReview set. Pick'em and Survivor are checked alike.
+function checkedSlot(slot,events,{season,week}){
   if(slot.state!=='effective')return slot;
   const x=slot.incident,obs=observeIncident(events,{away:x.away,home:x.home,eventId:x.evidence?.eventId||null,season,week});
-  const check=incidentFeedCheck(x,obs,{slot:slotKind});
+  const check=incidentFeedCheck(x,obs);
   if(check.status==='hold')return{state:'hold',scope:'incident',reason:check.reason,incident:x};
   return{...slot,feed:check,underReview:check.status==='review'?check.reason:null};
 }
 
 // Pick'em: one published slot's ruling state against the raw feed of its week.
 export function pickemSlotRuling(dataset,{week,season,away,home,events}={}){
-  return checkedSlot(rulingForSlot(dataset,{week,away,home}),events,{season,week,slotKind:'published'});
+  return checkedSlot(rulingForSlot(dataset,{week,away,home}),events,{season,week});
 }
 
 // Pick'em: the effect of a slot's ruling state. VOID is a commissioner ruling, never an NFL tie.
@@ -420,7 +431,7 @@ export function survivorRulingLookup(dataset,{eventsByWeek=[],season}={}){
   return{
     status,
     reason:status==='ready'?null:(dataset?.reason||'ruling data unavailable'),
-    forPick(week,team){return checkedSlot(rulingForTeam(dataset,{week,team}),eventsByWeek[week-1],{season,week,slotKind:'team'})}
+    forPick(week,team){return checkedSlot(rulingForTeam(dataset,{week,team}),eventsByWeek[week-1],{season,week})}
   };
 }
 

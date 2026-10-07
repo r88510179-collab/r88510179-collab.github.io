@@ -224,9 +224,10 @@ async function updateScores(){
     outcomes.forEach((o,k)=>{const i=indexes[k];if(o.status==='fulfilled'){resultsByWeek[i]=o.value.results;rawEventsByWeek[i]=o.value.events}else failed.push({i,reason:o.reason})});
     failed.forEach(f=>console.warn(f.reason));
     if(failed.some(f=>f.i===current||!(resultsByWeek[f.i] instanceof Map)))throw failed.find(f=>f.i===current||!(resultsByWeek[f.i] instanceof Map)).reason;
-    const R=rulingLookup(),flags=R?.status==='hold'?null:feedFlags(R);
+    // Rulings kept from an earlier load (stale) still apply, and the feed status always says so.
+    const R=rulingLookup(),flags=R?.status==='hold'?null:[...feedFlags(R),...(rulingData?.stale?['RULINGS STALE']:[])];
     $('svFeed').textContent=!flags?'ON HOLD · RULING DATA UNAVAILABLE':flags.length?`LIVE · ${flags.join(' · ')}`:'LIVE · NFL results';$('svFeed').className=`survivor-feed ${!flags||flags.length?'warn':'ok'}`;render();void updateDecisionSchedule();
-  }catch(e){if(id!==refreshId||cfg!==scoreCfg)return;$('svFeed').textContent='RESULT FEED UNAVAILABLE';$('svFeed').className='survivor-feed warn';render();console.warn(e)}
+  }catch(e){if(id!==refreshId||cfg!==scoreCfg)return;$('svFeed').textContent=`RESULT FEED UNAVAILABLE${rulingData?.stale?' · RULINGS STALE':''}`;$('svFeed').className='survivor-feed warn';render();console.warn(e)}
 }
 
 function choose(row,{push=false}={}){
