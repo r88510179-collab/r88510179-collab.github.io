@@ -441,7 +441,7 @@ await regression('Survivor preview (advance_team_used): affected entries, ALIVE/
 class PageEl{constructor(){this.innerHTML='';this.className='';this.value='';this.hidden=false;this.disabled=false;this.style={};this.listeners={};this.children=[];this.text=''}
   get textContent(){return this.text} set textContent(v){this.text=v==null?'':String(v)}
   addEventListener(t,f){(this.listeners[t]||=[]).push(f)} replaceChildren(...n){this.children=[...n]} appendChild(n){this.children.push(n);return n}}
-let pageInstance=0;
+let pageInstance=0;const pageWarnings=[];
 const pageSource=(file,imports)=>{let s=read(`../${file}`);for(const dep of imports){const from=s.match(new RegExp(`from '\\./${dep.replace('.','\\.')}\\?v=[^']+';`))?.[0];assert(from,`${file} imports ${dep}`);
   s=s.replace(from,`from '${new URL(from.slice("from '".length,-"';".length),new URL('../',here)).href}';`)}return s};
 const STORE_COLUMNS={nfl_contests:PUBLIC_COLUMNS.contests,nfl_contest_policies:PUBLIC_COLUMNS.policies,nfl_incident_rulings:PUBLIC_COLUMNS.rulings};
@@ -469,8 +469,13 @@ async function bootPage(file,{weekRows,store,feedFor,view}){
     return payload?{ok:true,status:200,json:async()=>structuredClone(payload)}:{ok:false,status:404,json:async()=>({})};
   };
   const source=file==='weekly-app.js'?pageSource(file,['public-math.js','contest-rulings.js']):pageSource(file,['survivor-math.js','contest-rulings.js']);
-  await import(`data:text/javascript;base64,${Buffer.from(source+`\n//page ${++pageInstance}`).toString('base64')}`);
-  await flush(40);
+  // The pages' own console warnings (here: the next week's schedule, which this harness does not serve) are collected
+  // rather than printed; their stacks embed the whole data: URL. No assertion reads them.
+  const warn=console.warn;console.warn=(...args)=>{pageWarnings.push(args)};
+  try{
+    await import(`data:text/javascript;base64,${Buffer.from(source+`\n//page ${++pageInstance}`).toString('base64')}`);
+    await flush(40);
+  }finally{console.warn=warn}
   return $;
 }
 const weeklyView=async({rows,events,config=pkConfig()})=>{
