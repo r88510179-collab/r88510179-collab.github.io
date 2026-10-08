@@ -1,8 +1,9 @@
 # NFL Pool Center regression gate.
 #
-# Runs the committed NFL Pool Center Node assertion suites on every push and
-# pull request. Detection only: nothing is deployed, no secrets are used, and
-# the token can only read repository contents.
+# Runs the committed NFL Pool Center Node assertion suites, and the HDC-13 SQL
+# behavior harness on a throwaway PostgreSQL 17.11, on every push and pull
+# request. Detection only: nothing is deployed, no secrets are used, no Neon
+# database is reached, and the token can only read repository contents.
 name: NFL Pool Tests
 
 on:
@@ -18,6 +19,9 @@ defaults:
 
 jobs:
   regression-gate:
+    # Branch protection on main requires this exact check name, so it stays
+    # "12-suite regression gate" although the gate now runs the 13 suites
+    # below; renaming it is a separate, controlled branch-protection change.
     name: 12-suite regression gate
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -26,8 +30,9 @@ jobs:
       # nfl-pool/**/*.test.mjs files are exactly these paths, so adding,
       # removing or renaming a suite means updating this list and the count in
       # the same change.
-      EXPECTED_SUITE_COUNT: '12'
+      EXPECTED_SUITE_COUNT: '13'
       EXPECTED_SUITES: |
+        nfl-pool/admin/incident-rulings.test.mjs
         nfl-pool/admin/parser-core.test.mjs
         nfl-pool/admin/survivor-admin.test.mjs
         nfl-pool/admin/survivor-parser.test.mjs
@@ -113,7 +118,7 @@ jobs:
           fi
           echo "Inventory guard passed: the discovered suites are exactly the $count approved suites."
 
-      - name: Run 12 suites
+      - name: Run 13 suites
         run: |
           set -euo pipefail
           work="$(mktemp -d)"
@@ -160,3 +165,21 @@ jobs:
           fi
           echo "All $passed/$EXPECTED_SUITE_COUNT NFL Pool suites passed."
           echo "All $passed/$EXPECTED_SUITE_COUNT NFL Pool suites passed." >> "$summary"
+
+  sql-behavior-gate:
+    # HDC-13: the incident-ruling write path (migration 004) exercised as the
+    # Data API calls it, on a throwaway PostgreSQL 17.11 container (pinned by
+    # digest in run.sh) that emulates the production Neon roles, auth.user_id()
+    # and neon_auth."user". Migrations 001-004 are applied from this checkout.
+    # No Neon database, no secrets.
+    name: sql-behavior-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Run the SQL behavior and race suites on PostgreSQL 17.11
+        run: bash nfl-pool/sql-tests/run.sh
