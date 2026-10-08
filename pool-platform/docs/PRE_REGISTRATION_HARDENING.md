@@ -1,13 +1,49 @@
 # Pre-registration takeover hardening
 
-Status: plan corrective 3 on branch `commercial-v1-pre-registration-plan-corrective-3`, a child of `d0e112c` (plan
-corrective 2). `d0e112c` is a child of `a854419` (the first plan corrective), and `a854419` of `38ea9ee`, the hardening
-candidate built on the production SHA `48e0ac4`. The exact-SHA reviews of `38ea9ee` and `a854419` accepted migrations
-002 and 004, the helper hardening and the race model, and refused the rollout plan around them. The exact-SHA review of
-`d0e112c` refused the plan again, mainly because P0-5's cookie jar applied the server's deletions, so S could be
-understated. This revision corrects that and the review's other findings, and changes only this document. It is not
-yet reviewed. Nothing is applied to any database or deployed, no Neon setting has been changed, and no Neon branch has
-been created. Everything below that touches Neon is a plan.
+Status: plan corrective 4 on branch `commercial-v1-pre-registration-plan-corrective-4`, a child of `f6e6587` (plan
+corrective 3). `f6e6587` is a child of `d0e112c` (corrective 2), `d0e112c` of `a854419` (the first plan corrective),
+and `a854419` of `38ea9ee`, the hardening candidate built on the production SHA `48e0ac4`. The exact-SHA reviews of
+`38ea9ee` and `a854419` accepted migrations 002 and 004, the helper hardening and the race model, and refused the
+rollout plan around them. The reviews of `d0e112c` and `f6e6587` refused the plan again. The review of `f6e6587` found
+that `/update-user` can re-issue the cookie cache from a revoked session, so S could be understated. This revision
+answers that with live evidence from a child branch of production, records the P0 results so far, corrects the
+review's other findings, and changes only this document. It is not yet reviewed.
+
+What has run live, all on the child branch `br-muddy-surf-b5s4wgzx` on 2026-10-08 (P0 results on the child): synthetic
+identities created on the child, one session-row DELETE (P0-5), and N0 set to true (P0-6). Production is unchanged: no
+Neon setting, row or migration. 004 is applied nowhere. The child still exists (K4 not done). Everything below that
+would touch production is a plan.
+
+## Corrections to the reviewed plan (`f6e6587`)
+
+- **Answered with evidence:** the review's finding that `/update-user` re-issues `session_data` from a cached, revoked
+  session, so the cache could slide to the session's own `expiresAt` (7 days). On the child, Neon issues no non-empty
+  `session_data` cookie at all: not on sign-up, sign-in, `/get-session`, `/token` or `/update-user`. Before the DELETE,
+  `/update-user` re-issued only `session_token` and created no session row. After it, `/update-user` returned 401 with
+  no `Set-Cookie` (Evidence; P0 results on the child). The tail the review describes needs the cache, and the host as
+  observed has none. That is a vendor setting, not a guarantee, so it is now a premise the plan checks (the cache
+  premise): P0-5 fails if Jar B ever receives `session_data`, and the window records the cookie names of the production
+  probe's responses. Any non-empty `session_data` cookie is a STOP. The plan then needs a revision, with a Gate W floor
+  at the latest `expiresAt` among the revoked sessions, before it continues.
+- **Added:** P0-5 polls `/update-user` with Jar B, with a valid minimal body, beside `/get-session` and `/token`.
+- **Corrected:** Jar B keeps one value per cookie name, which could lose the chunks Better Auth splits a large cache
+  into. The rule now says that each chunk (`session_data.0`, `session_data.1`, ...) is its own name, and each is kept.
+- **Corrected:** S is in whole minutes and G in seconds. G is now written G = 60 * S + 1050 s.
+- **Corrected:** the P0-5 and step 5 service entries add `sslrootcert=system` (libpq 16 and later), so
+  `sslmode=verify-full` has a certificate store to verify against.
+- **Corrected:** Restores and new branches now names user and account rows.
+- **Recorded:** the child results (P0 results on the child). P0-6 passed, with P_N0 = 11 s. P0-5 measured S = 3 min, an
+  observed upper bound, with its deviations from this plan's procedure listed for review. P0-3 and P0-4 were observed.
+  P0-1, P0-2, R0 for a verified user, K3, and production's side of K2 and of the schema fingerprint are not done. P0
+  has not passed.
+- **Corrected:** N0's "Time to take effect: unknown". P0-6 measured it on the child.
+- **Answered:** whether Neon sends a verification email on `/sign-up/email` under N0. Sign-up created a verification
+  code row, although `send_verification_email_on_sign_up` is false.
+- **Corrected:** the word "drift" for the live identity helpers, used in an earlier phase report. The three live
+  helpers hash to 004's pre-hardening column: the database holds the reviewed pre-hardening bodies, and the hardening is
+  unapplied, as planned. Only the 002 source file on the production branch differs from this lineage (Follow-up:
+  migration 002 on the production branch).
+- **Corrected:** "no Neon branch has been created" (Status). The P0 child exists.
 
 ## Corrections to the reviewed plan (`d0e112c`)
 
@@ -87,9 +123,10 @@ and a password. The address owner's first Email OTP sign-in then verifies that s
 1.6.22 (GHSA-qq9h-g4jm-xgf3, also filed as CVE-2026-67327), the password survives, so whoever registered it signs in
 as the owner from then on. Fixed versions delete the unproven password and revoke the user's sessions at that
 sign-in. But they do it in separate statements that concurrent requests can interleave with (Race A, Race B). A JWT
-already minted also stays valid at the Data API for its 15 minutes, and a revoked session can mint more from its
-cookie cache until the cache expires. The live Neon Auth host fingerprints between 1.6.18 and 1.6.33, so whether it
-carries the fix is undetermined. The plan has to hold either way.
+already minted also stays valid at the Data API for its 15 minutes, and where Better Auth's cookie cache is on, a
+revoked session can mint more from it until the cache expires (Neon issued no cache cookie on the P0 child). The live
+Neon Auth host fingerprints between 1.6.18 and 1.6.33, so whether it carries the fix is undetermined. The plan has to
+hold either way.
 
 Before this candidate, V1 named a caller from `auth.user_id()` and the user row alone (present, not banned). The
 email-bound invite check added the stored `"emailVerified"`. Once the owner has verified, a password holder sharing
@@ -186,7 +223,8 @@ the row passes both.
   included), `neon_auth.project_config`, every user and every session row.
 - `migration-integration.test.mjs`, probe `a_revoked`: after Race A's session row is deleted, the JWT minted from it
   still names the owner under 004's helpers.
-- Migration 002 differs between the production branch and this lineage (Follow-up: production source drift).
+- The 002 source file differs between the production branch and this lineage (Follow-up: migration 002 on the
+  production branch).
 
 2026-10-08, for corrective 3 (npm source, the review of `d0e112c`, and a local psql check):
 
@@ -218,6 +256,39 @@ the row passes both.
   - Step 5's transaction rolled back, leaving every row, when a session was committed between its DELETE and its
     count.
 
+2026-10-08, for corrective 4 (live, on the P0 child branch only; every HTTP call went to the child's Auth host):
+
+- The child: `br-muddy-surf-b5s4wgzx` (`commercial-v1-auth-security-proof-20261008`), parent production
+  (`br-hidden-darkness-b55g0j83`), created at 19:02 UTC. Its compute endpoint and Auth host (`ep-ancient-term-b5wm7qsa`)
+  differ from production's (`ep-still-recipe-b5g7680z`). Its schema fingerprint is `e67ff74f…` with 78 paths, the value
+  above. Production's schema was not fetched again that day.
+- Both branches report the same Neon Auth `auth_provider_project_id`. Neon does not document what that shares. Setting
+  N0 on the child left production's configuration unchanged (P0-6), and the child's JWTs name the child (below).
+- Cookie cache: no response set a non-empty `session_data` cookie. That covers `/sign-up/email`, `/sign-in/email`,
+  `/get-session`, `/token` and `/update-user`. The only cookie issued is `__Secure-neon-auth.session_token`
+  (`Max-Age=604800`, `HttpOnly`, `Secure`, `SameSite=None`, `Partitioned`). So every request is answered from the
+  session row. On a refusal, `/get-session` sends deletions for `session_token`, `session_data` and `dont_remember`.
+- Session lifetime: every session created on the child expires exactly 604800 s (7 days) after its creation.
+- `/update-user` with a valid body on a live session returns 200, writes the user, re-issues only `session_token` and
+  creates no session row. With an empty body it returns 400 `FST_ERR_CTP_EMPTY_JSON_BODY`, which says nothing about
+  the session.
+- `/list-sessions` answers only a live session. It lists that user's own sessions, each with its raw `token`
+  (holder-scoped). A raw token sent as `Authorization: Bearer`, with no cookie, is not accepted: `/get-session` returns
+  `null`. The `session_token` cookie carries a signature made with the Auth secret (Better Auth source, not tested
+  live), so a raw token is not a usable cookie either.
+- JWTs: `/token` returns an EdDSA JWT whose `kid` is the child's only JWKS key (`sha256(kid)` prefix `d3c354b49651`).
+  The JWKS endpoint serves no private fields. For an unverified password user, `iss` and `aud` are both the child's
+  origin, `exp - iat` is 900 s, and `emailVerified` is the JSON boolean false. This is not R0 or K3, which come from
+  P0-1.
+- `/token/anonymous` without a session returns 200 and an EdDSA JWT under the same key. Its claim keys are `aud`,
+  `database`, `endpointId`, `exp`, `iat`, `iss`, `role` and `sub`, and `exp - iat` is 3600 s. It has no
+  `emailVerified` claim, so 004's helpers never name its holder. Whether its `sub` can equal a user id was not checked.
+- The three identity helpers on the child (a copy of production's database at branching) hash to 004's pre-hardening
+  column (`7702b142…`, `2cf7b7b8…`, `51204241…`). Production holds the reviewed pre-hardening bodies, not unreviewed
+  ones.
+- Clocks: on every P0-6 probe, the child Auth host's `Date` header matched the operator's clock to the second. Session
+  rows' `createdAt` fell within 0.4 s of the operator's send and arrival times.
+
 ## The races in the fix: Race A and Race B
 
 Both need an address that was pre-registered (an unverified row with a `credential` account) and whose owner then
@@ -234,10 +305,10 @@ verification. The identity stays contested, which 004 refuses (see Recovery).
 | Ordering | 1. The attacker's `/sign-in/email` reads the row: unverified, with the credential. 2. While it hashes the password (scrypt), the owner's first `/sign-in/email-otp` deletes the credential, deletes the user's sessions, sets `emailVerified` true and creates the owner's session. 3. The attacker's request checks nothing more and creates its session. That INSERT lands after step 2's session delete, so nothing removes it. |
 | Boundary crossed | Account binding. The attacker holds a persistent Neon Auth session (full session lifetime, renewed on use) for the owner's user. Every JWT it mints carries the owner's `sub` and `"emailVerified": true`. |
 | What 004 prevents | Every losing order: any JWT minted before the row is verified (its claim false never equals the stored true), and any JWT while the credential remains (no fix, or a verification path that keeps it). |
-| What 004 does not prevent | The winning order. Once the row is verified and has no account, the attacker's session mints exactly the owner's claims. All three checks pass, and no row says whose session is whose. The attacker claims the owner's email-bound invites, submits as them and reads what they read. Revoking the session does not stop this at once: the attacker can mint JWTs from its cookie cache for up to S (P0-5), and each one passes 004 for its 15 minutes. |
-| What N0 prevents | The attacker's session. With `require_email_verification` true, `/sign-in/email` refuses when its single read said `emailVerified` false. A read that still finds the credential comes before the credential's deletion, and so before the verification. Better Auth deletes the credential before it sets the flag. With native joins the read is one statement; without them the user is read before the accounts. So that read says false, and the request is refused (403). A read after the verification finds no credential (401). This is source-backed and exercised on upstream Better Auth locally (Evidence); only P0 proves that Neon enforces it, and P0-6 and step 4 how soon. |
+| What 004 does not prevent | The winning order. Once the row is verified and has no account, the attacker's session mints exactly the owner's claims. All three checks pass, and no row says whose session is whose. The attacker claims the owner's email-bound invites, submits as them and reads what they read. Revoking the session does not stop this at once: every JWT already minted passes 004 for its 15 minutes, and the session may still be accepted for up to S, the upper bound P0-5 observed (3 minutes on the child, where no cookie cache was issued). |
+| What N0 prevents | The attacker's session. With `require_email_verification` true, `/sign-in/email` refuses when its single read said `emailVerified` false. A read that still finds the credential comes before the credential's deletion, and so before the verification. Better Auth deletes the credential before it sets the flag. With native joins the read is one statement; without them the user is read before the accounts. So that read says false, and the request is refused (403). A read after the verification finds no credential (401). This is source-backed and exercised on upstream Better Auth locally (Evidence). On the child, P0-6 saw Neon refuse with 403 `EMAIL_NOT_VERIFIED` from 10.4 s after the PATCH was sent (P_N0 = 11 s). Step 4 proves it in production before any revocation. |
 | What N1 prevents | The precondition: no new pre-registration through `/sign-up/email`. Rows registered before N1 remain (audit I03). |
-| Residual after the combined remediation | None known through `/sign-in/email` on 1.6.22 to 1.6.33. It depends on Neon keeping N0 enforced: a Neon Auth upgrade or a revert of N0 reopens it, so P0 is tied to the schema fingerprint. It also depends on no other route creating a session for an unverified row without that check. The routes that can create a session (Evidence) are the password and sign-up routes N0 gates, Email OTP and both verification routes (which need the owner's mailbox), social sign-in (N2 removes it; an OAuth account is refused by 004 anyway) and admin impersonation (operator only). A Race A session created before the window cannot be told from the owner's either, so the window revokes every live session (step 5), and Gate W holds everything an owner's identity could be used for until that session's cache and last JWT have expired. |
+| Residual after the combined remediation | None known through `/sign-in/email` on 1.6.22 to 1.6.33. It depends on Neon keeping N0 enforced: a Neon Auth upgrade or a revert of N0 reopens it, so P0 is tied to the schema fingerprint. It also depends on no other route creating a session for an unverified row without that check. The routes that can create a session (Evidence) are the password and sign-up routes N0 gates, Email OTP and both verification routes (which need the owner's mailbox), social sign-in (N2 removes it; an OAuth account is refused by 004 anyway) and admin impersonation (operator only). A Race A session created before the window cannot be told from the owner's either, so the window revokes every live session (step 5), and Gate W holds everything an owner's identity could be used for until S and that session's last JWT have passed. |
 | Blocks Stage B | Yes, until N0 is applied after a passing P0, in the same window as 004, and Gate W has passed. |
 | Blocks customer launch | Yes, on the same conditions, and N1 as well. |
 
@@ -247,13 +318,13 @@ verification. The identity stays contested, which 004 refuses (see Recovery).
 |---|---|
 | Initial state | As Race A, and the attacker already holds a live session on the pre-registered row: a password sign-in made while `require_email_verification` was false. N0 does not end that session. |
 | Attacker capability | That session's token and cookies. Calls `/token` (or `/get-session`) at will. |
-| Ordering | The attacker's `findSession` reads the session row before the owner's first `/sign-in/email-otp` deletes it, and reads the user row after that sign-in has set `emailVerified` true. This needs the two-query `findSession` (no native joins), and a request the cookie cache does not answer. |
-| Boundary crossed | A JWT bound to the owner's identity: `sub` is the owner and `"emailVerified"` is true. It is valid for 15 minutes (the Data API accepts a JWT about 30 s past its `exp`). The session row is gone, but the same request re-issued the `session_data` cookie with the verified user. So `/token` can keep minting such JWTs from that cookie, with no session row, until the cache expires (S, measured by P0-5): up to S + 15 minutes + 30 s in all. |
-| What 004 prevents | Every other JWT from that session: before the verification (claim false), and after it once the cache has expired (no session to mint from). |
-| What 004 does not prevent | The straddling JWT, and any JWT minted from the re-issued cache. Each passes all three checks for its whole lifetime. |
+| Ordering | The attacker's `findSession` reads the session row before the owner's first `/sign-in/email-otp` deletes it, and reads the user row after that sign-in has set `emailVerified` true. This needs the two-query `findSession` (no native joins), and a request the cookie cache does not answer. On the child every request was such a request: no cache was issued (Evidence). |
+| Boundary crossed | A JWT bound to the owner's identity: `sub` is the owner and `"emailVerified"` is true. It is valid for 15 minutes (the Data API accepts a JWT about 30 s past its `exp`). Upstream, with the cookie cache on, the same request would also re-issue `session_data` with the verified user, and `/token` could keep minting such JWTs from that cookie, with no session row, until the cache expired. Neon's host issued no cache on the child, so once the row is gone the session mints nothing more (P0-5). The plan does not rely on that alone: Gate W still waits S, the observed upper bound, then 15 minutes and 30 s. |
+| What 004 prevents | Every other JWT from that session: before the verification (claim false), and after it once the session is no longer accepted (its row is gone; at most S). |
+| What 004 does not prevent | The straddling JWT, and any JWT minted from a re-issued cache if the host ever issued one (the cache premise, P0-5). Each passes all three checks for its whole lifetime. |
 | What N0 prevents | New sessions of this kind: no password sign-in on an unverified row, and no session from sign-up. N0 does not remove sessions minted before it. The identity audit (I05, I06) finds them, and they are revoked after N0 is enforced, before the hardening counts as complete. |
 | What N1 prevents | New pre-registrations, so no new rows of this shape. |
-| Residual after the combined remediation | None known once N0 is enforced and I05 and I06 pass after it: no session remains on an unverified or account-bearing row, and none can be created. It depends on N0 as Race A does, on the revocation being complete (P0-5, then I05 and I06 at the end of the window), and on Gate W outlasting the cache and the last JWT. With native joins the race cannot occur at all. |
+| Residual after the combined remediation | None known once N0 is enforced and I05 and I06 pass after it: no session remains on an unverified or account-bearing row, and none can be created. It depends on N0 as Race A does, on the revocation being complete (P0-5, then I05 and I06 at the end of the window), and on Gate W outlasting S and the last JWT. With native joins the race cannot occur at all. |
 | Blocks Stage B | Yes, until the identity audit passes after N0, in the same window as 004, and Gate W has passed. |
 | Blocks customer launch | Yes, on the same conditions. |
 
@@ -263,9 +334,9 @@ pre-verification JWT, before and after the owner's sign-in). It asserts what a s
 retains: Race B's session is gone, yet the JWT minted across the verification names the owner. And it asserts what
 004 cannot close: Race A's session and Race B's JWT meet all three checks, mint the owner's own claims and claim the
 owner's email-bound invite. A revoked session's JWT also stays valid until it expires. A later revision that claimed 004
-alone makes every intermediate state safe would have to change that test. The test does not model the cookie cache, so
-it understates how long a revoked session can still mint JWTs; P0-5 measures that. The test proves nothing about N0,
-which only Neon enforces: P0 proves it.
+alone makes every intermediate state safe would have to change that test. The test does not model a cookie cache, or
+how long a deleted session is still accepted. P0-5 measures that on Neon's host: on the child, no cache was issued, and
+S = 3 minutes is an observed upper bound. The test proves nothing about N0, which only Neon enforces: P0 proves it.
 
 ## Trust model
 
@@ -322,15 +393,15 @@ Files: `migrations/002_identity_submission_rls.sql` (the hardened helpers);
 `submit_entry`: a guard, the three definitions byte for byte as 002 has them, and 002's privilege statements);
 `validation/neon-preflight.sql` (P22, P23) and `validation/neon-catalog-verify.sql` (C24), for the two new
 prerequisites; and `validation/neon-identity-audit.sql`, the read-only identity audit. 002 carries the fix itself
-because re-applying 002 is a supported operation, and it must not undo the hardening. The production branch does not
-carry it yet (Follow-up: production source drift).
+because re-applying 002 is a supported operation, and it must not undo the hardening. The production branch's 002 does
+not carry it yet (Follow-up: migration 002 on the production branch).
 
 ## Neon Auth configuration plan (not executed)
 
 | | N0: `email_password.require_email_verification` | N1: `email_password.allow_sign_up` | N2: Google OAuth provider |
 |---|---|---|---|
 | API field | `require_email_verification` | `disable_sign_up` (inverse) | `oauth_providers` `google` |
-| Current (read 2026-10-08) | `false` | `true` | `google`, type `shared` |
+| Current on production (read 2026-10-08, again after P0-6) | `false` (the child alone was set to `true`, by P0-6) | `true` | `google`, type `shared` |
 | Desired | `true` | `false` | removed |
 | Purpose | refuse a password sign-in on an unverified row: closes Race A, and with the audit Race B | stop public `/sign-up/email`, the pre-registration path | remove OAuth sign-up and linking by address, the GHSA-g38m class |
 | Email OTP, first-time sign-in (new invitee) | unaffected by source (it creates the user verified; `requireEmailVerification` is not read); **P0 proves it** | **UNPROVEN**: Better Auth's emailOTP has its own `disableSignUp`, and how Neon maps `allow_sign_up` is unknown. If it also gates OTP sign-up, no new participant can join; **P1 proves it** | unaffected |
@@ -338,9 +409,9 @@ carry it yet (Follow-up: production source drift).
 | Password sign-in | refused for an unverified row (403 `EMAIL_NOT_VERIFIED`); a verified row's password still signs in, and 004 refuses that identity | unaffected | none |
 | `/sign-up/email` | creates the row and its password, no session | refused | none |
 | Existing users | 5 verified OTP users unaffected; the 6 unverified synthetic password users can no longer sign in | none signs up again | 0 OAuth users |
-| Existing sessions | **not touched**: a session minted before N0 survives it (no session or JWT route reads the setting). The audit finds them, and they are revoked | not touched | not touched (0 OAuth users) |
-| Time to take effect | **unknown**: P0-6 measures it on the child, and step 4 probes it in production before any revocation | not measured: N1 and N2 change no session | not measured |
-| To observe in P0 | whether a verification email goes out on `/sign-up/email` (Better Auth defaults `sendOnSignUp` to `requireEmailVerification`; Neon's `send_verification_email_on_sign_up` is false and its mapping is unknown) | | |
+| Existing sessions | **not touched**: a session minted before N0 survives it (no session or JWT route reads the setting). Observed on the child (P0-4): after N0, `/get-session` still accepted a session signed in before it, and `/token` minted a 900 s JWT from it. The audit finds such sessions, and they are revoked | not touched | not touched (0 OAuth users) |
+| Time to take effect | **measured on the child** (P0-6): read back as `true` 1.46 s, and first refusal 10.35 s, after t0, so P_N0 = 11 s. Step 4 probes it in production before any revocation | not measured: N1 and N2 change no session | not measured |
+| Verification email on `/sign-up/email` | **observed on the child** (P0-3): under N0, sign-up created a verification code row (`email-verification-otp`, 5-minute expiry), although `send_verification_email_on_sign_up` is false. So Neon sends a verification email on sign-up under N0 (Better Auth defaults `sendOnSignUp` to `requireEmailVerification`). Delivery to `@example.com` cannot be seen. Before N0, sign-up created no such row | | |
 | Rollback | `require_email_verification` back to `false` (reopens Race A; after step 5 only once Gate W has passed, see Rollout) | `allow_sign_up` back to `true` | re-add `google` shared |
 | Prerequisite | P0 | P1 | P1 (applied with N1) |
 | When | in the rollout window, before 004, and enforced (step 4) before the revocation | in the same window, once P1 passed | with N1 |
@@ -426,7 +497,7 @@ Two jars hold that session's cookies, in separate files in the scratch directory
 |---|---|---|
 | Models | an ordinary browser or client | a party that already holds the session's cookies and keeps them |
 | Starts from | the `Set-Cookie` headers of the sign-in response that created the session, written once into both jars. From then on the jars are separate: each is updated only from responses to its own requests, and neither ever takes a value from the other | the same |
-| A new non-empty value from the child's Auth host | replaces the stored value (standard cookie rules) | replaces the retained value for that name, or adds the name |
+| A new non-empty value from the child's Auth host | replaces the stored value (standard cookie rules) | replaces the retained value for that name, or adds the name. Each name is its own entry, so chunked cookies (`session_data.0`, `session_data.1`, ...) are each kept |
 | A deletion (an empty value, `Max-Age` of 0 or less, or `Expires` not after the response's `Date`) | applied: the cookie is removed | ignored: the retained value stays, and that `Set-Cookie` is discarded |
 | `Max-Age` and `Expires` | honoured: the cookie is dropped when it expires | ignored: a retained value is presented until the server refuses it |
 | Values | never invented or changed | never invented or changed; never taken from Jar A; sent only to the child's Auth base URL |
@@ -444,6 +515,11 @@ Each call is classified:
 |---|---|---|---|
 | `/get-session` | 200, and the JSON body's `session` and `user` are objects | the response the calibration (step 0) recorded for this endpoint with an empty jar: the same status and the same body shape. It must be 200 with a JSON `null` body, or a 401 | anything else: 429, any other 4xx or 5xx, a timeout (`--max-time 20`), a DNS, TLS or connection failure, or a body that is not JSON |
 | `/token` | 200, and the JSON body's `token` is a non-empty string | as for `/get-session`; it must be a 401 | as for `/get-session` |
+| `/update-user` (POST, body `{"name":"pp-cv1-p05"}`) | 200, or any response that sets a non-empty `session_token` or `session_data*` cookie | as for `/get-session`; it must be a 401 | as for `/get-session`. A 400 (for example an empty body) is Inconclusive, never Refused |
+
+`/update-user` is polled because Better Auth re-issues the session cookies from it, from a cached session when a cache
+cookie is presented (the review of `f6e6587`). The body is a valid minimal one. An Accepted call writes that name to
+the test identity's own row on the child, and nothing else.
 
 Every Jar B request presents the retained `session_token`, and the retained `session_data` whenever Jar B holds one.
 A Jar B request that presented neither is Inconclusive, never Refused. For every call, record: the jar; the endpoint;
@@ -451,25 +527,26 @@ the send and arrival times (operator clock, UTC, milliseconds); the HTTP status;
 back, or a token, and whether that token parses as a JWT (three base64url segments, with a JSON header and payload);
 and, per cookie name, whether a new non-empty value was set and whether a deletion was requested. Never a value.
 
-0. Calibration. Before the control, call `/get-session` and `/token` once each with an empty jar, and record each
-   status and body shape. `/get-session` must answer 200 with a JSON `null` body, or 401, and `/token` must answer
-   401. Otherwise STOP: the classification does not fit this host. From then on, only a response of the calibrated
-   shape counts as Refused.
-1. Control. Present Jar B, then Jar A, to `/get-session` and to `/token`. All four calls must be Accepted: Jar B
-   authenticates before the DELETE. For Jar B, record whether it holds `session_data`, and the `Max-Age` and `Expires`
-   attributes (attributes only) on each non-empty `session_data` it accepts. Record t_issue: the send time of the
-   request whose response last gave Jar B a non-empty `session_data`. It moves whenever that happens again, before or
-   after the DELETE. Write the session's raw token from the body of Jar A's control `/get-session` into the scratch
-   token file (Token to psql).
+0. Calibration. Before the control, call `/get-session`, `/token` and `/update-user` once each with an empty jar, and
+   record each status and body shape. `/get-session` must answer 200 with a JSON `null` body, or 401, and `/token` and
+   `/update-user` must answer 401. Otherwise STOP: the classification does not fit this host. From then on, only a
+   response of the calibrated shape counts as Refused.
+1. Control. Present Jar B, then Jar A, to `/get-session` and to `/token`, then Jar B to `/update-user`. All five calls
+   must be Accepted: Jar B authenticates before the DELETE. For Jar B, record whether it holds `session_data`, and the
+   `Max-Age` and `Expires` attributes (attributes only) on each non-empty `session_data` it accepts. Record t_issue: the
+   send time of the request whose response last gave Jar B a non-empty `session_data`. It moves whenever that happens
+   again, before or after the DELETE. Write the session's raw token from the body of Jar A's control `/get-session` into
+   the scratch token file (Token to psql).
 2. Delete. Note t_del on the operator's clock, then run the DELETE below as the child's migration owner, on the K1
    endpoint. In one transaction, it deletes the row whose `token` equals the bound value. It commits only if exactly
    one row was deleted, and after the commit it confirms that no row with that token remains. Note t_commit when psql
    returns. The DELETE fails on any of these: the guard stops it, the token file is missing or empty, the count is not
    1, an error occurs, or the commit is not confirmed. That is a FAIL, and nothing is committed.
-3. Poll. From t_commit, every 10 s, start one poll: Jar B to `/get-session` and to `/token`, then Jar A to both. Each
-   call stands on its own, so a refusal by one endpoint never skips the other.
-   - A Jar B poll is an acceptance if either of its calls is Accepted or Inconclusive. An Inconclusive call counts as
-     an acceptance, because its cause cannot be established. A Jar B poll is Refused only when both calls are Refused.
+3. Poll. From t_commit, every 10 s, start one poll: Jar B to `/get-session`, `/token` and `/update-user`, then Jar A
+   to `/get-session` and `/token`. Each call stands on its own, so a refusal by one endpoint never skips another.
+   - A Jar B poll is an acceptance if any of its calls is Accepted or Inconclusive. An Inconclusive call counts as an
+     acceptance, because its cause cannot be established. A Jar B poll is Refused only when all three calls are
+     Refused.
    - t_last_ok is the arrival of the last Jar B call that was Accepted or Inconclusive, counted from the control.
    - t_first_fail is the arrival of the last call of the first Refused Jar B poll after t_last_ok.
    - The refusal window is complete when every Jar B poll since t_first_fail has been Refused, the polls span at least
@@ -496,14 +573,24 @@ and, per cookie name, whether a new non-empty value was set and whether a deleti
 PASS requires all of the following:
 
 - the prerequisites (Token to psql) and the calibration held;
-- the control accepted all four calls;
+- the control accepted all five calls;
 - the DELETE deleted exactly one row, committed, and the follow-up found none;
 - the refusal window completed before the bound;
 - Jar A was never Accepted in a poll where Jar B was Refused;
-- S and R are recorded, and R is at most 15 s (Gate W's margin assumes it).
+- S and R are recorded, and R is at most 15 s (Gate W's margin assumes it);
+- the cache premise held: no response, from the sign-in to the last poll, set a non-empty `session_data` cookie
+  (any name starting `session_data`), so A is 0.
 
 Anything else is a FAIL or INCONCLUSIVE. **Either is a STOP.** The controlled remediation rollout is not authorized,
 nothing proceeds to production, and no other revocation method stands in. The plan has no fallback.
+
+The cache premise is not a measurement of S; it is what makes S enough. With a cache, a session deleted at any time
+before step 5 could be renewed from its cache through `/update-user` up to its own `expiresAt` (7 days on the child),
+and step 5 never sees it. Gate W, which starts at T_rev and lasts S plus a JWT's life, would not cover that. Without a
+cache, every request reads the session row, so a deleted session is refused once the deletion is visible to Neon Auth.
+P0-5 bounds that by S without claiming it is instant, and then only the JWTs the session minted remain (15 minutes and
+30 s, inside G). If a non-empty `session_data` cookie ever appears, here or in production (steps 2 and 4), the plan
+needs a revision before it continues.
 
 **Token to psql (P0-5's DELETE).** The DELETE needs the child test session's raw token. It is handled as follows, and
 P0-5 does not start unless all of it is available:
@@ -512,7 +599,8 @@ P0-5 does not start unless all of it is available:
 - The scratch directory and the child's connection. The connection lives in a libpq service file and password file in
   that directory, so no secret is in an argument either. The operator writes them in an editor from the Neon Console,
   never with `echo`. The service entry names the K1 endpoint host, the database and the migration owner, with
-  `sslmode=verify-full`. They are set up before P0:
+  `sslmode=verify-full` and `sslrootcert=system` (libpq 16 and later: the operating system's certificate store;
+  without it, `verify-full` looks for `~/.postgresql/root.crt` and fails). They are set up before P0:
 
       umask 077
       export P05="$(mktemp -d)"
@@ -637,14 +725,111 @@ every user (fail closed, reversible). If `exp - iat` exceeds 900 s, STOP: Gate W
 
 Values the window uses:
 
-| Value | From | Used in |
+| Value | From | On the child (2026-10-08) | Used in |
+|---|---|---|---|
+| P_N0 (seconds) | P0-6 | **11** (PASS) | step 4: production must enforce N0 within 2 * P_N0 = 22 s, and the revocation waits for T_N0 + 2 * P_N0 + 120 s = T_N0 + 142 s; it also bounds the production probe: at most 2 * P_N0 + 300 = 322 s after t3, and at most 33 calls (Production probe authorization) |
+| S (whole minutes) | P0-5, from Jar B only | **3**, an observed upper bound (deviations below) | Gate W: G = 60 * S + 900 + 30 + M seconds = 60 * S + 1050 s = **1230 s** |
+| R (seconds) | P0-5: the longest call | under 3 (0.321 logged) | must be at most 15 s, or Gate W's margin M is not justified (STOP) |
+| `exp - iat` (seconds) | R0 (K3) | not recorded: needs P0-1 (900 for an unverified user's JWT) | must be at most 900; Gate W uses 900 s whatever the value |
+| M (seconds) | Gate W | 120 (fixed) | fixed at 120 s; valid only while R and the clock offsets are within their bounds |
+| Clock offsets (seconds) | step 1, and straight after T_rev | the child's Auth host: under 1 | each of the production database, the production Auth host and the Data API, against the operator's clock: at most 10 s, or STOP |
+
+### P0 results on the child (2026-10-08)
+
+Run on `br-muddy-surf-b5s4wgzx` (Evidence, corrective 4), with fresh synthetic `pp-cv1-*@example.com` password
+identities created on the child. No identity copied from production was used. Every HTTP call went to the child's Auth
+host through an allowlist that refused production's host before connecting. Passwords, cookies, tokens and addresses
+stayed in private scratch files and are not in this record. The P0 order above was not followed: P0-5 ran before N0
+(deviation 1 below).
+
+| Item | Status | Record |
 |---|---|---|
-| P_N0 (seconds) | P0-6 | step 4: production must enforce N0 within 2 * P_N0, and the revocation waits for T_N0 + 2 * P_N0 + 120 s; it also bounds the production probe (Production probe authorization) |
-| S (whole minutes) | P0-5, from Jar B only | Gate W: G = S + 900 s + 30 s + M |
-| R (seconds) | P0-5: the longest call | must be at most 15 s, or Gate W's margin M is not justified (STOP) |
-| `exp - iat` (seconds) | R0 (K3) | must be at most 900; Gate W uses 900 s whatever the value |
-| M (seconds) | Gate W | fixed at 120 s; valid only while R and the clock offsets are within their bounds |
-| Clock offsets (seconds) | step 1, and straight after T_rev | each of the production database, the production Auth host and the Data API, against the operator's clock: at most 10 s, or STOP |
+| Schema fingerprint | child side only | the child's was `e67ff74f…` at 22:35 UTC, before P0-6. Production's was last fetched earlier on 2026-10-08 (Evidence), not at the time of the proofs. A read-only fetch of production's public schema must confirm the match before the proofs count |
+| K1 | recorded | the child's branch id and name, parent, endpoint and Auth host (Evidence). Each differs from production's, and the parent is production |
+| K2 | child side only | the child serves one key: `OKP`, `Ed25519`, `EdDSA`, `kid` fingerprint `d3c354b49651`, and no private fields. Production's JWKS was not fetched (child-only HTTP), so whether the child serves a production key is not recorded |
+| K3 | not done | it needs P0-1's JWT. An unverified identity's JWT carried `iss` = `aud` = the child's origin and the child's `kid` (Evidence), which K3 would accept |
+| K4 | not done | the child exists; N0 is still on there |
+| P0-1 | INCONCLUSIVE | not run: it needs an address the operator controls, and its OTP typed by the operator |
+| P0-2 | INCONCLUSIVE | not run: it needs a verified OTP user copied from production (D, E or A), that user's mailbox, and the operator's authorization to use that identity on the child |
+| P0-3 | observed; not PASS | sign-up: 200, `token` null, no cookie. Sign-in with the right password: 403 `EMAIL_NOT_VERIFIED`. The user has 0 session rows. P0 also records whether a verification email was sent: a verification code row was created at sign-up (Neon Auth configuration plan), but delivery could not be observed without a controlled inbox. So P0-3 is not marked PASS here |
+| P0-4 | recorded | the session signed in before N0 survived it. After N0, `/get-session` accepted Jar A and Jar B, and `/token` minted a JWT from it (`exp - iat` 900 s, `emailVerified` false) |
+| P0-5 | measured, with deviations | S = 3 minutes, an observed upper bound (below) |
+| P0-6 | PASS | P_N0 = 11 s (below) |
+| R0 | not done | the verified case needs P0-1. For an unverified user the claim is the JSON boolean false |
+| `/token/anonymous` | recorded | claim keys and lifetime (Evidence) |
+| P0 | **not passed** | P0-1, P0-2, P0-3's email record, R0, K3, production's side of K2 and of the fingerprint, and the review's decision on P0-5's deviations remain |
+| P1 | not run | N1 and N2 are unchanged on both branches |
+
+**P0-6 on the child: PASS.** The identity, a third synthetic password identity, was signed up and signed in (200, with
+a session) while N0 was false. The PATCH was this neon CLI 8.2.0 command, the CLI equivalent named in Evidence:
+
+    neon neon-auth config email-password update --project-id <project> --branch <child> --require-email-verification
+
+Its request body names only `require_email_verification`, and the API updates only the fields it is given.
+
+| Event | UTC, operator clock | After t0 |
+|---|---|---|
+| t0 | 22:38:08.022 | 0 |
+| PATCH sent, then returned with exit 0 | 22:38:08.023, 22:38:08.751 | 0.001 s, 0.729 s |
+| Last success: probe 0, sent before the PATCH returned | arrived 22:38:08.372 | 0.350 s |
+| t_rb, the first read-back of `true` | 22:38:09.479 | 1.456 s |
+| Production read back straight after | 22:38:10.248: `false`, every field unchanged | 2.226 s |
+| t_ref, the first refusal (probe 1) | arrived 22:38:18.376 | 10.354 s |
+| Observation window complete (probe 14) | arrived 22:40:28.351 | 140.329 s |
+
+- P_N0 = 11 s: 10.354 s, rounded up. The probes ran every 10 s, so enforcement began between probe 0 and probe 1. The
+  measurement does not resolve it more finely, and step 4 doubles it.
+- 15 probes: 1 success, then 14 refusals, each a 403 `EMAIL_NOT_VERIFIED` with no `Set-Cookie`. No 429, 401 or
+  unclassified response. The largest gap between refusals was 10.5 s, so the window was never voided. The longest call
+  took 0.81 s.
+- The refused probes created no session. The identity holds exactly the 3 sessions it had before t_ref: its sign-up,
+  its sign-in, and probe 0.
+- A wrong password for the same identity after N0 returned 401 `INVALID_EMAIL_OR_PASSWORD`. So the 403 comes only after
+  the password has verified, as P0-6's table assumes.
+- At the end, every Neon Auth configuration section of both branches was read back again (email and password, email
+  provider, organization, webhook, OAuth providers, domains, status). On the child only `require_email_verification`
+  had changed. Production was unchanged throughout.
+
+**P0-5 on the child: measured, with deviations.** It ran before this revision, so before N0 and before `/update-user`
+joined the polls. The poller logged whole seconds.
+
+| Event | UTC, operator clock |
+|---|---|
+| Calibration, empty jar | `/get-session` 200 `null`; `/token` 401 |
+| Control, Jar B then Jar A | all four calls Accepted. Jar B held only `session_token`, never `session_data` |
+| t_last_ok | 20:50:03, the control |
+| t_del | 20:50:26 |
+| t_commit | 20:50:52: exactly 1 row deleted; 0 rows remain with that session's id |
+| First poll, t_first_fail | 20:53:11: Jar B refused on both calls |
+| Polls | 31, from 20:53:11 to 20:58:44, 11 to 12 s apart. Every Jar B and Jar A call was Refused: `/get-session` 200 `null`, with deletions for 3 cookies that Jar B ignored, and `/token` 401. Jar A was never Accepted |
+| `/update-user` with Jar B and a valid body | 20:55:14: 401 `UNAUTHORIZED`, no `Set-Cookie` |
+
+- t_issue: none, since Jar B never received `session_data`. So A = 0, and L = C = t_first_fail - t_del, about 165 s.
+  **S = 3 minutes.**
+- S is an observed upper bound, not the revocation time. The first poller failed on a macOS `date` format and was
+  restarted, so nothing was observed between t_commit and 20:53:11. Revocation may have taken effect at any time in
+  that interval. The plan does not assume it is instant, and Gate W uses S = 3 minutes.
+- R: 0.321 s is logged, for Jar B's `/get-session` calls only. The other calls were not timed one by one. Each poll's
+  calls finished between that poll's start and the next 10 s sleep. Consecutive poll starts were logged 11 to 12 s
+  apart in whole seconds, so under 13 s in fact, and every call took under 3 s: R is under 3 s, within 15 s. P0-6's
+  longest call was 0.81 s.
+- Afterwards the deleted row was still gone, the user row was intact, and the user kept its other session.
+
+Deviations from the P0-5 procedure, for the review:
+
+1. Order: P0-5 ran before N0, on its own identity, not on P0-4's session after N0. N0 is read only by the sign-in and
+   sign-up routes (Evidence; P0-4 on the child), so it does not change how a session is looked up.
+2. The DELETE ran as the migration owner through the Neon API's SQL call on the child branch, not through Token to
+   psql. It was a guarded `DO` block (the database, the role, the target session and its synthetic user, and a row
+   count of exactly 1, or raise), by session id. The effect, one deleted `neon_auth.session` row, is the method step 5
+   uses.
+3. Polling did not start at t_commit: there is no observation for 139 s after it. That can only make S larger.
+4. Times have 1 s resolution, and R was logged for one endpoint (above).
+5. `/update-user` was not one of the polled calls. The in-poll call carried no body and returned 400, which shows
+   nothing either way. It was called once with a valid body, at 20:55:14, and refused.
+
+The review decides whether these deviations stand. If it does not accept them, a conformant P0-5 (with `/update-user`
+in every poll) runs before the window on P0-4's surviving session, and Gate W uses the larger S of the two runs.
 
 ## Identity audit (read-only)
 
@@ -678,20 +863,25 @@ one transaction, with the same predicate the audit uses:
 No admin route is used (P0-5). Then run the audit again until I99 is PASS. In the rollout window itself, every live
 session is revoked, not only these (step 5).
 
-A revocation is not instant. A deleted session is still answered from its `session_data` cookie cache for up to S
-(P0-5), and every JWT minted from it until then stays valid for 15 minutes plus about 30 s of skew. A Race A session's
-JWTs carry the owner's claims for a verified row with no account, so 004 does not refuse them (probe `a_revoked`). The
-other revoked sessions' JWTs carry `"emailVerified": false` or belong to a row with an account, and 004 refuses those
-once applied. Gate W holds everything an owner's identity could be used for until that whole tail has passed.
+The plan does not treat a revocation as instant. A deleted session may still be accepted for up to S (P0-5: on the
+child, no cookie cache was issued and the first observation after the DELETE already refused, but that observation came
+165 s after it, so S = 3 minutes). Every JWT minted from it until then stays valid for 15 minutes plus about 30 s of
+skew. A Race A session's JWTs carry the owner's claims for a verified row with no account, so 004 does not refuse them
+(probe `a_revoked`). The other revoked sessions' JWTs carry `"emailVerified": false` or belong to a row with an
+account, and 004 refuses those once applied. Gate W holds everything an owner's identity could be used for until that
+whole tail has passed.
 
 ## Controlled rollout (one window)
 
 Before the window (no production change):
 
 1. This corrective is independently reviewed at its exact SHA.
-2. P0 passes, including P0-5 (Jar B) and P0-6 (classified refusals). P1 passes, or N1 and N2 are recorded as deferred
-   (Stage B then stays blocked). R0 is recorded with `exp - iat` at most 900 s. K1 and K2 are recorded, and K3
-   passes. P_N0, S and R are recorded, with R at most 15 s.
+2. P0 passes, including P0-5 (Jar B, with the cache premise) and P0-6 (classified refusals). For P0-5 that means the
+   review has accepted the child run's recorded deviations, or a conformant run has passed. P1 passes, or N1 and N2 are
+   recorded as deferred (Stage B then stays blocked). R0 is recorded with `exp - iat` at most 900 s. K1 and K2 are
+   recorded, and K3 passes. P_N0, S and R are recorded, with R at most 15 s. As of 2026-10-08, P_N0 = 11 s, S = 3
+   minutes and R is under 3 s; P0-1, P0-2, P0-3's email record, R0, K3, and production's side of K2 and of the
+   fingerprint are outstanding (P0 results on the child).
 3. The child branch is deleted and K4 is recorded.
 4. Production is unchanged: the production branch is at `48e0ac4`, Netlify Auto Publishing is Locked, and the three
    live helper bodies still hash to 004's pre-hardening column.
@@ -723,19 +913,23 @@ build ships differs from `48e0ac4`. Auto Publishing stays Locked throughout, and
 2. **Audit, baseline, and the probe identity.** Run `neon-identity-audit.sql` and record every row. A STOP here is
    expected when old sessions exist. It is remediated in step 5. Then, strictly within its separate authorization
    (Production probe authorization), sign up one synthetic probe identity on production through `/sign-up/email`
-   (`pp-cv1-n0probe-<UTC date>@example.com`, with a random password held only in the operator's shell). Step 4
-   probes with it, and step 5 revokes its sign-up session. Afterwards it stays as one more synthetic I03 row: under N0
-   it cannot sign in, 004 refuses it, and deleting it falls under the same operator decision as the other synthetic
-   rows.
+   (`pp-cv1-n0probe-<UTC date>@example.com`, with a random password held only in the operator's shell). Step 4 probes
+   with it, and step 5 revokes its sign-up session. Afterwards it stays as one more synthetic I03 row: under N0 it
+   cannot sign in, 004 refuses it, and deleting it falls under the same operator decision as the other synthetic rows.
+   Record the names, never the values, of the cookies the sign-up response sets. A non-empty `session_data` cookie is a
+   STOP before N0: the cache premise (P0-5) fails in production, so S does not bound production's revocation.
 3. **N0.** Note t3 on the operator's clock, and set `require_email_verification` to `true` on production. Immediately
    after the PATCH returns, read T_N0 = `clock_timestamp()` on production and record it. Read the configuration back
    every 10 s, for up to 15 minutes, until N0 is true. Every other field must be as step 1 recorded.
 4. **N0 enforced (replaces the fixed settle).** From step 3 on, call production's `/sign-in/email` with the probe
    identity's password every 10 s, within the authorized limits. Classify every response by P0-6's table: only a
    403 `EMAIL_NOT_VERIFIED` is a refusal, and a 429, a 401 or an unclassified response is never one. Record every
-   probe's time, status and class. t_ref is the arrival of the first refusal after the last success, and
-   P_prod = t_ref - t3. The observation window after t_ref is P0-6's: at least 2 minutes, at least 3 further
-   refusals, no gap over 30 s between consecutive refusals, and no success.
+   probe's time, status and class, and the names of any cookies it sets. t_ref is the arrival of the first refusal
+   after the last success, and P_prod = t_ref - t3. The observation window after t_ref is P0-6's: at least 2 minutes,
+   at least 3 further refusals, no gap over 30 s between consecutive refusals, and no success. With P_N0 = 11 s, the
+   refusal must arrive within 22 s of t3: from the probe at t3, t3 + 10 s or t3 + 20 s. One probe lost to a 429 or an
+   unclassified response can therefore end the window in a STOP. That STOP is safe, as below, but the window then has
+   to be repeated.
    - PASS, when all of these hold: N0 reads back true; P_prod is at most 2 * P_N0; the observation window is complete;
      and `SELECT clock_timestamp() >= timestamptz '<T_N0>' + interval '<2 * P_N0 + 120> seconds'` returns true on
      production. The 2 minutes let a `/sign-in/email` that read its row before N0 finish. Doubling P_N0 is a margin,
@@ -747,6 +941,7 @@ build ships differs from `48e0ac4`. Auto Publishing stays Locked throughout, and
      - the observation window not complete by t3 + 2 * P_N0 + 5 minutes, because rate limiting or unclassified
        responses kept it from completing (INCONCLUSIVE);
      - N0 not read back within 15 minutes;
+     - a non-empty `session_data` cookie in any probe response (the cache premise);
      - any probe outside the authorized limits.
 
      On a STOP, no session is revoked and 004 is not applied. N0 stays applied: it is stricter than before, and P0
@@ -825,7 +1020,7 @@ below, and the probe runs only within it:
 | Identity | the exact address, or the rule that generates it: `pp-cv1-n0probe-<UTC date as YYYYMMDD>@example.com`, one per window. `example.com` is reserved (RFC 2606) and receives no mail |
 | Branch | the production Neon project and branch, by name and id, as step 1 records them |
 | Sign-up | exactly one `/sign-up/email` call, at step 2, while N0 is still false, with a random password generated in the operator's shell and kept only there. It is not retried. Any response other than a new user (for example, the address already exists) is a STOP, and no other address is tried |
-| Sign-in probes | `/sign-in/email`, with that identity and password only, at most one call every 10 s. They run from t3 until step 4's PASS or STOP, for no longer than 2 * P_N0 + 5 minutes after t3, and at most (2 * P_N0 + 300) / 10 + 1 calls in all. No other route and no other identity |
+| Sign-in probes | `/sign-in/email`, with that identity and password only, at most one call every 10 s. They run from t3 until step 4's PASS or STOP, for no longer than 2 * P_N0 + 5 minutes after t3, and at most (2 * P_N0 + 300) / 10 + 1 calls in all, rounded down. With P_N0 = 11 s: 322 s and 33 calls. No other route and no other identity |
 | Expected residual | one more unverified synthetic user with a `credential` account, so I03's synthetic count rises by one. Its sign-up session, and any session a probe created before N0 was enforced, are revoked at step 5 |
 | Handling and disposition | the password is never printed or recorded, and is unset at step 9 or when the window ends. The row stays as a synthetic I03 row: N0 refuses its password sign-in, and 004 refuses it. It gets no membership, entry or invite. Deleting it is the same separate operator decision as for the other synthetic rows |
 | STOP rules | the sign-up rule above, step 4's STOP rules, and any call outside these limits |
@@ -833,17 +1028,18 @@ below, and the probe runs only within it:
 
 ### Gate W (security wait)
 
-Gate W is an operator gate between step 5 and step 9. It exists because a revoked session is still usable for up to
-S, and its JWTs for 15 minutes and about 30 s after that. Clock and timing uncertainty are added on top as a margin, M.
+Gate W is an operator gate between step 5 and step 9. It exists because a revoked session may still be usable for up
+to S, P0-5's observed upper bound, and its JWTs for 15 minutes and about 30 s after that. Clock and timing uncertainty
+are added on top as a margin, M.
 
 | | |
 |---|---|
 | Starts at | T_rev: the production database's `clock_timestamp()`, read immediately after step 5's transaction commits (the last committed run of step 5, if it ran more than once) |
-| Length | G = S + 900 s + 30 s + M, with M = 120 s (below), so G = S + 1050 s. S comes from P0-5's Jar B, in whole minutes rounded up. 900 s is the JWT lifetime R0 bounded. 30 s is the skew the Data API accepts past `exp`. G is never shortened |
+| Length | G = 60 * S + 900 + 30 + M seconds, with M = 120 s (below), so G = 60 * S + 1050 s. S comes from P0-5's Jar B, in whole minutes rounded up. 900 s is the JWT lifetime R0 bounded. 30 s is the skew the Data API accepts past `exp`. With the child's S = 3 minutes, G = 1230 s (20 minutes 30 s). G is never shortened |
 | Check | `SELECT clock_timestamp() >= timestamptz '<T_rev>' + interval '<G> seconds';` on production, as the migration owner. The production database clock is the only clock that releases the gate |
 | PASS | all of these: the check returns true; step 5 passed (committed with 0 remaining, then I99 `PASS` and I07's total 0); step 6 has completed; the clock offsets measured after T_rev are each at most 10 s; and since T_rev, no rollback of N0 or 004 has run, N0 still reads back true, and 004's helper fingerprints are still the hardened column. Record the time of the check |
 | Not yet | the check returns false, or step 6 has not completed: wait and check again |
-| STOP | T_rev or S is not recorded, or step 5's checks after the commit did not pass: no PASS is possible, so step 5's single recorded repeat is the only way on. A rollback of N0 or 004 has run since T_rev: the window is incomplete (Rollback). M is not justified, because an offset after T_rev is over 10 s or cannot be read, or R was over 15 s: the gate cannot pass, and the plan needs a revision with a new margin and a new review |
+| STOP | T_rev or S is not recorded, or step 5's checks after the commit did not pass: no PASS is possible, so step 5's single recorded repeat is the only way on. A rollback of N0 or 004 has run since T_rev: the window is incomplete (Rollback). M is not justified, because an offset after T_rev is over 10 s or cannot be read, or R was over 15 s: the gate cannot pass, and the plan needs a revision with a new margin and a new review. A non-empty `session_data` cookie was seen in production (steps 2 and 4): S does not bound production's revocation, the gate cannot pass, and the plan needs a revision |
 | Until PASS | no step 9, no final PASS and no "complete"; no invite created (`pool_platform_create_entry_invite`) or sent; no invite claimed; no participant or customer activity; no Stage B. Steps 6, 7 and 8 may run |
 
 The margin M (120 s) is this plan's own allowance, built from its measurements. It is not a Neon SLA or a vendor
@@ -864,7 +1060,7 @@ finite margin is justified by this plan. STOP and redesign; the gate is never re
 Rollback, in reverse order of application. Roll back only what failed, and record it. Deleting a session row is not
 instant. So no rollback or recovery step counts a revocation as effective before Gate W's check for that revocation
 returns true. After step 5, a rollback of 004 or N0 does not run before Gate W's check returns true. Until then, a
-revoked session can still mint JWTs from its cache, and JWTs minted before the revocation are still valid. Rolling back
+revoked session may still be accepted for up to S, and JWTs minted before the revocation are still valid. Rolling back
 004 would make more of them acceptable. Rolling back N0 would let new password sessions form beside them. Both
 failures these rollbacks answer are fail-closed (everyone refused, or no Email OTP sign-in), so waiting costs
 availability, not security. Every rollback below is a forward change. None uses a point-in-time restore, a branch
@@ -904,6 +1100,7 @@ reset or restore, or a new branch (Restores and new branches):
 - Falling back to an admin route, or any revocation method P0-5 did not prove, when P0-5 fails.
 - Measuring S with a jar that applies deletions or expiry, or passing P0-5 on a client losing its cookies rather than
   on the server refusing Jar B.
+- Relying on S after a non-empty `session_data` cookie has appeared, on the child or in production (the cache premise).
 - Counting a 429, a 401, an unclassified response or a network failure as an N0 refusal (P0-6, step 4).
 - Committing step 5 with sessions remaining, or continuing to 004 or Gate W after an unexpected session; repeating step
   5 more than once, or without recording the cause.
@@ -920,6 +1117,9 @@ before the window or after it. Each one copies or brings back authentication sta
 - Neon Auth configuration from before N0 (`require_email_verification` false) reopens Race A.
 - Session rows from before step 5 bring back every revoked session, a possible Race A session included, and database
   reads then accept them again, not only the cookie cache.
+- User and account rows from before a deletion bring back deleted users with their password or OAuth accounts:
+  pre-registered and contested rows, and identities removed by a contested-identity recovery (Recovery), with whatever
+  password holder or session they had.
 - Identity helpers from before 004 (the pre-hardening bodies) reopen the original takeover for whatever state is
   restored.
 - A branch made from production copies its users, sessions and signing keys, private halves included (Child branch,
@@ -940,9 +1140,10 @@ child, which K1 to K4 govern and which is deleted before the window.
 
 Stage B (signed-in validation on production) stays unauthorized until all of these are true and recorded:
 
-1. This corrective (corrective 3) has passed its independent exact-SHA review.
+1. This corrective (corrective 4) has passed its independent exact-SHA review.
 2. P0 and P1 passed on a child branch whose schema fingerprint equals production's. That includes:
-   - P0-5: revocation measured with the retained Jar B, the refusal window complete, S recorded, and R at most 15 s.
+   - P0-5: revocation measured with the retained Jar B, the refusal window complete, S recorded, R at most 15 s, and
+     the cache premise held; the child run's deviations accepted by the review, or a conformant run passed.
    - P0-6: N0 enforced on the child, refusals classified, and P_N0 recorded.
    - R0, recorded with `exp - iat` at most 900 s.
    - K1 and K2 recorded, and K3 passed on `iss`, `aud` and `kid`.
@@ -954,7 +1155,8 @@ Stage B (signed-in validation on production) stays unauthorized until all of the
      the commit. T_rev is recorded.
    - 004 was applied, with C99 `PASS` and the hardened helper fingerprints.
    - D, E and A were confirmed. N1 and N2 were applied and read back.
-   - Gate W passed with G = S + 1050 s, and the clock offsets were within 10 s at step 1 and after T_rev.
+   - Gate W passed with G = 60 * S + 1050 s, and the clock offsets were within 10 s at step 1 and after T_rev.
+   - No production probe response set a non-empty `session_data` cookie (steps 2 and 4).
    - The audit (I99 `PASS`) and the catalog verifier (C99 `PASS`) at step 9 ran after Gate W.
 5. A fresh identity audit at the start of Stage B passes (I99 `PASS`). Every I03 row other than the synthetic harness
    identities is classified, and every I04 identity with V1 standing (I08) has been recovered.
@@ -976,10 +1178,11 @@ changed here.
   sign-in, and 004 refuses them. The 2 memberships the six hold become inert; the probe holds none. Their live
   sessions, if any, are revoked in step 5. Deleting the users (which cascades their accounts and sessions; memberships
   and `entries.owner_auth_user_id` have no foreign key) is a separate operator decision.
-- Any session minted before N0 survives N0 (Neon's setting gates sign-in only). The audit finds those on unverified
-  or account-bearing rows. Step 5 revokes every live session, including any it cannot find (a Race A session on a row
-  since verified). A revoked session can still be answered from its cookie cache for up to S, and its JWTs stay valid
-  for 15 minutes and about 30 s after that. Gate W covers that tail. Everyone signs in again with Email OTP.
+- Any session minted before N0 survives N0 (Neon's setting gates sign-in only). P0-4 observed this on the child:
+  after N0, such a session was still accepted by `/get-session` and still minted JWTs at `/token`. The audit finds
+  those on unverified or account-bearing rows. Step 5 revokes every live session, including any it cannot find (a Race
+  A session on a row since verified). A revoked session may still be accepted for up to S, and its JWTs stay valid for
+  15 minutes and about 30 s after that. Gate W covers that tail. Everyone signs in again with Email OTP.
 - The live validation harness (`validation/live/`) signs up password identities, so after N0 and 004 it can no longer
   act. It needs a redesign before any further live run. Its local rehearsal takes the stub from
   `migration-integration.test.mjs`, and its mock Data API sets no JWT claims, so the rehearsal now refuses every
@@ -992,20 +1195,25 @@ Neon Auth user, which cascades its accounts and sessions. Do not delete only the
 password holder's sessions valid again. Clear any `owner_auth_user_id` and membership that named the user, and
 re-invite. The owner's next Email OTP sign-in creates a fresh row.
 
-## Follow-up: production source drift of migration 002
+## Follow-up: migration 002 on the production branch
 
-- **The drift.** The production source and runtime branch, `commercial-v1-netlify-adapter`, is at
+- **The live database is not drifted.** On 2026-10-08 the three identity helpers on the P0 child, a copy of
+  production's database, hashed exactly to 004's pre-hardening column (Evidence). Production holds the reviewed
+  pre-hardening bodies. The hardening is unapplied, as planned until step 6, and 004's guard admits exactly those
+  bodies. An earlier phase report called this "drift". That word is retracted for the live helpers. What follows
+  concerns the source file only.
+- **The source difference.** The production source and runtime branch, `commercial-v1-netlify-adapter`, is at
   `48e0ac4e0d6a4cd745cdd4ed2a67fc56ef53cb60` (tree `e1c71e85ffd10556c83ebbb9b06b8b5cec99e099`). Its
   `pool-platform/migrations/002_identity_submission_rls.sql` (blob `5bf7b18`) defines the three identity helpers
   without the hardening, and it has no 004. The hardened 002 (blob `016749b`) and 004 (blob `c696397`) exist only on
-  the candidate lineage: `38ea9ee`, `a854419`, `d0e112c` and this branch.
+  the candidate lineage: `38ea9ee`, `a854419`, `d0e112c`, `f6e6587` and this branch.
 - **Why it does not block the controlled remediation.** 004 hardens the live database by itself: it carries the
   three hardened definitions byte for byte. No file the Netlify build ships differs from `48e0ac4`, so the window
   needs no deploy and the runtime stays at `48e0ac4`.
 - **Why it must be resolved before any migration maintenance or re-application.** Re-applying 002 is a supported
   operation (Trust model). 002 as of `48e0ac4` replaces the hardened helpers with the pre-hardening bodies
-  (`CREATE OR REPLACE`), so re-applying it would silently undo 004 on the live database. Until the drift is resolved,
-  002 is not re-applied from the production branch.
+  (`CREATE OR REPLACE`), so re-applying it would silently undo 004 on the live database. Until the source difference
+  is resolved, 002 is not re-applied from the production branch.
 - **Resolution is separate.** Promoting the reviewed source lineage to the production branch, or any other fix, is
   its own reviewed follow-up. This corrective moves no branch and does not fast-forward the production branch.
 
@@ -1016,7 +1224,8 @@ re-invite. The owner's next Email OTP sign-in creates a fresh row.
 - R0 and the N0 effects are vendor behaviour. They are proven on a child branch, and confirmed in production only by
   step 4 (the refusal probe) and step 7 (Email OTP).
 - Gate W's length rests on the S that P0-5 measured on the child and the JWT lifetime R0 bounded. P0-5 measures one
-  session from one client, so a Neon change to either value calls for a new P0. Jar B models a party that keeps every
+  session from one client, so a Neon change to either value calls for a new P0. The child's S = 3 minutes is an
+  observed upper bound from one run whose deviations the review must accept. Jar B models a party that keeps every
   cookie value it has received. A strategy it does not model, such as presenting `session_data` without
   `session_token`, is not measured. Better Auth refuses that, because it requires the signed `session_token`
   (Evidence), but Neon's deployment is not visible from outside.
@@ -1027,16 +1236,33 @@ re-invite. The owner's next Email OTP sign-in creates a fresh row.
   or new branch from production, at any time, can bring back sessions, signing keys, pre-N0 configuration or
   pre-hardening helpers (Restores and new branches).
 - Until N1, an attacker who knows an invitee's address can make that identity contested, and the invitee is refused
-  rather than taken over (Recovery). If Neon sends a verification email on sign-up under N0, the owner may also get
-  one for a sign-up they never made. Completing it keeps the password, and 004 refuses the contested identity.
-- After a revocation, a session can still mint JWTs from its cookie cache for up to S, and each JWT stays valid for up
-  to 15 minutes, plus about 30 s of skew. For a Race A session, these JWTs still name the owner once 004 is applied.
-  Gate W holds the close, invites, customer activity and Stage B until that tail, plus the margin M, has passed.
+  rather than taken over (Recovery). Under N0, Neon sends a verification email on sign-up (observed on the child,
+  P0-3), so the owner gets a code for a sign-up they never made. Completing it with `/email-otp/verify-email` verifies
+  the row and keeps the password. N0 then lets that password sign in, since the row is verified, and 004 refuses the
+  contested identity. Each such sign-up also sends mail from Neon's shared sender to an address the attacker chose.
+- The cache premise (P0-5). Neon issued no non-empty `session_data` cookie on the child. If it starts issuing one, a
+  session deleted before step 5 could be renewed from its cache through `/update-user` up to its own `expiresAt` (7
+  days), beyond Gate W. A session deleted before the cache was turned on never held a cache cookie, so it cannot be
+  renewed that way. P0-5 and the production probe (steps 2 and 4) check the premise. Nothing re-checks it continuously
+  after the window.
+- After a revocation, a session may still be accepted for up to S, and each JWT it minted stays valid for up to 15
+  minutes, plus about 30 s of skew. For a Race A session, these JWTs still name the owner once 004 is applied. Gate W
+  holds the close, invites, customer activity and Stage B until that tail, plus the margin M, has passed.
+- `/list-sessions` gives the holder of a live session the raw tokens of that user's sessions (Evidence). A Race A or
+  Race B attacker holding a session on the owner's row could read the owner's raw session tokens. A raw token was not
+  accepted as a bearer token, and the session cookie needs the Auth secret's signature (Better Auth source, not tested
+  live). Step 5 deletes every session, those included.
+- Both branches report the same `auth_provider_project_id`, and Neon does not document what it shares. The child's
+  JWTs name the child (`iss`, `aud`), and the child is deleted before the window (K4). Whether production's Data API
+  checks `iss` or `aud` is still not known (Child branch). This is open with Neon.
+- `/token/anonymous` issues a 1-hour JWT with no session. It has no `emailVerified` claim, so 004's helpers never name
+  its holder. Before 004, the helpers name a caller from `sub` and the user row alone, and whether an anonymous JWT's
+  `sub` can equal a user's id was not checked.
 - A refused identity sees a generic sign-in message, not the reason.
-- Better Auth mints a JWT from a cached user snapshot when a request carries the `session_data` cookie (Evidence). A
-  user who verified moments earlier could then be refused until the cache refreshes. That only affects rows that
-  existed unverified before their first OTP sign-in. The proxy passes Neon only the session token cookie, never the
-  session-data cache cookie, so this does not reach V1's own client.
+- Better Auth mints a JWT from a cached user snapshot when a request carries the `session_data` cookie (Evidence; Neon
+  issued none on the child). A user who verified moments earlier could then be refused until the cache refreshes. That
+  only affects rows that existed unverified before their first OTP sign-in. The proxy passes Neon only the session token
+  cookie, never the session-data cache cookie, so this does not reach V1's own client.
 - The Better Auth organization plugin is enabled upstream (GHSA-fmh4, 0 organizations). V1 never reads
   `auth.organization()`, and 004 does not change that.
 - If a future Neon Auth release attached an account row to Email OTP users, every new user would be refused (fail
