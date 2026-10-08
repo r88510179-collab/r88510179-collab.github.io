@@ -10,7 +10,13 @@
 --   auth       a schema the Data API roles have no USAGE on, with auth.user_id() executable by PUBLIC. Production runs
 --              pg_session_jwt; here auth.user_id() is a deterministic stand-in that returns the "sub" claim of the
 --              request.jwt.claims setting (NULL when the setting, or its sub, is missing), the claims the Data API sets
---              per request with set_config(..., true)
+--              per request with set_config(..., true). The transaction-local test setting hdc13_test.jwt_backend
+--              selects the backend state it emulates (the HDC-13 cold-backend regressions; nothing in Neon reads it):
+--                unset or 'warm'  a warm backend: the "sub" claim, as above
+--                'cold'           the first call into pg_session_jwt on a new Neon backend, as the HDC-13 child-branch
+--                                 rehearsal observed it: no identity (NULL) although request.jwt.claims holds the
+--                                 verified claims, and request.jwt.claims cleared for the rest of the transaction
+--                'trap'           any call fails (SQLSTATE HT000), so a test proves a code path never calls it
 --   neon_auth  the Neon Auth schema (USAGE for authenticated) and its "user" table, of which authenticated may SELECT
 --              only id, email, role and banned, the four columns the commissioner predicate reads
 --   public     USAGE for PUBLIC, anonymous and authenticated; nfl_pool_weeks, the Pick'em publication table no
@@ -45,13 +51,23 @@ CREATE FUNCTION auth.user_id() RETURNS text
 LANGUAGE plpgsql STABLE SET search_path = pg_catalog AS $$
 DECLARE
   claims text := current_setting('request.jwt.claims', true);
+  backend text := COALESCE(current_setting('hdc13_test.jwt_backend', true), '');
 BEGIN
+  IF backend = 'trap' THEN
+    RAISE EXCEPTION 'auth.user_id() was called on a trapped backend' USING ERRCODE = 'HT000';
+  END IF;
+  IF backend = 'cold' THEN
+    PERFORM set_config('request.jwt.claims', '', true);
+    RETURN NULL;
+  END IF;
   IF claims IS NULL OR btrim(claims) = '' THEN
     RETURN NULL;
   END IF;
-  RETURN claims::jsonb ->> 'sub';
-EXCEPTION WHEN others THEN
-  RETURN NULL;
+  BEGIN
+    RETURN claims::jsonb ->> 'sub';
+  EXCEPTION WHEN others THEN
+    RETURN NULL;
+  END;
 END
 $$;
 

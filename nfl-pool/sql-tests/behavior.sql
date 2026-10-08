@@ -1,7 +1,9 @@
 -- HDC-13 SQL behavior suite. Run as the cluster superuser, connected to nfl_pool, after neon-shape.sql, migrations
 -- 001-004 and fixtures.sql. Every call of public.nfl_append_incident_ruling is made the way the Data API makes it: in its
--- own transaction, with request.jwt.claims set for the transaction and the role switched with SET LOCAL ROLE (anonymous,
--- authenticated, or authenticator itself). Each assertion reports one notice, "HDC13-TEST ok: <name>" or
+-- own transaction (or, where a test must leave nothing behind, inside one rolled-back transaction), with
+-- request.jwt.claims set for the transaction and the role switched with SET LOCAL ROLE (anonymous, authenticated, or
+-- authenticator itself). The cold-backend section starts a new backend (\connect) and puts the pg_session_jwt stand-in
+-- in its cold or trap state (neon-shape.sql). Each assertion reports one notice, "HDC13-TEST ok: <name>" or
 -- "HDC13-TEST FAIL: <name>: <detail>"; run.sh counts them against the plan echoed at the end. A missing function is an
 -- assertion failure, never an aborted script: the function is only ever named through to_regprocedure or dynamic SQL,
 -- except in the two sections guarded by \if :has_fn.
@@ -145,6 +147,70 @@ CREATE FUNCTION hdc13_test.public_row(p_key text) RETURNS jsonb LANGUAGE sql STA
     FROM public.nfl_incident_rulings r WHERE r.ruling_id = hdc13_test.id(p_key)) x
 $$;
 
+-- One Data API call of the RPC as authenticated on a backend whose pg_session_jwt is in the given state (neon-shape.sql:
+-- 'warm', 'cold' or 'trap'), with request.jwt.claims set to exactly the given text for the transaction (verified, empty or
+-- malformed claims); NULL leaves the setting as the backend has it, never set at all on a new backend.
+CREATE FUNCTION hdc13_test.rpc_on(p_backend text, p_claims text, p_args jsonb) RETURNS hdc13_test.outcome LANGUAGE plpgsql AS $$
+DECLARE
+  v jsonb;
+  s text;
+  m text;
+  h text;
+BEGIN
+  PERFORM set_config('hdc13_test.jwt_backend', p_backend, true);
+  IF p_claims IS NOT NULL THEN
+    PERFORM set_config('request.jwt.claims', p_claims, true);
+  END IF;
+  BEGIN
+    SET LOCAL ROLE authenticated;
+    EXECUTE 'SELECT public.nfl_append_incident_ruling($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)' INTO v
+      USING p_args->>'p_contest_id', (p_args->>'p_week')::integer, p_args->>'p_away_team', p_args->>'p_home_team',
+            p_args->>'p_action', p_args->>'p_consequence', (p_args->>'p_expected_policy_revision')::integer,
+            (p_args->>'p_expected_parent_ruling_id')::bigint, p_args->>'p_incident_status', p_args->>'p_event_id',
+            p_args->>'p_evidence_source', p_args->>'p_public_note', p_args->>'p_admin_note';
+    RESET ROLE;
+    RETURN ROW('00000', NULL, NULL, v)::hdc13_test.outcome;
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE, m = MESSAGE_TEXT, h = PG_EXCEPTION_HINT;
+    RETURN ROW(s, m, NULLIF(h, ''), NULL)::hdc13_test.outcome;
+  END;
+END
+$$;
+-- query() on a backend whose pg_session_jwt is in the given state.
+CREATE FUNCTION hdc13_test.query_on(p_backend text, p_claims jsonb, p_sql text) RETURNS hdc13_test.outcome LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM set_config('hdc13_test.jwt_backend', p_backend, true);
+  RETURN hdc13_test.query('authenticated', p_claims, p_sql);
+END
+$$;
+-- The pg_session_jwt stand-in itself, as one request on a backend in the given state sees it (the superuser may call it
+-- directly): the claims before the call, what it returns or the SQLSTATE it raises, and the claims after it.
+CREATE FUNCTION hdc13_test.stand_in(p_backend text, p_claims text) RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE
+  v_before text;
+  v_user text;
+  v_state text := '00000';
+BEGIN
+  PERFORM set_config('hdc13_test.jwt_backend', p_backend, true);
+  PERFORM set_config('request.jwt.claims', p_claims, true);
+  v_before := current_setting('request.jwt.claims', true);
+  BEGIN
+    v_user := auth.user_id();
+  EXCEPTION WHEN OTHERS THEN
+    v_state := SQLSTATE;
+  END;
+  RETURN jsonb_build_object('before', v_before, 'user_id', v_user, 'sqlstate', v_state, 'after', current_setting('request.jwt.claims', true));
+END
+$$;
+-- The ruling history and the published Pick'em weeks and Survivor snapshots (counts and digests), to prove that a
+-- rolled-back test left them exactly as they were.
+CREATE FUNCTION hdc13_test.history() RETURNS jsonb LANGUAGE sql STABLE AS $$
+  SELECT jsonb_build_object(
+    'rulings', (SELECT count(*) || ':' || md5(COALESCE(string_agg(to_jsonb(r)::text, '|' ORDER BY r.ruling_id), '')) FROM public.nfl_incident_rulings r),
+    'weeks', (SELECT count(*) || ':' || md5(COALESCE(string_agg(to_jsonb(w)::text, '|' ORDER BY w.season, w.week), '')) FROM public.nfl_pool_weeks w),
+    'snapshots', (SELECT count(*) || ':' || md5(COALESCE(string_agg(to_jsonb(w)::text, '|' ORDER BY w.season, w.week), '')) FROM public.nfl_survivor_weeks w))
+$$;
+
 INSERT INTO hdc13_test.preset VALUES
   ('pk', '{"p_contest_id":"pool-center-2026-pickem","p_week":3,"p_away_team":"BUF","p_home_team":"CIN","p_action":"rule",
     "p_consequence":"void","p_expected_policy_revision":1,"p_expected_parent_ruling_id":null,"p_incident_status":"STATUS_CANCELED",
@@ -203,10 +269,15 @@ SELECT hdc13_test.check('exactly the 13 approved named arguments, no defaults, r
      'p_event_id','p_evidence_source','p_public_note','p_admin_note'] FROM pg_proc p WHERE p.oid = to_regprocedure(:'fn')));
 SELECT hdc13_test.check('no dynamic SQL in the function body',
   (SELECT p.prosrc !~* '\mexecute\M' AND p.prosrc !~* '\mformat\s*\(' FROM pg_proc p WHERE p.oid = to_regprocedure(:'fn')));
-SELECT hdc13_test.check('every table, auth and neon_auth reference in the body is schema-qualified',
+SELECT hdc13_test.check('every table and neon_auth reference in the body is schema-qualified',
   (SELECT p.prosrc !~ '(?<!public\.)\mnfl_(contests|contest_policies|incident_rulings|pool_weeks|survivor_weeks)\M'
-      AND p.prosrc !~ '(?<!neon_auth\.)"user"' AND p.prosrc !~ '(?<!auth\.)\muser_id\(' AND p.prosrc ~ 'auth\.user_id\(\)'
+      AND p.prosrc !~ '(?<!neon_auth\.)"user"'
      FROM pg_proc p WHERE p.oid = to_regprocedure(:'fn')));
+SELECT hdc13_test.check('cold-backend identity: the body never calls pg_session_jwt (no auth.* reference, no user_id() call)',
+  (SELECT p.prosrc !~* '\mauth\s*\.|"auth"\s*\.' AND p.prosrc !~* '\muser_id\s*\('
+     FROM pg_proc p WHERE p.oid = to_regprocedure(:'fn')));
+SELECT hdc13_test.check('the body has no exception handler: nothing in it can swallow a refusal or a trapped pg_session_jwt call',
+  (SELECT p.prosrc !~* '\mexception\s+when\M' FROM pg_proc p WHERE p.oid = to_regprocedure(:'fn')));
 SELECT hdc13_test.check('anonymous and authenticated still have no INSERT, UPDATE, DELETE or TRUNCATE on any HDC-12 table',
   NOT EXISTS (SELECT 1 FROM unnest(ARRAY['anonymous','authenticated']) AS r(role), unnest(ARRAY['public.nfl_contests','public.nfl_contest_policies','public.nfl_incident_rulings']) AS t(tab)
     WHERE has_any_column_privilege(r.role, t.tab, 'INSERT') OR has_any_column_privilege(r.role, t.tab, 'UPDATE')
@@ -350,6 +421,125 @@ SELECT hdc13_test.expect_error('write-access probe by anonymous: permission deni
 SELECT hdc13_test.check('the write-access probes wrote 0 rows', hdc13_test.rows() = 0);
 
 -- =====================================================================================================================
+-- Cold Neon backends (HDC-13 child-branch rehearsal, finding F1). On a new backend behind the Data API the first call
+-- into pg_session_jwt returns no identity although request.jwt.claims holds the verified claims, and clears
+-- request.jwt.claims for the rest of the transaction; later requests on that, now warm, backend identify correctly. The
+-- stand-in reproduces it ('cold') and can fail any call ('trap'). The function must identify its caller from the
+-- verified claims alone, so whether the commissioner is authorized never depends on which backend serves the request.
+-- =====================================================================================================================
+\connect
+SELECT hdc13_test.check('setup: a new backend has never set request.jwt.claims', current_setting('request.jwt.claims', true) IS NULL);
+SELECT hdc13_test.expect_error('missing claims (request.jwt.claims never set on a new backend): HDC13_NOT_COMMISSIONER',
+  hdc13_test.rpc_on('cold', NULL, hdc13_test.req('probe')), '42501', 'HDC13_NOT_COMMISSIONER');
+SELECT hdc13_test.expect_error('the commissioner''s first call on a new cold backend: the write-access probe is HDC13_STALE_CHAIN, not HDC13_NOT_COMMISSIONER',
+  hdc13_test.rpc_on('cold', :commissioner::text, hdc13_test.req('probe')), 'P0001', 'HDC13_STALE_CHAIN');
+SELECT hdc13_test.expect_error('cold backend, the commissioner''s claims with registered claims (iat, exp) too: HDC13_STALE_CHAIN',
+  hdc13_test.rpc_on('cold', (:commissioner || '{"iat":1791500000,"exp":1791503600}')::text, hdc13_test.req('probe')), 'P0001', 'HDC13_STALE_CHAIN');
+SELECT hdc13_test.check('the cold-backend probes wrote 0 rows', hdc13_test.rows() = 0);
+
+-- The stand-in reproduces the rehearsal's observations, so the cases below exercise the real failure mechanism.
+SELECT hdc13_test.check('stand-in fidelity (cold): auth.user_id() returns NULL for the commissioner''s valid claims and clears request.jwt.claims for the rest of the transaction',
+  hdc13_test.stand_in('cold', :commissioner::text) = jsonb_build_object('before', :commissioner::text, 'user_id', NULL, 'sqlstate', '00000', 'after', ''));
+SELECT hdc13_test.check('stand-in fidelity (warm): the same claims identify the commissioner',
+  hdc13_test.stand_in('warm', :commissioner::text) = jsonb_build_object('before', :commissioner::text, 'user_id', '00000000-0000-4000-8000-000000000001',
+    'sqlstate', '00000', 'after', :commissioner::text));
+SELECT hdc13_test.check('stand-in fidelity (trap): any auth.user_id() call fails with SQLSTATE HT000',
+  hdc13_test.stand_in('trap', :commissioner::text) ->> 'sqlstate' = 'HT000');
+SELECT hdc13_test.check('stand-in fidelity: on a cold backend the unchanged publication policies (auth.user_id()) show the commissioner no Pick''em week, on a warm one every week (pre-existing; a separate follow-up)',
+  (hdc13_test.query_on('cold', :commissioner, 'SELECT w.season, w.week FROM public.nfl_pool_weeks w')).result = '[]'::jsonb
+  AND jsonb_array_length((hdc13_test.query_on('warm', :commissioner, 'SELECT w.season, w.week FROM public.nfl_pool_weeks w')).result)
+    = (SELECT count(*) FROM public.nfl_pool_weeks));
+
+-- Everyone else is still refused on a cold backend, and no claims shape leaks a JSON or UUID error.
+SELECT hdc13_test.expect_error('cold backend, an unrelated authenticated user''s claims: HDC13_NOT_COMMISSIONER',
+  hdc13_test.rpc_on('cold', :participant::text, hdc13_test.req('denkc')), '42501', 'HDC13_NOT_COMMISSIONER');
+SELECT hdc13_test.expect_error('cold backend, another admin''s claims: HDC13_NOT_COMMISSIONER',
+  hdc13_test.rpc_on('cold', :other_admin::text, hdc13_test.req('denkc')), '42501', 'HDC13_NOT_COMMISSIONER');
+BEGIN;
+UPDATE neon_auth."user" SET banned = true WHERE id = '00000000-0000-4000-8000-000000000001';
+SELECT hdc13_test.expect_error('cold backend, the banned commissioner''s claims: HDC13_NOT_COMMISSIONER',
+  hdc13_test.rpc_on('cold', :commissioner::text, hdc13_test.req('denkc')), '42501', 'HDC13_NOT_COMMISSIONER');
+ROLLBACK;
+BEGIN;
+UPDATE neon_auth."user" SET role = 'user' WHERE id = '00000000-0000-4000-8000-000000000001';
+SELECT hdc13_test.expect_error('cold backend, the commissioner''s account without the admin role: HDC13_NOT_COMMISSIONER',
+  hdc13_test.rpc_on('cold', :commissioner::text, hdc13_test.req('denkc')), '42501', 'HDC13_NOT_COMMISSIONER');
+ROLLBACK;
+BEGIN;
+UPDATE neon_auth."user" SET email = 'former.commissioner@example.com' WHERE id = '00000000-0000-4000-8000-000000000001';
+SELECT hdc13_test.expect_error('cold backend, the commissioner''s account under another email: HDC13_NOT_COMMISSIONER',
+  hdc13_test.rpc_on('cold', :commissioner::text, hdc13_test.req('denkc')), '42501', 'HDC13_NOT_COMMISSIONER');
+ROLLBACK;
+SELECT hdc13_test.expect_error('cold backend, empty claims: HDC13_NOT_COMMISSIONER',
+  hdc13_test.rpc_on('cold', '', hdc13_test.req('denkc')), '42501', 'HDC13_NOT_COMMISSIONER');
+SELECT hdc13_test.expect_error('cold backend, claims that are not JSON (truncated, with the commissioner''s sub): HDC13_NOT_COMMISSIONER',
+  hdc13_test.rpc_on('cold', '{"sub":"00000000-0000-4000-8000-000000000001","role":"authenticated"', hdc13_test.req('denkc')), '42501', 'HDC13_NOT_COMMISSIONER');
+SELECT hdc13_test.expect_error('cold backend, claims JSON that is not valid jsonb (a \u0000 escape) with the commissioner''s sub: HDC13_NOT_COMMISSIONER',
+  hdc13_test.rpc_on('cold', '{"sub":"00000000-0000-4000-8000-000000000001","name":"\u0000"}', hdc13_test.req('denkc')), '42501', 'HDC13_NOT_COMMISSIONER');
+SELECT hdc13_test.expect_error('cold backend, claims that are a JSON array holding the commissioner''s id: HDC13_NOT_COMMISSIONER',
+  hdc13_test.rpc_on('cold', '["00000000-0000-4000-8000-000000000001"]', hdc13_test.req('denkc')), '42501', 'HDC13_NOT_COMMISSIONER');
+SELECT hdc13_test.expect_error('cold backend, claims without a sub: HDC13_NOT_COMMISSIONER',
+  hdc13_test.rpc_on('cold', hdc13_test.claims(NULL)::text, hdc13_test.req('denkc')), '42501', 'HDC13_NOT_COMMISSIONER');
+SELECT hdc13_test.expect_error('cold backend, a sub that is not a UUID: HDC13_NOT_COMMISSIONER',
+  hdc13_test.rpc_on('cold', hdc13_test.claims('not-a-uuid')::text, hdc13_test.req('denkc')), '42501', 'HDC13_NOT_COMMISSIONER');
+SELECT hdc13_test.expect_error('cold backend, a sub that is a JSON number: HDC13_NOT_COMMISSIONER',
+  hdc13_test.rpc_on('cold', '{"sub":1,"role":"authenticated"}', hdc13_test.req('denkc')), '42501', 'HDC13_NOT_COMMISSIONER');
+SELECT hdc13_test.expect_error('cold backend, the commissioner''s id in braces (only its canonical text identifies, as before): HDC13_NOT_COMMISSIONER',
+  hdc13_test.rpc_on('cold', hdc13_test.claims('{00000000-0000-4000-8000-000000000001}')::text, hdc13_test.req('denkc')), '42501', 'HDC13_NOT_COMMISSIONER');
+SELECT hdc13_test.expect_error('cold backend, the commissioner''s id with a trailing line break: HDC13_NOT_COMMISSIONER',
+  hdc13_test.rpc_on('cold', hdc13_test.claims(E'00000000-0000-4000-8000-000000000001\n')::text, hdc13_test.req('denkc')), '42501', 'HDC13_NOT_COMMISSIONER');
+SELECT hdc13_test.expect_error('cold backend, a well-formed sub of no account: HDC13_NOT_COMMISSIONER',
+  hdc13_test.rpc_on('cold', hdc13_test.claims('00000000-0000-4000-8000-0000000000ff')::text, hdc13_test.req('denkc')), '42501', 'HDC13_NOT_COMMISSIONER');
+SELECT hdc13_test.expect_error('cold backend, a participant''s claims naming the commissioner''s email, admin role and id in other claims: HDC13_NOT_COMMISSIONER',
+  hdc13_test.rpc_on('cold', jsonb_build_object('sub', '00000000-0000-4000-8000-000000000002', 'role', 'admin', 'email', 'djsmokke@gmail.com',
+    'id', '00000000-0000-4000-8000-000000000001', 'user_id', '00000000-0000-4000-8000-000000000001')::text, hdc13_test.req('denkc')), '42501', 'HDC13_NOT_COMMISSIONER');
+SELECT hdc13_test.check('no refused cold-backend call wrote a row', hdc13_test.rows() = 0);
+
+-- No pg_session_jwt call at all: on a trapped backend any auth.user_id() call fails the request.
+SELECT hdc13_test.expect_error('trapped backend: the commissioner''s write-access probe never calls auth.user_id() (HDC13_STALE_CHAIN)',
+  hdc13_test.rpc_on('trap', :commissioner::text, hdc13_test.req('probe')), 'P0001', 'HDC13_STALE_CHAIN');
+SELECT hdc13_test.expect_error('trapped backend: an unrelated user is refused without calling auth.user_id() (HDC13_NOT_COMMISSIONER)',
+  hdc13_test.rpc_on('trap', :participant::text, hdc13_test.req('denkc')), '42501', 'HDC13_NOT_COMMISSIONER');
+SELECT hdc13_test.expect_error('trapped backend: malformed claims are refused without calling auth.user_id() (HDC13_NOT_COMMISSIONER)',
+  hdc13_test.rpc_on('trap', '{"sub":', hdc13_test.req('denkc')), '42501', 'HDC13_NOT_COMMISSIONER');
+
+-- No identity argument: the browser cannot supply created_by (or any caller) to the function.
+SELECT hdc13_test.expect_error('a request naming created_by (the commissioner''s id) matches no function: undefined function',
+  hdc13_test.exec('authenticated', :participant, $$SELECT public.nfl_append_incident_ruling(p_contest_id => 'pool-center-2026-pickem', p_week => 3,
+    p_away_team => 'DEN', p_home_team => 'KC', p_action => 'rule', p_consequence => 'void', p_expected_policy_revision => 1,
+    p_expected_parent_ruling_id => NULL, p_incident_status => 'STATUS_POSTPONED', p_event_id => '401437900', p_evidence_source => 'nflscores2',
+    p_public_note => 'Postponed by the league.', p_admin_note => NULL, created_by => '00000000-0000-4000-8000-000000000001')$$), '42883');
+
+-- Writes on cold and trapped backends, rolled back: a whole chain and a Survivor ruling, each row created by the sub of
+-- the verified claims.
+BEGIN;
+SELECT hdc13_test.expect_ok('cold backend: the commissioner''s first call records a Pick''em VOID ruling',
+  hdc13_test.rpc_on('cold', :commissioner::text, hdc13_test.req('denkc', '{"p_admin_note":"Private: recorded on a cold backend."}')), 'cold-1');
+SELECT hdc13_test.check('cold backend: created_by is the sub of the verified request.jwt.claims',
+  (SELECT r.created_by = hdc13_test.commissioner() ->> 'sub' FROM hdc13_test.stored('cold-1') r));
+SELECT hdc13_test.check('cold backend: the function returns the stored public row, never created_by or admin_note',
+  hdc13_test.memo('cold-1') = hdc13_test.public_row('cold-1') AND NOT (hdc13_test.memo('cold-1') ?| ARRAY['created_by','admin_note'])
+  AND (SELECT r.admin_note = 'Private: recorded on a cold backend.' FROM hdc13_test.stored('cold-1') r));
+SELECT hdc13_test.expect_ok('cold backend: the commissioner reaffirms', hdc13_test.rpc_on('cold', :commissioner::text, hdc13_test.later('denkc', 'reaffirm', hdc13_test.id('cold-1'))), 'cold-2');
+SELECT hdc13_test.expect_ok('cold backend: the commissioner withdraws', hdc13_test.rpc_on('cold', :commissioner::text, hdc13_test.later('denkc', 'withdraw', hdc13_test.id('cold-2'))), 'cold-3');
+SELECT hdc13_test.expect_ok('cold backend: the commissioner re-rules', hdc13_test.rpc_on('cold', :commissioner::text, hdc13_test.later('denkc', 'rerule', hdc13_test.id('cold-3'), '{"p_consequence":"void"}')), 'cold-4');
+SELECT hdc13_test.expect_ok('cold backend: the commissioner records a Survivor ruling',
+  hdc13_test.rpc_on('cold', :commissioner::text, hdc13_test.req('sv', '{"p_away_team":"LV","p_home_team":"KC","p_event_id":"401547002"}')), 'cold-sv');
+SELECT hdc13_test.check('cold backend: the chain reads void, void, withdrawn, void and all five rows are created by the claims'' sub',
+  (SELECT string_agg(r.consequence, ',' ORDER BY r.chain_seq) = 'void,void,withdrawn,void' FROM public.nfl_incident_rulings r
+     WHERE r.contest_id = 'pool-center-2026-pickem' AND r.week = 3 AND r.away_team = 'DEN' AND r.home_team = 'KC')
+  AND (SELECT count(*) = 5 AND bool_and(r.created_by = '00000000-0000-4000-8000-000000000001') FROM public.nfl_incident_rulings r
+     WHERE r.ruling_id IN (SELECT hdc13_test.id(k) FROM unnest(ARRAY['cold-1','cold-2','cold-3','cold-4','cold-sv']) AS k)));
+ROLLBACK;
+BEGIN;
+SELECT hdc13_test.expect_ok('trapped backend: the commissioner records a ruling without any auth.user_id() call',
+  hdc13_test.rpc_on('trap', :commissioner::text, hdc13_test.req('denkc')), 'trap-1');
+SELECT hdc13_test.check('trapped backend: created_by is the sub of the verified request.jwt.claims',
+  (SELECT r.created_by = '00000000-0000-4000-8000-000000000001' FROM hdc13_test.stored('trap-1') r));
+ROLLBACK;
+SELECT hdc13_test.check('the cold-backend and trapped-backend writes were rolled back: no ruling remains', hdc13_test.rows() = 0);
+
+-- =====================================================================================================================
 -- Authorized: Pick'em VOID, then reaffirm, withdraw and re-rule on one incident.
 -- =====================================================================================================================
 SELECT hdc13_test.expect_ok('the commissioner records a Pick''em VOID ruling', hdc13_test.rpc('authenticated', :commissioner, hdc13_test.req('pk')), 'pk-1');
@@ -442,6 +632,44 @@ SELECT hdc13_test.check('the commissioner_decides chain reads advance_team_used,
      FROM public.nfl_incident_rulings r WHERE r.contest_id = 'fixture-2026-survivor-decides'));
 
 -- =====================================================================================================================
+-- MINOR-1: a withdrawal stays available after the incident's game is no longer published; reaffirm and re-rule do not.
+-- Test state only: the published week or snapshot changes inside a transaction that is rolled back.
+-- =====================================================================================================================
+INSERT INTO hdc13_test.memo VALUES ('before-minor-1', hdc13_test.history());
+BEGIN;
+SELECT hdc13_test.expect_ok('MINOR-1 setup: an active Pick''em ruling on a published game (DEN @ KC, Week 3)',
+  hdc13_test.rpc('authenticated', :commissioner, hdc13_test.req('denkc')), 'm1-1');
+UPDATE public.nfl_pool_weeks w SET config = jsonb_set(w.config, '{games}', (SELECT jsonb_agg(g) FROM jsonb_array_elements(w.config -> 'games') AS g
+    WHERE g ->> 'away' <> 'DEN')), revision = w.revision + 1, updated_at = now()
+  WHERE w.season = 2026 AND w.week = 3;
+SELECT hdc13_test.check('MINOR-1 setup: Week 3 is republished without DEN @ KC',
+  NOT EXISTS (SELECT 1 FROM public.nfl_pool_weeks w, jsonb_array_elements(w.config -> 'games') AS g WHERE w.season = 2026 AND w.week = 3 AND g ->> 'away' = 'DEN'));
+SELECT hdc13_test.expect_error('MINOR-1: reaffirm of the active ruling after its game was unpublished: HDC13_NOT_PUBLISHED',
+  hdc13_test.rpc('authenticated', :commissioner, hdc13_test.later('denkc', 'reaffirm', hdc13_test.id('m1-1'))), 'P0001', 'HDC13_NOT_PUBLISHED');
+SELECT hdc13_test.expect_ok('MINOR-1: withdraw after the game was unpublished succeeds',
+  hdc13_test.rpc('authenticated', :commissioner, hdc13_test.later('denkc', 'withdraw', hdc13_test.id('m1-1'))), 'm1-2');
+SELECT hdc13_test.expect_error('MINOR-1: re-rule after the withdrawal while the game is still unpublished: HDC13_NOT_PUBLISHED',
+  hdc13_test.rpc('authenticated', :commissioner, hdc13_test.later('denkc', 'rerule', hdc13_test.id('m1-2'), '{"p_consequence":"void"}')), 'P0001', 'HDC13_NOT_PUBLISHED');
+SELECT hdc13_test.check('MINOR-1: the chain is exactly void, withdrawn with the root evidence (the refused reaffirm and re-rule wrote nothing)',
+  (SELECT string_agg(r.consequence, ',' ORDER BY r.chain_seq) = 'void,withdrawn' AND bool_and(r.event_id = '401437900') FROM public.nfl_incident_rulings r
+     WHERE r.contest_id = 'pool-center-2026-pickem' AND r.week = 3 AND r.away_team = 'DEN' AND r.home_team = 'KC'));
+ROLLBACK;
+BEGIN;
+SELECT hdc13_test.expect_ok('MINOR-1 setup: an active Survivor ruling covered by the locked Week 3 snapshot (LV @ KC, Week 2)',
+  hdc13_test.rpc('authenticated', :commissioner, hdc13_test.req('sv', '{"p_away_team":"LV","p_home_team":"KC","p_event_id":"401547002"}')), 'm1-sv1');
+UPDATE public.nfl_survivor_weeks w SET status = 'draft', revision = w.revision + 1, updated_at = now() WHERE w.season = 2026 AND w.week = 3;
+SELECT hdc13_test.expect_error('MINOR-1: Survivor reaffirm once no locked snapshot covers the week: HDC13_NOT_PUBLISHED',
+  hdc13_test.rpc('authenticated', :commissioner, hdc13_test.later('sv', 'reaffirm', hdc13_test.id('m1-sv1'), '{"p_away_team":"LV","p_home_team":"KC"}')), 'P0001', 'HDC13_NOT_PUBLISHED');
+SELECT hdc13_test.expect_ok('MINOR-1: Survivor withdraw once no locked snapshot covers the week succeeds',
+  hdc13_test.rpc('authenticated', :commissioner, hdc13_test.later('sv', 'withdraw', hdc13_test.id('m1-sv1'), '{"p_away_team":"LV","p_home_team":"KC"}')), 'm1-sv2');
+SELECT hdc13_test.expect_error('MINOR-1: Survivor re-rule after the withdrawal while still unpublished: HDC13_NOT_PUBLISHED',
+  hdc13_test.rpc('authenticated', :commissioner, hdc13_test.later('sv', 'rerule', hdc13_test.id('m1-sv2'), '{"p_away_team":"LV","p_home_team":"KC","p_consequence":"advance_team_used"}')),
+  'P0001', 'HDC13_NOT_PUBLISHED');
+ROLLBACK;
+SELECT hdc13_test.check('MINOR-1: rolled back: the ruling history, the published weeks and the snapshots are exactly as before',
+  hdc13_test.history() = hdc13_test.memo('before-minor-1'));
+
+-- =====================================================================================================================
 -- Privacy: created_by and admin_note stay private; public_note is public.
 -- =====================================================================================================================
 SELECT hdc13_test.expect_error('authenticated cannot read created_by', hdc13_test.query('authenticated', :commissioner, 'SELECT created_by FROM public.nfl_incident_rulings'), '42501');
@@ -496,4 +724,4 @@ SELECT hdc13_test.check('after DROP a call fails as an undefined function', fals
 \endif
 SELECT hdc13_test.check('the function exists again after the rolled-back DROP', to_regprocedure(:'fn') IS NOT NULL);
 
-\echo HDC13-PLAN 169
+\echo HDC13-PLAN 223
