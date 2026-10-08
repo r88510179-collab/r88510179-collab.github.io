@@ -406,13 +406,16 @@ export function pickemState({contestId,season,week,config,events,data,candidate:
   const dataset=datasetFor(contestId,'pickem',season,data),games=pickemGames(config)||[];
   const slots=games.map(g=>{const ruling=pickemSlotRuling(dataset,{week,season,away:g.away,home:g.home,events});return{ruling,effect:pickemSlotEffect(ruling)}});
   const at=Number.isInteger(c.gameIndex)?slots[c.gameIndex]:null,fact=haltedFact(events,c);
+  // The week's tiebreak, whichever game is previewed: the public Pick'em page voids it exactly when the configured tiebreak
+  // game is VOID (games[TIEBREAK_INDEX].void, which pickemEffectiveGame sets for a void slot effect only).
+  const tiebreak=Number.isInteger(config?.tiebreakGameIndex)?slots[config.tiebreakGameIndex]:null;
   const slot=at?at.ruling:null,effect=at?at.effect:null;
   const game=!at?null:effect.kind==='nfl'?(fact?pickemEffectiveGame(fact,effect):null)
     :pickemEffectiveGame(fact||{away:c.away,home:c.home,state:'pre',completed:false,winner:null,awayScore:null,homeScore:null},effect);
   const entries=at?pickemEntries(config,games).map(e=>({name:e.name,tracked:e.tracked,pick:e.picks[c.gameIndex]}))
     .filter(e=>e.pick===c.away||e.pick===c.home).map(e=>({...e,cell:cellOf(game,e.pick),...(game?scoreEntry([e.pick],[game]):{w:null,l:null,left:null})})):[];
   return{status:dataset.status,slot,effect,game,graded:effect?.kind==='nfl'&&!fact?'nfl':null,entries,
-    remaining:game?(game.completed?0:1):null,tiebreakVoid:game?.void===true,rules:rulesModel(dataset,{week,slotState:cardSlot(games,slots)})};
+    remaining:game?(game.completed?0:1):null,tiebreakVoid:tiebreak?.effect.kind==='void',rules:rulesModel(dataset,{week,slotState:cardSlot(games,slots)})};
 }
 
 // The Pick'em preview: before (the rows as loaded) and after (with the row the server would write).
