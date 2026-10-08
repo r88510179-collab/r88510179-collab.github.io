@@ -65,6 +65,7 @@ Implemented:
 - RLS read policies
 - no direct authenticated table writes
 - hashed invitation tokens; email-bound invitations require a matching, verified Neon Auth email
+- pre-registration takeover hardening (migration 004, a review-only candidate, not applied): a Neon Auth user with a password or OAuth account, or a JWT minted before its email was verified, is no identity; see `docs/PRE_REGISTRATION_HARDENING.md`
 - submission audit trail design
 - responsive PWA participant and commissioner surfaces
 

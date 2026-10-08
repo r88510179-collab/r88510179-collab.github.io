@@ -143,14 +143,20 @@ pol AS (
 role_flags AS (
   SELECT rolname::text AS rolname,rolsuper,rolbypassrls,rolcanlogin FROM pg_roles WHERE rolname IN ('anonymous','authenticated')
 ),
--- The owner runs the SECURITY DEFINER identity helpers, so it must reach auth.user_id() and neon_auth."user".
+-- The owner runs the SECURITY DEFINER identity helpers, so it must reach auth.user_id(), auth.session(),
+-- neon_auth."user" and neon_auth.account."userId".
 owner_auth AS (
   SELECT has_schema_privilege((SELECT oid FROM owner),to_regnamespace('auth'),'USAGE')
            AND has_function_privilege((SELECT oid FROM owner),to_regprocedure('auth.user_id()'),'EXECUTE') AS user_id_ok,
+         has_schema_privilege((SELECT oid FROM owner),to_regnamespace('auth'),'USAGE')
+           AND has_function_privilege((SELECT oid FROM owner),to_regprocedure('auth.session()'),'EXECUTE') AS session_ok,
          has_schema_privilege((SELECT oid FROM owner),to_regnamespace('neon_auth'),'USAGE') AS neon_auth_usage,
          (SELECT count(*) FROM unnest(ARRAY['id','email','emailVerified','banned']) c(name)
           JOIN pg_attribute a ON a.attrelid=to_regclass('neon_auth."user"') AND a.attname=c.name AND a.attnum>0 AND NOT a.attisdropped
-          WHERE has_column_privilege((SELECT oid FROM owner),a.attrelid,a.attnum,'SELECT')) AS readable_columns
+          WHERE has_column_privilege((SELECT oid FROM owner),a.attrelid,a.attnum,'SELECT')) AS readable_columns,
+         EXISTS (SELECT 1 FROM pg_attribute a
+                 WHERE a.attrelid=to_regclass('neon_auth.account') AND a.attname='userId' AND a.attnum>0 AND NOT a.attisdropped
+                   AND has_column_privilege((SELECT oid FROM owner),a.attrelid,a.attnum,'SELECT')) AS account_ok
 ),
 personal AS (
   SELECT 'relation '||n.nspname||'.'||c.relname AS found
@@ -300,10 +306,12 @@ checks AS (
          'report: pgcrypto sits in public with the default PUBLIC EXECUTE; whether the Data API exposes them is a live check (runbook step 11)',
          (SELECT count(*)||' callable' FROM other_fn WHERE extname='pgcrypto'),NULL
   UNION ALL
-  SELECT 'C24','owner can reach auth.user_id() and neon_auth."user"',true,
-         'USAGE on auth and EXECUTE on auth.user_id(); USAGE on neon_auth and SELECT on id, email, "emailVerified", banned',
-         'auth.user_id()='||COALESCE(user_id_ok::text,'MISSING')||'; neon_auth USAGE='||COALESCE(neon_auth_usage::text,'MISSING')||'; readable columns '||readable_columns||'/4',
-         COALESCE(user_id_ok AND neon_auth_usage,false) AND readable_columns=4
+  SELECT 'C24','owner can reach auth.user_id(), auth.session(), neon_auth."user" and neon_auth.account',true,
+         'USAGE on auth and EXECUTE on auth.user_id() and auth.session(); USAGE on neon_auth and SELECT on id, email, "emailVerified", banned and on neon_auth.account."userId"',
+         'auth.user_id()='||COALESCE(user_id_ok::text,'MISSING')||'; auth.session()='||COALESCE(session_ok::text,'MISSING')
+           ||'; neon_auth USAGE='||COALESCE(neon_auth_usage::text,'MISSING')||'; readable columns '||readable_columns||'/4'
+           ||'; neon_auth.account."userId" readable='||account_ok,
+         COALESCE(user_id_ok AND session_ok AND neon_auth_usage AND account_ok,false) AND readable_columns=4
   FROM owner_auth
   UNION ALL
   SELECT 'C25','authenticated USAGE on schema public',true,'true (needed to call the RPCs and read the tables)',

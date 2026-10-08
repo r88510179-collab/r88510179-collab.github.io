@@ -126,6 +126,7 @@ No demo credential may access production customer data.
 - Submission RPCs authorize the caller before checking entry state, week state, payload or pick history, and only active entries accept ordinary submissions.
 - Invitation tokens are 256-bit random values; only SHA-256 hashes are stored.
 - Optional invitation email binding prevents another signed-in email from claiming the link, and the bound email must be verified in Neon Auth.
+- A caller is a V1 identity only through a JWT whose `emailVerified` claim equals the stored state, for a Neon Auth user with no password or OAuth account, so a pre-registered address or a JWT minted before verification names nobody (migration 004, a candidate not yet applied; `PRE_REGISTRATION_HARDENING.md`).
 - The commercial service worker only manages caches under its own pool-platform-commercial- prefix and only stores an allow-list of same-origin static files; auth (including the `/api/auth` proxy), Data API, cross-origin and query-string URLs are never cached.
 - The worker is registered from `sw-register.js` with scope `./` and never stores or answers `platform-config.js`, so no cached configuration can pin a page to an old backend; a page that cannot load its configuration says so and never falls back to the sandbox.
 - The browser loads the pinned `@neondatabase/neon-js` 0.7.0-beta from its own origin (`vendor/neon-js.js`, bundled from `package-lock.json`); no code is loaded from a CDN.

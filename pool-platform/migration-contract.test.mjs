@@ -8,6 +8,8 @@ const m1=fs.readFileSync(new URL('./migrations/001_foundation.sql',import.meta.u
 const m2=fs.readFileSync(new URL('./migrations/002_identity_submission_rls.sql',import.meta.url),'utf8');
 // Forward migration for a database that applied 002 before the submit_entry authorization-order fix.
 const m3=fs.readFileSync(new URL('./migrations/003_submit_entry_authorization_order.sql',import.meta.url),'utf8');
+// Forward migration for a database that applied 002 before its identity helpers were hardened against pre-registration.
+const m4=fs.readFileSync(new URL('./migrations/004_identity_pre_registration_hardening.sql',import.meta.url),'utf8');
 
 const TABLES=[
   'pool_platform_tenants','pool_platform_memberships','pool_platform_pools','pool_platform_seasons',
@@ -260,6 +262,48 @@ test('email-bound invites require a matching AND verified Neon Auth email; unbou
   assert.doesNotMatch(claim,/v_inv\.email_normalized IS NOT NULL AND v_inv\.email_normalized<>v_email/,'the NULL-unsafe comparison must not return');
 });
 
+// Every V1 authority (RLS, every RPC, the invite claim) resolves its caller through these three helpers, so each one
+// applies the whole identity rule in one query. A password or OAuth account can be attached to an address by someone
+// who does not control it (pre-registration, before the address owner's first Email OTP sign-in), and a Neon Auth JWT
+// minted before the email was verified stays valid for its 15 minutes whatever happens to the user afterwards.
+const IDENTITY_HELPERS=['pool_platform_current_user_id','pool_platform_current_user_email','pool_platform_current_user_has_verified_email'];
+const IDENTITY_CHECKS=[
+  'AND auth.session()->>\'sub\'=u.id::text',
+  'AND auth.session()->\'emailVerified\'=to_jsonb(u."emailVerified")',
+  'AND NOT EXISTS (SELECT 1 FROM neon_auth.account a WHERE a."userId"=u.id)'
+];
+const identityFilter=name=>{
+  const lines=functionBody(name).split('\n').map(line=>line.trim());
+  const from=lines.findIndex(line=>line.startsWith('WHERE '));
+  assert.ok(from>0,`${name} has a WHERE clause`);
+  const to=lines.findIndex((line,i)=>i>from&&!line.startsWith('AND '));
+  return lines.slice(from,to);
+};
+
+test('identity helpers: a caller is a V1 identity only through a JWT minted for the stored verification state of a user with no password or OAuth account',()=>{
+  const base=['WHERE u.id::text=auth.user_id()','AND COALESCE(u.banned,false)=false'];
+  assert.deepEqual(identityFilter('pool_platform_current_user_id'),[...base,...IDENTITY_CHECKS]);
+  assert.deepEqual(identityFilter('pool_platform_current_user_email'),[...base,...IDENTITY_CHECKS]);
+  assert.deepEqual(identityFilter('pool_platform_current_user_has_verified_email'),
+    [...base,'AND u."emailVerified" IS TRUE','AND lower(btrim(u.email))=p_email_normalized',...IDENTITY_CHECKS]);
+  for(const name of IDENTITY_HELPERS)assert.match(functionBody(name),/\n  FROM neon_auth\."user" u\n|\n    FROM neon_auth\."user" u\n/,name);
+  // The claim is compared as jsonb, so only a JSON boolean equal to the stored state matches: a missing, null, string
+  // ("true"), numeric or nested claim, or a session that is not a JSON object, never does. ->> would accept "true".
+  assert.doesNotMatch(m2,/->>'emailVerified'/);
+  // Verification is required only where the email is the authority: an email-bound invite. An unbound invite stays a
+  // bearer token for any V1 identity, as before; a password or OAuth identity, or a stale JWT, is no V1 identity at all.
+  assert.doesNotMatch(functionBody('pool_platform_current_user_id'),/"emailVerified" IS TRUE/);
+  assert.doesNotMatch(functionBody('pool_platform_current_user_email'),/"emailVerified" IS TRUE/);
+  // Nothing else reads the JWT or Neon Auth: every policy and RPC goes through the helpers.
+  const code=m2.replace(/--[^\n]*/g,'');
+  assert.equal(code.split('auth.user_id()').length-1,IDENTITY_HELPERS.length,'auth.user_id() is read only by the identity helpers');
+  assert.equal(code.split('auth.session()').length-1,2*IDENTITY_HELPERS.length,'auth.session() is read only by the identity helpers');
+  assert.equal(code.split('neon_auth.account').length-1,IDENTITY_HELPERS.length,'neon_auth.account is read only by the identity helpers');
+  for(const name of Object.keys(FUNCTIONS_002).filter(name=>!IDENTITY_HELPERS.includes(name))){
+    assert.doesNotMatch(functionBody(name),/auth\.(?:user_id|session|jwt|uid)\(\)|neon_auth\./,`${name} must resolve its caller through the identity helpers`);
+  }
+});
+
 test('Survivor team reuse is blocked atomically per entry by a partial unique index',()=>{
   assert.match(m2,/CREATE UNIQUE INDEX IF NOT EXISTS pool_platform_submissions_survivor_team_unique\n  ON public\.pool_platform_submissions\(entry_id,\(payload->>'team'\)\)\n  WHERE jsonb_typeof\(payload->'team'\)='string';/);
   const valid=functionBody('pool_platform_payload_valid');
@@ -325,6 +369,58 @@ test('003 forward migration: a guard, then submit_entry byte for byte as 002 def
   assert.match(guard,/IF current_database\(\)='nfl_pool'\n     OR EXISTS \(SELECT 1 FROM pg_catalog\.pg_class c WHERE c\.relname IN \('nfl_pool_weeks','nfl_survivor_weeks'\)\)/);
   assert.match(guard,/to_regprocedure\('public\.pool_platform_submit_entry\(uuid,uuid,text,jsonb\)'\)/);
   assert.match(guard,/IF v_owner IS DISTINCT FROM \(SELECT r\.oid FROM pg_catalog\.pg_roles r WHERE r\.rolname=current_user\)/);
+});
+
+// SHA-256 of pg_proc.prosrc for each identity helper as the commercial database holds it today (002 as of 48e0ac4), read
+// from its catalog on 2026-10-07. 004's guard admits exactly these and the hardened bodies 002 now carries.
+const LIVE_PRE_HARDENING={
+  pool_platform_current_user_id:'7702b14277266031188e451f3245a76b99b5a7a68153ed11075fe7356e932b5d',
+  pool_platform_current_user_email:'2cf7b7b80696acc8b22486daaff2a0cfa26f1f9fecab991fcd823d17a64db3c5',
+  pool_platform_current_user_has_verified_email:'5120424105ba729e50e82bfd365720ef31a2f1eb323afe66da36b2cf8fb1f0c3'
+};
+const IDENTITY_SIGNATURES={
+  pool_platform_current_user_id:'public.pool_platform_current_user_id()',
+  pool_platform_current_user_email:'public.pool_platform_current_user_email()',
+  pool_platform_current_user_has_verified_email:'public.pool_platform_current_user_has_verified_email(text)'
+};
+
+test('004 forward migration: a guard, then the three identity helpers byte for byte as 002 defines them, with 002\'s own privilege statements, and nothing else',()=>{
+  const scan4=scanSql(m4);
+  assert.deepEqual(scan4.errors,[]);
+  const [guard,...rest]=scan4.statements.map(s=>s.text);
+  assert.equal(scan4.statements.length,1+IDENTITY_HELPERS.length+4);
+  assert.match(guard,/^DO \$\$\n/);
+  const creates=rest.slice(0,IDENTITY_HELPERS.length),privileges=rest.slice(IDENTITY_HELPERS.length);
+  assert.deepEqual(creates,IDENTITY_HELPERS.map(name=>functionStatements(scan2).find(s=>functionName(s)===name).text),'the definitions are 002\'s, byte for byte');
+  const sig=name=>IDENTITY_SIGNATURES[name];
+  assert.deepEqual(privileges,[
+    ...IDENTITY_HELPERS.map(name=>`REVOKE ALL ON FUNCTION ${sig(name)} FROM PUBLIC,anonymous,authenticated CASCADE;`),
+    `GRANT EXECUTE ON FUNCTION ${sig('pool_platform_current_user_id')} TO authenticated;`
+  ]);
+  for(const stmt of privileges)assert.ok(scan2.statements.some(s=>s.text===stmt),`002 carries ${stmt}`);
+  assert.doesNotMatch(codeOnly(m4),/\b(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT|START)\b/i,'psql --single-transaction supplies the one transaction');
+
+  // The guard admits, per helper, exactly the live pre-hardening body and the hardened one. The pre-hardening body is
+  // the hardened one without its three identity checks, which is how the local suite rebuilds it.
+  const sha256=text=>crypto.createHash('sha256').update(text,'utf8').digest('hex');
+  const preHardening=body=>body.split('\n').filter(line=>!IDENTITY_CHECKS.includes(line.trim())).join('\n');
+  assert.equal([...guard.matchAll(/'([0-9a-f]{64})'/g)].length,2*IDENTITY_HELPERS.length);
+  for(const name of IDENTITY_HELPERS){
+    const hardened=sha256(functionBody(name));
+    assert.equal(sha256(preHardening(functionBody(name))),LIVE_PRE_HARDENING[name],`${name}: 002 is the live body plus the identity checks, nothing else`);
+    assert.notEqual(hardened,LIVE_PRE_HARDENING[name]);
+    assert.ok(guard.includes(`('${sig(name)}','${LIVE_PRE_HARDENING[name]}','${hardened}')`),`the guard admits ${name}'s live and hardened bodies`);
+  }
+  assert.match(guard,/encode\(sha256\(convert_to\(p\.prosrc,'UTF8'\)\),'hex'\)/);
+  assert.match(guard,/IF current_database\(\)='nfl_pool'\n     OR EXISTS \(SELECT 1 FROM pg_catalog\.pg_class c WHERE c\.relname IN \('nfl_pool_weeks','nfl_survivor_weeks'\)\)/);
+  assert.match(guard,/IF v_owner IS DISTINCT FROM \(SELECT r\.oid FROM pg_catalog\.pg_roles r WHERE r\.rolname=current_user\)/);
+  // What the hardened helpers read, checked as their owner before anything is replaced.
+  assert.match(guard,/to_regprocedure\('auth\.session\(\)'\)/);
+  assert.match(guard,/'jsonb'::regtype/);
+  assert.match(guard,/has_function_privilege\(v_session,'EXECUTE'\)/);
+  assert.match(guard,/to_regclass\('neon_auth\.account'\)/);
+  assert.match(guard,/a\.attname='userId'/);
+  assert.match(guard,/has_column_privilege\(v_account,v_account_user_id,'SELECT'\)/);
 });
 
 test('audit history records the genuine previous payload',()=>{
@@ -447,6 +543,21 @@ test('validation kit: preflight gates the personal Pool Center, Neon Auth, auth.
   assert.match(preflight,/FROM pg_default_acl d CROSS JOIN LATERAL aclexplode\(d\.defaclacl\) x/);
   assert.match(preflight,/SELECT 'P20','default privileges 002 does not reset',true,/);
   assert.match(preflight,/num\/10000 IN \(16,17,18\) AS ok/);
+});
+
+test('validation kit: preflight and catalog verifier gate what the identity helpers read: auth.session() and neon_auth.account',()=>{
+  assert.ok(m2.includes('auth.session()')&&m2.includes('neon_auth.account a WHERE a."userId"=u.id'),'what 002 reads');
+  assert.match(preflight,/FROM pg_proc p WHERE p\.oid=to_regprocedure\('auth\.session\(\)'\)/);
+  assert.match(preflight,/SELECT 'P22','auth\.session\(\) \(pg_session_jwt\)',true,/);
+  assert.match(preflight,/COALESCE\(\(SELECT rettype='jsonb' FROM sessionfn\),false\)/);
+  assert.match(preflight,/has_function_privilege\(current_user,to_regprocedure\('auth\.session\(\)'\),'EXECUTE'\)/);
+  assert.match(preflight,/SELECT 'P23','neon_auth\.account\."userId" \(Neon Auth\)',true,/);
+  assert.match(preflight,/WHERE a\.attrelid=to_regclass\('neon_auth\.account'\) AND a\.attname='userId'/);
+  assert.match(preflight,/COALESCE\(\(SELECT same_type AND readable FROM accountcol\),false\)/);
+  assert.match(verify,/SELECT 'C24','owner can reach auth\.user_id\(\), auth\.session\(\), neon_auth\."user" and neon_auth\.account',true,/);
+  assert.match(verify,/has_function_privilege\(\(SELECT oid FROM owner\),to_regprocedure\('auth\.session\(\)'\),'EXECUTE'\) AS session_ok/);
+  assert.match(verify,/WHERE a\.attrelid=to_regclass\('neon_auth\.account'\) AND a\.attname='userId'/);
+  assert.match(verify,/COALESCE\(user_id_ok AND session_ok AND neon_auth_usage AND account_ok,false\) AND readable_columns=4/);
 });
 
 // Behaviour fixtures for pool_platform_payload_valid. Survivor cases here all return before the

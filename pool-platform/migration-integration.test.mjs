@@ -8,10 +8,12 @@ import {after,afterEach,before,describe,test} from 'node:test';
 //     node --test pool-platform/migration-integration.test.mjs
 // The URL must be a superuser on localhost. The run creates the roles authenticated, anonymous,
 // pool_platform_it_owner and pool_platform_it_other when missing, creates its own databases and drops them
-// afterwards. Neon Auth is stood in for by neon_auth."user" (columns as Neon publishes them) and auth.user_id()
-// reading a session setting. Both migrations are applied as the NOLOGIN owner role under hostile default
-// privileges (every function, table and sequence the owner creates in public starts out granted to anonymous
-// and authenticated), and races use real concurrent psql sessions. Run it on PostgreSQL 16, 17 and 18: the
+// afterwards. Neon Auth is stood in for by neon_auth."user" and neon_auth.account (columns as Neon publishes
+// them), auth.user_id() reading a session setting, and auth.session() returning the JWT claims a second setting
+// holds (JSON null when there are none, as pg_session_jwt answers). Both migrations are applied as the NOLOGIN
+// owner role under hostile default privileges (every function, table and sequence the owner creates in public
+// starts out granted to anonymous and authenticated), and races use real concurrent psql sessions. The 004
+// forward migration is checked from the live pre-hardening helpers. Run it on PostgreSQL 16, 17 and 18: the
 // privilege checks follow the server version, since 17 adds the table MAINTAIN privilege and 18 adds none. A
 // second block runs clean and hostile privilege scenarios in small separate databases, together with the
 // read-only live Neon validation kit in validation/.
@@ -219,9 +221,10 @@ const uuid=(prefix,n)=>`${prefix}-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const U={
   commish:uuid('00000000',0xc1),rival:uuid('00000000',0xc2),p1:uuid('00000000',0xa1),p2:uuid('00000000',0xa2),
   p3:uuid('00000000',0xa3),wrong:uuid('00000000',0xa4),pending:uuid('00000000',0xb1),drifter:uuid('00000000',0xb2),
-  racer1:uuid('00000000',0xd1),racer2:uuid('00000000',0xd2),racer3:uuid('00000000',0xd3),racer4:uuid('00000000',0xd4)
+  racer1:uuid('00000000',0xd1),racer2:uuid('00000000',0xd2),racer3:uuid('00000000',0xd3),racer4:uuid('00000000',0xd4),
+  victim:uuid('00000000',0xe1),squatter:uuid('00000000',0xe2),linked:uuid('00000000',0xe3),banned:uuid('00000000',0xe4)
 };
-const UNVERIFIED=new Set(['pending','drifter','racer4']);
+const UNVERIFIED=new Set(['pending','drifter','racer4','victim','squatter']);
 const T1=uuid('10000000',1),T2=uuid('10000000',2);
 const SURV=uuid('20000000',1),PICK=uuid('20000000',2),RIVAL=uuid('20000000',3);
 const S_SURV=uuid('30000000',1),S_PICK=uuid('30000000',2),S_RIVAL=uuid('30000000',3);
@@ -234,7 +237,8 @@ const ENTRY_DEFS=[
   ['OOO','p1'],['RACE','p1'],['B1','p1'],['B2','p2'],['C','p1'],['D','p1'],['D2','p1'],['IDX','p1'],['MAP','p1'],
   ['AUTH','p1'],['INACTIVE','p1','inactive'],['ELIMINATED','p1','eliminated'],['ARCHIVED','p1','archived'],
   ['ACTIVE','p1'],['BATCH','p1'],['LOCK','p1'],['INV1',null],['INV2',null],['INV3',null],['INV4',null],
-  ['RINV1',null],['RINV2',null],['RINV3',null],['TYPED','p1'],['TYPED_BATCH','p1'],['TYPED_RR','p1'],['TYPED_RR2','p1']
+  ['RINV1',null],['RINV2',null],['RINV3',null],['TYPED','p1'],['TYPED_BATCH','p1'],['TYPED_RR','p1'],['TYPED_RR2','p1'],
+  ['PRE_BOUND',null],['PRE_BEARER',null],['ID_BOUND',null],['ID_BEARER',null]
 ];
 const E=Object.fromEntries(ENTRY_DEFS.map(([code],i)=>[code,uuid('50000000',i+1)]));
 const K_P2=uuid('51000000',1),K_RIVAL=uuid('51000000',2);
@@ -268,12 +272,31 @@ CREATE TABLE neon_auth."user" (
   "banExpires" timestamptz,
   CONSTRAINT user_email_key UNIQUE (email)
 );
+CREATE TABLE neon_auth.account (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY NOT NULL,
+  "accountId" text NOT NULL,
+  "providerId" text NOT NULL,
+  "userId" uuid NOT NULL REFERENCES neon_auth."user"(id) ON DELETE CASCADE,
+  "accessToken" text,
+  "refreshToken" text,
+  "idToken" text,
+  "accessTokenExpiresAt" timestamptz,
+  "refreshTokenExpiresAt" timestamptz,
+  scope text,
+  password text,
+  "createdAt" timestamptz DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  "updatedAt" timestamptz NOT NULL
+);
+CREATE INDEX "account_userId_idx" ON neon_auth.account("userId");
 CREATE SCHEMA auth;
 CREATE FUNCTION auth.user_id() RETURNS text LANGUAGE sql STABLE
 AS $$ SELECT NULLIF(current_setting('pp_test.user_id', true), '') $$;
+CREATE FUNCTION auth.session() RETURNS jsonb LANGUAGE sql STABLE
+AS $$ SELECT COALESCE(NULLIF(current_setting('pp_test.session', true), '')::jsonb, 'null'::jsonb) $$;
 GRANT USAGE ON SCHEMA auth TO PUBLIC;
 GRANT USAGE ON SCHEMA neon_auth TO ${OWNER};
 GRANT SELECT ON neon_auth."user" TO ${OWNER};
+GRANT SELECT ON neon_auth.account TO ${OWNER};
 `;
 
 function seedSql(){
@@ -284,6 +307,12 @@ function seedSql(){
   return `
 INSERT INTO neon_auth."user"(id,name,email,"emailVerified") VALUES
 ${users};
+-- victim and squatter carry the password a pre-registration attaches; linked signed in with Google once.
+INSERT INTO neon_auth.account("accountId","providerId","userId",password,"updatedAt") VALUES
+('${U.victim}','credential','${U.victim}','pp-it-password-hash',now()),
+('${U.squatter}','credential','${U.squatter}','pp-it-password-hash',now()),
+('pp-it-google-subject','google','${U.linked}',NULL,now());
+UPDATE neon_auth."user" SET banned=true WHERE id='${U.banned}';
 INSERT INTO public.pool_platform_tenants(id,slug,display_name) VALUES ('${T1}','it-group','IT Group'),('${T2}','it-rival','IT Rival');
 INSERT INTO public.pool_platform_memberships(tenant_id,auth_user_id,role) VALUES ('${T1}','${U.commish}','owner'),('${T2}','${U.rival}','owner');
 INSERT INTO public.pool_platform_pools(id,tenant_id,slug,display_name,pool_type) VALUES
@@ -312,12 +341,18 @@ describe('commercial migrations on a throwaway local PostgreSQL (opt-in)',{skip:
   let admin;
   const open=[];
   const session=name=>{const s=openSession(dbUrl(),`pp_it_${name}`);open.push(s);return s};
-  const actor=async(name,userKey)=>{
+  // A Neon Auth JWT carries the user's emailVerified as it was when the JWT was minted, and auth.session() returns its
+  // claims. actor() mints one from the user's row as it stands now; actorWith() takes the user id and claims as given
+  // (null: not set), for JWTs minted earlier and for missing or malformed claims. Either session keeps its JWT.
+  const mint=async userKey=>rowsOf(await admin.run(`SELECT json_build_object('sub',id::text,'email',email,'emailVerified',"emailVerified",'role','authenticated')::text FROM neon_auth."user" WHERE id='${U[userKey]}'`))[0];
+  const actorWith=async(name,userId,claims,role='authenticated')=>{
     const s=session(name);
-    rowsOf(await s.run('SET ROLE authenticated'));
-    rowsOf(await s.run(`SELECT set_config('pp_test.user_id','${U[userKey]}',false)`));
+    rowsOf(await s.run(`SET ROLE ${role}`));
+    if(userId!==null)rowsOf(await s.run(`SELECT set_config('pp_test.user_id','${userId}',false)`));
+    if(claims!==null)rowsOf(await s.run(`SELECT set_config('pp_test.session',$claims$${claims}$claims$,false)`));
     return s;
   };
+  const actor=async(name,userKey)=>actorWith(name,U[userKey],await mint(userKey));
   const submit=(s,week,entry,source,payload)=>
     s.run(`SELECT public.pool_platform_submit_entry('${week}','${entry}',${source===null?'NULL':`'${source}'`},${lit(payload)})`);
   const waitForLockWait=async s=>{
@@ -755,6 +790,98 @@ ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} IN SCHEMA public GRANT ALL ON SEQUENC
     assert.equal(await scalar(`SELECT count(*) FROM public.pool_platform_entry_invites WHERE entry_id='${E.RINV3}' AND claimed_at IS NULL`),'1');
   });
 
+  test('identity: a caller is named only by a JSON-boolean emailVerified claim equal to the stored state, for the JWT\'s own user, with no password or OAuth account',async()=>{
+    const claims=(key,patch={})=>JSON.stringify({sub:U[key],email:`${key}@example.test`,emailVerified:!UNVERIFIED.has(key),role:'authenticated',...patch});
+    const without=(key,field)=>{const c=JSON.parse(claims(key));delete c[field];return JSON.stringify(c)};
+    // All three helpers, read as their owner (the only role that may call the two internal ones): id, email, and whether
+    // the caller is a verified identity for that email.
+    const probe=async(label,userId,session,email)=>{
+      const s=await actorWith(`id_${label}`,userId,session,OWNER);
+      return rowsOf(await s.run(`SELECT concat_ws(' ',COALESCE(public.pool_platform_current_user_id(),'-'),COALESCE(public.pool_platform_current_user_email(),'-'),public.pool_platform_current_user_has_verified_email('${email}')::text)`))[0];
+    };
+    const NONE='- - false';
+    for(const [label,userId,session,email,expected] of [
+      ['verified',U.p1,claims('p1'),'p1@example.test',`${U.p1} p1@example.test true`],
+      ['no_jwt',null,null,'p1@example.test',NONE],
+      ['no_claims',U.p1,null,'p1@example.test',NONE],
+      ['sub_other',U.p1,claims('p1',{sub:U.p2}),'p1@example.test',NONE],
+      ['sub_missing',U.p1,without('p1','sub'),'p1@example.test',NONE],
+      ['claim_missing',U.p1,without('p1','emailVerified'),'p1@example.test',NONE],
+      ['claim_null',U.p1,claims('p1',{emailVerified:null}),'p1@example.test',NONE],
+      ['claim_string',U.p1,claims('p1',{emailVerified:'true'}),'p1@example.test',NONE],
+      ['claim_number',U.p1,claims('p1',{emailVerified:1}),'p1@example.test',NONE],
+      ['claim_array',U.p1,claims('p1',{emailVerified:[true]}),'p1@example.test',NONE],
+      ['claim_object',U.p1,claims('p1',{emailVerified:{value:true}}),'p1@example.test',NONE],
+      ['claim_stale',U.p1,claims('p1',{emailVerified:false}),'p1@example.test',NONE],
+      ['session_array',U.p1,JSON.stringify([JSON.parse(claims('p1'))]),'p1@example.test',NONE],
+      ['session_string',U.p1,JSON.stringify(claims('p1')),'p1@example.test',NONE],
+      ['unknown_user',uuid('00000000',0xff),claims('p1',{sub:uuid('00000000',0xff)}),'p1@example.test',NONE],
+      // Unverified, with no password or OAuth account: still the caller (an unbound invite stays a bearer token), never
+      // a verified one, and never on a claim of a verification it does not have.
+      ['unverified',U.drifter,claims('drifter'),'drifter@example.test',`${U.drifter} drifter@example.test false`],
+      ['unverified_claims_true',U.drifter,claims('drifter',{emailVerified:true}),'drifter@example.test',NONE],
+      ['oauth_account',U.linked,claims('linked'),'linked@example.test',NONE],
+      ['password_account',U.squatter,claims('squatter'),'squatter@example.test',NONE],
+      ['banned',U.banned,claims('banned'),'banned@example.test',NONE]
+    ]){
+      assert.equal(await probe(label,userId,session,email),expected,label);
+    }
+
+    // Through the claim RPC: a refused caller leaves an email-bound invite open; an unbound one stays a bearer token
+    // for any identity, whatever its email.
+    const commish=await actor('id_commish','commish');
+    const invite=async(entry,email)=>jsonOf(await commish.run(`SELECT public.pool_platform_create_entry_invite('${entry}',${email===null?'NULL':`'${email}'`},24)`)).invite_token;
+    const claimWith=async(label,userId,session,token)=>(await actorWith(`id_claim_${label}`,userId,session)).run(`SELECT public.pool_platform_claim_entry_invite('${token}')`);
+    const bound=await invite(E.ID_BOUND,'p1@example.test');
+    for(const [label,userId,session] of [
+      ['no_jwt',null,null],['no_claims',U.p1,null],['claim_missing',U.p1,without('p1','emailVerified')],
+      ['claim_string',U.p1,claims('p1',{emailVerified:'true'})],['claim_stale',U.p1,claims('p1',{emailVerified:false})],
+      ['sub_other',U.p1,claims('p1',{sub:U.p2})]
+    ])failsWith(await claimWith(label,userId,session,bound),'auth_required');
+    assert.equal(await scalar(`SELECT count(*) FROM public.pool_platform_entry_invites WHERE entry_id='${E.ID_BOUND}' AND claimed_at IS NULL`),'1');
+    assert.equal(jsonOf(await claimWith('verified',U.p1,claims('p1'),bound)).claimed,true);
+    assert.equal(await scalar(`SELECT owner_auth_user_id FROM public.pool_platform_entries WHERE id='${E.ID_BOUND}'`),U.p1);
+    const bearer=await invite(E.ID_BEARER,null);
+    assert.equal(jsonOf(await claimWith('bearer_other_email',U.p2,claims('p2'),bearer)).claimed,true,'an unbound invite needs no email match');
+    assert.equal(await scalar(`SELECT owner_auth_user_id FROM public.pool_platform_entries WHERE id='${E.ID_BEARER}'`),U.p2);
+  });
+
+  test('pre-registration takeover: a password-registered identity, and a JWT minted before the email was verified, claim nothing and act for no one',async()=>{
+    const commish=await actor('pre_commish','commish');
+    const invite=async(entry,email)=>jsonOf(await commish.run(`SELECT public.pool_platform_create_entry_invite('${entry}',${email===null?'NULL':`'${email}'`},24)`)).invite_token;
+    const claim=(s,token)=>s.run(`SELECT public.pool_platform_claim_entry_invite('${token}')`);
+    const openInvites=entry=>scalar(`SELECT count(*) FROM public.pool_platform_entry_invites WHERE entry_id='${entry}' AND claimed_at IS NULL`);
+    const owner=entry=>scalar(`SELECT COALESCE(owner_auth_user_id,'-') FROM public.pool_platform_entries WHERE id='${entry}'`);
+    const bound=await invite(E.PRE_BOUND,'victim@example.test'),bearer=await invite(E.PRE_BEARER,null);
+
+    // Someone signed up with the victim's address and a password before the victim ever signed in: the row is
+    // unverified, carries a credential account, and that JWT says emailVerified false. It stays in this session.
+    const early=await actor('pre_early','victim');
+    for(const token of [bound,bearer])failsWith(await claim(early,token),'auth_required');
+
+    // The victim's first Email OTP sign-in verifies the same row. Where Neon Auth keeps the password (Better Auth
+    // before 1.6.22), the identity stays contested: the victim's fresh JWT is refused as the password holder's is.
+    rowsOf(await admin.run(`UPDATE neon_auth."user" SET "emailVerified"=true WHERE id='${U.victim}'`));
+    const contested=await actor('pre_contested','victim');
+    for(const s of [contested,early])for(const token of [bound,bearer])failsWith(await claim(s,token),'auth_required');
+    assert.deepEqual([await openInvites(E.PRE_BOUND),await openInvites(E.PRE_BEARER)],['1','1']);
+
+    // Where Neon Auth removes the unproven password on that sign-in, the victim's fresh JWT is a V1 identity. The JWT
+    // minted before verification still names the same user for up to 15 minutes, and stays refused everywhere.
+    rowsOf(await admin.run(`DELETE FROM neon_auth.account WHERE "userId"='${U.victim}'`));
+    for(const token of [bound,bearer])failsWith(await claim(early,token),'auth_required');
+    const victim=await actor('pre_victim','victim');
+    assert.equal(jsonOf(await claim(victim,bound)).claimed,true);
+    assert.equal(await owner(E.PRE_BOUND),U.victim);
+    failsWith(await submit(early,W3,E.PRE_BOUND,'participant',{team:'austin'}),'auth_required');
+    failsWith(await early.run(`SELECT public.pool_platform_participant_context('it-survivor')`),'auth_required');
+    const visible=async s=>rowsOf(await s.run(`SELECT count(*) FROM public.pool_platform_entries WHERE id='${E.PRE_BOUND}'`))[0];
+    assert.equal(await visible(early),'0');
+    assert.equal(await visible(victim),'1');
+    assert.equal(jsonOf(await submit(victim,W3,E.PRE_BOUND,'participant',{team:'austin'})).code,'created');
+    assert.equal(await openInvites(E.PRE_BEARER),'1','the bearer link is still there for whoever holds it');
+  });
+
   test('Survivor team must be a JSON string: number, boolean, array, object and null picks are invalid_payload even when their text is a configured key',async()=>{
     const p1=await actor('typed_p1','p1'),commish=await actor('typed_commish','commish');
     const nonString=[123,1.5,true,false,['austin'],{k:'v'},null];
@@ -991,6 +1118,96 @@ GRANT USAGE ON SEQUENCE public.${AUDIT_SEQUENCE} TO anonymous;`);
     assert.equal(bodySha(bare),'missing','003 never creates the function');
   });
 
+  // 004 is the forward migration for a database that applied 002 before its identity helpers were hardened against
+  // pre-registration. The live helpers are 002's definitions without their three identity checks:
+  // migration-contract.test.mjs pins that, by SHA-256, to what the commercial database holds.
+  test('004 forward migration: hardens only the three identity helpers and resets only their privileges; stops, leaving nothing behind, on the wrong database, role, definition or prerequisites',()=>{
+    const HELPERS={
+      pool_platform_current_user_id:'public.pool_platform_current_user_id()',
+      pool_platform_current_user_email:'public.pool_platform_current_user_email()',
+      pool_platform_current_user_has_verified_email:'public.pool_platform_current_user_has_verified_email(text)'
+    };
+    const CHECKS=[`AND auth.session()->>'sub'=u.id::text`,`AND auth.session()->'emailVerified'=to_jsonb(u."emailVerified")`,
+      'AND NOT EXISTS (SELECT 1 FROM neon_auth.account a WHERE a."userId"=u.id)'];
+    const definition=name=>readMigration('002_identity_submission_rls.sql').match(new RegExp(`CREATE OR REPLACE FUNCTION public\\.${name}\\([\\s\\S]*?\\n\\$\\$;`))[0];
+    const liveHelpers=Object.keys(HELPERS).map(name=>definition(name).split('\n').filter(line=>!CHECKS.includes(line.trim())).join('\n')).join('\n');
+    const snapshot=url=>JSON.parse(psqlSync(url,CATALOG_SNAPSHOT_SQL));
+    const bodySha=url=>Object.fromEntries(Object.entries(HELPERS).map(([name,sig])=>[name,
+      psqlSync(url,`SELECT COALESCE((SELECT encode(sha256(convert_to(prosrc,'UTF8')),'hex') FROM pg_proc WHERE oid=to_regprocedure('${sig}')),'missing')`)]));
+    // As the runbook applies migrations (psql --single-transaction): a stop rolls all of 004 back.
+    const forward=(url,role=OWNER)=>psqlRun(url,`\\set ON_ERROR_STOP 1\n${role?`SET ROLE ${role};\n`:''}BEGIN;\n${readMigration('004_identity_pre_registration_hardening.sql')}\nCOMMIT;`);
+    const stops=(url,message,label,role)=>{
+      const run=forward(url,role);
+      assert.notEqual(run.status,0,`${label}: 004 must stop`);
+      assert.match(run.stderr,message,label);
+    };
+
+    const url=scenario('forward4');
+    apply(url,'001_foundation.sql','002_identity_submission_rls.sql');
+    const hardened=bodySha(url),clean=snapshot(url);
+    let run=forward(url);
+    assert.equal(run.status,0,run.stderr);
+    assert.deepEqual(snapshot(url),clean,'on a database built from the current 002, 004 changes nothing');
+    assertCatalogPasses(url,'catalog after 004');
+
+    // The live state: the pre-hardening helpers, here with unwanted grants on one of them and on another function.
+    psqlSync(url,`SET ROLE ${OWNER};\n${liveHelpers}`);
+    const live=bodySha(url);
+    for(const name of Object.keys(HELPERS))assert.notEqual(live[name],hardened[name],`setup: ${name} is the pre-hardening body`);
+    psqlSync(url,`GRANT EXECUTE ON FUNCTION ${HELPERS.pool_platform_current_user_email} TO authenticated WITH GRANT OPTION;
+GRANT EXECUTE ON FUNCTION public.pool_platform_submit_batch(uuid,text,jsonb) TO anonymous;`);
+    const granted=functionAclsOf(url);
+    assert.notEqual(granted.pool_platform_current_user_email,EXPECTED_FUNCTION_ACLS.pool_platform_current_user_email,'setup: the email helper carries an unwanted grant');
+    run=forward(url);
+    assert.equal(run.status,0,run.stderr);
+    assert.deepEqual(bodySha(url),hardened,'004 installs the hardened helpers');
+    assert.deepEqual(functionAclsOf(url),{...granted,pool_platform_current_user_email:EXPECTED_FUNCTION_ACLS.pool_platform_current_user_email},
+      '004 resets the identity helpers\' privileges and leaves every other function\'s as it found them');
+    apply(url,'002_identity_submission_rls.sql');
+    assert.deepEqual(snapshot(url),clean);
+
+    // Each guard stops 004 and leaves the database as it was.
+    psqlSync(url,`SET ROLE ${OWNER};\n${liveHelpers}`);
+    const before=snapshot(url);
+    stops(url,/run as pool_platform_it_owner, the owner of public\.pool_platform_current_user_id\(\), not [^:]+: stop/,'a superuser instead of the migration owner','');
+    psqlSync(url,'CREATE TABLE public.nfl_survivor_weeks(season integer);');
+    stops(url,/personal Pool Center database: stop/,'a personal Pool Center table');
+    psqlSync(url,'DROP TABLE public.nfl_survivor_weeks;');
+    const unreviewed=liveHelpers.replace('    WHERE u.id::text=auth.user_id()\n      AND','    WHERE u.id::text=auth.user_id() -- an unreviewed edit\n      AND');
+    assert.notEqual(unreviewed,liveHelpers,'setup: the edit applies');
+    psqlSync(url,`SET ROLE ${OWNER};\n${unreviewed}`);
+    const drifted=bodySha(url).pool_platform_current_user_has_verified_email;
+    assert.notEqual(drifted,live.pool_platform_current_user_has_verified_email);
+    stops(url,new RegExp(`public\\.pool_platform_current_user_has_verified_email\\(text\\) body sha256 ${drifted} is not a reviewed definition: stop`),'an unreviewed definition');
+    assert.equal(bodySha(url).pool_platform_current_user_has_verified_email,drifted,'an unreviewed definition is left for review, not overwritten');
+    psqlSync(url,`SET ROLE ${OWNER};\n${liveHelpers}`);
+    for(const [label,fault,undo,message] of [
+      ['no auth.session()','ALTER FUNCTION auth.session() RENAME TO session_elsewhere','ALTER FUNCTION auth.session_elsewhere() RENAME TO session',
+        /auth\.session\(\) returning jsonb \(pg_session_jwt\) is missing: stop/],
+      ['the owner cannot call auth.session()','REVOKE EXECUTE ON FUNCTION auth.session() FROM PUBLIC','GRANT EXECUTE ON FUNCTION auth.session() TO PUBLIC',
+        /pool_platform_it_owner cannot call auth\.session\(\): stop/],
+      ['no neon_auth.account."userId"','ALTER TABLE neon_auth.account RENAME COLUMN "userId" TO user_id','ALTER TABLE neon_auth.account RENAME COLUMN user_id TO "userId"',
+        /neon_auth\.account\."userId" of the type of neon_auth\."user"\.id is missing: stop/],
+      ['the owner cannot read neon_auth.account',`REVOKE SELECT ON neon_auth.account FROM ${OWNER}`,`GRANT SELECT ON neon_auth.account TO ${OWNER}`,
+        /pool_platform_it_owner cannot read neon_auth\.account\."userId": stop/]
+    ]){
+      psqlSync(url,`${fault};`);
+      stops(url,message,label);
+      psqlSync(url,`${undo};`);
+    }
+    assert.deepEqual(snapshot(url),before,'every stop left the database as it was');
+    assert.deepEqual(bodySha(url),live);
+    run=forward(url);
+    assert.equal(run.status,0,run.stderr);
+    assert.deepEqual(bodySha(url),hardened);
+    assertCatalogPasses(url,'catalog after 004 from the live helpers');
+
+    const bare=scenario('forward4_bare');
+    apply(bare,'001_foundation.sql');
+    stops(bare,/public\.pool_platform_current_user_id\(\) does not exist: stop/,'a database without 002');
+    assert.equal(bodySha(bare).pool_platform_current_user_id,'missing','004 never creates the helpers');
+  });
+
   test('the catalog verifier reports each single fault on an otherwise correct database, and only that fault',()=>{
     const url=scenario('faults');
     apply(url,'001_foundation.sql','002_identity_submission_rls.sql');
@@ -1008,7 +1225,9 @@ GRANT USAGE ON SEQUENCE public.${AUDIT_SEQUENCE} TO anonymous;`);
       ['ALTER POLICY pool_platform_week_read ON public.pool_platform_weeks TO PUBLIC','ALTER POLICY pool_platform_week_read ON public.pool_platform_weeks TO authenticated',['C09']],
       [`GRANT USAGE ON SEQUENCE public.${AUDIT_SEQUENCE} TO anonymous`,`REVOKE USAGE ON SEQUENCE public.${AUDIT_SEQUENCE} FROM anonymous`,['C16']],
       ['CREATE FUNCTION public.pp_it_extra() RETURNS integer LANGUAGE sql AS $$SELECT 1$$','DROP FUNCTION public.pp_it_extra()',['C17']],
-      [`REVOKE SELECT ON neon_auth."user" FROM ${OWNER}`,`GRANT SELECT ON neon_auth."user" TO ${OWNER}`,['C24']]
+      [`REVOKE SELECT ON neon_auth."user" FROM ${OWNER}`,`GRANT SELECT ON neon_auth."user" TO ${OWNER}`,['C24']],
+      [`REVOKE SELECT ON neon_auth.account FROM ${OWNER}`,`GRANT SELECT ON neon_auth.account TO ${OWNER}`,['C24']],
+      ['REVOKE EXECUTE ON FUNCTION auth.session() FROM PUBLIC','GRANT EXECUTE ON FUNCTION auth.session() TO PUBLIC',['C24']]
     ]){
       psqlSync(url,`${fault};`);
       const rows=runKit(url,'neon-catalog-verify.sql');
@@ -1023,7 +1242,11 @@ GRANT USAGE ON SEQUENCE public.${AUDIT_SEQUENCE} TO anonymous;`);
     const clean=scenario('pf_clean');
     assertPreflightPasses(clean,'clean');
     const stops=(url,options)=>failingChecks(runKit(url,'neon-preflight.sql',options));
-    assert.deepEqual(stops(scenario('pf_no_auth',{stub:false})),['P07','P08','P10','P11','P12'],'no Neon Auth schema and no auth.user_id()');
+    assert.deepEqual(stops(scenario('pf_no_auth',{stub:false})),['P07','P08','P10','P11','P12','P22','P23'],'no Neon Auth schema, no auth.user_id() and no auth.session()');
+    assert.deepEqual(stops(scenario('pf_no_session',{setup:'DROP FUNCTION auth.session();'})),['P22'],'no auth.session()');
+    assert.deepEqual(stops(scenario('pf_session_private',{setup:'REVOKE EXECUTE ON FUNCTION auth.session() FROM PUBLIC;'})),['P22'],'the migration role cannot call auth.session()');
+    assert.deepEqual(stops(scenario('pf_no_account',{setup:'DROP TABLE neon_auth.account;'})),['P23'],'no neon_auth.account');
+    assert.deepEqual(stops(scenario('pf_account_private',{setup:`REVOKE SELECT ON neon_auth.account FROM ${OWNER};`})),['P23'],'the migration role cannot read neon_auth.account');
     assert.deepEqual(stops(scenario('pf_other',{setup:`ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} IN SCHEMA public GRANT SELECT ON TABLES TO ${OTHER_ROLE};`})),['P20'],'a default 002 does not reset');
     const applied=scenario('pf_applied');
     apply(applied,'001_foundation.sql','002_identity_submission_rls.sql');

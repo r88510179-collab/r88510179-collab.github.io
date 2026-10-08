@@ -10,6 +10,9 @@ This runbook is intentionally blocked until the Step 2 candidate receives an ind
   `f52183734e1f8c42c401e2a507e8c82323c259486909adca49d9537eed523c8f`.
 - The live security/behaviour validation (step 11, `validation/live/`) cleared: no commercial P0, P1 or P2 remains
   from that phase.
+- Migration 004 (`004_identity_pre_registration_hardening.sql`), the pre-registration takeover hardening of the
+  identity helpers, is a review-only candidate and is NOT applied. Its rollout order, together with the Neon Auth
+  configuration change it pairs with, is in `PRE_REGISTRATION_HARDENING.md`.
 - The pgcrypto Data API surface check is recorded and decided (below): no ACL change is required at present.
 - Two platform behaviours were measured in step 11 (below): about 30 s of JWT expiry skew, and a NULL identity on the
   first request of a newly opened Data API backend connection.
@@ -45,7 +48,8 @@ Chromium:
 Do these steps in this order. STOP means: record the output, do not continue, and get the cause reviewed.
 
 The earlier order, which applied migration 002 before Neon Auth and the Data API were provisioned, was wrong:
-002 needs `neon_auth."user"`, `auth.user_id()` and the `anonymous`/`authenticated` roles at the moment it runs.
+002 needs `neon_auth."user"`, `neon_auth.account`, `auth.user_id()`, `auth.session()` and the
+`anonymous`/`authenticated` roles at the moment it runs.
 
 1. **Create a dedicated commercial/dev Neon environment.** Use a new Neon project for the commercial product,
    on PostgreSQL 16, 17 or 18 (the versions the local suites verify; the preflight stops on any other). Low-cost goal:
@@ -66,11 +70,13 @@ The earlier order, which applied migration 002 before Neon Auth and the Data API
 5. **Verify what migration 002 needs exists**, before anything is applied:
    - roles `anonymous` and `authenticated`
    - function `auth.user_id()` returning text
+   - function `auth.session()` returning jsonb (the JWT claims)
    - table `neon_auth."user"` with `id`, `email`, `"emailVerified"` and `banned`
+   - table `neon_auth.account` with `"userId"` (Neon Auth's password and OAuth accounts)
 
    The reviewed migrations assume Neon Auth and the Data API provide exactly these. On the dedicated commercial
    project they did: 002 applied and the catalog verification passed (C99). If anything is missing or different,
-   STOP; do not create stand-ins by hand. The preflight checks all of it (P06 to P12).
+   STOP; do not create stand-ins by hand. The preflight checks all of it (P06 to P12, P22, P23).
 
 6. **Run `validation/neon-preflight.sql`** as the role that will run and own the migrations (use the same role
    for steps 6, 8, 9 and 10). It is one read-only SELECT over the catalogs:
@@ -197,6 +203,8 @@ Participant:
 - wrong email cannot claim an email-bound invite
 - matching but unverified email cannot claim an email-bound invite (invite_email_unverified) until verified
 - an invite without an email restriction remains a bearer link
+- a Neon Auth user with a password or OAuth account, or a JWT minted before the email was verified, is no identity:
+  every RPC answers `auth_required` and RLS shows it nothing (migration 004, `PRE_REGISTRATION_HARDENING.md`)
 - expired/used invite fails
 - signed-in RPCs succeed: the client sends the JWT the pinned SDK stores in session.token
 - can own multiple entries

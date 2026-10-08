@@ -52,6 +52,20 @@ authcol AS (
   LEFT JOIN pg_attribute a
     ON a.attrelid=to_regclass('neon_auth."user"') AND a.attname=c.name AND a.attnum>0 AND NOT a.attisdropped
 ),
+-- The JWT claims the identity helpers compare (pg_session_jwt), and the column they look up Neon Auth's password and
+-- OAuth accounts by: a user with any account row is never a V1 identity.
+sessionfn AS (
+  SELECT format_type(p.prorettype,NULL) AS rettype
+  FROM pg_proc p WHERE p.oid=to_regprocedure('auth.session()')
+),
+accountcol AS (
+  SELECT format_type(a.atttypid,a.atttypmod) AS type,
+         a.atttypid=(SELECT u.atttypid FROM pg_attribute u
+                     WHERE u.attrelid=to_regclass('neon_auth."user"') AND u.attname='id' AND u.attnum>0 AND NOT u.attisdropped) AS same_type,
+         has_column_privilege(current_user,a.attrelid,a.attnum,'SELECT') AS readable
+  FROM pg_attribute a
+  WHERE a.attrelid=to_regclass('neon_auth.account') AND a.attname='userId' AND a.attnum>0 AND NOT a.attisdropped
+),
 pgcrypto AS (
   SELECT n.nspname::text AS nsp FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pgcrypto'
 ),
@@ -185,6 +199,20 @@ checks AS (
          COALESCE((SELECT string_agg(for_role||' in '||in_schema||' '||objects||': '||grantee_name||':'||privilege,'; '
                                      ORDER BY for_role,in_schema,objects,grantee_name,privilege) FROM defacl),'none'),
          NULL
+  UNION ALL
+  SELECT 'P22','auth.session() (pg_session_jwt)',true,
+         'function auth.session() returning jsonb; USAGE on schema auth and EXECUTE on it (002''s identity helpers read the JWT claims as their owner)',
+         COALESCE((SELECT 'returns '||rettype FROM sessionfn),'MISSING')
+           ||'; EXECUTE='||COALESCE(has_function_privilege(current_user,to_regprocedure('auth.session()'),'EXECUTE')::text,'no function'),
+         COALESCE((SELECT rettype='jsonb' FROM sessionfn),false)
+           AND COALESCE(has_schema_privilege(current_user,to_regnamespace('auth'),'USAGE')
+                        AND has_function_privilege(current_user,to_regprocedure('auth.session()'),'EXECUTE'),false)
+  UNION ALL
+  SELECT 'P23','neon_auth.account."userId" (Neon Auth)',true,
+         'present, of the type of neon_auth."user".id, readable by the migration role (002''s identity helpers refuse a user with any account row)',
+         COALESCE((SELECT type||'; same type as neon_auth."user".id='||COALESCE(same_type::text,'unknown')||'; readable='||readable FROM accountcol),'MISSING'),
+         COALESCE((SELECT same_type AND readable FROM accountcol),false)
+           AND COALESCE(has_schema_privilege(current_user,to_regnamespace('neon_auth'),'USAGE'),false)
 )
 SELECT check_id,check_name,required,expected,actual,ok FROM checks
 UNION ALL

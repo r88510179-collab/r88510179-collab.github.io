@@ -296,7 +296,8 @@ OTP is sent and no sign-in is made for any of them.
   parameters, and the deployed `d23448b3` builds invite links as `participant.html?pool=<slug>&invite=<token>`, so
   opening one would put its bearer token in Netlify telemetry. The production deployment is unchanged until the
   candidate is independently reviewed, merged and deployed; until then, every invite link it issues has that shape.
-- **Neon pre-registration takeover: HIGH, a customer blocker.** Not addressed here.
+- **Neon pre-registration takeover: HIGH, a customer blocker.** Not addressed by the hosting adapter. The remediation
+  candidate (migration 004 and a Neon Auth configuration change, neither applied) is `PRE_REGISTRATION_HARDENING.md`.
 - Neon question I (how Email OTP limits are keyed) remains a hosting blocker.
 
 ### Invite links: the token travels in the fragment (implementation candidate)

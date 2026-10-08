@@ -88,6 +88,8 @@ re-grants, PUBLIC, column and sequence grants), on PostgreSQL 16, 17 and 18.
 | P19 | report | default privileges 002 resets: PUBLIC/`anonymous`/`authenticated` on the tables, sequence and functions the migration role creates in `public`; from PostgreSQL 17 on, table defaults can include `MAINTAIN` |
 | P20 | yes | default privileges 002 does not reset: any other grantee on those object types |
 | P21 | report | every default privilege in the database |
+| P22 | yes | `auth.session()` exists and returns jsonb; the migration role has USAGE on `auth` and EXECUTE on it |
+| P23 | yes | `neon_auth.account."userId"` exists, has the type of `neon_auth."user".id`, and the migration role can read it |
 | P99 | verdict | |
 
 ## Catalog verification rows
@@ -117,7 +119,7 @@ re-grants, PUBLIC, column and sequence grants), on PostgreSQL 16, 17 and 18.
 | C21 | yes from 17, report on 16 | `authenticated` holds `MAINTAIN` on no commercial table |
 | C22 | yes | no column privileges |
 | C23 | report | pgcrypto functions callable by `anonymous`/`authenticated`; the live Data API check (runbook step 11) decides whether that matters (live: 37 in the catalog, seven callable through the Data API, no ACL change required) |
-| C24 | yes | the owner can call `auth.user_id()` and read `neon_auth."user"` |
+| C24 | yes | the owner can call `auth.user_id()` and `auth.session()`, and read `neon_auth."user"` and `neon_auth.account."userId"` |
 | C25 | yes | `authenticated` has USAGE on `public` |
 | C26 | yes | not the personal Pool Center database |
 | C99 | verdict | |

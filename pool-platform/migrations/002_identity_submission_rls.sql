@@ -34,6 +34,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS pool_platform_submissions_survivor_team_unique
 
 REVOKE CREATE ON SCHEMA public FROM anonymous,authenticated;
 
+-- The three identity helpers below are the only readers of the JWT and of Neon Auth: every policy and RPC names its
+-- caller through them. Each applies the whole identity rule in one query. Beyond the user named by auth.user_id(), not
+-- banned, the caller must hold:
+--   - the same JWT's claims (auth.session(), pg_session_jwt): its sub is that user;
+--   - an emailVerified claim that is a JSON boolean equal to the stored "emailVerified". A Neon Auth JWT carries the
+--     state at minting and stays valid for 15 minutes whatever happens to the user, so a JWT minted before the email
+--     was verified names nobody once it is; a missing, null, string or other claim never matches;
+--   - no neon_auth.account row. A password or OAuth account can be attached to an address by someone who does not
+--     control it: pre-registration signs up with the address before its owner's first Email OTP sign-in, which then
+--     verifies that same user. Email OTP sign-in creates no account row, so a V1 identity never has one.
+-- Verification itself is required only where the email is the authority (an email-bound invite); an unbound invite
+-- stays a bearer token for any identity.
 CREATE OR REPLACE FUNCTION public.pool_platform_current_user_id()
 RETURNS text
 LANGUAGE sql
@@ -45,6 +57,9 @@ AS $$
   FROM neon_auth."user" u
   WHERE u.id::text=auth.user_id()
     AND COALESCE(u.banned,false)=false
+    AND auth.session()->>'sub'=u.id::text
+    AND auth.session()->'emailVerified'=to_jsonb(u."emailVerified")
+    AND NOT EXISTS (SELECT 1 FROM neon_auth.account a WHERE a."userId"=u.id)
   LIMIT 1
 $$;
 
@@ -59,11 +74,15 @@ AS $$
   FROM neon_auth."user" u
   WHERE u.id::text=auth.user_id()
     AND COALESCE(u.banned,false)=false
+    AND auth.session()->>'sub'=u.id::text
+    AND auth.session()->'emailVerified'=to_jsonb(u."emailVerified")
+    AND NOT EXISTS (SELECT 1 FROM neon_auth.account a WHERE a."userId"=u.id)
   LIMIT 1
 $$;
 
 -- Neon Auth (Better Auth) keeps verification state in neon_auth."user"."emailVerified" (boolean NOT NULL).
--- Email, ban and verification state are read in one query so an email change cannot slip in between.
+-- Email, ban and verification state, the JWT's claims and the account rows are read in one query so an email
+-- change cannot slip in between. With "emailVerified" true, the identity rule requires the JWT's claim to be true too.
 CREATE OR REPLACE FUNCTION public.pool_platform_current_user_has_verified_email(p_email_normalized text)
 RETURNS boolean
 LANGUAGE sql
@@ -78,6 +97,9 @@ AS $$
       AND COALESCE(u.banned,false)=false
       AND u."emailVerified" IS TRUE
       AND lower(btrim(u.email))=p_email_normalized
+      AND auth.session()->>'sub'=u.id::text
+      AND auth.session()->'emailVerified'=to_jsonb(u."emailVerified")
+      AND NOT EXISTS (SELECT 1 FROM neon_auth.account a WHERE a."userId"=u.id)
   )
 $$;
 
