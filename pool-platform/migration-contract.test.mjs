@@ -465,9 +465,10 @@ test('Pickem per-game pick check fails closed on missing, null or non-string pic
   assert.match(branch,/IF v_tb_text::integer>200 THEN RETURN false; END IF;/);
 });
 
-// Live Neon validation kit: both files must stay read-only and describe the same contract as the migrations.
+// Live Neon validation kit: every file must stay read-only and describe the same contract as the migrations.
 const preflight=fs.readFileSync(new URL('./validation/neon-preflight.sql',import.meta.url),'utf8');
 const verify=fs.readFileSync(new URL('./validation/neon-catalog-verify.sql',import.meta.url),'utf8');
+const audit=fs.readFileSync(new URL('./validation/neon-identity-audit.sql',import.meta.url),'utf8');
 
 // The SQL with comments, string literals, quoted identifiers and dollar quotes blanked, lexed as scanSql does.
 function codeOnly(sql){
@@ -489,8 +490,8 @@ function codeOnly(sql){
   return out;
 }
 
-test('validation kit: each file is one read-only SELECT over the catalogs',()=>{
-  for(const [name,sql] of Object.entries({preflight,verify})){
+test('validation kit: each file is one read-only SELECT',()=>{
+  for(const [name,sql] of Object.entries({preflight,verify,audit})){
     const scan=scanSql(sql);
     assert.deepEqual(scan.errors,[],name);
     assert.equal(scan.statements.length,1,`${name} must be exactly one statement`);
@@ -504,6 +505,7 @@ test('validation kit: each file is one read-only SELECT over the catalogs',()=>{
   }
   assert.match(preflight,/SELECT 'P99','verdict',true,/);
   assert.match(verify,/SELECT 'C99','verdict',true,/);
+  assert.match(audit,/SELECT 'I99','verdict',true,/);
 });
 
 test('validation kit: the catalog verifier expects exactly the tables, policies and functions the migrations create',()=>{
@@ -558,6 +560,24 @@ test('validation kit: preflight and catalog verifier gate what the identity help
   assert.match(verify,/has_function_privilege\(\(SELECT oid FROM owner\),to_regprocedure\('auth\.session\(\)'\),'EXECUTE'\) AS session_ok/);
   assert.match(verify,/WHERE a\.attrelid=to_regclass\('neon_auth\.account'\) AND a\.attname='userId'/);
   assert.match(verify,/COALESCE\(user_id_ok AND session_ok AND neon_auth_usage AND account_ok,false\) AND readable_columns=4/);
+});
+
+test('validation kit: the identity audit reports counts only, and gates the live sessions Race B needs',()=>{
+  const sql=audit.replace(/--[^\n]*/g,'');
+  // It reads the three Neon Auth tables and the two V1 tables that name users, and no column that identifies anyone or
+  // holds a secret: the email only feeds the synthetic-identity pattern.
+  assert.deepEqual([...new Set(sql.match(/\b(?:neon_auth\.(?:"user"|account|session)|public\.pool_platform_\w+)/g))].sort(),
+    ['neon_auth."user"','neon_auth.account','neon_auth.session','public.pool_platform_entries','public.pool_platform_memberships']);
+  assert.doesNotMatch(sql.replace(/'(?:[^']|'')*'/g,"''"),/\btoken\b|"ipAddress"|"userAgent"|\bpassword\b|"accountId"|"accessToken"|"refreshToken"|"idToken"|\bname\b/);
+  assert.equal(sql.match(/\bemail\b/g).length,1);
+  assert.match(sql,/lower\(btrim\(u\.email\)\) LIKE 'pp-cv1-%@example\.com' AS synthetic/);
+  // A session is live while Better Auth would still accept it.
+  assert.match(sql,/WHERE s\."expiresAt">now\(\)\n/);
+  // The gates are the live sessions of unverified users and of users with any account row; the rest is reported.
+  assert.deepEqual([...sql.matchAll(/SELECT '(I\d\d)','[^']*',(true|false),/g)].filter(m=>m[2]==='true').map(m=>m[1]),['I05','I06','I99']);
+  assert.match(sql,/FROM live l JOIN users u ON u\.id=l\.user_id WHERE NOT u\.verified\n/);
+  assert.match(sql,/FROM live l JOIN users u ON u\.id=l\.user_id WHERE u\.has_account\n/);
+  assert.equal(sql.match(/^         count\(\*\)=0$/gm).length,2);
 });
 
 // Behaviour fixtures for pool_platform_payload_valid. Survivor cases here all return before the

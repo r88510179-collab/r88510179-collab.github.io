@@ -8,9 +8,9 @@ import {after,afterEach,before,describe,test} from 'node:test';
 //     node --test pool-platform/migration-integration.test.mjs
 // The URL must be a superuser on localhost. The run creates the roles authenticated, anonymous,
 // pool_platform_it_owner and pool_platform_it_other when missing, creates its own databases and drops them
-// afterwards. Neon Auth is stood in for by neon_auth."user" and neon_auth.account (columns as Neon publishes
-// them), auth.user_id() reading a session setting, and auth.session() returning the JWT claims a second setting
-// holds (JSON null when there are none, as pg_session_jwt answers). Both migrations are applied as the NOLOGIN
+// afterwards. Neon Auth is stood in for by neon_auth."user", neon_auth.account and neon_auth.session (columns as
+// Neon publishes them), auth.user_id() reading a session setting, and auth.session() returning the JWT claims a
+// second setting holds (JSON null when there are none, as pg_session_jwt answers). Both migrations are applied as the NOLOGIN
 // owner role under hostile default privileges (every function, table and sequence the owner creates in public
 // starts out granted to anonymous and authenticated), and races use real concurrent psql sessions. The 004
 // forward migration is checked from the live pre-hardening helpers. Run it on PostgreSQL 16, 17 and 18: the
@@ -222,9 +222,10 @@ const U={
   commish:uuid('00000000',0xc1),rival:uuid('00000000',0xc2),p1:uuid('00000000',0xa1),p2:uuid('00000000',0xa2),
   p3:uuid('00000000',0xa3),wrong:uuid('00000000',0xa4),pending:uuid('00000000',0xb1),drifter:uuid('00000000',0xb2),
   racer1:uuid('00000000',0xd1),racer2:uuid('00000000',0xd2),racer3:uuid('00000000',0xd3),racer4:uuid('00000000',0xd4),
-  victim:uuid('00000000',0xe1),squatter:uuid('00000000',0xe2),linked:uuid('00000000',0xe3),banned:uuid('00000000',0xe4)
+  victim:uuid('00000000',0xe1),squatter:uuid('00000000',0xe2),linked:uuid('00000000',0xe3),banned:uuid('00000000',0xe4),
+  raced:uuid('00000000',0xf1),straddled:uuid('00000000',0xf2)
 };
-const UNVERIFIED=new Set(['pending','drifter','racer4','victim','squatter']);
+const UNVERIFIED=new Set(['pending','drifter','racer4','victim','squatter','raced','straddled']);
 const T1=uuid('10000000',1),T2=uuid('10000000',2);
 const SURV=uuid('20000000',1),PICK=uuid('20000000',2),RIVAL=uuid('20000000',3);
 const S_SURV=uuid('30000000',1),S_PICK=uuid('30000000',2),S_RIVAL=uuid('30000000',3);
@@ -238,7 +239,7 @@ const ENTRY_DEFS=[
   ['AUTH','p1'],['INACTIVE','p1','inactive'],['ELIMINATED','p1','eliminated'],['ARCHIVED','p1','archived'],
   ['ACTIVE','p1'],['BATCH','p1'],['LOCK','p1'],['INV1',null],['INV2',null],['INV3',null],['INV4',null],
   ['RINV1',null],['RINV2',null],['RINV3',null],['TYPED','p1'],['TYPED_BATCH','p1'],['TYPED_RR','p1'],['TYPED_RR2','p1'],
-  ['PRE_BOUND',null],['PRE_BEARER',null],['ID_BOUND',null],['ID_BEARER',null]
+  ['PRE_BOUND',null],['PRE_BEARER',null],['ID_BOUND',null],['ID_BEARER',null],['RACE_A_BOUND',null],['RACE_B_BOUND',null]
 ];
 const E=Object.fromEntries(ENTRY_DEFS.map(([code],i)=>[code,uuid('50000000',i+1)]));
 const K_P2=uuid('51000000',1),K_RIVAL=uuid('51000000',2);
@@ -288,6 +289,20 @@ CREATE TABLE neon_auth.account (
   "updatedAt" timestamptz NOT NULL
 );
 CREATE INDEX "account_userId_idx" ON neon_auth.account("userId");
+CREATE TABLE neon_auth.session (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY NOT NULL,
+  "expiresAt" timestamptz NOT NULL,
+  token text NOT NULL,
+  "createdAt" timestamptz DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  "updatedAt" timestamptz NOT NULL,
+  "ipAddress" text,
+  "userAgent" text,
+  "userId" uuid NOT NULL REFERENCES neon_auth."user"(id) ON DELETE CASCADE,
+  "impersonatedBy" text,
+  "activeOrganizationId" text,
+  CONSTRAINT session_token_key UNIQUE (token)
+);
+CREATE INDEX "session_userId_idx" ON neon_auth.session("userId");
 CREATE SCHEMA auth;
 CREATE FUNCTION auth.user_id() RETURNS text LANGUAGE sql STABLE
 AS $$ SELECT NULLIF(current_setting('pp_test.user_id', true), '') $$;
@@ -297,6 +312,7 @@ GRANT USAGE ON SCHEMA auth TO PUBLIC;
 GRANT USAGE ON SCHEMA neon_auth TO ${OWNER};
 GRANT SELECT ON neon_auth."user" TO ${OWNER};
 GRANT SELECT ON neon_auth.account TO ${OWNER};
+GRANT SELECT ON neon_auth.session TO ${OWNER};
 `;
 
 function seedSql(){
@@ -307,10 +323,12 @@ function seedSql(){
   return `
 INSERT INTO neon_auth."user"(id,name,email,"emailVerified") VALUES
 ${users};
--- victim and squatter carry the password a pre-registration attaches; linked signed in with Google once.
+-- victim, squatter, raced and straddled carry the password a pre-registration attaches; linked signed in with Google once.
 INSERT INTO neon_auth.account("accountId","providerId","userId",password,"updatedAt") VALUES
 ('${U.victim}','credential','${U.victim}','pp-it-password-hash',now()),
 ('${U.squatter}','credential','${U.squatter}','pp-it-password-hash',now()),
+('${U.raced}','credential','${U.raced}','pp-it-password-hash',now()),
+('${U.straddled}','credential','${U.straddled}','pp-it-password-hash',now()),
 ('pp-it-google-subject','google','${U.linked}',NULL,now());
 UPDATE neon_auth."user" SET banned=true WHERE id='${U.banned}';
 INSERT INTO public.pool_platform_tenants(id,slug,display_name) VALUES ('${T1}','it-group','IT Group'),('${T2}','it-rival','IT Rival');
@@ -882,6 +900,95 @@ ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER} IN SCHEMA public GRANT ALL ON SEQUENC
     assert.equal(await openInvites(E.PRE_BEARER),'1','the bearer link is still there for whoever holds it');
   });
 
+  // The concurrent-session race (docs/PRE_REGISTRATION_HARDENING.md, Race A and Race B), which 004 alone cannot close.
+  // Better Auth 1.6.22 to 1.6.33, the range the live Neon Auth host fingerprints in, runs the first Email OTP sign-in of
+  // an unverified user as separate autocommit statements: it deletes the credential account, then the user's sessions,
+  // and only then sets "emailVerified" and creates the owner's session. /sign-in/email reads the user with its accounts
+  // once, hashes the password and creates a session; only require_email_verification (N0) makes it check
+  // emailVerified, on that one read. A JWT is minted by findSession, which without native joins reads the session and
+  // then the user in two queries, and it carries the user as read. Each step below runs on its own backend, as Neon
+  // Auth's would, in an order the race allows. The helpers are 004's.
+  test('pre-registration race residual: a session created, or a JWT minted, while the owner\'s first Email OTP sign-in verifies a pre-registered row names the owner, and no identity helper can tell it apart (Race A, Race B)',async()=>{
+    const neonAuth=session('race_neon_auth'),signIn=session('race_password_sign_in'),findSession=session('race_find_session');
+    const commish=await actor('race_commish','commish');
+    const invite=async(entry,email)=>jsonOf(await commish.run(`SELECT public.pool_platform_create_entry_invite('${entry}','${email}',24)`)).invite_token;
+    const createSession=(s,token,userId)=>
+      s.run(`INSERT INTO neon_auth.session(token,"userId","expiresAt","updatedAt") VALUES ('${token}','${userId}',now()+interval '7 days',now())`);
+    // The owner's /sign-in/email-otp on a row that is still unverified, one statement per step, up to its own session.
+    const otpSignIn=async userId=>{
+      for(const sql of [
+        `DELETE FROM neon_auth.account WHERE "userId"='${userId}' AND "providerId"='credential'`,
+        `DELETE FROM neon_auth.session WHERE "userId"='${userId}'`,
+        `UPDATE neon_auth."user" SET "emailVerified"=true WHERE id='${userId}'`
+      ])rowsOf(await neonAuth.run(sql));
+    };
+    // findSession's two queries; the JWT claims are the user row as the second one reads it.
+    const sessionUser=async token=>rowsOf(await findSession.run(`SELECT "userId" FROM neon_auth.session WHERE token='${token}' AND "expiresAt">now()`))[0];
+    const claimsOf=async userId=>rowsOf(await findSession.run(`SELECT json_build_object('sub',id::text,'email',email,'emailVerified',"emailVerified",'role','authenticated')::text FROM neon_auth."user" WHERE id='${userId}'`))[0];
+    const mintFrom=async token=>{const userId=await sessionUser(token);return userId===undefined?undefined:claimsOf(userId)};
+    // 004's three checks, read directly for a JWT: sub is the user, emailVerified equals the stored state, no account.
+    const checks004=claims=>scalar(`SELECT concat_ws(' ',(c->>'sub')=u.id::text,(c->'emailVerified')=to_jsonb(u."emailVerified"),NOT EXISTS (SELECT 1 FROM neon_auth.account a WHERE a."userId"=u.id))
+      FROM (SELECT $c$${claims}$c$::jsonb AS c) j JOIN neon_auth."user" u ON u.id::text=j.c->>'sub'`);
+    // What the helpers make of a JWT (id, email, verified for that email), and the claim RPC under it.
+    const probe=async(label,claims,email)=>{
+      const s=await actorWith(`race_probe_${label}`,JSON.parse(claims).sub,claims,OWNER);
+      return rowsOf(await s.run(`SELECT concat_ws(' ',COALESCE(public.pool_platform_current_user_id(),'-'),COALESCE(public.pool_platform_current_user_email(),'-'),public.pool_platform_current_user_has_verified_email('${email}')::text)`))[0];
+    };
+    const claim=async(label,claims,token)=>(await actorWith(`race_claim_${label}`,JSON.parse(claims).sub,claims)).run(`SELECT public.pool_platform_claim_entry_invite('${token}')`);
+
+    // Race A. Someone pre-registered raced@ with a password while require_email_verification was false. Their
+    // /sign-in/email reads the row (unverified, with that password) just before the owner's first Email OTP sign-in.
+    const raced=U.raced,racedEmail='raced@example.test',boundA=await invite(E.RACE_A_BOUND,racedEmail);
+    assert.equal(rowsOf(await signIn.run(`SELECT u."emailVerified"::text||' '||count(a.id) FROM neon_auth."user" u
+      LEFT JOIN neon_auth.account a ON a."userId"=u.id AND a."providerId"='credential' WHERE u.id='${raced}' GROUP BY u.id`))[0],'false 1',
+      'the password sign-in reads an unverified row with its password: under N0 it would stop here');
+    // While it hashes the password, the owner's sign-in removes the password and every session and verifies the row.
+    await otpSignIn(raced);
+    rowsOf(await createSession(neonAuth,'race-a-owner',raced));
+    // Without N0 the password sign-in checks nothing more. Its session lands after the revocation, so nothing removes
+    // it, and no constraint refuses it.
+    rowsOf(await createSession(signIn,'race-a-password',raced));
+    const ownerA=await mintFrom('race-a-owner'),passwordA=await mintFrom('race-a-password');
+    assert.deepEqual(JSON.parse(passwordA),JSON.parse(ownerA),'both sessions mint the same claims');
+    assert.equal(await checks004(passwordA),'t t t','the password holder\'s JWT meets all three of 004\'s checks');
+    for(const [label,claims] of [['a_owner',ownerA],['a_password',passwordA]])
+      assert.equal(await probe(label,claims,racedEmail),`${raced} ${racedEmail} true`,label);
+    assert.equal(jsonOf(await claim('a_password',passwordA,boundA)).claimed,true,'it claims the invite bound to the owner\'s address');
+    assert.equal(await scalar(`SELECT owner_auth_user_id FROM public.pool_platform_entries WHERE id='${E.RACE_A_BOUND}'`),raced);
+    // Revoking that session stops new JWTs from it, but one already minted stays valid at the Data API until it expires
+    // (15 minutes, and about 30 s of skew): the helpers read the JWT, never the session.
+    rowsOf(await neonAuth.run(`DELETE FROM neon_auth.session WHERE token='race-a-password'`));
+    assert.equal(await mintFrom('race-a-password'),undefined);
+    assert.equal(await probe('a_revoked',passwordA,racedEmail),`${raced} ${racedEmail} true`);
+
+    // Race B. straddled@ was pre-registered too, and its password holder signed in while require_email_verification
+    // was false: a session minted before N0, which N0 does not remove.
+    const straddled=U.straddled,straddledEmail='straddled@example.test',boundB=await invite(E.RACE_B_BOUND,straddledEmail);
+    rowsOf(await createSession(signIn,'race-b-password',straddled));
+    // What 004 closes: a JWT minted from it before the owner verifies says emailVerified false, and names nobody, both
+    // before the owner's sign-in and after it (the claim no longer equals the stored state).
+    const early=await mintFrom('race-b-password');
+    assert.equal(JSON.parse(early).emailVerified,false);
+    assert.equal(await probe('b_early',early,straddledEmail),'- - false');
+    failsWith(await claim('b_early',early,boundB),'auth_required');
+    // The owner's first Email OTP sign-in, with the password holder's findSession straddling it: the session query runs
+    // before the revocation, the user query after the row is verified.
+    assert.equal(await sessionUser('race-b-password'),straddled);
+    await otpSignIn(straddled);
+    const straddledB=await claimsOf(straddled);
+    rowsOf(await createSession(neonAuth,'race-b-owner',straddled));
+    assert.equal(await sessionUser('race-b-password'),undefined,'the revocation removed the password holder\'s session');
+    assert.equal(await probe('b_early_after',early,straddledEmail),'- - false');
+    failsWith(await claim('b_early_after',early,boundB),'auth_required');
+    // What 004 cannot close: the straddled JWT carries the owner's own claims, for a row with no account left, and names
+    // the owner for up to 15 minutes, minted from a session that no longer exists.
+    assert.deepEqual(JSON.parse(straddledB),JSON.parse(await mintFrom('race-b-owner')));
+    assert.equal(await checks004(straddledB),'t t t');
+    assert.equal(await probe('b_straddled',straddledB,straddledEmail),`${straddled} ${straddledEmail} true`);
+    assert.equal(jsonOf(await claim('b_straddled',straddledB,boundB)).claimed,true);
+    assert.equal(await scalar(`SELECT owner_auth_user_id FROM public.pool_platform_entries WHERE id='${E.RACE_B_BOUND}'`),straddled);
+  });
+
   test('Survivor team must be a JSON string: number, boolean, array, object and null picks are invalid_payload even when their text is a configured key',async()=>{
     const p1=await actor('typed_p1','p1'),commish=await actor('typed_commish','commish');
     const nonString=[123,1.5,true,false,['austin'],{k:'v'},null];
@@ -1270,5 +1377,66 @@ GRANT EXECUTE ON FUNCTION public.pool_platform_submit_batch(uuid,text,jsonb) TO 
       assert.deepEqual(faked,VERIFIED_MAJORS.includes(major)?[]:['P01'],`server_version_num ${major*10000}`);
     }
     assertPreflightPasses(clean,'clean again');
+  });
+
+  test('the identity audit counts pre-registration shapes and the sessions Race B needs, names no identity, and stops until those sessions are revoked',()=>{
+    const url=scenario('audit');
+    apply(url,'001_foundation.sql','002_identity_submission_rls.sql');
+    const id=n=>uuid('00000000',0x100+n);
+    // n: email, verified, account provider, live sessions, expired sessions
+    const USERS=[
+      [1,'v1@example.test',true,null,2,1],[2,'v2@example.test',true,null,0,0],
+      [3,'pp-cv1-t1-a@example.com',false,'credential',0,0],[4,'pp-cv1-t1-b@example.com',false,'credential',1,0],
+      [5,' Prereg@Example.org',false,'credential',1,1],[6,'contested@example.test',true,'credential',1,0],
+      [7,'google@example.test',true,'google',0,0],[8,'fresh@example.test',false,null,1,0]
+    ];
+    const T=uuid('11000000',1),P=uuid('21000000',1),S=uuid('31000000',1);
+    const sessions=USERS.flatMap(([n,,,,live,expired])=>[
+      ...Array.from({length:live},(_,i)=>`('tok-${n}-live-${i}','${id(n)}',now()+interval '7 days',now(),${n===1&&i===1?`'${id(2)}'`:'NULL'})`),
+      ...Array.from({length:expired},(_,i)=>`('tok-${n}-expired-${i}','${id(n)}',now()-interval '1 minute',now(),NULL)`)
+    ]);
+    psqlSync(url,`INSERT INTO neon_auth."user"(id,name,email,"emailVerified",banned) VALUES
+${USERS.map(([n,email,verified])=>`('${id(n)}','u${n}','${email}',${verified},${n===2})`).join(',\n')};
+INSERT INTO neon_auth.account("accountId","providerId","userId","updatedAt") VALUES
+${USERS.filter(u=>u[3]).map(([n,,,provider])=>`('acct-${n}','${provider}','${id(n)}',now())`).join(',\n')};
+INSERT INTO neon_auth.session(token,"userId","expiresAt","updatedAt","impersonatedBy") VALUES
+${sessions.join(',\n')};
+INSERT INTO public.pool_platform_tenants(id,slug,display_name) VALUES ('${T}','audit-group','Audit Group');
+INSERT INTO public.pool_platform_memberships(tenant_id,auth_user_id,role) VALUES ('${T}','${id(1)}','owner'),('${T}','${id(6)}','commissioner'),('${T}','${id(7)}','co_commissioner');
+INSERT INTO public.pool_platform_pools(id,tenant_id,slug,display_name,pool_type) VALUES ('${P}','${T}','audit-survivor','Audit Survivor','survivor');
+INSERT INTO public.pool_platform_seasons(id,pool_id,season,status) VALUES ('${S}','${P}',2027,'active');
+INSERT INTO public.pool_platform_entries(id,season_id,entry_code,display_name,owner_auth_user_id) VALUES
+('${uuid('51000000',0x100)}','${S}','A1','Audit 1','${id(1)}'),('${uuid('51000000',0x101)}','${S}','A6','Audit 6','${id(6)}');`);
+    const audit=()=>{
+      const rows=runKit(url,'neon-identity-audit.sql');
+      // Counts only: no id, email, token or provider subject of any seeded row reaches the output.
+      const text=JSON.stringify(rows);
+      for(const [n,email] of USERS){
+        for(const secret of [id(n),email.trim(),email.trim().toLowerCase(),`tok-${n}-`,`acct-${n}`])assert.ok(!text.includes(secret),`the audit output must not contain ${secret}`);
+      }
+      return Object.fromEntries(rows.map(r=>[r.check_id,[r.required,r.actual,r.ok]]));
+    };
+    const expected=(pending,live)=>({
+      I01:[false,'total=8; verified=4; unverified=4; banned=1',null],
+      I02:[false,'credential=4; google=1',null],
+      I03:[false,'3 (synthetic pp-cv1-*@example.com: 2; other: 1)',null],
+      I04:[false,'2',null],
+      I05:[true,pending?'3 sessions of 3 users':'0 sessions of 0 users',!pending],
+      I06:[true,pending?'3 sessions of 3 users':'0 sessions of 0 users',!pending],
+      I07:[false,`total=${live}; of verified users with no account=2; impersonated=1`,null],
+      I08:[false,'memberships=2; entries owned=1',null],
+      I99:[true,pending?'STOP: I05, I06':'PASS',!pending]
+    });
+    // A password session of a synthetic and of an unknown pre-registered user, a session of a contested (verified,
+    // password) user and one of an unverified user with no account: the audit stops on each class.
+    assert.deepEqual(audit(),expected(true,6));
+    // The operator revokes those users' sessions (never deletes a user): the audit passes; the users and their V1
+    // standing are still reported.
+    psqlSync(url,`DELETE FROM neon_auth.session s USING neon_auth."user" u WHERE u.id=s."userId"
+  AND (NOT u."emailVerified" OR EXISTS (SELECT 1 FROM neon_auth.account a WHERE a."userId"=u.id));`);
+    assert.deepEqual(audit(),expected(false,2));
+    // A role that cannot read a table it counts gets an error, which is a STOP, not a pass.
+    psqlSync(url,`REVOKE SELECT ON neon_auth.session FROM ${OWNER};`);
+    assert.throws(()=>runKit(url,'neon-identity-audit.sql'),/permission denied for table session/);
   });
 });

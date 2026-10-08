@@ -1,19 +1,26 @@
 # Commercial V1 Step 2: live Neon validation kit
 
-Two read-only SQL files for the dedicated commercial/dev Neon database, used by `docs/STEP2_RUNBOOK.md` (steps 6,
-7 and 10), and the live security/behaviour harness in `live/` (step 11). The kit has run against the dedicated
-commercial Neon project; see [Live results](#live-results-dedicated-commercial-neon-project).
+Three read-only SQL files for the dedicated commercial/dev Neon database, used by `docs/STEP2_RUNBOOK.md` (steps 6,
+7 and 10) and `docs/PRE_REGISTRATION_HARDENING.md` (the controlled rollout), and the live security/behaviour harness
+in `live/` (step 11). The preflight and catalog verifier have run against the dedicated commercial Neon project; see
+[Live results](#live-results-dedicated-commercial-neon-project). The identity audit has not run live yet.
 
 - `neon-preflight.sql`: after Neon Auth and the Data API are provisioned, before 001/002.
 - `neon-catalog-verify.sql`: after 001/002.
+- `neon-identity-audit.sql`: at the points the pre-registration rollout names. It counts the unverified users that
+  hold a password or OAuth account (the shape a pre-registration leaves), and gates the live sessions of unverified or
+  account-bearing users, which survive `require_email_verification`.
 
-Each file is one `SELECT` over the system catalogs, so it runs unchanged in psql, the Neon SQL Editor or a single
-HTTP SQL call, and it writes nothing. `migration-contract.test.mjs` checks that each file is a single statement
-with no write keyword or side-effecting function, and `migration-integration.test.mjs` runs both inside
-`BEGIN READ ONLY`. Run them as the role that runs and owns the migrations:
+Each file is one `SELECT`, so it runs unchanged in psql, the Neon SQL Editor or a single HTTP SQL call, and it writes
+nothing. The preflight and catalog verifier read the system catalogs. The identity audit reads `neon_auth` and two
+commercial tables, and returns counts only: no id, email, token, IP address or user agent.
+`migration-contract.test.mjs` checks that each file is a single statement with no write keyword or side-effecting
+function, and `migration-integration.test.mjs` runs each inside `BEGIN READ ONLY`. Run them as the role that runs and
+owns the migrations:
 
     psql "$COMMERCIAL_DEV_URL" -X -v ON_ERROR_STOP=1 -f pool-platform/validation/neon-preflight.sql
     psql "$COMMERCIAL_DEV_URL" -X -v ON_ERROR_STOP=1 -f pool-platform/validation/neon-catalog-verify.sql
+    psql "$COMMERCIAL_DEV_URL" -X -v ON_ERROR_STOP=1 -f pool-platform/validation/neon-identity-audit.sql
 
 ## Reading the output
 
@@ -21,8 +28,9 @@ Every row has `check_id`, `check_name`, `required`, `expected`, `actual` and `ok
 
 - `required = true`: a gate. It passes only when `ok` is `true`.
 - `required = false`: informational. Copy `actual` into the validation report.
-- `P99` / `C99`: the verdict. `PASS` only when every required row passes; otherwise it names the failing checks.
-  Anything but `PASS`, or an error while running the file, is a STOP.
+- `P99` / `C99` / `I99`: the verdict. `PASS` only when every required row passes; otherwise it names the failing
+  checks. Anything but `PASS`, or an error while running the file, is a STOP. The one exception is the identity audit
+  run before `require_email_verification` is set (rollout step 2), whose failures are remediated inside the window.
 
 ## Live results (dedicated commercial Neon project)
 
@@ -123,6 +131,27 @@ re-grants, PUBLIC, column and sequence grants), on PostgreSQL 16, 17 and 18.
 | C25 | yes | `authenticated` has USAGE on `public` |
 | C26 | yes | not the personal Pool Center database |
 | C99 | verdict | |
+
+## Identity audit rows
+
+| ID | Gate | Checks |
+|---|---|---|
+| I01 | report | Neon Auth users: total, verified, unverified, banned |
+| I02 | report | users holding an account row, per provider (`credential`, `google`, ...) |
+| I03 | report | unverified users with a password or OAuth account (the pre-registration shape), split into the synthetic live-harness identities (`pp-cv1-*@example.com`) and others; each other one is classified in the rollout record |
+| I04 | report | verified users with a password or OAuth account: contested identities that 004 refuses |
+| I05 | yes | no live (unexpired) session of an unverified user |
+| I06 | yes | no live session of a user with a password or OAuth account |
+| I07 | report | live sessions: total, held by verified users with no account (V1 identities), impersonated |
+| I08 | report | memberships and entries held by users with an account row (inert once 004 is applied) |
+| I99 | verdict | |
+
+When I05 or I06 fails, revoke those users' sessions after `require_email_verification` is set, never before, and run
+the audit again (`docs/PRE_REGISTRATION_HARDENING.md`, Identity audit). The rollout window itself revokes every live
+session and requires I07's total to be 0, because a session gained in Race A before then sits on a verified row with
+no account, where no count can single it out. The integration suite seeds every class above
+and checks each count, both gates, that no seeded id, email or token appears in the output, and that a role unable to
+read `neon_auth.session` gets an error rather than a pass.
 
 ## Local evidence (disposable local clusters, never Neon)
 
