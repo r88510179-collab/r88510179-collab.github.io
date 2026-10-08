@@ -922,5 +922,139 @@ await regression('the new Admin files are network-only under the unchanged servi
   assert.doesNotMatch(sw,/rulings\.html|rulings-admin|incident-rulings/,'the new Admin files are not precached');
 });
 
+// ---------------------------------------------------------------------------------------------------------------------
+// 13. Pick'em tiebreak preview parity. The tiebreak belongs to the week, not to the previewed game: weekly-app.js voids it
+// exactly when the game at config.tiebreakGameIndex is VOID (games[TIEBREAK_INDEX].void), whichever game a ruling names.
+// The child-branch rehearsal found the Admin preview reading it from the previewed game instead: voiding KC @ DEN (game 0)
+// or NO @ ATL showed "tiebreak game void: no tiebreak this week" while the public page kept the CAR @ CHI tiebreak active.
+// Each scenario compares, for the same rows and feed before and after the hypothetical row: pickemState's tiebreakVoid, the
+// preview's tiebreak summary, the unmodified weekly-app.js (TB box, tiebreak note and footer) and the preview the unmodified
+// rulings-admin.js renders. Fixture: a published Week 3 of four games; KC @ DEN, NO @ ATL and CAR @ CHI are halted and BUF @
+// CIN is a final. The tiebreak game is CAR @ CHI (the last game, as in production) or, where a scenario says so, NO @ ATL (a
+// middle game), so neither the first nor the last game can stand in for the configured one.
+// ---------------------------------------------------------------------------------------------------------------------
+const TB_GAMES=[
+  {away:'KC',home:'DEN',eventId:'401437901',halted:['STATUS_CANCELED','post'],score:['17','20']},
+  {away:'BUF',home:'CIN',eventId:'401437947',halted:null,score:['27','24']},
+  {away:'NO',home:'ATL',eventId:'401437960',halted:['STATUS_POSTPONED','pre'],score:['13','16']},
+  {away:'CAR',home:'CHI',eventId:'401437970',halted:['STATUS_CANCELED','post'],score:['20','23']}];
+const CARCHI=3,NOATL=2,NO_TIEBREAK='tiebreak game void: no tiebreak this week';
+const tbKey=g=>`${g.away}@${g.home}`,tbName=i=>`${TB_GAMES[i].away} @ ${TB_GAMES[i].home}`;
+const tbConfig=(tiebreakGameIndex=CARCHI)=>({schemaVersion:1,season:2026,week:3,tiebreakGameIndex,
+  games:TB_GAMES.map((g,i)=>({away:g.away,home:g.home,awayNumber:2*i+1,homeNumber:2*i+2,date:'2026-09-27',eventId:g.eventId})),
+  participants:[{id:'dc',displayName:'D.C.',pickNumbers:[1,3,5,7],tiebreak:41},{id:'djs',displayName:'DJS',pickNumbers:[2,4,6,8],tiebreak:44}]});
+// The week's raw ESPN events: each game as listed above, unless `states` makes it 'final', 'scheduled' or 'forfeit'.
+const tbEvents=(states={})=>TB_GAMES.map(g=>{
+  const state=states[tbKey(g)]||(g.halted?'halted':'final');
+  if(state==='final')return finalGame(g.away,g.home,g.eventId,...g.score);
+  const type={halted:g.halted,scheduled:['STATUS_SCHEDULED','pre'],forfeit:['STATUS_FORFEIT','post']}[state];
+  return espnEvent({id:g.eventId,away:g.away,home:g.home,type:espnType(...type)});
+});
+// A ruling chain of one fixture game, recording its halted status and its event.
+const tbChain=(key,consequences,firstId)=>{const g=TB_GAMES.find(x=>tbKey(x)===key);
+  return chainRows(PK,'pickem',{week:3,away:g.away,home:g.home,eventId:g.eventId,status:g.halted[0]},consequences,firstId)};
+// The Admin preview of one offered action, and the rows the public page reads before and after it.
+const tbPreview=({tiebreakGameIndex=CARCHI,rows=[],states={},key,action})=>{
+  const config=tbConfig(tiebreakGameIndex),raw=tbEvents(states),events=pkEvents(...raw),data=pkData(rows),c=pkCandidate({config,events,data},key);
+  assert.equal(c.actions[action].ok,true,`${key} ${action} is offered (${c.actions[action].reason})`);
+  const request=requestFor(c,action,{consequence:action==='rule'||action==='rerule'?'void':null}),rulingId=rows.reduce((m,r)=>Math.max(m,r.ruling_id),0)+1;
+  const p=need().pickemPreview({contestId:PK,season:2026,week:3,config,events,data,request,candidate:c,rulingId,createdAt:CREATED});
+  return{config,raw,p,before:rows,after:[...rows,need().hypotheticalRow(request,{contestType:'pickem',chain:c.chain,rulingId,createdAt:CREATED})]};
+};
+// The tiebreak as the unmodified weekly-app.js shows it. The page states it one way everywhere: the TB box reads VOID exactly
+// when the tiebreak note and the footer say there is no tiebreak this week.
+const publicTiebreak=async({config,rows,events})=>{
+  const $=await bootPage('weekly-app.js',{view:'home',weekRows:[pkWeekRow(config)],store:{nfl_contests:CONTESTS.filter(c=>c.contest_id===PK),
+    nfl_contest_policies:pkPolicies(),nfl_incident_rulings:rows},feedFor:()=>projected(events)});
+  const mnf=$('mnf').textContent,note=$('tbNote').textContent,footer=$('footerRule').textContent,tbVoid=mnf==='VOID';
+  assert.equal(/no tiebreak this week/.test(note),tbVoid,`weekly-app: the tiebreak note agrees with the TB box ${mnf}: ${note}`);
+  assert.equal(/tiebreak game voided by commissioner ruling: no tiebreak this week/.test(footer),tbVoid,`weekly-app: the footer agrees with the TB box ${mnf}: ${footer}`);
+  const cells=Object.fromEntries($('pickBody').innerHTML.split('</tr>').filter(r=>r.includes('<td class="name">'))
+    .map(r=>[r.match(/<td class="name">([^<]*)<\/td>/)[1],[...r.matchAll(/<td class="c ([a-z ]+)">/g)].map(m=>m[1])]));
+  return{tbVoid,mnf,note,footer,cells,standings:$('standings').innerHTML};
+};
+// Whether the preview the unmodified rulings-admin.js renders (fake DOM, mock Neon, real score-feed-proxy.js) says there is
+// no tiebreak this week, before and after.
+const renderedTiebreak=async({tiebreakGameIndex=CARCHI,rows=[],states={},key,action})=>{
+  const t=await boot({tables:{nfl_pool_weeks:[pkWeekRow(tbConfig(tiebreakGameIndex))],nfl_incident_rulings:rows},feeds:{3:projected(tbEvents(states))}});
+  await ready(t,{matchup:key,action,adminNote:action==='withdraw'||action==='rerule'?ADMIN_NOTE:''});await t.click('previewBtn');
+  assert.equal(t.$('preview').hidden,false,`${key} ${action}: the Admin page builds the preview (${t.$('message').textContent})`);
+  return[t.$('previewBefore').innerHTML,t.$('previewAfter').innerHTML].map(html=>html.includes(NO_TIEBREAK));
+};
+// One scenario: every reading of the week's tiebreak must be `expected`, [before, after] the previewed action.
+const tiebreakParity=async(scenario,expected)=>{
+  const {config,raw,p,before,after}=tbPreview(scenario);
+  const pub=[await publicTiebreak({config,rows:before,events:raw}),await publicTiebreak({config,rows:after,events:raw})];
+  const got={pickemState:[p.before.tiebreakVoid,p.after.tiebreakVoid],preview:[p.tiebreak.beforeVoid,p.tiebreak.afterVoid],
+    weeklyApp:pub.map(x=>x.tbVoid),rendered:await renderedTiebreak(scenario)};
+  const want=JSON.stringify({pickemState:expected,preview:expected,weeklyApp:expected,rendered:expected});
+  assert(JSON.stringify(got)===want,`tiebreak void [before, after]: expected ${want}, got ${JSON.stringify(got)}`);
+  return{p,pub};
+};
+const tbIncident=(side,i)=>side.rules.incidents.filter(x=>x.matchup===tbName(i)).map(x=>[x.status,x.history.length]);
+
+// 1. A VOID of a game that is not the tiebreak game leaves the tiebreak active, as the public page keeps it: the tiebreak game
+// scheduled, final (its total and the tiebreak differences stay in use) or halted without a ruling.
+for(const [tiebreakGameIndex,tiebreakState,key] of [[CARCHI,'scheduled','KC@DEN'],[CARCHI,'scheduled','NO@ATL'],[CARCHI,'final','KC@DEN'],
+  [CARCHI,'final','NO@ATL'],[CARCHI,'halted','KC@DEN'],[NOATL,'halted','KC@DEN'],[NOATL,'halted','CAR@CHI']])
+  await regression(`tiebreak parity 1: voiding ${key.replace('@',' @ ')}, not the tiebreak game, keeps the ${tbName(tiebreakGameIndex)} tiebreak (${tiebreakState}) active, as weekly-app.js does`,async()=>{
+    const {away,home}=TB_GAMES[tiebreakGameIndex],states=tiebreakState==='halted'?{}:{[`${away}@${home}`]:tiebreakState};
+    const {p,pub}=await tiebreakParity({tiebreakGameIndex,states,key,action:'rule'},[false,false]);
+    assert.deepEqual([p.tiebreak.isTiebreakGame,p.after.effect.kind,p.after.game?.void],[false,'void',true],'the previewed game is VOID after');
+    assert.equal(need().previewOutcome(p.after).tiebreakVoid,false,'the outcome the read-back compares keeps the tiebreak active');
+    const gi=TB_GAMES.findIndex(g=>tbKey(g)===key);
+    assert.deepEqual(Object.values(pub[1].cells).map(row=>row[gi]),['void','void'],'weekly-app shows the previewed game VOID after');
+    for(const x of pub){
+      assert.notEqual(x.mnf,'VOID');assert.doesNotMatch(`${x.note} ${x.footer}`,/no tiebreak|tiebreak game void/,'weekly-app keeps the tiebreak');
+      assert(x.footer.includes(`${away}–${home} tiebreak activates when that game is final.`),x.footer);
+      if(tiebreakState==='final'){
+        assert.deepEqual([x.mnf,x.note],['43','Tiebreak final total: 43. Tiebreak differences are active.'],'the tiebreak total stays in use');
+        assert.match(x.standings,/Δ 2<\/span>/);assert.match(x.standings,/Δ 1<\/span>/);
+      }else assert.deepEqual([x.mnf,x.note],['—','Tiebreak guesses: D.C. 41 · DJS 44.']);
+    }
+  });
+// 2. Voiding the configured tiebreak game voids the week's tiebreak. (The BUF @ CIN tiebreak-game regressions in sections 8 and
+// 9 are unchanged.)
+for(const [tiebreakGameIndex,key] of [[CARCHI,'CAR@CHI'],[NOATL,'NO@ATL']])
+  await regression(`tiebreak parity 2: voiding the tiebreak game ${tbName(tiebreakGameIndex)} voids the week's tiebreak, as weekly-app.js does`,async()=>{
+    const {p,pub}=await tiebreakParity({tiebreakGameIndex,key,action:'rule'},[false,true]);
+    assert.equal(p.tiebreak.isTiebreakGame,true);
+    assert(pub[1].footer.includes(`${tbName(tiebreakGameIndex).replace(' @ ','–')} tiebreak game voided by commissioner ruling: no tiebreak this week.`),pub[1].footer);
+  });
+// 3. The tiebreak game already has an active VOID: previewing a ruling on another game shows no tiebreak before and after,
+// and leaves the tiebreak game's chain as it was.
+for(const [tiebreakGameIndex,key] of [[CARCHI,'KC@DEN'],[CARCHI,'NO@ATL'],[NOATL,'KC@DEN'],[NOATL,'CAR@CHI']])
+  await regression(`tiebreak parity 3: with the tiebreak game ${tbName(tiebreakGameIndex)} already VOID, previewing ${key.replace('@',' @ ')} shows no tiebreak before and after, as weekly-app.js does`,async()=>{
+    const {p}=await tiebreakParity({tiebreakGameIndex,rows:tbChain(tbKey(TB_GAMES[tiebreakGameIndex]),['void'],1),key,action:'rule'},[true,true]);
+    assert.equal(p.tiebreak.isTiebreakGame,false);
+    for(const side of [p.before,p.after])assert.deepEqual(tbIncident(side,tiebreakGameIndex),[['APPLIED',1]],'the tiebreak chain is unchanged');
+  });
+// 4. The tiebreak game's VOID was withdrawn: the tiebreak is active again while another game is previewed.
+for(const [tiebreakGameIndex,key] of [[CARCHI,'KC@DEN'],[NOATL,'CAR@CHI']])
+  await regression(`tiebreak parity 4: with the tiebreak game ${tbName(tiebreakGameIndex)}'s VOID withdrawn, previewing ${key.replace('@',' @ ')} keeps the tiebreak active, as weekly-app.js does`,async()=>{
+    const {p}=await tiebreakParity({tiebreakGameIndex,rows:tbChain(tbKey(TB_GAMES[tiebreakGameIndex]),['void','withdrawn'],1),key,action:'rule'},[false,false]);
+    for(const side of [p.before,p.after])assert.deepEqual(tbIncident(side,tiebreakGameIndex),[['WITHDRAWN',2]],'the tiebreak chain is unchanged');
+  });
+// 5. A tiebreak-game ruling the feed makes unusable (a forfeit) holds that game; a HOLD is not a VOID, so the tiebreak is not
+// voided while another game is previewed.
+await regression('tiebreak parity 5: a held tiebreak game (its VOID made unusable by a forfeit) is no voided tiebreak while KC @ DEN is previewed, as weekly-app.js does',async()=>{
+  const {p}=await tiebreakParity({rows:tbChain('CAR@CHI',['void'],1),states:{'CAR@CHI':'forfeit'},key:'KC@DEN',action:'rule'},[false,false]);
+  for(const side of [p.before,p.after])assert.deepEqual(tbIncident(side,CARCHI),[['HOLD',1]],'the tiebreak ruling is on hold');
+});
+// 6. The tiebreak game's own chain through every action: rule VOID -> no tiebreak; reaffirm (UNDER REVIEW) -> still none;
+// withdraw -> the tiebreak is active again; re-rule VOID -> none again.
+for(const [action,rows,states,expected] of [['rule',[],{},[false,true]],['reaffirm',tbChain('CAR@CHI',['void'],1),{'CAR@CHI':'final'},[true,true]],
+  ['withdraw',tbChain('CAR@CHI',['void'],1),{},[true,false]],['rerule',tbChain('CAR@CHI',['void','withdrawn'],1),{},[false,true]]])
+  await regression(`tiebreak parity 6: ${action} on the tiebreak game CAR @ CHI takes the tiebreak void from ${expected[0]} to ${expected[1]}, as weekly-app.js does`,async()=>{
+    await tiebreakParity({rows,states,key:'CAR@CHI',action},expected);
+  });
+// 7. Another game's chain through every action never changes the tiebreak: active stays active, void stays void.
+for(const [tiebreak,tiebreakRows] of [['active',[]],['void',tbChain('CAR@CHI',['void'],1)]])
+  for(const [action,rows,states] of [['rule',[],{}],['reaffirm',tbChain('KC@DEN',['void'],11),{'KC@DEN':'final'}],
+    ['withdraw',tbChain('KC@DEN',['void'],11),{}],['rerule',tbChain('KC@DEN',['void','withdrawn'],11),{}]])
+    await regression(`tiebreak parity 7: ${action} on KC @ DEN leaves the CAR @ CHI tiebreak ${tiebreak}, as weekly-app.js does`,async()=>{
+      await tiebreakParity({rows:[...tiebreakRows,...rows],states,key:'KC@DEN',action},[tiebreak==='void',tiebreak==='void']);
+    });
+
 assert.equal(failures.length,0,`HDC-13 incident-ruling write-path regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
 console.log('HDC-13 Admin incident-ruling write path: module surface, feed path, notes, selection, candidate discovery and eligibility, action state, 13-argument requests, previews, weekly-app and survivor-app parity, confirmation, preflight, errors, read-back, write-access check, page workflow and static accessibility regressions passed');
