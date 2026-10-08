@@ -14,9 +14,14 @@
 -- re-checks the governing revision, the consequence, coverage, chain position, parent and event).
 --
 -- The function:
---   - authorizes first: the caller must be the commissioner exactly as the publication policies define it
---     (neon_auth."user".id::text = auth.user_id(), lower(email) = 'djsmokke@gmail.com', role = 'admin', not banned);
---     anyone else gets HDC13_NOT_COMMISSIONER (42501) before anything else is read or checked
+--   - authorizes first: the caller must be the commissioner exactly as the publication policies define it (the caller's
+--     neon_auth."user" row, lower(email) = 'djsmokke@gmail.com', role = 'admin', not banned); anyone else gets
+--     HDC13_NOT_COMMISSIONER (42501) before anything else is read or checked. The caller is the "sub" claim of the JWT
+--     the Data API verified, read from request.jwt.claims before anything else and accepted only as the canonical text
+--     of a UUID, the form the policies compare neon_auth."user".id in; missing, empty or malformed claims, or a missing
+--     or malformed sub, identify no one. No argument carries an identity. The function never calls pg_session_jwt
+--     (auth.user_id()): on a new Neon backend the first such call returns no identity and clears request.jwt.claims for
+--     the rest of the transaction, so authorization would depend on which backend serves the request
 --   - refuses any isolation level but READ COMMITTED (HDC13_ISOLATION, 25000)
 --   - validates the request's shape (HDC13_INVALID_INPUT, 22023), then takes the per-contest advisory lock of the HDC-12
 --     insert checks before deriving anything from stored rows
@@ -31,7 +36,7 @@
 --     HDC13_EVENT_MISMATCH); Survivor, a locked snapshot of the season covering the week. The published row is read FOR
 --     SHARE, so a concurrent publish of that week and the ruling are serialized. A withdrawal is not checked against
 --     published data: it is always available for an active chain.
---   - derives every server value: created_by (auth.user_id()), policy_revision, chain_seq, parent_ruling_id, the
+--   - derives every server value: created_by (the authorized caller), policy_revision, chain_seq, parent_ruling_id, the
 --     consequence of reaffirm (the active one) and withdraw ('withdrawn'), and, for every row after the first, the root's
 --     incident_status, event_id and evidence_source (a later request that supplies any of them is refused)
 --   - returns the written row's public columns as jsonb: never created_by or admin_note
@@ -87,6 +92,9 @@ AS $$
 DECLARE
   v_teams CONSTANT text[] := ARRAY['ARI','ATL','BAL','BUF','CAR','CHI','CIN','CLE','DAL','DEN','DET','GB','HOU','IND','JAX','KC',
     'LV','LAC','LAR','MIA','MIN','NE','NO','NYG','NYJ','PHI','PIT','SEA','SF','TB','TEN','WAS'];
+  v_claims_text text;
+  v_claims jsonb;
+  v_caller_id uuid;
   v_caller text;
   v_invalid text;
   v_public_note text;
@@ -110,17 +118,27 @@ DECLARE
   v_row record;
 BEGIN
   -- 1. Authorization, before anything else is read or checked: the commissioner, exactly as the publication policies
-  -- define the commissioner. The browser's email check is a convenience; this is the boundary.
-  IF NOT EXISTS (
+  -- define the commissioner. The browser's email check is a convenience; this is the boundary. The caller is the "sub"
+  -- claim the Data API verified, read once from request.jwt.claims and accepted only as the canonical text of a UUID;
+  -- pg_session_jwt is never called, because its first call on a new backend returns no identity and clears the claims.
+  v_claims_text := pg_catalog.current_setting('request.jwt.claims', true);
+  IF pg_catalog.pg_input_is_valid(v_claims_text, 'pg_catalog.jsonb') THEN
+    v_claims := v_claims_text::jsonb;
+  END IF;
+  IF pg_catalog.jsonb_typeof(v_claims) = 'object' AND pg_catalog.jsonb_typeof(v_claims -> 'sub') = 'string'
+     AND (v_claims ->> 'sub') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+    v_caller_id := (v_claims ->> 'sub')::uuid;
+  END IF;
+  IF v_caller_id IS NULL OR NOT EXISTS (
        SELECT 1 FROM neon_auth."user" u
-        WHERE u.id::text = auth.user_id()
+        WHERE u.id = v_caller_id
           AND pg_catalog.lower(u.email) = 'djsmokke@gmail.com'
           AND u.role = 'admin'
           AND COALESCE(u.banned, false) = false) THEN
     RAISE EXCEPTION 'HDC13_NOT_COMMISSIONER: only the commissioner can record incident rulings'
       USING ERRCODE = '42501', HINT = 'HDC13_NOT_COMMISSIONER';
   END IF;
-  v_caller := auth.user_id();
+  v_caller := v_caller_id::text;
 
   -- 2. Contest history is written only under READ COMMITTED, as the HDC-12 insert checks require.
   IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
