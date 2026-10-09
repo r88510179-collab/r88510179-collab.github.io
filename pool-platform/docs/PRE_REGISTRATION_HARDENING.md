@@ -1,18 +1,46 @@
 # Pre-registration takeover hardening
 
-Status: plan corrective 4 on branch `commercial-v1-pre-registration-plan-corrective-4`, a child of `f6e6587` (plan
-corrective 3). `f6e6587` is a child of `d0e112c` (corrective 2), `d0e112c` of `a854419` (the first plan corrective),
-and `a854419` of `38ea9ee`, the hardening candidate built on the production SHA `48e0ac4`. The exact-SHA reviews of
-`38ea9ee` and `a854419` accepted migrations 002 and 004, the helper hardening and the race model, and refused the
-rollout plan around them. The reviews of `d0e112c` and `f6e6587` refused the plan again. The review of `f6e6587` found
-that `/update-user` can re-issue the cookie cache from a revoked session, so S could be understated. This revision
-answers that with live evidence from a child branch of production, records the P0 results so far, corrects the
-review's other findings, and changes only this document. It is not yet reviewed.
+Status: results record on branch `commercial-v1-pre-registration-p0-results`, a child of `bca3db1` (plan corrective
+4). `bca3db1` is a child of `f6e6587` (corrective 3), `f6e6587` of `d0e112c` (corrective 2), `d0e112c` of `a854419`
+(the first plan corrective), and `a854419` of `38ea9ee`, the hardening candidate built on the production SHA
+`48e0ac4`. The exact-SHA reviews of `38ea9ee` and `a854419` accepted migrations 002 and 004, the helper hardening and
+the race model, and refused the rollout plan around them. The reviews of `d0e112c` and `f6e6587` refused the plan
+again. The independent exact-SHA review of `bca3db1` passed it as a reviewed plan (Review of `bca3db1`). This
+revision changes no step, gate, formula or rule of that plan. It records the review's outcome, the rest of the P0
+results, P1's deferral and the child's deletion, and updates the statements of state those results change. It changes
+only this document.
 
-What has run live, all on the child branch `br-muddy-surf-b5s4wgzx` on 2026-10-08 (P0 results on the child): synthetic
-identities created on the child, one session-row DELETE (P0-5), and N0 set to true (P0-6). Production is unchanged: no
-Neon setting, row or migration. 004 is applied nowhere. The child still exists (K4 not done). Everything below that
-would touch production is a plan.
+What has run live, all on the child branch `br-muddy-surf-b5s4wgzx` on 2026-10-08 and 2026-10-09 (P0 results on the
+child): synthetic identities created on the child, one session-row DELETE (P0-5), N0 set to true (P0-6), Email OTP
+sign-ins for one new operator-controlled identity (P0-1) and for identities copied from production (P0-2), and one
+password sign-up with an operator-controlled address (P0-3's email record). P0 passed. P1 was deferred. The child was
+deleted on 2026-10-09 (K4). Production is unchanged: no Neon setting, row or migration. 004 is applied nowhere. The
+controlled rollout window is not authorized, and everything below that would touch production is a plan.
+
+## Review of `bca3db1` (2026-10-09)
+
+Independent, read-only, at the exact SHA `bca3db12ad86efbed80d7dbae6a001054b3cfedf` (tree `7f52ee9`, parent `f6e6587`),
+with production at `48e0ac4`. Only this document had changed. The unit suites passed (200, with the opt-in browser test
+skipped), and so did the PostgreSQL suite (36 of 36 on each of PostgreSQL 16, 17 and 18).
+
+- **Verdict: SHIP, as a reviewed plan.** It is not launch approval and authorizes no production change.
+- **P0-5's five deviations: all accepted**, so S = 3 minutes stands and no conformant run is needed. Deviation 3 is
+  accepted on this ground rather than on "that can only make S larger": no cookie cache was issued, and a server-side
+  session store other than the row (Better Auth's secondary storage) would have kept the session for its 7-day
+  lifetime, yet it was refused within 165 s, so lookups read the row. What the run did not test is a party that keeps
+  using the session across the DELETE.
+- **P0-6: accepted** (PASS), as one observed measurement on the child, not a vendor bound.
+- Non-blocking findings, carried and not applied by this record:
+  - The child serves production's signing key (now recorded in K2), and the plan sets no maximum life for a child
+    while P0 is incomplete.
+  - A conformant P0-5 starts its polls at t_commit, so Jar B is idle between the control and the commit. A future
+    conformant run should poll Jar B continuously across the DELETE.
+  - "Any name starting `session_data`" (P0-5's PASS rule, Jar B) would never match `__Secure-neon-auth.session_data`
+    if implemented literally. Steps 2 and 4 record cookie names, which mitigates it.
+  - The production probe's address allows one window per UTC date. A second window on the same date stops at step 2.
+  - Both psql guards exit 0 when they stop, so success is the printed line. P0-5 says so; step 5 only implies it.
+  - The Neon Auth configuration plan's "Neon sends a verification email" went beyond the evidence at `bca3db1`. It is
+    now observed (P0 results on the child).
 
 ## Corrections to the reviewed plan (`f6e6587`)
 
@@ -411,7 +439,7 @@ not carry it yet (Follow-up: migration 002 on the production branch).
 | Existing users | 5 verified OTP users unaffected; the 6 unverified synthetic password users can no longer sign in | none signs up again | 0 OAuth users |
 | Existing sessions | **not touched**: a session minted before N0 survives it (no session or JWT route reads the setting). Observed on the child (P0-4): after N0, `/get-session` still accepted a session signed in before it, and `/token` minted a 900 s JWT from it. The audit finds such sessions, and they are revoked | not touched | not touched (0 OAuth users) |
 | Time to take effect | **measured on the child** (P0-6): read back as `true` 1.46 s, and first refusal 10.35 s, after t0, so P_N0 = 11 s. Step 4 probes it in production before any revocation | not measured: N1 and N2 change no session | not measured |
-| Verification email on `/sign-up/email` | **observed on the child** (P0-3): under N0, sign-up created a verification code row (`email-verification-otp`, 5-minute expiry), although `send_verification_email_on_sign_up` is false. So Neon sends a verification email on sign-up under N0 (Better Auth defaults `sendOnSignUp` to `requireEmailVerification`). Delivery to `@example.com` cannot be seen. Before N0, sign-up created no such row | | |
+| Verification email on `/sign-up/email` | **observed on the child** (P0-3): under N0, sign-up created a verification code row (`email-verification-otp`, 5-minute expiry), although `send_verification_email_on_sign_up` is false (Better Auth defaults `sendOnSignUp` to `requireEmailVerification`). Delivery to `@example.com` cannot be seen. On 2026-10-09 the operator saw the email arrive at a controlled address, so Neon sends a verification email on sign-up under N0. Before N0, sign-up created no such row | | |
 | Rollback | `require_email_verification` back to `false` (reopens Race A; after step 5 only once Gate W has passed, see Rollout) | `allow_sign_up` back to `true` | re-add `google` shared |
 | Prerequisite | P0 | P1 | P1 (applied with N1) |
 | When | in the rollout window, before 004, and enforced (step 4) before the revocation | in the same window, once P1 passed | with N1 |
@@ -448,7 +476,8 @@ child-branch proof can avoid that copy, and it is accepted only while the proofs
 the private key column, the project configuration or a production session. No query in this plan reads
 `neon_auth.jwks` or `neon_auth.project_config`: K2 comes from the public JWKS endpoint.
 
-If the child's Auth host signs with the copied key, its JWTs may verify against production's JWKS. Whether production's
+If the child's Auth host signs with the copied key, its JWTs may verify against production's JWKS. The P0 child did:
+it served production's key (K2, P0 results on the child). Whether production's
 Data API also checks `iss` or `aud` is not known, and the plan does not test it against production. No step presents a
 child JWT, cookie or session to any production endpoint, or a production one to the child. A shared `kid` or public
 key therefore never shows which branch signed a JWT: K3 decides provenance from `iss` and `aud`. The child also keeps
@@ -728,37 +757,40 @@ Values the window uses:
 | Value | From | On the child (2026-10-08) | Used in |
 |---|---|---|---|
 | P_N0 (seconds) | P0-6 | **11** (PASS) | step 4: production must enforce N0 within 2 * P_N0 = 22 s, and the revocation waits for T_N0 + 2 * P_N0 + 120 s = T_N0 + 142 s; it also bounds the production probe: at most 2 * P_N0 + 300 = 322 s after t3, and at most 33 calls (Production probe authorization) |
-| S (whole minutes) | P0-5, from Jar B only | **3**, an observed upper bound (deviations below) | Gate W: G = 60 * S + 900 + 30 + M seconds = 60 * S + 1050 s = **1230 s** |
+| S (whole minutes) | P0-5, from Jar B only | **3**, an observed upper bound (deviations below, accepted by the review of `bca3db1`) | Gate W: G = 60 * S + 900 + 30 + M seconds = 60 * S + 1050 s = **1230 s** |
 | R (seconds) | P0-5: the longest call | under 3 (0.321 logged) | must be at most 15 s, or Gate W's margin M is not justified (STOP) |
-| `exp - iat` (seconds) | R0 (K3) | not recorded: needs P0-1 (900 for an unverified user's JWT) | must be at most 900; Gate W uses 900 s whatever the value |
+| `exp - iat` (seconds) | R0 (K3) | **900**, from P0-1's verified JWT (2026-10-09; also 900 for an unverified user's) | must be at most 900; Gate W uses 900 s whatever the value |
 | M (seconds) | Gate W | 120 (fixed) | fixed at 120 s; valid only while R and the clock offsets are within their bounds |
 | Clock offsets (seconds) | step 1, and straight after T_rev | the child's Auth host: under 1 | each of the production database, the production Auth host and the Data API, against the operator's clock: at most 10 s, or STOP |
 
-### P0 results on the child (2026-10-08)
+### P0 results on the child (2026-10-08 and 2026-10-09)
 
-Run on `br-muddy-surf-b5s4wgzx` (Evidence, corrective 4), with fresh synthetic `pp-cv1-*@example.com` password
-identities created on the child. No identity copied from production was used. Every HTTP call went to the child's Auth
-host through an allowlist that refused production's host before connecting. Passwords, cookies, tokens and addresses
-stayed in private scratch files and are not in this record. The P0 order above was not followed: P0-5 ran before N0
-(deviation 1 below).
+Run on `br-muddy-surf-b5s4wgzx` (Evidence, corrective 4). On 2026-10-08, with fresh synthetic `pp-cv1-*@example.com`
+password identities created on the child, and no identity copied from production (P0-3's refusal, P0-4, P0-5, P0-6).
+On 2026-10-09, with Email OTP identities (P0-1, P0-2) and one password identity at an operator-controlled address
+(P0-3's email record), all under N0 (below). Every HTTP call to an Auth host went to the child's, through an allowlist
+that refused production's host before connecting. The exceptions are the read-only, unauthenticated K2 and schema
+fetches from production's public endpoints. Passwords, OTP codes, cookies, tokens and addresses stayed in private
+scratch files or in the operator's browser, and are not in this record. The P0 order above was not followed: P0-5 ran
+before N0 (deviation 1 below).
 
 | Item | Status | Record |
 |---|---|---|
-| Schema fingerprint | child side only | the child's was `e67ff74f…` at 22:35 UTC, before P0-6. Production's was last fetched earlier on 2026-10-08 (Evidence), not at the time of the proofs. A read-only fetch of production's public schema must confirm the match before the proofs count |
+| Schema fingerprint | match | `e67ff74f…`, 78 paths: on the child at 22:35 UTC on 2026-10-08, and on both the child and production at 01:13 and 01:59 UTC on 2026-10-09, which brackets P0-1, P0-2 and P0-3's email record |
 | K1 | recorded | the child's branch id and name, parent, endpoint and Auth host (Evidence). Each differs from production's, and the parent is production |
-| K2 | child side only | the child serves one key: `OKP`, `Ed25519`, `EdDSA`, `kid` fingerprint `d3c354b49651`, and no private fields. Production's JWKS was not fetched (child-only HTTP), so whether the child serves a production key is not recorded |
-| K3 | not done | it needs P0-1's JWT. An unverified identity's JWT carried `iss` = `aud` = the child's origin and the child's `kid` (Evidence), which K3 would accept |
-| K4 | not done | the child exists; N0 is still on there |
-| P0-1 | INCONCLUSIVE | not run: it needs an address the operator controls, and its OTP typed by the operator |
-| P0-2 | INCONCLUSIVE | not run: it needs a verified OTP user copied from production (D, E or A), that user's mailbox, and the operator's authorization to use that identity on the child |
-| P0-3 | observed; not PASS | sign-up: 200, `token` null, no cookie. Sign-in with the right password: 403 `EMAIL_NOT_VERIFIED`. The user has 0 session rows. P0 also records whether a verification email was sent: a verification code row was created at sign-up (Neon Auth configuration plan), but delivery could not be observed without a controlled inbox. So P0-3 is not marked PASS here |
+| K2 | recorded | both branches serve one key: `OKP`, `Ed25519`, `EdDSA`, `kid` fingerprint `d3c354b49651`, RFC 7638 thumbprint `UuW62L0d0PiP-glYl1gqKB1Bu-eg5fwK3x_QcMGXy3U`, and no private fields. **The child served production's key**: the two JWKS documents were byte for byte the same at both fetches |
+| K3 | PASS | from P0-1's JWT: `alg` `EdDSA`; `kid` fingerprint `d3c354b49651`, one of the child's K2 keys (and production's); `iss` and `aud` each the one string `https://ep-ancient-term-b5wm7qsa.neonauth.c-7.us-east-2.aws.neon.tech`, the child's origin, never production's |
+| K4 | done | the child was deleted on 2026-10-09 (below) |
+| P0-1 | PASS | a new verified row with no account row, a session, and a JWT carrying `"emailVerified": true` (below) |
+| P0-2 | PASS, with deviations | E, copied from production and authorized by the operator, signed in by Email OTP; its row is unchanged (below) |
+| P0-3 | PASS | 2026-10-08: sign-up 200, `token` null, no cookie; sign-in with the right password 403 `EMAIL_NOT_VERIFIED`; 0 session rows. 2026-10-09: the same at an operator-controlled address, whose verification email the operator saw arrive (below) |
 | P0-4 | recorded | the session signed in before N0 survived it. After N0, `/get-session` accepted Jar A and Jar B, and `/token` minted a JWT from it (`exp - iat` 900 s, `emailVerified` false) |
-| P0-5 | measured, with deviations | S = 3 minutes, an observed upper bound (below) |
+| P0-5 | PASS | S = 3 minutes, an observed upper bound. The review of `bca3db1` accepted its five deviations (below) |
 | P0-6 | PASS | P_N0 = 11 s (below) |
-| R0 | not done | the verified case needs P0-1. For an unverified user the claim is the JSON boolean false |
+| R0 | PASS | from P0-1: `emailVerified` is the JSON boolean true, and `exp - iat` is 900 s. For an unverified user the claim is the JSON boolean false |
 | `/token/anonymous` | recorded | claim keys and lifetime (Evidence) |
-| P0 | **not passed** | P0-1, P0-2, P0-3's email record, R0, K3, production's side of K2 and of the fingerprint, and the review's decision on P0-5's deviations remain |
-| P1 | not run | N1 and N2 are unchanged on both branches |
+| P0 | **PASS** | P0-1, P0-2, P0-3, P0-5 and P0-6 passed, R0 holds, K1 and K2 are recorded and K3 passed, under the fingerprint above |
+| P1 | **DEFERRED** | the operator's decision on 2026-10-09. N1 and N2 were never applied to the child and are unchanged on production. They stay out of the window, and Stage B stays blocked until P1 passes, which needs a new child branch with its own K1 to K4 |
 
 **P0-6 on the child: PASS.** The identity, a third synthetic password identity, was signed up and signed in (200, with
 a session) while N0 was false. The PATCH was this neon CLI 8.2.0 command, the CLI equivalent named in Evidence:
@@ -829,7 +861,71 @@ Deviations from the P0-5 procedure, for the review:
    nothing either way. It was called once with a valid body, at 20:55:14, and refused.
 
 The review decides whether these deviations stand. If it does not accept them, a conformant P0-5 (with `/update-user`
-in every poll) runs before the window on P0-4's surviving session, and Gate W uses the larger S of the two runs.
+in every poll) runs before the window on P0-4's surviving session, and Gate W uses the larger S of the two runs. The
+review of `bca3db1` accepted all five (Review of `bca3db1`). S = 3 minutes stands, and no conformant run is needed.
+
+**2026-10-09: P0-1, R0, K3, P0-2, P0-3's email record, K2 and K4.** One operator session under the live-gate OTP
+protocol. The operator typed every address and code into a local helper page in their own browser. The page was bound
+to 127.0.0.1 behind a random path token and forwarded only to the child's Auth host. It logged statuses, times, cookie
+names and flags, error codes and user ids, never an address, code, password, cookie value or token. Before the run,
+the child read back N0 true with every other field equal to production's. D, E and A were present on the child,
+verified, with no account row and no live session. The operator authorized E, and only E, for P0-2. The operator
+deferred P1.
+
+P0-1, R0 and K3:
+
+| Event | UTC, operator clock |
+|---|---|
+| Sign-in code requested (`/email-otp/send-verification-otp`) | 01:44:26.686, 200 |
+| `/sign-in/email-otp` | sent 01:44:53.219; 200 at 01:44:53.448. It set only `session_token` (`Max-Age=604800`): no `session_data`, no `set-auth-jwt` |
+| The row | created 01:44:53.494, after the request, so it was new to the child. `"emailVerified"` true, 0 account rows, 1 session expiring 604800 s after its creation |
+| `/token` | 200 at 01:45:24.804, no cookie set. The JWT was decoded in memory and is not recorded |
+
+- R0: `"emailVerified"` is the JSON boolean true. The claim keys are `aud`, `banExpires`, `banReason`, `banned`,
+  `createdAt`, `email`, `emailVerified`, `exp`, `iat`, `id`, `iss`, `name`, `role`, `sub` and `updatedAt`. `sub` is the
+  new row's id, `role` is `authenticated`, and `exp - iat` is 900 s.
+- K3: as in the table above.
+
+P0-2: E signed in by Email OTP at 01:53:45 and again at 01:55:35 (200 each, `session_token` only). All 11 columns of
+E's row hashed the same before the run (01:13) and after it, `updatedAt` included. E kept 0 account rows and gained 2
+sessions. Nothing called `/get-session` or `/token` for E, so no JWT was minted for a user copied from production.
+Deviations:
+
+1. Attempt 1 (01:46:43) signed in the P0-1 identity again: the address in the P0-2 field was P0-1's. E was untouched.
+   It does not count.
+2. Attempt 2 (01:52:24) signed in D, which was not authorized for P0-2. D's row was unchanged, it gained one child
+   session, and no JWT was minted for it. P0-2 stopped there. The operator chose to retry with E rather than accept D.
+   The helper was then restarted with a guard that refused any P0-2 address whose SHA-256 was not E's, before any
+   upstream call.
+3. E signed in twice: once on the old helper while it was being restarted, once on the guarded one.
+4. The codes were typed into the local helper page, not into an automation-driven browser paused at the OTP field.
+   The protocol's purpose held: no code or address reached anyone but the operator.
+
+The helper kept no cookie for D or E. Every session these runs created was deleted with the child (K4).
+
+P0-3's email record: at 01:57:49, `/sign-up/email` with an operator-controlled address new to the child and a random
+password returned 200 at 01:57:49.750, with `token` null and no cookie. `/sign-in/email` with that password returned
+403 `EMAIL_NOT_VERIFIED` at 01:57:50.021, with no cookie. The row is unverified, with 1 `credential` account, 0
+sessions and 1 `email-verification-otp` row expiring 300 s after its creation. The operator saw the verification email
+arrive and used no code from it.
+
+K2 and the fingerprint: read-only, unauthenticated GETs of each host's `/.well-known/jwks.json` and
+`/open-api/generate-schema`, at 01:13:10 and 01:59:05 UTC (table above).
+
+K4: the helper was stopped first. The child was deleted through the Neon API at 01:59:19 UTC. At 01:59:34:
+
+- the project's branch listing shows only production;
+- the child's `/.well-known/jwks.json` returns 404;
+- production's JWKS is byte for byte unchanged, and its fingerprint is unchanged;
+- production's `/get-session` without a cookie returns 200 `null`;
+- production's Neon Auth configuration reads back unchanged, so deleting the child did not touch production although
+  the two branches share `auth_provider_project_id`.
+
+The private scratch directories of all three P0 sessions were removed at 02:00:03. The only JWT the child minted on
+2026-10-09, P0-1's, expired at about 02:00:24 UTC (02:00:54 with the Data API's skew).
+
+Clocks: the child Auth host's `Date` headers matched the operator's clock to the second. P0-1's row was created 46 ms
+after the operator's clock saw the response arrive.
 
 ## Identity audit (read-only)
 
@@ -879,10 +975,10 @@ Before the window (no production change):
 2. P0 passes, including P0-5 (Jar B, with the cache premise) and P0-6 (classified refusals). For P0-5 that means the
    review has accepted the child run's recorded deviations, or a conformant run has passed. P1 passes, or N1 and N2 are
    recorded as deferred (Stage B then stays blocked). R0 is recorded with `exp - iat` at most 900 s. K1 and K2 are
-   recorded, and K3 passes. P_N0, S and R are recorded, with R at most 15 s. As of 2026-10-08, P_N0 = 11 s, S = 3
-   minutes and R is under 3 s; P0-1, P0-2, P0-3's email record, R0, K3, and production's side of K2 and of the
-   fingerprint are outstanding (P0 results on the child).
-3. The child branch is deleted and K4 is recorded.
+   recorded, and K3 passes. P_N0, S and R are recorded, with R at most 15 s. As of 2026-10-09, P0 has passed, with
+   P_N0 = 11 s, S = 3 minutes, R under 3 s and `exp - iat` 900 s. The review of `bca3db1` accepted P0-5's deviations,
+   and P1 is recorded as deferred (P0 results on the child).
+3. The child branch is deleted and K4 is recorded. Done on 2026-10-09 (P0 results on the child).
 4. Production is unchanged: the production branch is at `48e0ac4`, Netlify Auto Publishing is Locked, and the three
    live helper bodies still hash to 004's pre-hardening column.
 5. The production probe is separately authorized (Production probe authorization). Step 4 is mandatory before any
@@ -1225,7 +1321,8 @@ re-invite. The owner's next Email OTP sign-in creates a fresh row.
   step 4 (the refusal probe) and step 7 (Email OTP).
 - Gate W's length rests on the S that P0-5 measured on the child and the JWT lifetime R0 bounded. P0-5 measures one
   session from one client, so a Neon change to either value calls for a new P0. The child's S = 3 minutes is an
-  observed upper bound from one run whose deviations the review must accept. Jar B models a party that keeps every
+  observed upper bound from one run, whose deviations the review of `bca3db1` accepted. That run did not test a party
+  that keeps using the session across the DELETE. Jar B models a party that keeps every
   cookie value it has received. A strategy it does not model, such as presenting `session_data` without
   `session_token`, is not measured. Better Auth refuses that, because it requires the signed `session_token`
   (Evidence), but Neon's deployment is not visible from outside.
@@ -1237,7 +1334,8 @@ re-invite. The owner's next Email OTP sign-in creates a fresh row.
   pre-hardening helpers (Restores and new branches).
 - Until N1, an attacker who knows an invitee's address can make that identity contested, and the invitee is refused
   rather than taken over (Recovery). Under N0, Neon sends a verification email on sign-up (observed on the child,
-  P0-3), so the owner gets a code for a sign-up they never made. Completing it with `/email-otp/verify-email` verifies
+  P0-3: the operator saw one arrive), so the owner gets a code for a sign-up they never made. With P1 deferred, this
+  stays open after the window. Completing it with `/email-otp/verify-email` verifies
   the row and keeps the password. N0 then lets that password sign in, since the row is verified, and 004 refuses the
   contested identity. Each such sign-up also sends mail from Neon's shared sender to an address the attacker chose.
 - The cache premise (P0-5). Neon issued no non-empty `session_data` cookie on the child. If it starts issuing one, a
@@ -1252,9 +1350,13 @@ re-invite. The owner's next Email OTP sign-in creates a fresh row.
   Race B attacker holding a session on the owner's row could read the owner's raw session tokens. A raw token was not
   accepted as a bearer token, and the session cookie needs the Auth secret's signature (Better Auth source, not tested
   live). Step 5 deletes every session, those included.
-- Both branches report the same `auth_provider_project_id`, and Neon does not document what it shares. The child's
-  JWTs name the child (`iss`, `aud`), and the child is deleted before the window (K4). Whether production's Data API
-  checks `iss` or `aud` is still not known (Child branch). This is open with Neon.
+- Both branches report the same `auth_provider_project_id`, and Neon does not document what it shares. The P0 child
+  also served production's signing key (K2), so its JWTs would verify against production's JWKS (not tested: no step
+  presented one to production). They named the child
+  (`iss`, `aud`), and the child was deleted on 2026-10-09 (K4), which left production's configuration and JWKS
+  unchanged. Whether production's Data API checks `iss` or `aud` is still not known (Child branch). This is open with
+  Neon. Every new branch made from production, including the one a later P1 needs, is in the same position until it is
+  deleted.
 - `/token/anonymous` issues a 1-hour JWT with no session. It has no `emailVerified` claim, so 004's helpers never name
   its holder. Before 004, the helpers name a caller from `sub` and the user row alone, and whether an anonymous JWT's
   `sub` can equal a user's id was not checked.
