@@ -17,15 +17,20 @@
 // such that the new ruling would read as APPLIED on the public pages at once. A game absent from the week, moved, inverted,
 // re-paired, relisted, read with conflicting copies, recorded under another event, or forfeited is refused: it requires the
 // future exception workflow (HDC-14).
+//
+// HDC-14 adds exactly one exception workflow, through its own database function (migration 005): a game the published data
+// proves belongs to the week, whose week feed no longer lists either team, ruled on as an attested absence. Its evidence
+// is never a feed fact. A chain keeps one evidence class: the HDC-13 actions never continue an absence chain, and the
+// absent-game actions never continue a feed chain. No other week is ever read.
 
-import {CONTEST_TYPES,PUBLIC_COLUMNS,RULING_CONSEQUENCES,SUPPORTED_INCIDENT_STATUSES,WITHDRAWN,contestIdFor,rulingTeamCode,
-  evaluateContestRulings,policyForWeek,policyAllowsConsequence,observeIncident,incidentFeedCheck,pickemSlotRuling,
-  pickemSlotEffect,pickemEffectiveGame,survivorRulingLookup,rulesModel} from '../contest-rulings.js?v=1';
+import {CONTEST_TYPES,PUBLIC_COLUMNS,RULING_CONSEQUENCES,SUPPORTED_INCIDENT_STATUSES,WITHDRAWN,ABSENT_INCIDENT_STATUS,ATTESTATION_SOURCE,
+  contestIdFor,rulingTeamCode,evaluateContestRulings,policyForWeek,policyAllowsConsequence,observeIncident,incidentFeedCheck,pickemSlotRuling,
+  pickemSlotEffect,pickemEffectiveGame,survivorRulingLookup,rulesModel} from '../contest-rulings.js?v=2';
 import {survivorBuildResults,survivorEntryState,survivorEligibleEntering,survivorSummary,survivorAwaitingRuling,survivorOnHold,
   survivorFeedContextError,survivorScore} from '../survivor-math.js?v=7';
 import {scoreEntry} from '../public-math.js?v=2';
 
-export {PUBLIC_COLUMNS};
+export {PUBLIC_COLUMNS,ABSENT_INCIDENT_STATUS,ATTESTATION_SOURCE};
 
 const freeze=Object.freeze;
 export const RPC_FUNCTION='nfl_append_incident_ruling';
@@ -56,6 +61,27 @@ export const HDC13_ERROR_TEXT=freeze({
   HDC13_NOT_PERMITTED:'The governing policy does not permit that consequence. Nothing was written.',
   HDC13_NOT_PUBLISHED:'That game is not in the published Pool Center data for this contest week. Nothing was written.',
   HDC13_EVENT_MISMATCH:"The incident's event does not match the published game's event. Nothing was written; this requires the future exception workflow."
+});
+
+// HDC-14: the absent-game function and its 10 approved arguments, in its order. The browser sends no incident status, event
+// id, evidence source or identity: the server derives the evidence from the published data and the caller from the JWT.
+export const ABSENT_RPC_FUNCTION='nfl_append_absent_incident_ruling';
+export const ABSENT_RPC_ARGUMENTS=freeze(['p_contest_id','p_week','p_away_team','p_home_team','p_action','p_consequence',
+  'p_expected_policy_revision','p_expected_parent_ruling_id','p_public_note','p_admin_note']);
+export const ABSENCE_LABEL='ABSENT FROM ORIGINAL WEEK FEED';
+// Fixed, safe messages for the absent-game function's HDC-14 refusal tokens. A refusal never writes anything.
+export const HDC14_ERROR_TEXT=freeze({
+  HDC14_NOT_COMMISSIONER:'The database refused this account: only the commissioner can record absent-game rulings. Nothing was written.',
+  HDC14_ISOLATION:'The database refused the write because the request did not run under READ COMMITTED. Nothing was written.',
+  HDC14_INVALID_INPUT:'The database refused the absent-game request as invalid. Nothing was written. Reload, then build a new preview.',
+  HDC14_STALE_POLICY:'The contest policy changed after this preview was built. Nothing was written. Reload, then build a new preview.',
+  HDC14_STALE_CHAIN:'The ruling chain changed after this preview was built (another tab, a retry or a double submit). Nothing was written. Reload, then build a new preview.',
+  HDC14_INVALID_TRANSITION:"That action is not valid for the incident's current state. Nothing was written. Reload, then build a new preview.",
+  HDC14_NOT_ABSENCE_CHAIN:"This incident's chain records feed evidence, not an attested absence: it continues only with the HDC-13 actions. Nothing was written.",
+  HDC14_NOT_PERMITTED:'The governing policy does not permit that consequence. Nothing was written.',
+  HDC14_NOT_PUBLISHED:'That game is not one game of the published Pool Center data for this contest week. Nothing was written.',
+  HDC14_EVENT_MISMATCH:"The published game now records an event other than the incident's. Nothing was written.",
+  HDC14_ABSENCE_NOT_ATTESTABLE:"The same-week locked Pick'em slate does not prove this matchup, so the absence cannot be attested. Nothing was written."
 });
 
 const ALIASES=freeze({JAC:'JAX',WSH:'WAS'});
@@ -220,6 +246,107 @@ function assessFacts({away,home,season,week,events,source,publishedEventId,root}
 
 const yes=freeze({ok:true,reason:null}),no=reason=>({ok:false,reason});
 
+// ---- HDC-14: the absent-game assessment ----------------------------------------------------------------------------------
+
+const isAbsenceRow=r=>!!r&&r.incident_status===ABSENT_INCIDENT_STATUS&&r.evidence_source===ATTESTATION_SOURCE;
+const ABSENCE_CHAIN="this incident's chain records an attested absence (STATUS_ABSENT, commissioner-attestation): continue it with the absent-game actions";
+const FEED_CHAIN="this incident's chain records feed evidence: it continues only with the HDC-13 actions, never as an absence";
+
+// A Pick'em slate of the season's week, as the absent-game function proves a Survivor matchup with it: the locked row of
+// exactly that season and week, its configuration naming the same season and week, its games readable.
+function slateGames(slate,{season,week}){
+  if(!slate||typeof slate!=='object')return{ok:false,reason:`no locked Pick'em slate of Week ${shown(week)} is published`};
+  if(slate.status!=='locked'||slate.season!==season||slate.week!==week)return{ok:false,reason:`the Pick'em slate read is not the locked ${shown(season)} Week ${shown(week)} slate`};
+  if(!slate.config||typeof slate.config!=='object'||slate.config.season!==season||slate.config.week!==week)return{ok:false,reason:`the Week ${shown(week)} Pick'em slate's configuration names another season or week`};
+  const games=pickemGames(slate.config);
+  return games?{ok:true,games,revision:slate.revision}:{ok:false,reason:`the Week ${shown(week)} Pick'em slate's games cannot be read`};
+}
+// The same-week slate's proof of a Survivor pair: the pair exactly once, in its orientation, no other game of either team,
+// and its eventId, where it has one, an event id. Nothing else (another week, a makeup, the feed) ever proves the matchup.
+export function slateProof(slate,{season,week,away,home}={}){
+  const read=slateGames(slate,{season,week});
+  if(!read.ok)return read;
+  const pairs=read.games.filter(g=>g.away===away&&g.home===home),touching=read.games.filter(g=>[g.away,g.home].some(t=>t===away||t===home));
+  if(pairs.length!==1||touching.length!==1)return{ok:false,reason:`the Week ${shown(week)} Pick'em slate does not list ${shown(away)} @ ${shown(home)} exactly once, in that orientation, with no other game of its teams`};
+  const eventId=pairs[0].eventId;
+  if(eventId!==null&&!DIGITS.test(eventId))return{ok:false,reason:`the Week ${shown(week)} Pick'em slate records ${shown(eventId)} for the game, which is not an event id`};
+  return{ok:true,reason:null,eventId,revision:read.revision};
+}
+// What the published data proves about a pair: Pick'em, the game exactly once in the locked contest week; Survivor, a
+// covering snapshot and the same-week slate.
+function publishedProof(x){
+  if(x.contestType==='survivor'){
+    if(!x.published)return no('no locked Survivor snapshot covers this week');
+    return x.slateProof||no(`no locked Pick'em slate of Week ${shown(x.week)} proves this matchup`);
+  }
+  if(!x.published)return no(`the game is not in the published Week ${shown(x.week)}`);
+  if(!x.publishedOnce)return no('the matchup is not published exactly once, in its orientation, with no other game of its teams');
+  if(x.publishedEventId!==null&&!DIGITS.test(x.publishedEventId))return no(`the published game records ${shown(x.publishedEventId)}, which is not an event id, so it is never recorded`);
+  return{ok:true,reason:null,eventId:x.publishedEventId,revision:null};
+}
+// Why a reading of the week feed is not an absence.
+function absentReading(o){
+  switch(o?.kind){
+    case 'halted':return`the feed lists the game this week (${shown(o.status)}): it is ruled on by the HDC-13 path, not as an absence`;
+    case 'forfeit':return`the feed reports ${shown(o.status)}: a forfeit is never ruled on`;
+    case 'final':return'the feed lists the game this week as a completed final: it is not absent';
+    case 'live':return'the feed lists the game this week as live: it is not absent';
+    case 'scheduled':return'the feed lists the game this week as scheduled: it is not absent';
+    case 'unfinished':return'the feed lists the game this week: it is not absent';
+    case 'opponent':return`the feed lists ${shown(o.away)} @ ${shown(o.home)} for these teams this week (an inverted or re-paired matchup): not an absence`;
+    case 'repaired':return`the feed also lists ${shown(o.otherAway)} @ ${shown(o.otherHome)} this week (a re-paired team): not an absence`;
+    case 'relisted':return'the feed lists this matchup this week under more than one event: not an absence';
+    case 'conflicting':return'the feed lists this matchup this week with conflicting information: not an absence';
+    case 'context':return"the feed lists these teams only outside this season and week: the week's absence cannot be confirmed";
+    case 'unavailable':return'the score feed for this week could not be read, so the absence cannot be confirmed';
+    default:return'the feed has an unreadable listing for these teams this week, so the absence cannot be confirmed';
+  }
+}
+// The factual preflight of an absent-game first ruling (root null) or re-ruling (root = the absence chain's first row):
+// the published proof, the production feed listing no game of either team in the week, and the public evaluator reading
+// the new ruling as APPLIED at once (agrees). The evidence is the server's: STATUS_ABSENT, the published event (none:
+// null), commissioner-attestation; a re-ruling repeats the root's.
+function absenceFacts({away,home,season,week,events,source,proof,root}){
+  if(!proof.ok)return refuse(proof.reason);
+  const recorded=root?(root.event_id??null):proof.eventId;
+  if(root&&proof.eventId!==null&&proof.eventId!==recorded)return refuse(`the published game now records event ${proof.eventId}, not the incident's event ${recorded??'none'}`);
+  if(source!==PRODUCTION_FEED_SOURCE)return refuse(source?`the score feed was read from ${source}, not the production nflscores2 path the public pages use`
+    :'the score feed came from an unknown source, so the absence cannot be confirmed');
+  if(!Array.isArray(events))return refuse('the score feed for this week could not be read, so the absence cannot be confirmed');
+  const observation=observeIncident(events,{away,home,eventId:recorded,season,week});
+  if(observation.kind!=='missing')return refuse(absentReading(observation));
+  const evidence=root?{incidentStatus:root.incident_status,eventId:root.event_id??null,evidenceSource:root.evidence_source??null}
+    :{incidentStatus:ABSENT_INCIDENT_STATUS,eventId:proof.eventId,evidenceSource:ATTESTATION_SOURCE};
+  const check=incidentFeedCheck({state:'effective',away,home,evidence:{incidentStatus:evidence.incidentStatus,eventId:evidence.eventId,source:evidence.evidenceSource}},observation);
+  if(check.status!=='agrees')return refuse(`the public pages would not read the absence as applied (${check.reason||check.status})`);
+  return{ok:true,reason:null,hdc14:false,evidence,observation};
+}
+// The absent-game side of one candidate: whether the game is an absence the published data proves, its server-derived
+// evidence, and which absent-game actions are valid. A withdrawal of an active absence ruling needs nothing but the chain.
+function assessAbsence(x,{chain,blocked,canonical,consequences,underReview}){
+  const {season,week,away,home,events,source}=x;
+  const proof=canonical?publishedProof(x):no('the matchup is not two canonical NFL team codes');
+  const root=isAbsenceRow(chain.root)?chain.root:null,feedChain=!!chain.root&&!root;
+  const facts=absenceFacts({away,home,season,week,events,source,proof,root:null});
+  const refacts=root?absenceFacts({away,home,season,week,events,source,proof,root}):facts;
+  const later=!proof.ok?no(proof.reason):root&&proof.eventId!==null&&proof.eventId!==(root.event_id??null)
+    ?no(`the published game now records event ${proof.eventId}, not the incident's event ${root.event_id??'none'}`):yes;
+  const noConsequence=!consequences.length?'the governing policy permits no consequence for this contest':null;
+  const actions={
+    rule:blocked?no(blocked):chain.state!=='empty'?no('a ruling already exists for this incident: use its chain actions'):noConsequence?no(noConsequence):facts.ok?yes:no(facts.reason),
+    reaffirm:blocked?no(blocked):feedChain?no(FEED_CHAIN):chain.state!=='active'?no(chain.state==='empty'?'there is no ruling to reaffirm':'a withdrawn ruling cannot be reaffirmed; re-rule it')
+      :!underReview?no('reaffirm is offered only while the public evaluator shows the ruling UNDER REVIEW'):later,
+    withdraw:blocked?no(blocked):feedChain?no(FEED_CHAIN):chain.state==='active'?yes:no(chain.state==='empty'?'there is no ruling to withdraw':'the ruling is already withdrawn'),
+    rerule:blocked?no(blocked):feedChain?no(FEED_CHAIN):chain.state!=='withdrawn'?no('re-rule is only available after a withdrawal'):noConsequence?no(noConsequence):refacts.ok?yes:no(refacts.reason)
+  };
+  const eligible=!blocked&&!feedChain&&!noConsequence&&facts.ok;
+  const evidence=root?{incidentStatus:root.incident_status,eventId:root.event_id??null,evidenceSource:root.evidence_source??null}
+    :facts.ok?facts.evidence:null;
+  return{eligible,reason:eligible?null:blocked||(feedChain?FEED_CHAIN:null)||noConsequence||facts.reason,
+    label:eligible||root?ABSENCE_LABEL:null,evidence,actions,proof,observation:facts.observation||null,
+    slateRevision:x.contestType==='survivor'&&proof.ok?proof.revision:null};
+}
+
 // One candidate: its chain, the public reading of its slot, its factual preflight, and which actions are valid.
 function assessCandidate(x){
   const {contestId,contestType,season,week,away,home,events,source,dataset,policy,rows}=x;
@@ -253,13 +380,15 @@ function assessCandidate(x){
     withdraw:blocked?no(blocked):chain.state==='active'?yes:no(chain.state==='empty'?'there is no ruling to withdraw':'the ruling is already withdrawn'),
     rerule:blocked?no(blocked):chain.state!=='withdrawn'?no('re-rule is only available after a withdrawal'):writable()?no(writable()):factual.ok?yes:no(factual.reason)
   };
+  // HDC-14: the HDC-13 actions never continue a chain whose first row is an attested absence.
+  if(chain.root?.incident_status===ABSENT_INCIDENT_STATUS)for(const a of ['reaffirm','withdraw','rerule'])if(!blocked)actions[a]=no(ABSENCE_CHAIN);
   const evidence=chain.state==='empty'?(factual.ok?factual.evidence:null)
     :chain.root?{incidentStatus:chain.root.incident_status,eventId:chain.root.event_id??null,evidenceSource:chain.root.evidence_source??null}:null;
   return{key:`${away}@${home}`,matchup:`${away} @ ${home}`,contestId,contestType,season,week,away,home,gameIndex:x.gameIndex,
     published:x.published,publishedOnce:x.publishedOnce,publishedEventId:x.publishedEventId,
     policy:policyReady?{revision:policy.revision,policy:policy.policy,effectiveWeek:policy.effectiveWeek}:null,
     consequences,chain,observation,slot,underReview,factual:factual||{ok:false,reason:null,hdc14:false,evidence:null,observation:null},
-    evidence,actions};
+    evidence,actions,absence:assessAbsence(x,{chain,blocked,canonical,consequences,underReview})};
 }
 
 // Every pair of this week that has ruling rows (an existing chain is always listed, so it can be withdrawn).
@@ -304,9 +433,41 @@ function listedPair(e){
   return away&&home&&away!==home?{away,home}:null;
 }
 
+// The canonical team codes any listing of the week names, in any form (an unreadable listing still names its teams).
+function listedTeams(events){
+  const out=new Set();
+  for(const e of Array.isArray(events)?events:[])for(const c of Array.isArray(e?.competitions)?e.competitions:[])
+    for(const x of Array.isArray(c?.competitors)?c.competitors:[]){const t=rulingTeamCode(x?.team?.abbreviation);if(t)out.add(t)}
+  return out;
+}
+
+// HDC-14: the teams some entry picked in a Survivor week that the week feed does not list at all, each with what the
+// same-week locked Pick'em slate proves about its matchup. Only a slate pair the feed lists no team of is provable; a bye,
+// a game the sheet left out, a team the slate lists twice, a re-paired opponent or any slate that is not the locked slate
+// of exactly that season and week is not. No other week is ever read.
+export function survivorAbsentPicks({season,week,snapshot,events,slate}={}){
+  const covered=Number.isInteger(snapshot?.week)&&snapshot.week>=week,picked=covered?pickedTeams(snapshot.config,week):new Set();
+  if(!Array.isArray(events))return[];
+  const listed=listedTeams(events),read=slateGames(slate,{season,week}),out=[];
+  for(const team of [...picked].sort()){
+    if(listed.has(team))continue;
+    const unprovable=(reason,pair={})=>out.push({team,provable:false,away:pair.away??null,home:pair.home??null,eventId:null,slateRevision:null,reason});
+    if(!read.ok){unprovable(read.reason);continue}
+    const mine=read.games.filter(g=>g.away===team||g.home===team);
+    if(!mine.length){unprovable(`the locked Week ${week} Pick'em slate does not list ${team} (a bye, or a game the sheet left out)`);continue}
+    if(mine.length>1){unprovable(`the locked Week ${week} Pick'em slate lists ${team} in more than one game`);continue}
+    const {away,home}=mine[0],proof=slateProof(slate,{season,week,away,home}),other=away===team?home:away;
+    if(!proof.ok){unprovable(proof.reason,{away,home});continue}
+    if(listed.has(other)){unprovable(`the feed lists ${other} this week (a re-paired matchup), so ${away} @ ${home} is not absent`,{away,home});continue}
+    out.push({team,provable:true,away,home,eventId:proof.eventId,slateRevision:proof.revision,reason:null});
+  }
+  return out;
+}
+
 // Survivor candidates: the feed's games of the week that involve a team some entry picked (the published snapshot names
-// the picks, the feed the matchups), then any chain of the week the feed no longer lists.
-export function survivorCandidates({contestId,season,week,snapshot,events,source,data}={}){
+// the picks, the feed the matchups), then any chain of the week the feed no longer lists. HDC-14: a picked team the feed
+// no longer lists adds the matchup the same-week locked Pick'em slate proves, never one from another week or the feed.
+export function survivorCandidates({contestId,season,week,snapshot,events,source,data,slate=null}={}){
   const contestType='survivor',dataset=datasetFor(contestId,contestType,season,data),policy=policyForWeek(dataset,week);
   const covered=Number.isInteger(snapshot?.week)&&snapshot.week>=week,picked=covered?pickedTeams(snapshot.config,week):new Set();
   const rows=Array.isArray(data?.rulings)?data.rulings:[],list=[];
@@ -315,8 +476,10 @@ export function survivorCandidates({contestId,season,week,snapshot,events,source
     if(p&&(picked.has(p.away)||picked.has(p.home))&&!list.some(x=>x.away===p.away&&x.home===p.home))list.push(p);
   }
   for(const p of chainPairs(rows,week))if(!list.some(x=>x.away===p.away&&x.home===p.home))list.push(p);
+  if(slate)for(const r of survivorAbsentPicks({season,week,snapshot,events,slate}))
+    if(r.away&&r.home&&!list.some(x=>x.away===r.away&&x.home===r.home))list.push({away:r.away,home:r.home});
   return list.map(p=>assessCandidate({...p,gameIndex:null,publishedEventId:null,published:covered,publishedOnce:covered,
-    contestId,contestType,season,week,events,source,dataset,policy,rows}));
+    slateProof:slateProof(slate,{season,week,away:p.away,home:p.home}),contestId,contestType,season,week,events,source,dataset,policy,rows}));
 }
 
 // ---- requests ----------------------------------------------------------------------------------------------------------
@@ -366,6 +529,45 @@ export function hypotheticalRow(request,{contestType,chain,rulingId,createdAt}={
     evidence_source:later?(root?.evidence_source??null):request.p_evidence_source,public_note:request.p_public_note,created_at:createdAt};
 }
 
+// HDC-14: the absent-game function's arguments for one offered absent-game action: exactly the 10 approved keys, in order,
+// with an explicit NULL for every argument the action does not use. No incident status, event id or evidence source is
+// sent: the server derives them from the published data (a first ruling) or copies the chain's first row (a later row).
+export function buildAbsentRequest({contestId,week,candidate:c,action,consequence=null,publicNote,adminNote}={}){
+  if(!c)return{ok:false,reason:'choose a matchup first'};
+  if(contestId!==c.contestId||week!==c.week)return{ok:false,reason:'the matchup belongs to another contest or week'};
+  if(!ACTIONS.includes(action))return{ok:false,reason:'choose an action'};
+  const offered=c.absence?.actions?.[action];
+  if(!offered?.ok)return{ok:false,reason:offered?.reason||'that absent-game action is not available'};
+  const pub=checkPublicNote(publicNote);if(!pub.ok)return{ok:false,reason:pub.reason};
+  const adm=checkAdminNote(adminNote,{required:action==='withdraw'||action==='rerule'});if(!adm.ok)return{ok:false,reason:adm.reason};
+  const rules=action==='rule'||action==='rerule';
+  if(rules&&!c.consequences.includes(consequence))return{ok:false,reason:'the governing policy does not permit that consequence'};
+  const parent=action==='rule'?null:rulingIdValue(c.chain.last?.ruling_id);
+  if(action!=='rule'&&parent===null)return{ok:false,reason:'the chain has no current ruling to follow'};
+  return{ok:true,reason:null,request:{p_contest_id:contestId,p_week:week,p_away_team:c.away,p_home_team:c.home,p_action:action,
+    p_consequence:rules?consequence:null,p_expected_policy_revision:c.policy.revision,p_expected_parent_ruling_id:parent,
+    p_public_note:pub.value,p_admin_note:adm.value}};
+}
+
+// The absent-game function's non-writing permission test: a withdrawal whose expected parent no chain can have.
+export function absentWriteProbeRequest({contestId,week,away,home,policyRevision}={}){
+  return{p_contest_id:contestId,p_week:week,p_away_team:away,p_home_team:home,p_action:'withdraw',p_consequence:null,
+    p_expected_policy_revision:policyRevision,p_expected_parent_ruling_id:WRITE_PROBE_PARENT,p_public_note:'HDC-14 write-access check; writes nothing.',
+    p_admin_note:'Write-access check with an impossible expected parent; the database must refuse it with HDC14_STALE_CHAIN.'};
+}
+
+// The row the absent-game function would write, in public columns: a first ruling records STATUS_ABSENT, the published
+// event (eventId: none is null) and commissioner-attestation; every later row repeats the chain's first row.
+export function absentHypotheticalRow(request,{contestType,chain,eventId=null,rulingId,createdAt}={}){
+  const later=request.p_action!=='rule',root=chain?.root||null,last=chain?.last||null;
+  return{ruling_id:rulingId,contest_id:request.p_contest_id,contest_type:contestType,week:request.p_week,away_team:request.p_away_team,
+    home_team:request.p_home_team,policy_revision:request.p_expected_policy_revision,chain_seq:(last?.chain_seq||0)+1,
+    parent_ruling_id:last?last.ruling_id:null,
+    consequence:request.p_action==='withdraw'?WITHDRAWN:request.p_action==='reaffirm'?(last?.consequence??null):request.p_consequence,
+    incident_status:later?(root?.incident_status??null):ABSENT_INCIDENT_STATUS,event_id:later?(root?.event_id??null):(eventId??null),
+    evidence_source:later?(root?.evidence_source??null):ATTESTATION_SOURCE,public_note:request.p_public_note,created_at:createdAt};
+}
+
 // ---- previews: the shared HDC-12 evaluator before and after the hypothetical row ---------------------------------------
 
 // Tracked and (where published) full-field Pick'em entries with their pick per game, mapped as the public Pick'em page maps them.
@@ -390,6 +592,11 @@ function cardSlot(games,slots){
     return{state:'hold',reason:games.some(g=>[g.away,g.home].some(t=>t===x.away||t===x.home))?'it does not match the published game':'it does not match a published game in this contest'};
   };
 }
+// HDC-14: the NFL fact of an absent game, on the absence path only: the week feed lists no game of either team, so it is
+// not completed, has no winner and is still remaining, exactly as the public Pick'em page leaves it without a ruling.
+function absentFact(c){
+  return c.observation?.kind==='missing'?{away:c.away,home:c.home,state:'pre',completed:false,winner:null,awayScore:null,homeScore:null,absent:true}:null;
+}
 // The NFL fact of the ruled game, known here only when the feed reports it halted: not completed, no winner.
 function haltedFact(events,c){
   const o=c.observation,kind=o?.kind==='repaired'?o.incidentKind:o?.kind;
@@ -402,10 +609,10 @@ function haltedFact(events,c){
 const cellOf=(game,pick)=>!game?'nfl':game.void?'void':game.hold?'hold':game.completed?(game.winner?(pick===game.winner?'ok':'bad'):'neutral'):'pending';
 
 // One side (before or after) of a Pick'em preview, or the actual state read back after a write.
-export function pickemState({contestId,season,week,config,events,data,candidate:c}){
+export function pickemState({contestId,season,week,config,events,data,candidate:c,absent=false}){
   const dataset=datasetFor(contestId,'pickem',season,data),games=pickemGames(config)||[];
   const slots=games.map(g=>{const ruling=pickemSlotRuling(dataset,{week,season,away:g.away,home:g.home,events});return{ruling,effect:pickemSlotEffect(ruling)}});
-  const at=Number.isInteger(c.gameIndex)?slots[c.gameIndex]:null,fact=haltedFact(events,c);
+  const at=Number.isInteger(c.gameIndex)?slots[c.gameIndex]:null,fact=haltedFact(events,c)||(absent?absentFact(c):null);
   // The week's tiebreak, whichever game is previewed: the public Pick'em page voids it exactly when the configured tiebreak
   // game is VOID (games[TIEBREAK_INDEX].void, which pickemEffectiveGame sets for a void slot effect only).
   const tiebreak=Number.isInteger(config?.tiebreakGameIndex)?slots[config.tiebreakGameIndex]:null;
@@ -419,10 +626,13 @@ export function pickemState({contestId,season,week,config,events,data,candidate:
 }
 
 // The Pick'em preview: before (the rows as loaded) and after (with the row the server would write).
-export function pickemPreview({contestId,season,week,config,events,data,request,candidate:c,rulingId,createdAt}){
-  const row=hypotheticalRow(request,{contestType:'pickem',chain:c.chain,rulingId,createdAt});
-  const before=pickemState({contestId,season,week,config,events,data,candidate:c});
-  const after=pickemState({contestId,season,week,config,events,data:{...data,rulings:[...(data.rulings||[]),row]},candidate:c});
+// HDC-14: path 'absence' previews the absent-game function's row, with the absent game's NFL fact (pending).
+export function pickemPreview({contestId,season,week,config,events,data,request,candidate:c,path=null,rulingId,createdAt}){
+  const absent=path==='absence';
+  const row=absent?absentHypotheticalRow(request,{contestType:'pickem',chain:c.chain,eventId:c.absence?.evidence?.eventId??null,rulingId,createdAt})
+    :hypotheticalRow(request,{contestType:'pickem',chain:c.chain,rulingId,createdAt});
+  const before=pickemState({contestId,season,week,config,events,data,candidate:c,absent});
+  const after=pickemState({contestId,season,week,config,events,data:{...data,rulings:[...(data.rulings||[]),row]},candidate:c,absent});
   const entries=before.entries.map((e,i)=>({name:e.name,tracked:e.tracked,pick:e.pick,
     before:{cell:e.cell,w:e.w,l:e.l,left:e.left},after:{cell:after.entries[i].cell,w:after.entries[i].w,l:after.entries[i].l,left:after.entries[i].left}}));
   return{contestType:'pickem',before,after,entries,affected:entries.length,remaining:{before:before.remaining,after:after.remaining},
@@ -451,8 +661,9 @@ export function survivorState({contestId,season,week,snapshot,eventsByWeek,data,
 
 // The Survivor preview: affected entries (week pick in the ruled game), the tracked entries the page lists, the summary,
 // the awaiting and on-hold counts and the Rules card, before and after.
-export function survivorPreview({contestId,season,week,snapshot,eventsByWeek,data,request,candidate:c,rulingId,createdAt}){
-  const row=hypotheticalRow(request,{contestType:'survivor',chain:c.chain,rulingId,createdAt});
+export function survivorPreview({contestId,season,week,snapshot,eventsByWeek,data,request,candidate:c,path=null,rulingId,createdAt}){
+  const row=path==='absence'?absentHypotheticalRow(request,{contestType:'survivor',chain:c.chain,eventId:c.absence?.evidence?.eventId??null,rulingId,createdAt})
+    :hypotheticalRow(request,{contestType:'survivor',chain:c.chain,rulingId,createdAt});
   const before=survivorState({contestId,season,week,snapshot,eventsByWeek,data,candidate:c});
   const after=survivorState({contestId,season,week,snapshot,eventsByWeek,data:{...data,rulings:[...(data.rulings||[]),row]},candidate:c});
   const pair=(e,i)=>({name:e.name,tracked:e.tracked,pick:e.pick,before:e,after:after.entries[i]});
@@ -477,6 +688,10 @@ export function sameOutcome(a,b){return JSON.stringify(a)===JSON.stringify(b)}
 // ---- confirmation, preflight, errors, read-back, the write-access check --------------------------------------------------
 
 export function confirmationPhrase(c){return`${c.away} @ ${c.home}`}
+// HDC-14: an absent-game ruling or re-ruling is confirmed by typing the week, the matchup and the absence; a reaffirm or
+// withdrawal of an absence chain by the matchup, as on the HDC-13 path.
+export function absencePhrase(c){return`WEEK ${c.week} ${c.away} @ ${c.home} ABSENT`}
+export function absentActionPhrase(c,action){return action==='rule'||action==='rerule'?absencePhrase(c):confirmationPhrase(c)}
 const squash=s=>s.toUpperCase().replace(/\s+/g,'');
 // The typed matchup must be the phrase; letter case and spacing do not matter.
 export function confirmationMatches(typed,phrase){return typeof typed==='string'&&typeof phrase==='string'&&squash(phrase).length>0&&squash(typed)===squash(phrase)}
@@ -488,10 +703,12 @@ export function preflightKey(c){
   const o=c.observation;
   return JSON.stringify([c.contestId,c.week,c.key,c.published,c.publishedOnce,c.publishedEventId??null,c.policy?.revision??null,c.policy?.policy??null,
     c.chain.state,c.chain.last?.ruling_id??null,c.chain.rows.length,o?[o.kind,o.status??null,o.eventId??null,o.tied??null,o.incidentKind??null]:null,
-    c.evidence?[c.evidence.incidentStatus,c.evidence.eventId,c.evidence.evidenceSource]:null,c.underReview??null,ACTIONS.map(a=>c.actions[a].ok)]);
+    c.evidence?[c.evidence.incidentStatus,c.evidence.eventId,c.evidence.evidenceSource]:null,c.underReview??null,ACTIONS.map(a=>c.actions[a].ok),
+    c.absence?.label?[c.absence.eligible,c.absence.evidence?.eventId??null,c.absence.slateRevision??null,ACTIONS.map(a=>c.absence.actions[a].ok)]:null]);
 }
 
-const TOKEN=/^(HDC13_[A-Z_]+)(?::|$)/;
+const TOKEN=/^(HDC1[34]_[A-Z_]+)(?::|$)/;
+const TOKEN_TEXT=freeze({...HDC13_ERROR_TEXT,...HDC14_ERROR_TEXT});
 // A failed RPC: a known HDC13 token (a fixed message; nothing was written), PostgreSQL's permission denied, another
 // database refusal (it has an SQLSTATE or a Data API code: nothing was written; the text is shown as plain text), or a
 // lost response (no code: the outcome is unknown until the chain is read back).
@@ -499,8 +716,8 @@ export function rpcErrorInfo(error){
   const message=typeof error?.message==='string'?error.message:typeof error==='string'?error:'';
   const code=typeof error?.code==='string'?error.code:'';
   const hint=typeof error?.hint==='string'?error.hint:'';
-  const token=[hint,message.match(TOKEN)?.[1]].find(t=>t&&Object.hasOwn(HDC13_ERROR_TEXT,t))||null;
-  if(token)return{token,known:true,definitive:true,text:HDC13_ERROR_TEXT[token]};
+  const token=[hint,message.match(TOKEN)?.[1]].find(t=>t&&Object.hasOwn(TOKEN_TEXT,t))||null;
+  if(token)return{token,known:true,definitive:true,text:TOKEN_TEXT[token]};
   if(code==='42501')return{token:null,known:true,definitive:true,text:'The database denied access to the incident-ruling write (permission denied). Nothing was written.'};
   const definitive=/^(PGRST\d+|[0-9A-Z]{5})$/.test(code);
   return{token:null,known:false,definitive,text:definitive?`The database refused the request: ${message||code}. Nothing was written.`
@@ -523,6 +740,22 @@ export function classifyReadBack({beforeRows,afterRows,request,chain}={}){
     'evidence_source','public_note'].every(f=>(added[0][f]??null)===(expected[f]??null))?'LANDED':'CHANGED';
 }
 
+// HDC-14: the same read-back classification against the absent-game function's row (eventId: the published event a
+// first ruling records; a later row repeats the chain's first row).
+export function classifyAbsentReadBack({beforeRows,afterRows,request,chain,eventId=null}={}){
+  if(!Array.isArray(afterRows)||!request)return'CHANGED';
+  const mine=r=>r&&r.contest_id===request.p_contest_id&&r.week===request.p_week&&r.away_team===request.p_away_team&&r.home_team===request.p_home_team;
+  const before=(Array.isArray(beforeRows)?beforeRows:[]).filter(mine),after=afterRows.filter(mine);
+  const ids=new Set(before.map(r=>String(r.ruling_id)));
+  if(!before.every(b=>after.some(a=>String(a.ruling_id)===String(b.ruling_id)&&a.chain_seq===b.chain_seq&&a.consequence===b.consequence)))return'CHANGED';
+  const added=after.filter(a=>!ids.has(String(a.ruling_id)));
+  if(!added.length)return'NOT_WRITTEN';
+  if(added.length!==1)return'CHANGED';
+  const expected=absentHypotheticalRow(request,{contestType:added[0].contest_type,chain,eventId,rulingId:added[0].ruling_id,createdAt:added[0].created_at});
+  return['contest_id','week','away_team','home_team','policy_revision','chain_seq','parent_ruling_id','consequence','incident_status','event_id',
+    'evidence_source','public_note'].every(f=>(added[0][f]??null)===(expected[f]??null))?'LANDED':'CHANGED';
+}
+
 // The write-access check's answer: HDC13_STALE_CHAIN means the caller passed the commissioner check and nothing was written.
 export function probeOutcome({data,error}={}){
   if(!error)return{status:'unexpected',token:null,text:`UNEXPECTED: the write-access check returned ${data?'a written row':'no refusal'}. It must never write; read the chain back and investigate before using this page.`};
@@ -530,4 +763,12 @@ export function probeOutcome({data,error}={}){
   if(info.token==='HDC13_STALE_CHAIN')return{status:'authorized',token:info.token,text:'Write access confirmed: the database answered HDC13_STALE_CHAIN to the impossible expected parent, after the commissioner check.'};
   if(info.token==='HDC13_NOT_COMMISSIONER'||(!info.token&&String(error?.code)==='42501'))return{status:'denied',token:info.token,text:'This account is not authorized to record incident rulings: the database refused it.'};
   return{status:'inconclusive',token:info.token,text:`The write-access check was inconclusive: ${info.text}`};
+}
+// HDC-14: the absent-game function's write-access check: HDC14_STALE_CHAIN means the caller passed the commissioner check.
+export function absentProbeOutcome({data,error}={}){
+  if(!error)return{status:'unexpected',token:null,text:`UNEXPECTED: the absent-game write-access check returned ${data?'a written row':'no refusal'}. It must never write; read the chain back and investigate before using this page.`};
+  const info=rpcErrorInfo(error);
+  if(info.token==='HDC14_STALE_CHAIN')return{status:'authorized',token:info.token,text:'Absent-game write access confirmed: the database answered HDC14_STALE_CHAIN to the impossible expected parent, after the commissioner check.'};
+  if(info.token==='HDC14_NOT_COMMISSIONER'||(!info.token&&String(error?.code)==='42501'))return{status:'denied',token:info.token,text:'This account is not authorized to record absent-game rulings: the database refused it.'};
+  return{status:'inconclusive',token:info.token,text:`The absent-game write-access check was inconclusive: ${info.text}`};
 }

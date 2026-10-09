@@ -20,6 +20,12 @@ let totalEntriesInput={raw:'',badInput:false};
 // write whose response was lost can still commit afterwards). The next publish of that week checks whether it landed
 // before writing anything, so a write that did land is not written a second time.
 let lastAttempt=null;
+// HDC-14: the typed absent-game confirmation a candidate was validated with (WEEK N AWAY @ HOME ABSENT, one per line). A
+// sheet game the week's NFL feed no longer lists (no listing of either team) is published only with its exact phrase, as
+// an explicit exception the locked week records; it is published without an event id. The confirmation is part of the
+// validated state: changing it invalidates the candidate, and it is frozen while a publish is running.
+let candidateAbsence=null;
+const ABSENT_EXCEPTION='absent-from-week-feed';
 
 function selectedSeason(){const n=Number($('season').value);if(!Number.isInteger(n)||n<2020||n>2100)throw new Error('Season must be between 2020 and 2100.');return n}
 function totalEntriesField(){const el=$('totalEntries');return{raw:String(el.value??'').trim(),badInput:!!el.validity?.badInput}}
@@ -35,8 +41,10 @@ const fieldUnavailableReason=c=>(c?.fullFieldIssues||[]).join('; ')||'regular co
 const trackedNoSubmission=p=>Array.isArray(p?.pickNumbers)&&p.pickNumbers.length>0&&p.pickNumbers.every(n=>n===null)&&p.tiebreak===null;
 function message(text,type='info'){$('message').className=`notice ${type}`;$('message').textContent=text;$('message').hidden=!text}
 function fileContextCurrent(file,generation){return !!file&&currentFile===file&&fileGeneration===generation}
-function canPublish(){return !!session&&!!candidate&&scheduleVerified&&candidateFile===currentFile&&candidateFileGeneration===fileGeneration&&competitionSizeCurrent(candidateCompetitionSize)&&totalEntriesShown()}
-function setBusy(on,text='Working…'){$('busy').hidden=!on;$('busyText').textContent=text;$('parseBtn').disabled=on||!currentFile;$('publishBtn').disabled=on||!canPublish();$('sendCode').disabled=on;$('verifyCode').disabled=on;$('season').disabled=on;$('totalEntries').disabled=on;$('detectedWeek').disabled=on;$('tiebreakGame').disabled=on;$('replaceLocked').disabled=on}
+const absenceText=()=>String($('absenceConfirm').value??'');
+const absenceShown=()=>absenceText()===candidateAbsence;
+function canPublish(){return !!session&&!!candidate&&scheduleVerified&&candidateFile===currentFile&&candidateFileGeneration===fileGeneration&&competitionSizeCurrent(candidateCompetitionSize)&&totalEntriesShown()&&absenceShown()}
+function setBusy(on,text='Working…'){$('busy').hidden=!on;$('busyText').textContent=text;$('parseBtn').disabled=on||!currentFile;$('publishBtn').disabled=on||!canPublish();$('sendCode').disabled=on;$('verifyCode').disabled=on;$('season').disabled=on;$('totalEntries').disabled=on;$('absenceConfirm').disabled=on;$('detectedWeek').disabled=on;$('tiebreakGame').disabled=on;$('replaceLocked').disabled=on}
 function staleFileError(){const e=new Error('Selected file changed while validation was running.');e.name='StaleFileContext';return e}
 function assertFileContext(file,generation,operation=null){if(!fileContextCurrent(file,generation)||(operation!==null&&operation!==parseGeneration))throw staleFileError()}
 function invalidateParsedState(){candidates=[];candidate=null;scheduleVerified=false;candidateFile=null;candidateFileGeneration=-1;candidateCompetitionSize=undefined;$('review').hidden=true;$('publishResult').hidden=true;$('weekChoice').hidden=true;$('replaceLocked').checked=false;$('publishBtn').disabled=true}
@@ -84,6 +92,9 @@ $('season').addEventListener('change',()=>{parseGeneration++;invalidateParsedSta
 function totalEntriesChanged(){if(publishInFlight){showTotalEntries();message('Publishing is in progress. Total pool entries cannot be changed until it finishes.','info');return}const had=!!candidate;acceptTotalEntries();parseGeneration++;invalidateParsedState();setBusy(false);if(had)message('Total pool entries changed. Read the weekly sheet again.','info')}
 $('totalEntries').addEventListener('input',totalEntriesChanged);
 $('totalEntries').addEventListener('change',totalEntriesChanged);
+function absenceChanged(){if(publishInFlight){$('absenceConfirm').value=candidateAbsence??'';message('Publishing is in progress. The absent-game confirmation cannot be changed until it finishes.','info');return}const had=!!candidate;parseGeneration++;invalidateParsedState();setBusy(false);if(had)message('Absent-game confirmation changed. Read the weekly sheet again.','info')}
+$('absenceConfirm').addEventListener('input',absenceChanged);
+$('absenceConfirm').addEventListener('change',absenceChanged);
 $('file').addEventListener('change',()=>setCurrentFile($('file').files?.[0]||null));
 $('drop').addEventListener('dragover',e=>{e.preventDefault();$('drop').classList.add('over')});
 $('drop').addEventListener('dragleave',()=>$('drop').classList.remove('over'));
@@ -116,15 +127,15 @@ $('parseBtn').addEventListener('click',async()=>{
   const sourceFile=currentFile,sourceGeneration=fileGeneration;if(!sourceFile)return;const operation=++parseGeneration;
   setBusy(true,'Reading weekly sheet…');message('');invalidateParsedState();
   try{
-    const expectedCompetitionSize=selectedCompetitionSize();
+    const expectedCompetitionSize=selectedCompetitionSize(),typedAbsences=absenceText();
     const groups=await fileGroups(sourceFile);assertFileContext(sourceFile,sourceGeneration,operation);
     const season=selectedSeason(),localCandidates=parseDocumentGroups(groups,{filename:sourceFile.name,season,expectedCompetitionSize});assertFileContext(sourceFile,sourceGeneration,operation);
     const valid=localCandidates.filter(c=>!c.errors.length&&c.config.participants.length===TARGETS.length);
     if(!valid.length){const details=localCandidates.map(c=>`Week ${c.week}: ${c.errors.join('; ')||'not all tracked entries found'}`).join(' | ');throw new Error(`No complete tracked week was found. ${details}`)}
     const selected=chooseBestCandidate(localCandidates);assertFileContext(sourceFile,sourceGeneration,operation);
     candidates=localCandidates;candidate=selected;candidateFile=sourceFile;candidateFileGeneration=sourceGeneration;candidateCompetitionSize=expectedCompetitionSize;renderCandidateSelector(valid,sourceFile,sourceGeneration);
-    await prepareCandidate(candidate,sourceFile,sourceGeneration,operation);assertFileContext(sourceFile,sourceGeneration,operation);
-    message(candidate.config.fullFieldReady===true?`Week ${candidate.week} parsed with ${candidate.config.competitionSize} competition entries and matched to the NFL schedule. Review it before publishing.`:`Week ${candidate.week} parsed. Full-field metrics unavailable — ${fieldUnavailableReason(candidate)}. The four tracked entries remain valid.`,'success');
+    await prepareCandidate(candidate,sourceFile,sourceGeneration,operation,typedAbsences);assertFileContext(sourceFile,sourceGeneration,operation);
+    message(`${candidate.config.fullFieldReady===true?`Week ${candidate.week} parsed with ${candidate.config.competitionSize} competition entries and matched to the NFL schedule. Review it before publishing.`:`Week ${candidate.week} parsed. Full-field metrics unavailable — ${fieldUnavailableReason(candidate)}. The four tracked entries remain valid.`}${absentNote(candidate.config)}`,'success');
   }catch(e){
     if(e?.name==='StaleFileContext')return;
     if(fileContextCurrent(sourceFile,sourceGeneration)&&operation===parseGeneration){message(e.message||String(e),'error');invalidateParsedState()}
@@ -135,19 +146,46 @@ function renderCandidateSelector(valid,sourceFile,sourceGeneration){
   const sel=$('detectedWeek');sel.innerHTML=valid.map(c=>`<option value="${c.week}">Week ${c.week} · ${c.gameCount} games · ${c.config.competitionSize||c.config.participants.length} entries</option>`).join('');sel.value=String(candidate.week);$('weekChoice').hidden=valid.length<2;
   sel.onchange=async()=>{
     assertFileContext(sourceFile,sourceGeneration);if(!candidates.length)return;const operation=++parseGeneration;candidate=valid.find(c=>c.week===Number(sel.value));candidateFile=sourceFile;candidateFileGeneration=sourceGeneration;scheduleVerified=false;$('publishBtn').disabled=true;setBusy(true,'Checking NFL schedule…');message('');
-    try{await prepareCandidate(candidate,sourceFile,sourceGeneration,operation);assertFileContext(sourceFile,sourceGeneration,operation);message(`Week ${candidate.week} selected and verified.`,'success')}
+    try{await prepareCandidate(candidate,sourceFile,sourceGeneration,operation,absenceText());assertFileContext(sourceFile,sourceGeneration,operation);message(`Week ${candidate.week} selected and verified.${absentNote(candidate.config)}`,'success')}
     catch(e){if(e?.name!=='StaleFileContext'&&fileContextCurrent(sourceFile,sourceGeneration)&&operation===parseGeneration){scheduleVerified=false;renderReview();message(e.message||String(e),'error')}}
     finally{if(fileContextCurrent(sourceFile,sourceGeneration)&&operation===parseGeneration)setBusy(false)}
   };
 }
 
 function eventPair(event){const cs=event?.competitions?.[0]?.competitors||[],a=cs.find(x=>x.homeAway==='away'),h=cs.find(x=>x.homeAway==='home');return{away:norm(a?.team?.abbreviation),home:norm(h?.team?.abbreviation)}}
-async function verifySchedule(config){
-  const url=`${ESPN_SCOREBOARD}?dates=${config.season}&seasontype=2&week=${config.week}&limit=100&_=${Date.now()}`;
+async function readSchedule(season,week){
+  const url=`${ESPN_SCOREBOARD}?dates=${season}&seasontype=2&week=${week}&limit=100&_=${Date.now()}`;
   const r=await fetch(url,{cache:'no-store',headers:{Accept:'application/json'}});if(!r.ok)throw new Error(`NFL schedule feed returned ${r.status}`);const j=await r.json();if(!Array.isArray(j.events)||!j.events.length)throw new Error('NFL schedule feed returned no games.');
-  const usedEventIds=new Set();
+  return j.events;
+}
+// HDC-14. A sheet game is absent from its week's feed only when every listing of the week is a readable pair and none names
+// either team, in any orientation or against any opponent: a reversed, duplicate, re-paired or unreadable listing is never
+// an absence, and no other week is ever read. The sheet must name each of its teams in this game only.
+function readablePair(e){
+  const cs=Array.isArray(e?.competitions)&&e.competitions.length===1?e.competitions[0]?.competitors:null;
+  if(!Array.isArray(cs)||cs.length!==2)return false;
+  const a=cs.filter(x=>x?.homeAway==='away'),h=cs.filter(x=>x?.homeAway==='home');
+  return a.length===1&&h.length===1&&typeof a[0]?.team?.abbreviation==='string'&&typeof h[0]?.team?.abbreviation==='string'&&!!a[0].team.abbreviation&&a[0].team.abbreviation!==h[0].team.abbreviation;
+}
+const listedTeams=e=>(Array.isArray(e?.competitions)?e.competitions:[]).flatMap(c=>(Array.isArray(c?.competitors)?c.competitors:[]).map(x=>norm(String(x?.team?.abbreviation??''))));
+function absentFromFeed(events,away,home){return events.every(readablePair)&&!events.some(e=>listedTeams(e).some(t=>t===away||t===home))}
+const onlyGameOfItsTeams=(games,i)=>{const a=norm(games[i].away),h=norm(games[i].home);return !games.some((g,j)=>j!==i&&[norm(g.away),norm(g.home)].some(t=>t===a||t===h))};
+const absencePhrase=(week,away,home)=>`WEEK ${week} ${away} @ ${home} ABSENT`;
+const absenceLines=text=>String(text??'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+const absentNote=cfg=>(cfg?.publicationExceptions||[]).map(x=>` ${x.away} at ${x.home} is published as ABSENT FROM WEEK ${x.week} FEED by your typed exception.`).join('');
+async function verifySchedule(config,typed=''){
+  const events=await readSchedule(config.season,config.week);
+  const confirmations=absenceLines(typed),confirmed=new Set(),exceptions=[],usedEventIds=new Set();
   const games=config.games.map((g,i)=>{
-    const matches=j.events.filter(e=>{const p=eventPair(e);return p.away===norm(g.away)&&p.home===norm(g.home)});
+    const away=norm(g.away),home=norm(g.home);
+    const matches=events.filter(e=>{const p=eventPair(e);return p.away===away&&p.home===home});
+    // Found 0 matching NFL games stays an error unless the commissioner typed this game's exact absence phrase.
+    if(!matches.length&&onlyGameOfItsTeams(config.games,i)&&absentFromFeed(events,away,home)){
+      const phrase=absencePhrase(config.week,away,home);
+      if(!confirmations.includes(phrase))throw new Error(`Schedule mismatch for ${g.away} at ${g.home}. Found 0 matching NFL games. Neither team is listed in the NFL Week ${config.week} feed. If this game was moved out of Week ${config.week}, type ${phrase} under Absent games and read the sheet again to publish it with an explicit absence exception.`);
+      confirmed.add(phrase);exceptions.push({type:ABSENT_EXCEPTION,week:config.week,gameIndex:i,away,home,confirmation:phrase});
+      return{...g,index:i};
+    }
     if(matches.length!==1)throw new Error(`Schedule mismatch for ${g.away} at ${g.home}. Found ${matches.length} matching NFL games.`);
     const e=matches[0],eventId=String(e.id||'');
     if(!eventId)throw new Error(`Schedule event for ${g.away} at ${g.home} is missing an event ID.`);
@@ -155,12 +193,13 @@ async function verifySchedule(config){
     usedEventIds.add(eventId);
     return{...g,index:i,eventId,date:String(e.date||'').slice(0,10)};
   });
-  if(j.events.length<games.length)throw new Error(`NFL feed has ${j.events.length} games but the sheet has ${games.length}.`);
-  return{...config,games};
+  for(const line of confirmations)if(!confirmed.has(line))throw new Error(`Absent-game confirmation "${line}" does not match a sheet game missing from the NFL Week ${config.week} feed. Correct or clear it, then read the sheet again.`);
+  if(events.length<games.length-exceptions.length)throw new Error(`NFL feed has ${events.length} games but the sheet has ${games.length}.`);
+  return exceptions.length?{...config,games,publicationExceptions:exceptions}:{...config,games};
 }
-async function prepareCandidate(c,sourceFile,sourceGeneration,operation){
+async function prepareCandidate(c,sourceFile,sourceGeneration,operation,typedAbsences){
   assertFileContext(sourceFile,sourceGeneration,operation);let cfg=structuredClone(c.config);const localErrors=validateConfig(cfg);if(localErrors.length)throw new Error(localErrors.join(' · '));
-  cfg=await verifySchedule(cfg);assertFileContext(sourceFile,sourceGeneration,operation);c.config=cfg;candidateFile=sourceFile;candidateFileGeneration=sourceGeneration;scheduleVerified=true;renderReview();
+  cfg=await verifySchedule(cfg,typedAbsences);assertFileContext(sourceFile,sourceGeneration,operation);c.config=cfg;candidateFile=sourceFile;candidateFileGeneration=sourceGeneration;candidateAbsence=typedAbsences;scheduleVerified=true;renderReview();
 }
 
 function renderReview(){
@@ -169,7 +208,8 @@ function renderReview(){
   $('entryReview').innerHTML=cfg.participants.map(p=>{const blank=trackedNoSubmission(p);return`<tr><td>${esc(p.displayName)}</td><td class="nums">${blank?'NO PICKS SUBMITTED':p.pickNumbers.join(' ')}</td><td><b>${blank?'—':esc(p.tiebreak)}</b></td></tr>`}).join('');
   const tb=$('tiebreakGame');tb.innerHTML=cfg.games.map((g,i)=>`<option value="${i}">${i+1}. ${g.away} at ${g.home}</option>`).join('');tb.value=String(cfg.tiebreakGameIndex);tb.onchange=()=>{cfg.tiebreakGameIndex=Number(tb.value)};
   const fieldWarning=cfg.fullFieldReady===true?`<span class="check">✓ Full-field regular Pick'em data validated · ${cfg.competitionSize} entries</span>`:`<span class="field-warn">⚠ Full-field metrics unavailable — ${esc(fieldUnavailableReason(candidate))}. The four tracked entries remain valid.</span>`;
-  $('validation').innerHTML=scheduleVerified?`<span class="check">✓ Tracked rows valid</span><span class="check">✓ Four tracked entries found</span><span class="check">✓ Anonymous privacy allowlist enforced</span>${fieldWarning}<span class="check">✓ NFL schedule matched</span>`:'<span class="bad">Schedule verification required</span>';
+  const absent=(cfg.publicationExceptions||[]).map(x=>`<span class="field-warn">⚠ ${esc(x.away)} at ${esc(x.home)}: ABSENT FROM WEEK ${esc(x.week)} FEED — published by your typed absence exception; no NFL event is recorded for it, and it is ruled on separately</span>`).join('');
+  $('validation').innerHTML=scheduleVerified?`<span class="check">✓ Tracked rows valid</span><span class="check">✓ Four tracked entries found</span><span class="check">✓ Anonymous privacy allowlist enforced</span>${fieldWarning}<span class="check">✓ NFL schedule matched</span>${absent}`:'<span class="bad">Schedule verification required</span>';
   $('publishBtn').disabled=!canPublish();
 }
 
@@ -218,14 +258,28 @@ $('publishBtn').addEventListener('click',async()=>{
   if(publishInFlight)return;
   if(!session||session.user?.email?.toLowerCase()!==ADMIN_EMAIL){message('Sign in before publishing.','error');return}
   const publishFile=currentFile,publishGeneration=fileGeneration,publishCandidate=candidate,publishCompetitionSize=candidateCompetitionSize;
-  if(!publishCandidate||!scheduleVerified||!fileContextCurrent(publishFile,publishGeneration)||candidateFile!==publishFile||candidateFileGeneration!==publishGeneration||!competitionSizeCurrent(publishCompetitionSize)||!totalEntriesShown()){invalidateParsedState();message('The selected file changed or is no longer validated. Read and validate it again before publishing.','error');return}
+  if(!publishCandidate||!scheduleVerified||!fileContextCurrent(publishFile,publishGeneration)||candidateFile!==publishFile||candidateFileGeneration!==publishGeneration||!competitionSizeCurrent(publishCompetitionSize)||!totalEntriesShown()||!absenceShown()){invalidateParsedState();message('The selected file changed or is no longer validated. Read and validate it again before publishing.','error');return}
   publishInFlight=true;$('file').disabled=true;setBusy(true,'Publishing and locking week…');message('');
   const cfg=structuredClone(publishCandidate.config),configSnapshot=JSON.stringify(publishCandidate.config),replaceLocked=$('replaceLocked').checked,errors=validateConfig(cfg);
-  const assertPublishContext=()=>{if(!fileContextCurrent(publishFile,publishGeneration)||candidate!==publishCandidate||candidateFile!==publishFile||candidateFileGeneration!==publishGeneration||!scheduleVerified||JSON.stringify(publishCandidate.config)!==configSnapshot||candidateCompetitionSize!==publishCompetitionSize||!competitionSizeCurrent(publishCompetitionSize))throw staleFileError()};
+  const assertPublishContext=()=>{if(!fileContextCurrent(publishFile,publishGeneration)||candidate!==publishCandidate||candidateFile!==publishFile||candidateFileGeneration!==publishGeneration||!scheduleVerified||JSON.stringify(publishCandidate.config)!==configSnapshot||candidateCompetitionSize!==publishCompetitionSize||!competitionSizeCurrent(publishCompetitionSize)||!absenceShown())throw staleFileError()};
   let attempt=null;
   try{
     if(errors.length)throw new Error(errors.join(' · '));
     assertPublishContext();
+    // HDC-14: an absence exception holds only while the week's feed still lists no game of either team; it is re-checked
+    // against the same week before anything is read or written. No other week is ever read.
+    const exceptions=Array.isArray(cfg.publicationExceptions)?cfg.publicationExceptions:[];
+    if(exceptions.length){
+      let events;
+      try{events=await readSchedule(cfg.season,cfg.week)}
+      catch(e){throw new Error(`Publish refused: the NFL Week ${cfg.week} feed could not be re-checked for ${exceptions.map(x=>`${x.away} at ${x.home}`).join(', ')} (${e?.message||e}). Nothing was written. You can retry Publish.`)}
+      assertPublishContext();
+      const back=exceptions.find(x=>!absentFromFeed(events,x.away,x.home));
+      if(back){
+        const listed=events.some(e=>listedTeams(e).some(t=>t===back.away||t===back.home));
+        requireRevalidation(`Publish refused: ${back.away} at ${back.home} is no longer absent from the NFL Week ${cfg.week} feed (${listed?`a game of ${back.away} or ${back.home} is listed`:'the feed now lists a game it cannot read'}), so its absence exception no longer holds. Nothing was written. Read and validate the sheet again before publishing.`);return;
+      }
+    }
     const existing=await readWeek(cfg.season,cfg.week);assertPublishContext();
     const digest=await sha256(publishFile);assertPublishContext();
     cfg.source={kind:'weekly-upload',filename:publishFile.name,sha256:digest};

@@ -1,7 +1,7 @@
 'use strict';
 import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';
 import {groupSurvivorPdfTextItems,parseSurvivorPages,validateSurvivorConfig} from './survivor-parser.js?v=3';
-import {verifySurvivorSchedule,survivorPublishGuard} from './survivor-publish-checks.js?v=2';
+import {verifySurvivorSchedule,survivorPublishGuard,survivorScheduleWeek} from './survivor-publish-checks.js?v=3';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
@@ -21,9 +21,12 @@ function staleError(){const e=new Error('The selected file or season changed whi
 function assertParseContext(file,generation,operation,season){if(!fileContextCurrent(file,generation)||operation!==parseGeneration||seasonValue()!==season)throw staleError()}
 function candidateCurrent(){return !!candidate&&candidateFile===currentFile&&candidateFileGeneration===fileGeneration&&candidateSeason===seasonValue()}
 function dbCheckCurrent(c){return !!c?.db&&!!session&&session.user?.id===c.db.userId}
-function canPublish(){return !!session&&!busy&&!authBusy&&!publishInFlight&&candidateCurrent()&&candidate.verified===true&&candidate.published!==true&&dbCheckCurrent(candidate)&&!candidate.guard.blocking.length&&(!candidate.guard.requiresConfirmation||$('confirmPartial').checked)}
+// HDC-14: the typed absent-game confirmation the candidate was validated with is part of its validated state.
+const absenceText=()=>String($('absenceConfirm').value??'');
+const absenceLines=text=>String(text??'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+function canPublish(){return !!session&&!busy&&!authBusy&&!publishInFlight&&candidateCurrent()&&candidate.verified===true&&candidate.published!==true&&dbCheckCurrent(candidate)&&!candidate.guard.blocking.length&&(!candidate.guard.requiresConfirmation||$('confirmPartial').checked)&&absenceText()===candidate.absenceText}
 function syncPublish(){$('publishBtn').disabled=!canPublish()}
-function syncControls(){const locked=busy||publishInFlight;$('parseBtn').disabled=locked||!currentFile;$('file').disabled=locked;$('season').disabled=locked;$('replaceLocked').disabled=locked;$('confirmPartial').disabled=locked;$('sendCode').disabled=locked||authBusy;$('verifyCode').disabled=locked||authBusy;$('signOut').disabled=publishInFlight||authBusy;syncPublish()}
+function syncControls(){const locked=busy||publishInFlight;$('parseBtn').disabled=locked||!currentFile;$('file').disabled=locked;$('season').disabled=locked;$('absenceConfirm').disabled=locked;$('replaceLocked').disabled=locked;$('confirmPartial').disabled=locked;$('sendCode').disabled=locked||authBusy;$('verifyCode').disabled=locked||authBusy;$('signOut').disabled=publishInFlight||authBusy;syncPublish()}
 function setBusy(on,text='Working…'){busy=on;$('busy').hidden=!on;$('busyText').textContent=text;syncControls()}
 function invalidateCandidate(){candidate=null;candidateFile=null;candidateFileGeneration=-1;candidateSeason=null;dbGeneration++;$('review').hidden=true;$('publishResult').hidden=true;$('replaceLocked').checked=false;$('confirmPartial').checked=false;$('confirmWrap').hidden=true;$('publishBtn').disabled=true}
 function renderAuth(){const signed=!!session;$('signedOut').hidden=signed;$('signedIn').hidden=!signed;$('signedEmail').textContent=signed?session.user.email:'';$('authState').textContent=signed?'AUTHORIZED':'SIGN IN REQUIRED';$('authState').className=`pill ${signed?'ok':'warn'}`;syncControls()}
@@ -46,6 +49,11 @@ function setFile(file){
 $('file').addEventListener('change',e=>setFile(e.target.files?.[0]||null));['dragenter','dragover'].forEach(type=>$('drop').addEventListener(type,e=>{e.preventDefault();$('drop').classList.add('over')}));['dragleave','drop'].forEach(type=>$('drop').addEventListener(type,e=>{e.preventDefault();$('drop').classList.remove('over')}));$('drop').addEventListener('drop',e=>setFile(e.dataTransfer?.files?.[0]||null));
 $('season').addEventListener('change',()=>{if(publishInFlight)return;parseGeneration++;const had=!!candidate;invalidateCandidate();setBusy(false);if(had)msg('Season changed. Read & validate the Survivor sheet again.','info')});
 $('confirmPartial').addEventListener('change',syncPublish);
+function absenceChanged(){
+  if(publishInFlight){$('absenceConfirm').value=candidate?.absenceText??'';msg('Publishing is in progress. The absent-game confirmation cannot be changed until it finishes.','info');return}
+  parseGeneration++;const had=!!candidate;invalidateCandidate();setBusy(false);if(had)msg('Absent-game confirmation changed. Read & validate the Survivor sheet again.','info');
+}
+$('absenceConfirm').addEventListener('input',absenceChanged);$('absenceConfirm').addEventListener('change',absenceChanged);
 
 async function pdfPages(file){const pdfjs=await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs');pdfjs.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs';const data=new Uint8Array(await file.arrayBuffer()),pdf=await pdfjs.getDocument({data}).promise,pages=[];for(let n=1;n<=pdf.numPages;n++){const page=await pdf.getPage(n),content=await page.getTextContent(),rows=groupSurvivorPdfTextItems(content.items);pages.push({pageNumber:n,rows})}return pages}
 async function sha256(file){const bytes=await file.arrayBuffer();if(!bytes.byteLength)throw new Error('The selected file is empty.');const digest=await crypto.subtle.digest('SHA-256',bytes);return[...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('')}
@@ -61,6 +69,19 @@ async function fetchSchedules(season,week){
     try{out[w]=await r.json()}catch{throw new Error(`NFL schedule feed returned unreadable data for Week ${w}. Schedule verification is required before publishing.`)}
   }));
   return out;
+}
+// HDC-14: the locked Pick'em slates of the season, the only proof of a Survivor matchup the week feed no longer lists.
+async function readPickemSlates(season){
+  const {data,error}=await neon.from('nfl_pool_weeks').select('season,week,status,revision,config').eq('season',season).eq('status','locked');
+  if(error)throw new Error(`Could not read the published Pick'em slates for ${season}: ${error.message||error}`);
+  if(!Array.isArray(data))throw new Error(`Could not read the published Pick'em slates for ${season}.`);
+  return data;
+}
+// HDC-14: one week of the feed, re-read at publish to re-check an absence exception; the raw failure is reported.
+async function recheckWeek(season,week){
+  const r=await fetch(`${ESPN_SCOREBOARD}?dates=${season}&seasontype=2&week=${week}&limit=100&_=${Date.now()}`,{cache:'no-store',headers:{Accept:'application/json'}});
+  if(!r.ok)throw new Error(`NFL schedule feed returned ${r.status}`);
+  return r.json();
 }
 async function readPublished(season,{withConfig=true}={}){
   const {data,error}=await neon.from('nfl_survivor_weeks').select(`season,week,status,revision,source_sha256,updated_at${withConfig?',config':''}`).eq('season',season);
@@ -91,7 +112,8 @@ function renderCandidate(){
   const c=candidate.config,g=candidate.guard,r=candidate.review,geo=r.geometry||{};$('review').hidden=false;
   $('reviewTitle').textContent=`${c.season} · Week ${c.week} · ${c.competitionSize} entries · ${c.currentWeekEntryCount} with Week ${c.week} pick`;
   const stateChip=g.blocking.length?'<span class="bad">✕ Publishing blocked — see below</span>':g.requiresConfirmation?'<span class="field-warn">⚠ Confirmation required before publishing</span>':'<span class="check">✓ Consistent with published Survivor state</span>';
-  $('validation').innerHTML=`<span class="check">✓ Three tracked Survivor entries found</span><span class="check">✓ Anonymous field privacy enforced</span><span class="check">✓ Week columns and participant table validated</span><span class="check">✓ ${Number(c.competitionSize)} total entries</span><span class="check">✓ NFL schedule verified for Weeks 1–${Number(c.week)}</span>${stateChip}`;
+  const absent=(c.publicationExceptions||[]).map(x=>`<span class="field-warn">⚠ ${esc(x.away)} @ ${esc(x.home)}: ABSENT FROM WEEK ${esc(x.week)} FEED — published by your typed absence exception (Pick'em Week ${esc(x.week)} revision ${esc(x.pickemRevision)} proves the matchup); its picks stay pending until a ruling is recorded</span>`).join('');
+  $('validation').innerHTML=`<span class="check">✓ Three tracked Survivor entries found</span><span class="check">✓ Anonymous field privacy enforced</span><span class="check">✓ Week columns and participant table validated</span><span class="check">✓ ${Number(c.competitionSize)} total entries</span><span class="check">✓ NFL schedule verified for Weeks 1–${Number(c.week)}</span>${absent}${stateChip}`;
   $('entryReview').innerHTML=c.trackedEntries.map(p=>`<tr><td><b>${esc(p.displayName)}</b></td><td class="nums">${p.picks.map((x,i)=>`W${i+1} ${esc(x||'—')}`).join(' · ')}</td><td>${esc(p.picks[c.week-1]||'NO PICK')}</td></tr>`).join('');
   const blank=r.blankEntrants.map(x=>`${x.label}${x.page!=null?` (page ${x.page})`:''}`),ignored=r.ignoredRows.map(x=>`${x.text}${x.page!=null?` (page ${x.page})`:''} — ${x.reason}`);
   const geometry=`Sheet geometry: Week column gap ${geo.weekGap??'—'}pt · pick text offset ${geo.columnOffset??'—'}pt · row pitch ${geo.rowPitch??'—'}pt · name x ${geo.nameX?geo.nameX.join('–'):'—'}.`;
@@ -105,7 +127,7 @@ function renderCandidate(){
 $('parseBtn').onclick=async()=>{
   const sourceFile=currentFile,sourceGeneration=fileGeneration;if(!sourceFile||publishInFlight||busy)return;
   let season;try{season=selectedSeason()}catch(e){msg(e.message,'error');return}
-  const operation=++parseGeneration;invalidateCandidate();setBusy(true,'Reading Survivor PDF…');msg('');
+  const operation=++parseGeneration,typedAbsences=absenceText();invalidateCandidate();setBusy(true,'Reading Survivor PDF…');msg('');
   try{
     const digest=await sha256(sourceFile);assertParseContext(sourceFile,sourceGeneration,operation,season);
     const pages=await pdfPages(sourceFile);assertParseContext(sourceFile,sourceGeneration,operation,season);
@@ -113,11 +135,23 @@ $('parseBtn').onclick=async()=>{
     const errs=validateSurvivorConfig(result.config);if(errs.length)throw new Error(errs.join(' · '));
     const week=result.config.week;setBusy(true,`Verifying NFL schedule for Weeks 1–${week}…`);
     const payloads=await fetchSchedules(season,week);assertParseContext(sourceFile,sourceGeneration,operation,season);
-    const verification=verifySurvivorSchedule(result.config,payloads);
-    if(!verification.ok)throw new Error(`NFL schedule verification failed; this sheet cannot be published: ${verification.errors.join(' · ')}`);
+    // HDC-14: a pick the feed does not schedule is checked against the same-week locked Pick'em slate, and published only
+    // with the exact typed absence confirmation, which the snapshot records. The slates are read only when needed.
+    const absenceConfirmations=absenceLines(typedAbsences);
+    let verification=verifySurvivorSchedule(result.config,payloads,{absenceConfirmations});
+    let slateNote='';
+    if(verification.offSchedule.length){
+      setBusy(true,"Checking the same-week Pick'em slates…");
+      let pickemSlates=null;
+      try{pickemSlates=await readPickemSlates(season)}catch(e){slateNote=` (The same-week Pick'em slates could not be read to check for absent games: ${e.message||e}.)`}
+      assertParseContext(sourceFile,sourceGeneration,operation,season);
+      if(pickemSlates)verification=verifySurvivorSchedule(result.config,payloads,{pickemSlates,absenceConfirmations});
+    }
+    if(!verification.ok)throw new Error(`NFL schedule verification failed; this sheet cannot be published: ${verification.errors.join(' · ')}${slateNote}`);
+    if(verification.absentGames.length)result.config.publicationExceptions=verification.absentGames;
     const userId=session?.user?.id||null;let db=null;
     if(userId){setBusy(true,'Comparing with published Survivor weeks…');const rows=await readPublished(season);assertParseContext(sourceFile,sourceGeneration,operation,season);if(session?.user?.id===userId)db={userId,rows,key:publishedKey(rows)}}
-    const next={config:result.config,configSnapshot:JSON.stringify(result.config),review:result.review,verification,digest,verified:true,db,guard:null};
+    const next={config:result.config,configSnapshot:JSON.stringify(result.config),review:result.review,verification,digest,verified:true,db,guard:null,absenceText:typedAbsences};
     candidate=next;candidateFile=sourceFile;candidateFileGeneration=sourceGeneration;candidateSeason=season;refreshGuard(next);
     msg(`Survivor Week ${week} parsed and matched to the NFL schedule: ${result.config.competitionSize} entries, ${result.config.currentWeekEntryCount} with a Week ${week} pick. ${next.guard.blocking.length?'Sign in to compare it with published Survivor weeks before publishing.':next.guard.requiresConfirmation?'Review the publication checks and confirm before publishing.':'Review before publishing.'}`,'success');
     if(!db&&session)void checkPublished(next);
@@ -152,6 +186,25 @@ $('publishBtn').onclick=async()=>{
     const errors=validateSurvivorConfig(cfg);if(errors.length)throw new Error(errors.join(' · '));
     if(JSON.stringify(cfg)!==publishCandidate.configSnapshot||cfg.season!==publishSeason)throw staleError();
     assertPublishContext();
+    // HDC-14: an absence exception holds only while its same-week Pick'em slate is the revision that proved it and its week
+    // feed still lists no game of either team. Both are re-checked before anything is read or written.
+    const exceptions=Array.isArray(cfg.publicationExceptions)?cfg.publicationExceptions:[];
+    if(exceptions.length){
+      let slates;
+      try{slates=await readPickemSlates(cfg.season)}catch(e){throw new Error(`Publish refused: the Pick'em slates could not be re-read (${e.message||e}). Nothing was written. You can retry Publish.`)}
+      assertPublishContext();
+      const changed=exceptions.find(x=>{const rows=slates.filter(r=>r?.week===x.week);return rows.length!==1||rows[0].status!=='locked'||rows[0].revision!==x.pickemRevision});
+      if(changed){publishCandidate.verified=false;throw new Error(`Publish refused: Pick'em Week ${changed.week} changed since this sheet was validated, so the absence exception for ${changed.away} @ ${changed.home} no longer holds. Nothing was written. Read & validate again.`)}
+      for(const week of [...new Set(exceptions.map(x=>x.week))]){
+        const named=exceptions.filter(x=>x.week===week);let payload;
+        try{payload=await recheckWeek(cfg.season,week)}catch(e){throw new Error(`Publish refused: the NFL Week ${week} feed could not be re-checked for ${named.map(x=>`${x.away} @ ${x.home}`).join(', ')} (${e.message||e}). Nothing was written. You can retry Publish.`)}
+        assertPublishContext();
+        const schedule=survivorScheduleWeek(payload,{season:cfg.season,week});
+        if(schedule.errors.length){publishCandidate.verified=false;throw new Error(`Publish refused: the NFL Week ${week} feed no longer proves ${named.map(x=>`${x.away} @ ${x.home}`).join(', ')} absent (${schedule.errors[0]}). Nothing was written. Read & validate again.`)}
+        const back=named.find(x=>schedule.teams.has(x.away)||schedule.teams.has(x.home));
+        if(back){publishCandidate.verified=false;throw new Error(`Publish refused: ${back.away} @ ${back.home} is no longer absent from the NFL Week ${week} feed (a game of ${back.away} or ${back.home} is listed), so its absence exception no longer holds. Nothing was written. Read & validate again.`)}
+      }
+    }
     const rows=await readPublished(cfg.season,{withConfig:false});assertPublishContext();
     const existing=rows.find(r=>r.week===cfg.week)||null;
     if(lastAttempt&&lastAttempt.season===cfg.season&&lastAttempt.week===cfg.week&&lastAttempt.digest===publishCandidate.digest&&attemptLanded(existing,lastAttempt)){const revision=lastAttempt.revision;lastAttempt=null;markPublished(publishCandidate,revision,' (the previous attempt had already been written)');return}

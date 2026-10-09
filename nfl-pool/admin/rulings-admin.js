@@ -7,10 +7,15 @@
 // path the public pages use (score-feed-proxy.js -> nflscores2). The page loads on Load / refresh only: it never polls.
 // Before every write the feed, the published week, the policy and the chain are read again, and anything material that
 // changed since the preview cancels the submit. A submit is sent at most once per confirmed preview.
+//
+// HDC-14: a published game the week feed no longer lists is offered through the separate absent-game function
+// (public.nfl_append_absent_incident_ruling, migration 005) as the absent-game actions, confirmed by typing the week, the
+// matchup and the absence. A Survivor matchup is proved by the same-week locked Pick'em slate, read with the week.
 import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';
 import {PUBLIC_COLUMNS,RPC_FUNCTION,ACTIONS,scoreboardUrl,evidenceSourceFor,readFeed,contestOptions,pickemWeeks,survivorWeeks,
   pickemCandidates,survivorCandidates,buildRequest,writeProbeRequest,pickemPreview,survivorPreview,pickemState,survivorState,
-  previewOutcome,sameOutcome,confirmationPhrase,confirmationMatches,preflightKey,rpcErrorInfo,classifyReadBack,probeOutcome} from './incident-rulings.js?v=1';
+  previewOutcome,sameOutcome,confirmationPhrase,confirmationMatches,preflightKey,rpcErrorInfo,classifyReadBack,probeOutcome,
+  ABSENT_RPC_FUNCTION,ABSENCE_LABEL,buildAbsentRequest,absentWriteProbeRequest,absentActionPhrase,classifyAbsentReadBack,absentProbeOutcome} from './incident-rulings.js?v=2';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
@@ -18,6 +23,13 @@ const ADMIN_EMAIL='djsmokke@gmail.com',neon=createClient({auth:{url:NEON_AUTH_UR
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const ACTION_LABEL={rule:'Rule (first ruling)',reaffirm:'Reaffirm',withdraw:'Withdraw',rerule:'Re-rule'};
+const ABSENT_ACTION_LABEL={rule:'Rule absent game (first ruling)',reaffirm:'Reaffirm absent-game ruling',withdraw:'Withdraw absent-game ruling',rerule:'Re-rule absent game'};
+// The action select's values: the HDC-13 actions as they are, the absent-game actions prefixed "absent-".
+const ABSENT_PREFIX='absent-';
+const isAbsentValue=v=>typeof v==='string'&&v.startsWith(ABSENT_PREFIX);
+const actionOf=v=>isAbsentValue(v)?v.slice(ABSENT_PREFIX.length):v;
+const absentOffered=c=>ACTIONS.filter(a=>c?.absence?.actions?.[a]?.ok);
+const anyOffered=c=>ACTIONS.some(a=>c.actions[a].ok)||absentOffered(c).length>0;
 const CONSEQUENCE_LABEL={void:'VOID: removed from scoring',advance_team_used:'ADVANCE: pickers advance, team stays used',eliminate:'ELIMINATE: pickers are out',withdrawn:'WITHDRAWN'};
 const TYPE_LABEL={pickem:"Pick'em",survivor:'Survivor'};
 
@@ -36,10 +48,10 @@ function syncControls(){
   $('sendCode').disabled=authBusy||locked;$('verifyCode').disabled=authBusy||locked;$('signOut').disabled=authBusy||submitting||probing;
   $('contestSelect').disabled=!signed||locked;$('weekSelect').disabled=!signed||locked||!weeks;
   $('loadBtn').disabled=!signed||locked||!selectedContest()||!selectedWeek();
-  $('probeBtn').disabled=!signed||locked||!loaded;
+  $('probeBtn').disabled=!signed||locked||!loaded;$('probeAbsentBtn').disabled=!signed||locked||!loaded;
   $('matchupSelect').disabled=!signed||locked||!loaded;
   for(const id of ['actionSelect','consequenceSelect','publicNote','adminNote'])$(id).disabled=!signed||locked||!c;
-  $('previewBtn').disabled=!signed||locked||!c||!ACTIONS.some(a=>c.actions[a].ok);
+  $('previewBtn').disabled=!signed||locked||!c||!anyOffered(c);
   $('confirmMatchup').disabled=!preview||locked;
   $('submitBtn').disabled=!canSubmit();
 }
@@ -102,20 +114,22 @@ async function loadState(contest,week){
   if(contest.contestType==='survivor'&&!(published.snapshot&&published.snapshot.week>=week))throw new Error(`No locked Survivor snapshot covers Week ${week}.`);
   const last=contest.contestType==='pickem'?week:published.snapshot.week;
   const feedWeeks=contest.contestType==='pickem'?[week]:Array.from({length:last},(_,i)=>i+1);
-  const [contestRows,policies,rulings,...feeds]=await Promise.all([
+  const [contestRows,policies,rulings,slates,...feeds]=await Promise.all([
     read('nfl_contests',PUBLIC_COLUMNS.contests,q=>q.eq('contest_id',id)),
     read('nfl_contest_policies',PUBLIC_COLUMNS.policies,q=>q.eq('contest_id',id).order('revision',{ascending:true})),
     read('nfl_incident_rulings',PUBLIC_COLUMNS.rulings,q=>contest.contestType==='pickem'?q.eq('contest_id',id).eq('week',week).order('chain_seq',{ascending:true})
       :q.eq('contest_id',id).lte('week',last).order('week',{ascending:true}).order('chain_seq',{ascending:true})),
+    // HDC-14: the same-week locked Pick'em slate, the only proof of a Survivor matchup the feed no longer lists.
+    contest.contestType==='survivor'?read('nfl_pool_weeks',WEEK_COLUMNS,q=>q.eq('season',contest.season).eq('week',week).eq('status','locked')):Promise.resolve([]),
     ...feedWeeks.map(w=>fetchFeed(contest.season,w))
   ]);
   const byWeek={};feedWeeks.forEach((w,i)=>{byWeek[w]=feeds[i]});
-  return{contest,week,published,data:{contests:contestRows,policies,rulings},feeds:byWeek};
+  return{contest,week,published:{...published,slate:slates.length===1?slates[0]:null},data:{contests:contestRows,policies,rulings},feeds:byWeek};
 }
 function candidatesFor(s){
   const feed=s.feeds[s.week],events=feed?.ok?feed.events:null,source=feed?.source??null;
   const common={contestId:s.contest.contestId,season:s.contest.season,week:s.week,events,source,data:s.data};
-  return s.contest.contestType==='pickem'?pickemCandidates({...common,config:s.published.pickem.config}):survivorCandidates({...common,snapshot:s.published.snapshot});
+  return s.contest.contestType==='pickem'?pickemCandidates({...common,config:s.published.pickem.config}):survivorCandidates({...common,snapshot:s.published.snapshot,slate:s.published.slate});
 }
 const eventsByWeek=s=>Array.from({length:s.published.snapshot.week},(_,i)=>s.feeds[i+1]?.ok?s.feeds[i+1].events:null);
 
@@ -134,28 +148,31 @@ const chainLabel=c=>c.chain.state==='empty'?'no ruling':c.chain.state==='withdra
 function renderLoaded(keep=''){
   const feed=loaded.feeds[loaded.week];
   $('feedState').textContent=`Score feed Week ${loaded.week}: ${feed?.source||'unknown source'} · ${feed?.ok?`${feed.events.length} listings`:feed?.reason||'unavailable'}${feed?.fetchedAt?` · fetched ${feed.fetchedAt}`:''}`;
-  $('matchupSelect').innerHTML=`<option value="">Choose a game</option>${candidates.map(c=>`<option value="${esc(c.key)}">${esc(c.matchup)} · ${esc(chainLabel(c))}${ACTIONS.some(a=>c.actions[a].ok)?'':' · no action'}</option>`).join('')}`;
+  $('matchupSelect').innerHTML=`<option value="">Choose a game</option>${candidates.map(c=>`<option value="${esc(c.key)}">${esc(c.matchup)} · ${esc(chainLabel(c))}${c.absence?.label?` · ${esc(ABSENCE_LABEL)}`:''}${anyOffered(c)?'':' · no action'}</option>`).join('')}`;
   $('matchupSelect').value=candidates.some(c=>c.key===keep)?keep:'';
   renderCandidate();
 }
 function renderConsequences(){
-  const c=currentCandidate(),a=$('actionSelect').value,list=c&&(a==='rule'||a==='rerule')?c.consequences:[];
+  const c=currentCandidate(),a=actionOf($('actionSelect').value),list=c&&(a==='rule'||a==='rerule')?c.consequences:[];
   $('consequenceSelect').innerHTML=list.map(x=>`<option value="${esc(x)}">${esc(CONSEQUENCE_LABEL[x]||x)}</option>`).join('');
   $('consequenceSelect').value=list[0]||'';
 }
 function renderCandidate(){
   const c=currentCandidate();
   if(!c){$('actionSelect').innerHTML='';$('actionSelect').value='';renderConsequences();$('candidateInfo').innerHTML='';syncControls();return}
-  const offered=ACTIONS.filter(a=>c.actions[a].ok);
-  $('actionSelect').innerHTML=offered.map(a=>`<option value="${a}">${esc(ACTION_LABEL[a])}</option>`).join('');
-  $('actionSelect').value=offered[0]||'';renderConsequences();
-  const o=c.observation,ev=c.evidence;
+  const offered=[...ACTIONS.filter(a=>c.actions[a].ok).map(a=>[a,ACTION_LABEL[a]]),...absentOffered(c).map(a=>[`${ABSENT_PREFIX}${a}`,ABSENT_ACTION_LABEL[a]])];
+  $('actionSelect').innerHTML=offered.map(([v,label])=>`<option value="${v}">${esc(label)}</option>`).join('');
+  $('actionSelect').value=offered[0]?.[0]||'';renderConsequences();
+  const o=c.observation,ev=c.evidence||c.absence?.evidence||null;
   const reading=o?`${o.kind}${o.status?` (${o.status})`:''}${o.eventId?` · event ${o.eventId}`:''}`:'unavailable';
   const lines=[`<b>${esc(c.matchup)}</b> · Week ${c.week} · policy ${c.policy?`revision ${c.policy.revision} (${esc(c.policy.policy)})`:'not ready'}`,
     `Chain: ${esc(chainLabel(c))}${c.chain.last?` · last ruling ${esc(c.chain.last.ruling_id)}`:''}`,
     `Feed reading: ${esc(reading)}${c.publishedEventId?` · published event ${esc(c.publishedEventId)}`:''}`,
+    c.absence?.label?`<b>${esc(c.absence.label)}</b> · the commissioner attests the absence; it is not a feed-reported status${c.absence.slateRevision!=null?` · proved by the Week ${c.week} Pick'em slate (revision ${esc(c.absence.slateRevision)})`:''}`:'',
     ev?`Incident evidence: ${esc(ev.incidentStatus)} · event ${esc(ev.eventId??'none')} · ${esc(ev.evidenceSource??'unknown source')}`:''].filter(Boolean);
-  const refused=ACTIONS.filter(a=>!c.actions[a].ok&&c.actions[a].reason).map(a=>`<li class="no">${esc(ACTION_LABEL[a])}: ${esc(c.actions[a].reason)}</li>`).join('');
+  const refused=[...ACTIONS.filter(a=>!c.actions[a].ok&&c.actions[a].reason).map(a=>`<li class="no">${esc(ACTION_LABEL[a])}: ${esc(c.actions[a].reason)}</li>`),
+    ...(c.absence?.label?ACTIONS.filter(a=>!c.absence.actions[a].ok&&c.absence.actions[a].reason).map(a=>`<li class="no">${esc(ABSENT_ACTION_LABEL[a])}: ${esc(c.absence.actions[a].reason)}</li>`)
+      :c.absence?.reason&&c.observation?.kind==='missing'?[`<li class="no">Absent-game path: ${esc(c.absence.reason)}</li>`]:[])].join('');
   $('candidateInfo').innerHTML=`${lines.map(l=>`<div>${l}</div>`).join('')}${offered.length?'':'<div class="no">No action is available for this game.</div>'}${refused?`<ul>${refused}</ul>`:''}`;
   syncControls();
 }
@@ -174,11 +191,13 @@ function renderSurvivorSide(title,side,p,affected){
     +`<p>Summary: ${s.active} still in · ${s.pending} pending · ${s.eliminatedThisWeek} out this week · ${side.awaiting} awaiting a ruling · ${side.held} on hold</p><p>Rules card: ${incident}</p>`;
 }
 function renderPreview(){
-  const {request:r,candidate:c,result:p}=preview,contest=loaded.contest,ev=r.p_action==='rule'?{incidentStatus:r.p_incident_status,eventId:r.p_event_id,evidenceSource:r.p_evidence_source}:c.evidence||{};
+  const {request:r,candidate:c,result:p}=preview,contest=loaded.contest,absent=preview.path==='absence';
+  const ev=absent?c.absence?.evidence||{}:r.p_action==='rule'?{incidentStatus:r.p_incident_status,eventId:r.p_event_id,evidenceSource:r.p_evidence_source}:c.evidence||{};
   const consequence=r.p_action==='withdraw'?'withdrawn':r.p_action==='reaffirm'?c.chain.consequence:r.p_consequence;
-  const facts=[['Contest',`${contest.displayName} (${TYPE_LABEL[contest.contestType]})`],['Week',`Week ${loaded.week}`],['Matchup',c.matchup],['Event ID',ev.eventId??'none'],
-    ['Incident status',ev.incidentStatus??'—'],['Evidence source',ev.evidenceSource??'—'],['Policy',`Policy revision ${r.p_expected_policy_revision} · ${c.policy.policy}`],
-    ['Action',`${r.p_action} · ${ACTION_LABEL[r.p_action]}`],['Consequence',`${consequence} · ${CONSEQUENCE_LABEL[consequence]||consequence}`],['Affected entries',String(p.affected)],
+  const facts=[['Contest',`${contest.displayName} (${TYPE_LABEL[contest.contestType]})`],['Week',`Week ${loaded.week}`],['Matchup',c.matchup],
+    ...(absent?[['Incident',`${ABSENCE_LABEL} · attested by the commissioner; the score feed reported nothing for it, and no other week's game is linked`]]:[]),
+    ['Event ID',ev.eventId??'none'],['Incident status',ev.incidentStatus??'—'],['Evidence source',ev.evidenceSource??'—'],['Policy',`Policy revision ${r.p_expected_policy_revision} · ${c.policy.policy}`],
+    ['Action',`${r.p_action} · ${(absent?ABSENT_ACTION_LABEL:ACTION_LABEL)[r.p_action]}`],['Consequence',`${consequence} · ${CONSEQUENCE_LABEL[consequence]||consequence}`],['Affected entries',String(p.affected)],
     ['Public note',r.p_public_note],['Private note',r.p_admin_note??'none']];
   $('previewSummary').innerHTML=`<dl class="preview-facts">${facts.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`;
   const affected=side=>p.entries.map(e=>side==='before'?e.before:e.after);
@@ -219,8 +238,8 @@ $('confirmMatchup').addEventListener('input',syncControls);
 
 // ---- preview ------------------------------------------------------------------------------------------------------------
 const nextId=rows=>rows.reduce((m,r)=>Number.isSafeInteger(r?.ruling_id)&&r.ruling_id>m?r.ruling_id:m,0)+1;
-function buildPreview(state,c,request){
-  const common={contestId:state.contest.contestId,season:state.contest.season,week:state.week,data:state.data,request,candidate:c,
+function buildPreview(state,c,request,path=null){
+  const common={contestId:state.contest.contestId,season:state.contest.season,week:state.week,data:state.data,request,candidate:c,path,
     rulingId:nextId(state.data.rulings),createdAt:new Date().toISOString()};
   if(state.contest.contestType==='pickem'){const f=state.feeds[state.week];return pickemPreview({...common,config:state.published.pickem.config,events:f?.ok?f.events:null})}
   const missing=Object.entries(state.feeds).filter(([,f])=>!f.ok).map(([w])=>w);
@@ -230,19 +249,21 @@ function buildPreview(state,c,request){
 $('previewBtn').addEventListener('click',()=>task('Building the preview…',async()=>{
   invalidatePreview();msg('');
   const c=currentCandidate();if(!c||!loaded){msg('Load the contest week and choose a game first.','error');return}
-  const built=buildRequest({contestId:loaded.contest.contestId,week:loaded.week,candidate:c,action:$('actionSelect').value,
+  const value=$('actionSelect').value,absent=isAbsentValue(value),action=actionOf(value);
+  const built=(absent?buildAbsentRequest:buildRequest)({contestId:loaded.contest.contestId,week:loaded.week,candidate:c,action,
     consequence:$('consequenceSelect').value||null,publicNote:$('publicNote').value,adminNote:$('adminNote').value});
   if(!built.ok){msg(`Cannot build the preview: ${built.reason}.`,'error');return}
-  const result=buildPreview(loaded,c,built.request);
-  preview={request:built.request,candidate:c,key:preflightKey(c),phrase:confirmationPhrase(c),result,outcome:previewOutcome(result.after),done:false};
+  const path=absent?'absence':null,result=buildPreview(loaded,c,built.request,path);
+  preview={request:built.request,candidate:c,key:preflightKey(c),phrase:absent?absentActionPhrase(c,action):confirmationPhrase(c),result,outcome:previewOutcome(result.after),
+    done:false,path,eventId:absent?c.absence?.evidence?.eventId??null:null};
   renderPreview();
   msg(`Review the preview, then type ${preview.phrase} to confirm.`,'info');
 }));
 
 // ---- submit -------------------------------------------------------------------------------------------------------------
-const stateAfter=(state,data,c)=>state.contest.contestType==='pickem'
+const stateAfter=(state,data,c,absent=false)=>state.contest.contestType==='pickem'
   ?pickemState({contestId:state.contest.contestId,season:state.contest.season,week:state.week,config:state.published.pickem.config,
-    events:state.feeds[state.week]?.ok?state.feeds[state.week].events:null,data,candidate:c})
+    events:state.feeds[state.week]?.ok?state.feeds[state.week].events:null,data,candidate:c,absent})
   :survivorState({contestId:state.contest.contestId,season:state.contest.season,week:state.week,snapshot:state.published.snapshot,eventsByWeek:eventsByWeek(state),data,candidate:c});
 // Read the chain back after a write: the reloaded rows, with the feed and published week the preview used, must render
 // exactly the preview's AFTER. A difference is reported; nothing is ever retried automatically.
@@ -257,7 +278,7 @@ async function readBack(p,state){
 }
 function settle(state,data,keep){loaded={...state,data};candidates=candidatesFor(loaded);renderLoaded(keep)}
 function recorded(p,state,data,note){
-  const same=sameOutcome(previewOutcome(stateAfter(state,data,p.candidate)),p.outcome);
+  const same=sameOutcome(previewOutcome(stateAfter(state,data,p.candidate,p.path==='absence')),p.outcome);
   p.done=true;settle(state,data,p.candidate.key);
   msg(`Ruling recorded: ${p.request.p_action} for ${p.candidate.matchup}, Week ${state.week}.${note}`,'success');
   $('result').textContent=same?'Read-back: the recorded chain matches the preview.'
@@ -275,13 +296,14 @@ async function submit(){
     let fresh,c;
     try{fresh=await loadState(loaded.contest,loaded.week);c=candidatesFor(fresh).find(x=>x.key===p.candidate.key)||null}
     catch(e){invalidatePreview();msg(`Nothing was sent: the pre-submit check could not read the current state (${e?.message||e}). Load / refresh and build a new preview.`,'error');return}
-    if(!c||preflightKey(c)!==p.key||!c.actions[p.request.p_action]?.ok){
+    const stillOffered=p.path==='absence'?c?.absence?.actions?.[p.request.p_action]?.ok:c?.actions[p.request.p_action]?.ok;
+    if(!c||preflightKey(c)!==p.key||!stillOffered){
       settle(fresh,fresh.data,p.candidate.key);invalidatePreview();
       msg('The score feed, the published week, the policy or the ruling chain changed since the preview was built. Nothing was sent. Build a new preview and confirm again.','error');return;
     }
     showBusy('Recording the ruling…');
     let response;
-    try{response=await neon.rpc(RPC_FUNCTION,p.request)}catch(e){response={data:null,error:e}}
+    try{response=p.path==='absence'?await neon.rpc(ABSENT_RPC_FUNCTION,p.request):await neon.rpc(RPC_FUNCTION,p.request)}catch(e){response={data:null,error:e}}
     if(response&&!response.error&&response.data){
       let data;
       try{data=await readBack(p,fresh)}catch(e){p.done=true;invalidatePreview();msg(`Ruling recorded, but the chain could not be read back (${e?.message||e}). Load / refresh to check it.`,'success');return}
@@ -293,7 +315,8 @@ async function submit(){
     let data;
     try{data=await readBack(p,fresh)}
     catch(e){invalidatePreview();msg(`Outcome unknown: ${info.text} The chain could not be read back (${e?.message||e}). Load / refresh and check the chain before acting again.`,'error');return}
-    const verdict=classifyReadBack({beforeRows:fresh.data.rulings,afterRows:data.rulings,request:p.request,chain:c.chain});
+    const verdict=p.path==='absence'?classifyAbsentReadBack({beforeRows:fresh.data.rulings,afterRows:data.rulings,request:p.request,chain:c.chain,eventId:p.eventId})
+      :classifyReadBack({beforeRows:fresh.data.rulings,afterRows:data.rulings,request:p.request,chain:c.chain});
     if(verdict==='LANDED'){recorded(p,fresh,data,' LANDED: the response was lost, and the read-back shows this exact row was written.');return}
     if(verdict==='NOT_WRITTEN'){settle(fresh,data,p.candidate.key);invalidatePreview();msg('NOT WRITTEN: the response was lost and the read-back shows the chain unchanged. Build a new preview to try again.','error');return}
     settle(fresh,data,p.candidate.key);invalidatePreview();
@@ -317,6 +340,25 @@ async function probe(){
     const outcome=probeOutcome(response||{}),after=await count();
     $('probeResult').textContent=`${outcome.text} ${after===before?"0 rows written (the contest's ruling count is unchanged).":`WARNING: the contest's ruling count changed from ${before} to ${after}. Load / refresh and review the chain.`}`;
   }catch(e){$('probeResult').textContent=`The write-access check could not finish: ${e?.message||e}`}
+  finally{probing=false;showBusy('');syncControls()}
+}
+
+// HDC-14: the absent-game function's write-access check (writes nothing).
+$('probeAbsentBtn').addEventListener('click',()=>probeAbsent());
+async function probeAbsent(){
+  if(probing||busy||submitting||!session||!loaded)return;
+  const c=currentCandidate()||candidates.find(x=>x.policy)||null;
+  if(!c?.policy){$('probeResult').textContent='Load a contest week whose policy is ready before checking absent-game write access.';return}
+  probing=true;showBusy('Checking absent-game write access…');syncControls();
+  try{
+    const id=loaded.contest.contestId,count=async()=>(await read('nfl_incident_rulings',PUBLIC_COLUMNS.rulings,q=>q.eq('contest_id',id))).length;
+    const before=await count();
+    let response;
+    try{response=await neon.rpc(ABSENT_RPC_FUNCTION,absentWriteProbeRequest({contestId:id,week:loaded.week,away:c.away,home:c.home,policyRevision:c.policy.revision}))}
+    catch(e){response={data:null,error:e}}
+    const outcome=absentProbeOutcome(response||{}),after=await count();
+    $('probeResult').textContent=`${outcome.text} ${after===before?"0 rows written (the contest's ruling count is unchanged).":`WARNING: the contest's ruling count changed from ${before} to ${after}. Load / refresh and review the chain.`}`;
+  }catch(e){$('probeResult').textContent=`The absent-game write-access check could not finish: ${e?.message||e}`}
   finally{probing=false;showBusy('');syncControls()}
 }
 

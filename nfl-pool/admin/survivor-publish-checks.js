@@ -33,10 +33,42 @@ export function survivorScheduleWeek(payload,{season,week}){
 export const NFL_REGULAR_SEASON_WEEKS=18;
 const exposesContext=payload=>payload?.season?.year!=null&&payload?.season?.type!=null&&payload?.week?.number!=null;
 
-export function verifySurvivorSchedule(config,payloadByWeek){
-  const errors=[],weeks=[],resultsByWeek=[],contextUnexposed=[];
-  if(!config||!Number.isInteger(config.week)||config.week<1)return{ok:false,errors:['Survivor week is missing'],weeks,resultsByWeek,contextUnexposed};
-  if(config.week>NFL_REGULAR_SEASON_WEEKS)return{ok:false,errors:[`Survivor Week ${config.week} is outside the NFL regular season (Weeks 1–${NFL_REGULAR_SEASON_WEEKS}); only regular-season schedules can be verified`],weeks,resultsByWeek,contextUnexposed};
+// HDC-14: a picked game the NFL feed no longer lists in its week. The only proof of its matchup is the locked Pick'em slate
+// of the same season and week (never another week, a makeup listing, the feed or anything typed): the team in exactly one
+// slate game, no other slate game of either team, the slate's eventId (if any) an event id, and neither team listed in the
+// week's feed. Even then the sheet publishes only with the exact typed confirmation WEEK N AWAY @ HOME ABSENT, and the
+// snapshot records the exception; nothing is decided for the picks, which stay pending until a ruling is recorded. A bye,
+// a matchup the slate cannot prove (the Thursday game a sheet may omit) or a re-paired opponent still blocks.
+export const SURVIVOR_ABSENT_EXCEPTION='absent-from-week-feed';
+export const survivorAbsencePhrase=(week,away,home)=>`WEEK ${week} ${away} @ ${home} ABSENT`;
+const SLATE_ALIASES={JAC:'JAX',WSH:'WAS'};
+const slateCode=code=>typeof code==='string'?(SLATE_ALIASES[code]||code):null;
+function slateMatchup(pickemSlates,{season,week,team,listed}){
+  const rows=(Array.isArray(pickemSlates)?pickemSlates:[]).filter(r=>r&&r.season===season&&r.week===week);
+  if(rows.length!==1)return null;
+  const row=rows[0],cfg=row.config;
+  if(row.status!=='locked'||!cfg||typeof cfg!=='object'||cfg.season!==season||cfg.week!==week||!Array.isArray(cfg.games))return null;
+  const games=[];
+  for(const g of cfg.games){
+    const away=slateCode(g?.away),home=slateCode(g?.home);
+    if(!SURVIVOR_NFL_TEAMS.has(away)||!SURVIVOR_NFL_TEAMS.has(home)||away===home)return null;
+    games.push({away,home,eventId:g.eventId??null});
+  }
+  const mine=games.filter(g=>g.away===team||g.home===team);
+  if(mine.length!==1)return null;
+  const {away,home,eventId}=mine[0];
+  if(games.filter(g=>[g.away,g.home].some(t=>t===away||t===home)).length!==1)return null;
+  if(eventId!==null&&!/^[0-9]{1,20}$/.test(String(eventId)))return null;
+  if(listed.has(away)||listed.has(home))return null;
+  return{away,home,revision:row.revision};
+}
+
+export function verifySurvivorSchedule(config,payloadByWeek,{pickemSlates=[],absenceConfirmations=[]}={}){
+  const errors=[],weeks=[],resultsByWeek=[],contextUnexposed=[],absentGames=[],absenceRequests=[],offScheduleList=[];
+  const none={weeks,resultsByWeek,contextUnexposed,absentGames,absenceRequests,offSchedule:offScheduleList};
+  if(!config||!Number.isInteger(config.week)||config.week<1)return{ok:false,errors:['Survivor week is missing'],...none};
+  if(config.week>NFL_REGULAR_SEASON_WEEKS)return{ok:false,errors:[`Survivor Week ${config.week} is outside the NFL regular season (Weeks 1–${NFL_REGULAR_SEASON_WEEKS}); only regular-season schedules can be verified`],...none};
+  const confirmations=new Set((Array.isArray(absenceConfirmations)?absenceConfirmations:[]).filter(x=>typeof x==='string')),confirmed=new Set();
   const entries=entriesOf(config);
   for(let week=1;week<=config.week;week++){
     const payload=payloadFor(payloadByWeek,week);
@@ -54,11 +86,23 @@ export function verifySurvivorSchedule(config,payloadByWeek){
       offSchedule.get(pick).push(entryLabel(entry));
     }
     for(const [team,labels] of offSchedule){
+      offScheduleList.push({week,team,entries:labels.length});
       const shown=labels.slice(0,8).join(', ')+(labels.length>8?`, +${labels.length-8} more`:'');
-      errors.push(`Week ${week}: ${team} is not scheduled in verified NFL Week ${week} (bye or invalid team) — ${plural(labels.length,'entry','entries')}: ${shown}. Check the sheet's Week ${week} column for ${team}.`);
+      const base=`Week ${week}: ${team} is not scheduled in verified NFL Week ${week} (bye or invalid team) — ${plural(labels.length,'entry','entries')}: ${shown}. Check the sheet's Week ${week} column for ${team}.`;
+      const slate=slateMatchup(pickemSlates,{season:config.season,week,team,listed:schedule.teams});
+      if(!slate){errors.push(base);continue}
+      const phrase=survivorAbsencePhrase(week,slate.away,slate.home);
+      if(confirmations.has(phrase)){
+        confirmed.add(phrase);
+        if(!absentGames.some(x=>x.confirmation===phrase))absentGames.push({type:SURVIVOR_ABSENT_EXCEPTION,week,away:slate.away,home:slate.home,pickemRevision:slate.revision,confirmation:phrase});
+        continue;
+      }
+      if(!absenceRequests.some(x=>x.confirmation===phrase))absenceRequests.push({week,away:slate.away,home:slate.home,pickemRevision:slate.revision,confirmation:phrase});
+      errors.push(`${base} Pick'em Week ${week} (revision ${slate.revision}) proves ${slate.away} @ ${slate.home}, and neither team is listed in the NFL Week ${week} feed: if that game was moved out of Week ${week}, type ${phrase} under Absent games and Read & validate again.`);
     }
   }
-  return{ok:errors.length===0,errors:[...new Set(errors)],weeks,resultsByWeek,contextUnexposed};
+  for(const text of confirmations)if(!confirmed.has(text))errors.push(`Absent-game confirmation "${text}" does not match a picked game that the same-week Pick'em slate proves and the NFL feed no longer lists. Correct or clear it, then Read & validate again.`);
+  return{ok:errors.length===0,errors:[...new Set(errors)],weeks,resultsByWeek,contextUnexposed,absentGames,absenceRequests,offSchedule:offScheduleList};
 }
 
 const weekSpan=(a,b)=>a===b?`Week ${a}`:`Weeks ${a}–${b}`;

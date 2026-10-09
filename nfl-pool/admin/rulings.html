@@ -40,7 +40,7 @@ textarea.rulings-field{min-height:110px;resize:vertical}
 <body>
 <main class="admin-wrap">
 <header class="admin-top">
-  <div class="admin-brand"><img src="../assets/pool-center-icon.svg" alt="" class="admin-brand-icon"><div><div class="admin-league"><img src="https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png" alt="NFL" class="admin-nfl-shield"><span>Pool Center · Commissioner</span></div><h1>Incident Rulings</h1><p>Record a commissioner ruling for a canceled, postponed or suspended game: preview it against the public pages, confirm it, and the database appends it to the incident's history.</p></div></div>
+  <div class="admin-brand"><img src="../assets/pool-center-icon.svg" alt="" class="admin-brand-icon"><div><div class="admin-league"><img src="https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png" alt="NFL" class="admin-nfl-shield"><span>Pool Center · Commissioner</span></div><h1>Incident Rulings</h1><p>Record a commissioner ruling for a canceled, postponed or suspended game, or for a published game the score feed no longer lists in its original week (ABSENT FROM ORIGINAL WEEK FEED): preview it against the public pages, confirm it, and the database appends it to the incident's history.</p></div></div>
   <div class="admin-actions"><span id="authState" class="pill warn">SIGN IN REQUIRED</span><a href="./" class="back">← Pick'em Admin</a><a href="survivor.html" class="back">Survivor Admin</a><a href="../?view=home" class="back">Pool Center</a></div>
 </header>
 
@@ -56,7 +56,7 @@ textarea.rulings-field{min-height:110px;resize:vertical}
     <div class="field"><label for="contestSelect">Contest</label><select id="contestSelect"></select></div>
     <div class="field"><label for="weekSelect">Published week</label><select id="weekSelect"></select></div>
   </div>
-  <div class="row-actions"><button type="button" id="loadBtn" class="primary">Load / refresh</button><button type="button" id="probeBtn" class="ghost">Check write access</button><div id="busy" class="busy" hidden><span class="spinner"></span><span id="busyText">Working…</span></div></div>
+  <div class="row-actions"><button type="button" id="loadBtn" class="primary">Load / refresh</button><button type="button" id="probeBtn" class="ghost">Check write access</button><button type="button" id="probeAbsentBtn" class="ghost">Check absent-game write access</button><div id="busy" class="busy" hidden><span class="spinner"></span><span id="busyText">Working…</span></div></div>
   <p id="feedState" class="rulings-help"></p>
   <p id="probeResult" class="rulings-help"></p>
   <div class="field rulings-field"><label for="matchupSelect">Game</label><select id="matchupSelect"></select></div>
@@ -64,7 +64,7 @@ textarea.rulings-field{min-height:110px;resize:vertical}
 </section>
 
 <section class="admin-card">
-  <div class="section-head"><div><h2>3. Ruling</h2><p>Only the actions valid for the incident's current state are offered, and only the consequences its policy permits.</p></div></div>
+  <div class="section-head"><div><h2>3. Ruling</h2><p>Only the actions valid for the incident's current state are offered, and only the consequences its policy permits. An absent-game action records the commissioner's attestation that the game is absent from its original week's feed; no other week's game is ever linked to it.</p></div></div>
   <div class="rulings-grid">
     <div class="field"><label for="actionSelect">Action</label><select id="actionSelect"></select></div>
     <div class="field"><label for="consequenceSelect">Consequence</label><select id="consequenceSelect"></select></div>
@@ -80,7 +80,7 @@ textarea.rulings-field{min-height:110px;resize:vertical}
   <div class="section-head"><div><h2>4. Preview and confirm</h2><p>What the public pages will show before and after this ruling, computed with the same evaluator they run.</p></div></div>
   <div id="previewSummary"></div>
   <div class="preview-sides"><div id="previewBefore" class="preview-side"></div><div id="previewAfter" class="preview-side"></div></div>
-  <div class="confirm-row"><label for="confirmMatchup">Type the matchup to confirm: <b id="confirmPhrase"></b></label><input id="confirmMatchup" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false"></div>
+  <div class="confirm-row"><label for="confirmMatchup">Type exactly this to confirm: <b id="confirmPhrase"></b></label><input id="confirmMatchup" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false"></div>
   <div class="row-actions"><button type="button" id="submitBtn" class="publish">Record ruling</button></div>
   <p class="rulings-help">Before the write, the score feed, the published week, the policy and the ruling chain are read again; if anything material changed nothing is sent.</p>
 </section>
@@ -90,6 +90,6 @@ textarea.rulings-field{min-height:110px;resize:vertical}
 <footer class="admin-foot">Rulings are append-only: a withdrawal or re-ruling adds a row and never edits or deletes an earlier one. Private notes are stored for the commissioner and never reach participants.</footer>
 </main>
 <script src="../score-feed-proxy.js?v=2"></script>
-<script type="module" src="rulings-admin.js?v=1"></script>
+<script type="module" src="rulings-admin.js?v=2"></script>
 </body>
 </html>

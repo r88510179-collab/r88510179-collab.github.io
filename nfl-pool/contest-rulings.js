@@ -1,4 +1,5 @@
-// HDC-12 contest-scoped halted-game rulings: the pure evaluator shared by Pick'em and Survivor.
+// HDC-12 contest-scoped halted-game rulings: the pure evaluator shared by Pick'em and Survivor. HDC-14 adds rulings for a
+// game the feed no longer lists in its original week, whose evidence is the commissioner's attestation of that absence.
 //
 // Three layers stay apart. An NFL FACT comes from the score feed and is never rewritten here. A CONTEST POLICY is the
 // halted-game rule the commissioner chose for one contest; it never changes a standing by itself. An INCIDENT RULING is a
@@ -23,6 +24,15 @@ export const WITHDRAWN='withdrawn';
 // The only incident evidence a v1 ruling may rest on. A forfeit is out of scope: it never receives a cancellation ruling.
 export const SUPPORTED_INCIDENT_STATUSES=freeze(['STATUS_CANCELED','STATUS_POSTPONED','STATUS_SUSPENDED']);
 export const EVIDENCE_SOURCES=freeze(['espn-scoreboard','nflscores2']);
+// HDC-14: an attested absence. The feed reported nothing for a game it no longer lists in its original week, so the
+// evidence is never a feed-reported status or a feed source: the status is STATUS_ABSENT, the source is the
+// commissioner's attestation, and the event (if any) is the one the original published game recorded. The two always go
+// together, and a chain never mixes them with feed evidence.
+export const ABSENT_INCIDENT_STATUS='STATUS_ABSENT';
+export const ATTESTATION_SOURCE='commissioner-attestation';
+export function isAbsenceEvidence(evidence){
+  return !!evidence&&typeof evidence==='object'&&evidence.incidentStatus===ABSENT_INCIDENT_STATUS&&evidence.source===ATTESTATION_SOURCE;
+}
 // Contest-scoped rulings begin with the two personal 2026 contests (migration 003). Earlier seasons have no contest and no
 // ruling store, so the ruling layer is inactive there and HDC-11 behaviour is unchanged; from 2026 on, a contest that is
 // missing or unreadable holds.
@@ -135,9 +145,13 @@ function resolveIncident(rows,ctx){
     if(r.away===r.home)return hold('the ruling names the same team twice');
     if(r.consequence!==WITHDRAWN&&!RULING_CONSEQUENCES[contestType].includes(r.consequence))return hold(`"${shown(r.consequence)}" is not a ${CONTEST_LABEL[contestType]} ruling consequence`);
     if(typeof r.incidentStatus==='string'&&FORFEIT_NAME.test(r.incidentStatus))return hold('a forfeit is not a supported halted-game incident; no v1 ruling applies to it');
-    if(!SUPPORTED_INCIDENT_STATUSES.includes(r.incidentStatus))return hold('the incident evidence is not a supported halted status (canceled, postponed or suspended)');
+    // HDC-14: an absence is recorded only as the commissioner's attestation, never as something a feed reported, and a
+    // feed-reported status never as an attestation.
+    const absenceRow=r.incidentStatus===ABSENT_INCIDENT_STATUS;
+    if(!absenceRow&&!SUPPORTED_INCIDENT_STATUSES.includes(r.incidentStatus))return hold('the incident evidence is not a supported halted status (canceled, postponed or suspended)');
+    if(absenceRow&&r.evidenceSource!==ATTESTATION_SOURCE)return hold('an absence from the week feed is recorded only as a commissioner attestation, never as a feed fact');
     if(r.eventId!==null&&!(typeof r.eventId==='string'&&/^[0-9]{1,20}$/.test(r.eventId)))return hold('the recorded event evidence is invalid');
-    if(r.evidenceSource!==null&&!EVIDENCE_SOURCES.includes(r.evidenceSource))return hold('the recorded evidence source is invalid');
+    if(!absenceRow&&r.evidenceSource!==null&&!EVIDENCE_SOURCES.includes(r.evidenceSource))return hold(r.evidenceSource===ATTESTATION_SOURCE?'a feed-reported halted status is never a commissioner attestation':'the recorded evidence source is invalid');
     if(r.publicNote!==null&&typeof r.publicNote!=='string')return hold('a ruling public note is invalid');
   }
   if(tainted.has(key))return hold('a ruling row of another incident names a row of this incident as its predecessor');
@@ -163,6 +177,9 @@ function resolveIncident(rows,ctx){
   // event, so a makeup game is never followed.
   const eventId=sorted[0].eventId;
   if(sorted.some(r=>r.eventId!==null&&r.eventId!==eventId))return hold('a later ruling row names an event the original ruling did not record; makeup games are never followed');
+  // HDC-14: one factual evidence class per incident. An attested absence and feed-reported evidence never share a chain.
+  const absenceRoot=sorted[0].incidentStatus===ABSENT_INCIDENT_STATUS;
+  if(sorted.some(r=>(r.incidentStatus===ABSENT_INCIDENT_STATUS)!==absenceRoot))return hold('the ruling chain mixes an attested absence with feed-reported evidence; one incident has one evidence class');
   // Policy: the revision named must be the one in force for the incident week, and must permit every consequence.
   const cited=policies.find(p=>p.revision===first.policyRevision),current=inForce(policies,first.week);
   if(!cited)return hold(`the ruling cites policy revision ${first.policyRevision}, which does not exist`);
@@ -381,6 +398,7 @@ export function observeIncident(events,{away,home,eventId=null,season,week,seaso
 export function incidentFeedCheck(incident,observation){
   if(!incident||incident.state!=='effective')return{status:'none'};
   const o=observation||{kind:'unavailable'},stored=incident.evidence||{};
+  if(isAbsenceEvidence(stored))return absenceFeedCheck(incident,o);
   const changedId=stored.eventId&&o.eventId&&o.eventId!==stored.eventId?` (feed event ${o.eventId}; the ruling recorded event ${stored.eventId})`:'';
   const review=reason=>({status:'review',kind:o.kind,reason});
   switch(o.kind){
@@ -403,6 +421,29 @@ export function incidentFeedCheck(incident,observation){
     case 'unfinished':return review(`the feed no longer reports the game as halted${changedId}`);
     case 'missing':return review("the game is no longer in this week's feed");
     default:return review('the feed no longer matches the recorded incident');
+  }
+}
+
+// HDC-14: an attested absence compared with the feed of the incident's own week (the only feed a slot is ever checked
+// against: a listing in any other week is never read, and one outside the week's context is no evidence).
+//   agrees  - the week's feed still lists no game of either team: the ruling is APPLIED
+//   unknown - the feed is unavailable, or lists the teams only outside the season/week: the ruling stays applied
+//   review  - the matchup, or either team, is listed in the week again (final, live, scheduled, halted, reversed,
+//             re-paired, relisted, conflicting or unreadable): the ruling STAYS APPLIED and is UNDER REVIEW; nothing is
+//             withdrawn, re-slotted or switched to the NFL result while the ruling is active
+//   hold    - the feed now reports a forfeit for the pair, which no ruling covers
+function absenceFeedCheck(incident,o){
+  const review=reason=>({status:'review',kind:o.kind,reason});
+  switch(o.kind){
+    case 'missing':return{status:'agrees'};
+    case 'unavailable':case 'context':return{status:'unknown',kind:o.kind};
+    case 'forfeit':return{status:'hold',kind:'forfeit',reason:`the feed now reports ${o.status}; a forfeit is not covered by v1 rulings`};
+    case 'opponent':return review(`the feed now lists ${o.away} @ ${o.home} this week`);
+    case 'repaired':return review(`the game is listed in this week's feed again, and the feed also lists ${o.otherAway} @ ${o.otherHome} this week`);
+    case 'relisted':return review("the game is listed in this week's feed again, under more than one event");
+    case 'conflicting':return review("the game is listed in this week's feed again, with conflicting information");
+    case 'ambiguous':case 'malformed':return review(`this week's feed lists an unreadable game naming ${incident.away} or ${incident.home}`);
+    default:return review("the game is listed in this week's feed again");
   }
 }
 
@@ -487,7 +528,9 @@ export function rulesModel(dataset,{week,slotState=null}={}){
       :`${consequenceText(x.consequence)}. Applied by commissioner ruling under policy revision ${x.policyRevision}.`;
     return{key:x.key,week:x.week,matchup:x.away&&x.home?`${x.away} @ ${x.home}`:(x.away||x.home||'Unknown teams'),status,detail,
       review:review?`UNDER REVIEW: ${review}. The ruling stays applied until the commissioner changes it.`:null,
-      evidence:x.evidence?`Recorded incident: ${x.evidence.incidentStatus}${x.evidence.eventId?` · event ${x.evidence.eventId}`:''}`:null,
+      evidence:!x.evidence?null:isAbsenceEvidence(x.evidence)
+        ?`Recorded incident: ABSENT FROM WEEK ${x.week} FEED · commissioner attestation${x.evidence.eventId?` · original event ${x.evidence.eventId}`:''}`
+        :`Recorded incident: ${x.evidence.incidentStatus}${x.evidence.eventId?` · event ${x.evidence.eventId}`:''}`,
       history:x.history.map(h=>({label:`${ACTION_TEXT[h.action]}${h.action==='withdrawn'?'':` ${CONSEQUENCE_NAME[h.consequence]||h.consequence}`}`,date:h.createdAt?h.createdAt.slice(0,10):null,note:h.publicNote||null}))};
   });
   return{state:'ready',contestType:type,contestName:dataset.contest.displayName,

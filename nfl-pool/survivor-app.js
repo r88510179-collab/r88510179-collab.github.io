@@ -1,7 +1,7 @@
 'use strict';
 
 import {survivorEntryState,survivorPickDistribution,survivorSummary,survivorWeekProgress,survivorFieldAvailability,survivorDecisionOptions,survivorMarketMatchups,survivorBuildResults,survivorFeedContextError,survivorUnresolvedEntering,survivorAwaitingRuling,survivorOnHold} from './survivor-math.js?v=7';
-import {PUBLIC_COLUMNS,FIRST_RULING_SEASON,contestIdFor,evaluateContestRulings,survivorRulingLookup,rulesModel} from './contest-rulings.js?v=1';
+import {PUBLIC_COLUMNS,FIRST_RULING_SEASON,contestIdFor,evaluateContestRulings,survivorRulingLookup,rulesModel} from './contest-rulings.js?v=2';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
