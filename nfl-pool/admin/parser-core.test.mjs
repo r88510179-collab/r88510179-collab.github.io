@@ -1056,7 +1056,9 @@ async function bootAdmin({rows=[]}={}){
   const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new AdminEl(id));return els.get(id)};
   // `rows` is the nfl_pool_weeks table: pages booted with the same array share it, and each keeps its own session, logs
   // and hooks. `affected` records how many rows each committed write changed. A read returns only the columns it selects.
-  const db={session:{id:'admin-1',email:'djsmokke@gmail.com'},rows,log:[],dispatched:[],affected:[],readGate:null,writeGate:null,readFail:null,beforeWrite:null,afterWrite:null},net={gate:null};
+  // `net.feed` is the NFL schedule feed the page reads (a payload, or a function of the requested week); `net.urls`
+  // records every schedule URL it requests.
+  const db={session:{id:'admin-1',email:'djsmokke@gmail.com'},rows,log:[],dispatched:[],affected:[],readGate:null,writeGate:null,readFail:null,beforeWrite:null,afterWrite:null},net={gate:null,feed:scheduleFeed,urls:[],fail:null};
   class Query{
     constructor(table){Object.assign(this,{table,op:'select',filters:[],row:null,columns:null})}
     select(columns){if(this.op==='select'&&columns)this.columns=columns.split(',');return this}
@@ -1094,7 +1096,11 @@ async function bootAdmin({rows=[]}={}){
   }
   globalThis.__pickemTest={
     document:{getElementById:$},
-    fetch:async()=>{if(net.gate)await net.gate.promise;return{ok:true,status:200,json:async()=>structuredClone(scheduleFeed)}},
+    fetch:async url=>{
+      net.urls.push(String(url));if(net.gate)await net.gate.promise;if(net.fail)throw net.fail;
+      const feed=typeof net.feed==='function'?net.feed(Number(new URL(url).searchParams.get('week'))):net.feed;
+      return{ok:true,status:200,json:async()=>structuredClone(feed)};
+    },
     neonModule:{createClient:()=>({auth:{getSession:async()=>({data:db.session?{user:db.session,session:{token:'t'}}:null}),signOut:async()=>{db.session=null},emailOtp:{sendVerificationOtp:async()=>({error:null})},signIn:{emailOtp:async()=>({error:null})}},from:table=>new Query(table)})},
     pdfjs:{GlobalWorkerOptions:{},getDocument:({data})=>{const pages=ADMIN_SHEETS[new TextDecoder().decode(data)];return{promise:Promise.resolve({numPages:pages.length,getPage:async n=>({getTextContent:async()=>({items:pages[n-1]})})})}}}
   };
@@ -1916,6 +1922,167 @@ async function atInstant(iso,run){
     assert.deepEqual(t.db.log,['select',before?'update':'insert','select','select'],`${label}: the retry only reads`);
     assert.equal(JSON.stringify(table),landed,label);
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// HDC-14 — the Pick'em publication exception for a sheet game the NFL feed no longer lists in its week (the 2020-style
+// absent game). A game with no same-week listing of either team blocks publication exactly as before unless the
+// commissioner types the explicit absence confirmation WEEK N AWAY @ HOME ABSENT; then it publishes without any event
+// id, and the locked week records the exception. Reversed, duplicate, re-paired and unreadable listings still block, a
+// confirmation that matches no absent game blocks, and only the sheet's own week is ever read (the later makeup listing
+// in Week 7 is never requested). Every regression reports through one collector.
+{
+  const failures=[];
+  const regression=async(name,check)=>{try{await check()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+  const feedOf=list=>({events:list.map(([away,home,id])=>id===null?{id:'498'}:{id,date:'2026-09-13T17:00:00Z',competitions:[{competitors:[{homeAway:'away',team:{abbreviation:away}},{homeAway:'home',team:{abbreviation:home}}]}]})});
+  const BASE=FEED_TEAMS.map(([away,home],i)=>[away,home,String(401+i)]);
+  const withoutPitNe=BASE.filter(([away])=>away!=='PIT');
+  // Week 2 no longer lists PIT @ NE (event 405); Week 7 lists the distinct makeup PIT @ NE (event 777).
+  const absentWeeks=week=>week===2?feedOf(withoutPitNe):week===7?feedOf([['PIT','NE','777']]):{events:[]};
+  const PHRASE='WEEK 2 PIT @ NE ABSENT';
+  const UNCONFIRMED='Schedule mismatch for PIT at NE. Found 0 matching NFL games. Neither team is listed in the NFL Week 2 feed. If this game was moved out of Week 2, type WEEK 2 PIT @ NE ABSENT under Absent games and read the sheet again to publish it with an explicit absence exception.';
+  const OLD_MISMATCH='Schedule mismatch for PIT at NE. Found 0 matching NFL games.';
+  const EXCEPTION={type:'absent-from-week-feed',week:2,gameIndex:4,away:'PIT',home:'NE',confirmation:PHRASE};
+  const confirm=async(t,text)=>{t.$('absenceConfirm').value=text;await t.$('absenceConfirm').dispatch('input')};
+  const readWith=async({feed=absentWeeks,text=null,rows}={})=>{
+    const t=await bootAdmin(rows?{rows}:undefined);t.net.feed=feed;
+    if(text!==null)await confirm(t,text);
+    await t.count('6');await t.choose('six.pdf');await t.parse();return t;
+  };
+  const weeksRequested=t=>t.net.urls.map(u=>new URL(u).searchParams.get('week'));
+
+  await regression('index.html: the Absent games confirmation field, its exact format, and admin.js v14',()=>{
+    const field=adminHtml.match(/<textarea id="absenceConfirm"[^>]*>/);
+    assert(field,'an #absenceConfirm textarea');
+    assert.match(adminHtml,/<label for="absenceConfirm">Absent games/);
+    assert.match(adminHtml,/WEEK N AWAY @ HOME ABSENT/,'the help text names the exact confirmation format');
+    assert.match(adminHtml,/<script type="module" src="admin\.js\?v=14"><\/script>/);
+  });
+  await regression('without a typed exception, an absent sheet game still blocks: the old error plus the exact phrase to type',async()=>{
+    const t=await readWith();
+    assert.equal(t.$('message').textContent,UNCONFIRMED);assert.equal(t.$('message').className,'notice error');
+    assert.equal(t.$('review').hidden,true);assert.equal(t.$('publishBtn').disabled,true);
+    await t.publish();assert.equal(t.writes(),0);assert.deepEqual(t.db.log,[],'nothing read or written');
+    assert.deepEqual(weeksRequested(t),['2'],'only Week 2 is requested');
+  });
+  await regression('a typed confirmation that is not the exact phrase never confirms the absence',async()=>{
+    for(const text of ['week 2 pit @ ne absent','WEEK 2 NE @ PIT ABSENT','WEEK 3 PIT @ NE ABSENT','WEEK 2 PIT @ NE','yes','WEEK 2 PIT at NE ABSENT']){
+      const t=await readWith({text});
+      assert.equal(t.$('message').textContent,UNCONFIRMED,text);assert.equal(t.$('review').hidden,true,text);
+      await t.publish();assert.equal(t.writes(),0,text);
+    }
+  });
+  await regression('with the exact typed exception the week validates, shows the absence, and publishes',async()=>{
+    const t=await readWith({text:PHRASE});
+    assert.equal(t.$('review').hidden,false,t.$('message').textContent);
+    assert.match(t.$('message').textContent,/^Week 2 parsed with 6 competition entries and matched to the NFL schedule\./);
+    assert.match(t.$('validation').innerHTML,/PIT at NE: ABSENT FROM WEEK 2 FEED/);
+    assert.match(t.$('validation').innerHTML,/no NFL event is recorded/);
+    assert.match(t.$('gameReview').innerHTML,/<td>5<\/td><td><b>9<\/b> [^<]*<\/td><td>at<\/td><td><b>10<\/b> [^<]*<\/td><td>—<\/td>/,'the absent game has no feed date');
+    assert.equal(t.$('publishBtn').disabled,false);
+    await t.publish();
+    assert.equal(t.writes(),1);assert.match(t.$('message').textContent,/^Week 2 published and locked successfully\. Revision 1\./);
+    const cfg=t.db.rows.find(r=>r.week===2).config;
+    assert.deepEqual(cfg.publicationExceptions,[EXCEPTION],'the exception is recorded explicitly');
+    const g=cfg.games[4];
+    assert.equal(g.away,'PIT');assert.equal(g.home,'NE');assert.equal(g.index,4);
+    assert.equal('eventId' in g,false,'no event id is fabricated for the absent game');
+    assert.equal('date' in g,false,'no feed date is fabricated for the absent game');
+    assert.deepEqual(cfg.games.filter((x,i)=>i!==4).map(x=>x.eventId),withoutPitNe.map(([,,id])=>id),'every other game keeps its matched event id');
+    assert.equal(JSON.stringify(cfg).includes('777'),false,'the Week 7 makeup listing is never adopted');
+    assert.deepEqual(weeksRequested(t),['2','2'],'the publish re-checks Week 2 only; Week 7 is never requested');
+  });
+  await regression('two absent games need both phrases; the exceptions are recorded in sheet order',async()=>{
+    const both=week=>week===2?feedOf(BASE.filter(([away])=>away!=='PIT'&&away!=='SEA')):{events:[]};
+    const one=await readWith({feed:both,text:PHRASE});
+    assert.equal(one.$('message').textContent,'Schedule mismatch for SEA at ARI. Found 0 matching NFL games. Neither team is listed in the NFL Week 2 feed. If this game was moved out of Week 2, type WEEK 2 SEA @ ARI ABSENT under Absent games and read the sheet again to publish it with an explicit absence exception.');
+    await one.publish();assert.equal(one.writes(),0);
+    const t=await readWith({feed:both,text:`WEEK 2 SEA @ ARI ABSENT\n  ${PHRASE}  \n`});
+    assert.equal(t.$('review').hidden,false,t.$('message').textContent);
+    await t.publish();
+    const cfg=t.db.rows.find(r=>r.week===2).config;
+    assert.deepEqual(cfg.publicationExceptions,[EXCEPTION,{type:'absent-from-week-feed',week:2,gameIndex:10,away:'SEA',home:'ARI',confirmation:'WEEK 2 SEA @ ARI ABSENT'}]);
+    assert.equal('eventId' in cfg.games[10],false);
+  });
+  await regression('reversed, duplicate, re-paired and unreadable listings block even with the typed exception',async()=>{
+    const cases=[
+      ['reversed (NE @ PIT)',BASE.map(([a,h,id])=>a==='PIT'?['NE','PIT',id]:[a,h,id]),OLD_MISMATCH],
+      ['duplicate (PIT @ NE twice)',[...BASE,['PIT','NE','499']],'Schedule mismatch for PIT at NE. Found 2 matching NFL games.'],
+      ['re-paired away team (PIT @ DET)',[...withoutPitNe,['PIT','DET','499']],OLD_MISMATCH],
+      ['re-paired home team (BUF @ NE)',[...withoutPitNe,['BUF','NE','499']],OLD_MISMATCH],
+      ['malformed listing of PIT',null,OLD_MISMATCH],
+      ['unreadable event',[...withoutPitNe,[null,null,null]],OLD_MISMATCH]
+    ];
+    for(const [label,list,expected] of cases){
+      const events=list?feedOf(list).events:[...feedOf(withoutPitNe).events,{id:'499',competitions:[{competitors:[{homeAway:'away',team:{abbreviation:'PIT'}}]}]}];
+      const t=await readWith({feed:week=>week===2?{events}:{events:[]},text:PHRASE});
+      assert.equal(t.$('message').textContent,expected,label);assert.equal(t.$('review').hidden,true,label);
+      await t.publish();assert.equal(t.writes(),0,label);
+    }
+  });
+  await regression('generic missing data is never an absence: an empty Week 2 feed still blocks with the typed exception',async()=>{
+    const t=await readWith({feed:()=>({events:[]}),text:PHRASE});
+    assert.equal(t.$('message').textContent,'NFL schedule feed returned no games.');
+    await t.publish();assert.equal(t.writes(),0);
+  });
+  await regression('a typed confirmation that matches no absent game blocks publication',async()=>{
+    const t=await readWith({feed:scheduleFeed,text:PHRASE});
+    assert.equal(t.$('message').textContent,'Absent-game confirmation "WEEK 2 PIT @ NE ABSENT" does not match a sheet game missing from the NFL Week 2 feed. Correct or clear it, then read the sheet again.');
+    assert.equal(t.$('review').hidden,true);await t.publish();assert.equal(t.writes(),0);
+  });
+  await regression('ordinary feed matches are unchanged: no exception key, every event id, no publish-time feed read',async()=>{
+    const t=await readWith({feed:scheduleFeed});
+    assert.equal(t.$('validation').innerHTML.includes('ABSENT'),false);
+    await t.publish();
+    const cfg=t.db.rows.find(r=>r.week===2).config;
+    assert.equal('publicationExceptions' in cfg,false);
+    assert.deepEqual(cfg.games.map(g=>g.eventId),BASE.map(([,,id])=>id));
+    assert.deepEqual(weeksRequested(t),['2'],'an ordinary publish does not read the feed again');
+  });
+  await regression('changing the confirmation after validation invalidates the week; publishing needs a new read',async()=>{
+    const t=await readWith({text:PHRASE});
+    assert.equal(t.$('publishBtn').disabled,false,t.$('message').textContent);
+    await confirm(t,'');
+    assert.equal(t.$('review').hidden,true);assert.equal(t.$('publishBtn').disabled,true);
+    assert.equal(t.$('message').textContent,'Absent-game confirmation changed. Read the weekly sheet again.');
+    await t.publish();assert.equal(t.writes(),0);
+    await t.parse();assert.equal(t.$('message').textContent,UNCONFIRMED);
+    // An edit the page never saw as an input event is caught before any database access.
+    const u=await readWith({text:PHRASE});
+    u.$('absenceConfirm').value='';await u.publish();
+    assert.equal(u.writes(),0);assert.deepEqual(u.db.log,[]);
+    assert.equal(u.$('message').textContent,'The selected file changed or is no longer validated. Read and validate it again before publishing.');
+  });
+  await regression('a game of either team listed in the week again before the publish is refused with nothing written',async()=>{
+    const t=await readWith({text:PHRASE});
+    t.net.feed=scheduleFeed;await t.publish();
+    assert.equal(t.$('message').textContent,'Publish refused: PIT at NE is no longer absent from the NFL Week 2 feed (a game of PIT or NE is listed), so its absence exception no longer holds. Nothing was written. Read and validate the sheet again before publishing.');
+    assert.equal(t.writes(),0);assert.deepEqual(t.db.log,[]);
+    assert.equal(t.$('review').hidden,true);assert.equal(t.$('publishBtn').disabled,true);
+    // A re-paired listing that appears before the publish is refused the same way.
+    const u=await readWith({text:PHRASE});
+    u.net.feed=feedOf([...withoutPitNe,['BUF','NE','499']]);await u.publish();
+    assert.match(u.$('message').textContent,/^Publish refused: PIT at NE is no longer absent from the NFL Week 2 feed \(a game of PIT or NE is listed\)/);assert.equal(u.writes(),0);
+  });
+  await regression('a feed that cannot be re-checked at publish refuses the write and allows a retry',async()=>{
+    const t=await readWith({text:PHRASE});
+    t.net.fail=new TypeError('Failed to fetch');await t.publish();
+    assert.equal(t.$('message').textContent,'Publish refused: the NFL Week 2 feed could not be re-checked for PIT at NE (Failed to fetch). Nothing was written. You can retry Publish.');
+    assert.equal(t.writes(),0);assert.equal(t.$('publishBtn').disabled,false,'the validated week can be retried');
+    t.net.fail=null;await t.publish();
+    assert.equal(t.writes(),1);assert.deepEqual(t.db.rows.find(r=>r.week===2).config.publicationExceptions,[EXCEPTION]);
+  });
+  await regression('the confirmation is frozen while a publish is running',async()=>{
+    const t=await readWith({text:PHRASE});
+    const gate=adminDeferred();t.db.readGate=gate;
+    const pending=t.publish();await adminFlush();
+    await confirm(t,'');
+    assert.equal(t.$('absenceConfirm').value,PHRASE,'the rejected edit does not stay on screen');
+    assert.equal(t.$('message').textContent,'Publishing is in progress. The absent-game confirmation cannot be changed until it finishes.');
+    gate.resolve();await pending;await adminFlush();
+    assert.equal(t.writes(),1);assert.deepEqual(t.db.rows.find(r=>r.week===2).config.publicationExceptions,[EXCEPTION]);
+  });
+  assert.equal(failures.length,0,`HDC-14 Pick'em publication-exception regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
 }
 
 console.log('parser-core regular-table region, continuation, fail-closed field, duplicate, privacy, and publication write-integrity regressions passed');

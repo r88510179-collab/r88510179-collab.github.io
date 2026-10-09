@@ -115,10 +115,10 @@ await regression('incident-rulings.js loads and exports the HDC-13 surface',()=>
   assert.equal(m.PRODUCTION_FEED_SOURCE,'nflscores2');
   assert.deepEqual(Object.keys(m.HDC13_ERROR_TEXT).sort(),[...TOKENS].sort(),'a fixed message for every HDC13 token');
 });
-await regression('incident-rulings.js is pure and imports only contest-rulings v1, survivor-math v7 and public-math v2',()=>{
+await regression('incident-rulings.js is pure and imports only contest-rulings v2 (HDC-14), survivor-math v7 and public-math v2',()=>{
   assert(moduleSource,'incident-rulings.js must exist');
   const imports=[...moduleSource.matchAll(/^\s*import\b[^;]*?from\s*'([^']+)'/gm)].map(m=>m[1]).sort();
-  assert.deepEqual(imports,['../contest-rulings.js?v=1','../public-math.js?v=2','../survivor-math.js?v=7']);
+  assert.deepEqual(imports,['../contest-rulings.js?v=2','../public-math.js?v=2','../survivor-math.js?v=7']);
   assert.doesNotMatch(moduleSource,/weekly-app|survivor-app|\bdocument\b|\bwindow\b|\bfetch\s*\(|localStorage|sessionStorage|XMLHttpRequest|setInterval|setTimeout|innerHTML/,
     'no DOM, network, storage or timer in the pure module');
 });
@@ -624,6 +624,48 @@ function serverRpc(db){
     return{data:Object.fromEntries(PUBLIC_COLUMNS.rulings.map(c=>[c,row[c]])),error:null};
   };
 }
+// HDC-14: the absent-game function's server derivations (migration 005), emulated over the in-memory tables: the commissioner,
+// the compare-and-swap tokens, the state machine, one evidence class per chain, the published proof (Pick'em: the locked
+// week; Survivor: a covering snapshot and the same-week locked slate) and the server-derived absence evidence.
+const ABSENT_ARGS=['p_contest_id','p_week','p_away_team','p_home_team','p_action','p_consequence','p_expected_policy_revision',
+  'p_expected_parent_ruling_id','p_public_note','p_admin_note'];
+function serverAbsentRpc(db){
+  const alias=c=>({JAC:'JAX',WSH:'WAS'}[c]||c);
+  return async(fn,a)=>{
+    assert.equal(fn,'nfl_append_absent_incident_ruling');
+    assert.deepEqual(Object.keys(a),ABSENT_ARGS,'exactly the 10 absent-game arguments, in order');
+    if(!db.session||db.session.email.toLowerCase()!=='djsmokke@gmail.com')return tokenError('HDC14_NOT_COMMISSIONER','42501');
+    const contest=db.tables.nfl_contests.find(c=>c.contest_id===a.p_contest_id);
+    if(!contest)return tokenError('HDC14_INVALID_INPUT','22023');
+    const rev=db.tables.nfl_contest_policies.filter(p=>p.contest_id===a.p_contest_id&&p.effective_week<=a.p_week).sort((x,y)=>y.revision-x.revision)[0]?.revision??null;
+    if(rev!==a.p_expected_policy_revision)return tokenError('HDC14_STALE_POLICY');
+    const chain=db.tables.nfl_incident_rulings.filter(r=>r.contest_id===a.p_contest_id&&r.week===a.p_week&&r.away_team===a.p_away_team&&r.home_team===a.p_home_team&&r.policy_revision===rev).sort((x,y)=>x.chain_seq-y.chain_seq);
+    const last=chain.at(-1)||null,root=chain[0]||null;
+    if((last?.ruling_id??null)!==(a.p_expected_parent_ruling_id??null))return tokenError('HDC14_STALE_CHAIN');
+    const state=!last?'empty':last.consequence==='withdrawn'?'withdrawn':'active';
+    if({rule:'empty',reaffirm:'active',withdraw:'active',rerule:'withdrawn'}[a.p_action]!==state)return tokenError('HDC14_INVALID_TRANSITION');
+    if(root&&root.incident_status!=='STATUS_ABSENT')return tokenError('HDC14_NOT_ABSENCE_CHAIN');
+    let eventId=root?root.event_id:null;
+    if(a.p_action!=='withdraw'){
+      const survivor=contest.contest_type==='survivor';
+      if(survivor&&!db.tables.nfl_survivor_weeks.some(w=>w.season===contest.season&&w.week>=a.p_week&&w.status==='locked'))return tokenError('HDC14_NOT_PUBLISHED');
+      const weeks=db.tables.nfl_pool_weeks.filter(w=>w.season===contest.season&&w.week===a.p_week&&w.status==='locked'&&w.config?.week===a.p_week);
+      const games=(weeks[0]?.config?.games||[]).map(g=>({away:alias(g.away),home:alias(g.home),eventId:g.eventId??null}));
+      const pairs=games.filter(g=>g.away===a.p_away_team&&g.home===a.p_home_team),touching=games.filter(g=>[g.away,g.home].some(t=>t===a.p_away_team||t===a.p_home_team));
+      if(weeks.length!==1||pairs.length!==1||touching.length!==1)return tokenError(survivor?'HDC14_ABSENCE_NOT_ATTESTABLE':'HDC14_NOT_PUBLISHED');
+      if(a.p_action==='rule')eventId=pairs[0].eventId;
+      else if(pairs[0].eventId!==null&&pairs[0].eventId!==eventId)return tokenError('HDC14_EVENT_MISMATCH');
+    }
+    const row={ruling_id:++db.nextId,contest_id:a.p_contest_id,contest_type:contest.contest_type,week:a.p_week,away_team:a.p_away_team,home_team:a.p_home_team,
+      policy_revision:rev,chain_seq:(last?.chain_seq||0)+1,parent_ruling_id:last?.ruling_id??null,
+      consequence:a.p_action==='withdraw'?'withdrawn':a.p_action==='reaffirm'?last.consequence:a.p_consequence,
+      incident_status:'STATUS_ABSENT',event_id:eventId,evidence_source:'commissioner-attestation',
+      public_note:db.serverNote??a.p_public_note,created_at:new Date().toISOString(),admin_note:a.p_admin_note,created_by:db.session.id};
+    db.tables.nfl_incident_rulings.push(row);
+    return{data:Object.fromEntries(PUBLIC_COLUMNS.rulings.map(c=>[c,row[c]])),error:null};
+  };
+}
+const routeRpc=db=>{const normal=serverRpc(db),absentRpc=serverAbsentRpc(db);return(fn,a)=>fn==='nfl_append_absent_incident_ruling'?absentRpc(fn,a):normal(fn,a)};
 function neonModule(db){
   const columns={nfl_contests:PUBLIC_COLUMNS.contests,nfl_contest_policies:PUBLIC_COLUMNS.policies,nfl_incident_rulings:PUBLIC_COLUMNS.rulings};
   class Query{
@@ -651,8 +693,10 @@ function neonModule(db){
 }
 const patchedAdmin=()=>{
   assert(adminSource,'rulings-admin.js must exist');
+  const moduleFrom=adminSource.match(/from '\.\/incident-rulings\.js\?v=\d+';/)?.[0];
+  assert(moduleFrom,'rulings-admin.js imports a versioned incident-rulings.js');
   const swaps=[["import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';","const {createClient}=globalThis.__rulingsTest.neonModule;"],
-    ["from './incident-rulings.js?v=1';",`from '${new URL('./incident-rulings.js?v=1',here).href}';`]];
+    [moduleFrom,`from '${new URL(moduleFrom.slice("from '".length,-"';".length),here).href}';`]];
   let s=adminSource;
   for(const [from,to] of swaps){assert(s.includes(from),`harness expects: ${from}`);s=s.split(from).join(to)}
   return s;
@@ -662,7 +706,7 @@ async function boot({session=COMMISSIONER,pendingSession=COMMISSIONER,tables={},
   const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new El(id));return els.get(id)};
   const db={session,pendingSession,signOuts:0,reads:[],rpcCalls:[],nextId:100,tables:{nfl_contests:structuredClone(CONTESTS),nfl_contest_policies:[...pkPolicies(),...svPolicies()],
     nfl_incident_rulings:[],nfl_pool_weeks:[pkWeekRow()],nfl_survivor_weeks:[svSnapshotRow()],...structuredClone(tables)}};
-  db.rpc=rpc?rpc(db):serverRpc(db);
+  db.rpc=rpc?rpc(db):routeRpc(db);
   const net={calls:[],feeds,gate:null};
   const nativeFetch=async(url)=>{
     const u=new URL(String(url));net.calls.push(u.href);
@@ -895,15 +939,15 @@ await regression('rulings.html: language, viewport, title, labelled controls, a 
 await regression('rulings.html loads score-feed-proxy.js before the module and never a public page runtime',()=>{
   assert(pageHtml,'rulings.html must exist');
   const scripts=[...pageHtml.matchAll(/<script\b[^>]*src="([^"]+)"[^>]*>/g)].map(m=>m[1]);
-  assert.deepEqual(scripts,['../score-feed-proxy.js?v=2','rulings-admin.js?v=1']);
-  assert.match(pageHtml,/<script type="module" src="rulings-admin\.js\?v=1"><\/script>/);
+  assert.deepEqual(scripts,['../score-feed-proxy.js?v=2','rulings-admin.js?v=2'],'HDC-14 loads rulings-admin.js v2');
+  assert.match(pageHtml,/<script type="module" src="rulings-admin\.js\?v=2"><\/script>/);
   assert.doesNotMatch(pageHtml+(adminSource||''),/weekly-app\.js|survivor-app\.js/);
   assert.match(pageHtml,/href="admin\.css\?v=premium-v3"/);assert.match(pageHtml,/href="\.\/"/);assert.match(pageHtml,/href="survivor\.html"/);
 });
-await regression('rulings-admin.js uses the existing Neon client and auth pattern and imports only incident-rulings.js v1',()=>{
+await regression('rulings-admin.js uses the existing Neon client and auth pattern and imports only incident-rulings.js v2 (HDC-14)',()=>{
   assert(adminSource,'rulings-admin.js must exist');
   const imports=[...adminSource.matchAll(/^\s*import\b[^;]*?from\s*'([^']+)'/gm)].map(m=>m[1]);
-  assert.deepEqual(imports,['https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm','./incident-rulings.js?v=1']);
+  assert.deepEqual(imports,['https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm','./incident-rulings.js?v=2']);
   assert.match(adminSource,/neon\.auth\.emailOtp\.sendVerificationOtp\(\{email:ADMIN_EMAIL,type:'sign-in'\}\)/);
   assert.match(adminSource,/neon\.rpc\(RPC_FUNCTION,/);
   assert.doesNotMatch(adminSource,/(?<!\w)admin_note|created_by|\.innerHTML\s*=\s*[^;]*\berror\b/,'never reads private columns; never renders an error as HTML');
@@ -1056,5 +1100,353 @@ for(const [tiebreak,tiebreakRows] of [['active',[]],['void',tbChain('CAR@CHI',['
       await tiebreakParity({rows:[...tiebreakRows,...rows],states,key:'KC@DEN',action},[tiebreak==='void',tiebreak==='void']);
     });
 
+// ---------------------------------------------------------------------------------------------------------------------
+// 14. HDC-14: absent-game adjudication. Week 12 of the 2026 Pick'em contest publishes DEN @ KC and PIT @ TEN (event
+// 401438121); the Week 12 feed no longer lists PIT @ TEN (the 2020 Week 4 shape: it later appears as a distinct Week 13
+// event). The normal HDC-13 path still refuses it; the separate absent-game path (public.nfl_append_absent_incident_ruling)
+// offers it, with server-derived evidence (STATUS_ABSENT, commissioner-attestation, the published event) and a typed
+// confirmation naming the week, the matchup and the absence. Controls: a game canceled (2022) or postponed (2017) in place
+// stays on the HDC-13 path, and HDC-14 is not offered. No other week is ever read.
+// ---------------------------------------------------------------------------------------------------------------------
+const ABSENT_RPC='nfl_append_absent_incident_ruling';
+const HDC14_TOKENS=['HDC14_NOT_COMMISSIONER','HDC14_ISOLATION','HDC14_INVALID_INPUT','HDC14_STALE_POLICY','HDC14_STALE_CHAIN','HDC14_INVALID_TRANSITION',
+  'HDC14_NOT_ABSENCE_CHAIN','HDC14_NOT_PERMITTED','HDC14_NOT_PUBLISHED','HDC14_EVENT_MISMATCH','HDC14_ABSENCE_NOT_ATTESTABLE'];
+const PITTEN={week:12,away:'PIT',home:'TEN',eventId:'401438121'};
+const pk12Config=({tiebreakGameIndex=0,eventIds=true,extraGames=[]}={})=>({schemaVersion:1,season:2026,week:12,tiebreakGameIndex,
+  games:[{away:'DEN',home:'KC',awayNumber:1,homeNumber:2,date:'2026-11-29',...(eventIds?{eventId:'401438140'}:{})},
+    {away:'PIT',home:'TEN',awayNumber:3,homeNumber:4,date:'2026-11-29',...(eventIds?{eventId:'401438121'}:{})},...extraGames],
+  participants:[{id:'dc',displayName:'D.C.',pickNumbers:[1,3],tiebreak:41},{id:'djs',displayName:'DJS',pickNumbers:[2,4],tiebreak:44}]});
+const pk12Row=(config=pk12Config(),o={})=>({season:2026,week:12,status:'locked',revision:1,config,...o});
+const denKc12=(as='24',hs='17')=>finalGame('DEN','KC','401438140',as,hs,12);
+const pitTen12=(name='STATUS_POSTPONED',state='pre',o={})=>espnEvent({id:'401438121',away:'PIT',home:'TEN',week:12,type:espnType(name,state),...o});
+const pk12Events=(...events)=>projected(events.length?events:[denKc12()]).events;
+const absentChain=(consequences,o={},firstId=1)=>chainRows(PK,'pickem',{...PITTEN,status:'STATUS_ABSENT'},consequences,firstId)
+  .map(r=>({...r,evidence_source:'commissioner-attestation',...o}));
+const feedChain12=consequences=>chainRows(PK,'pickem',{...PITTEN,status:'STATUS_POSTPONED'},consequences);
+const pk12Candidates=({config=pk12Config(),events=pk12Events(),source='nflscores2',data=pkData()}={})=>
+  need().pickemCandidates({contestId:PK,season:2026,week:12,config,events,source,data});
+const pk12Candidate=(o={},key='PIT@TEN')=>{const c=pk12Candidates(o).find(x=>x.key===key);assert(c,`candidate ${key} is discovered`);return c};
+const absentOffered=c=>need().ACTIONS.filter(a=>c.absence?.actions?.[a]?.ok);
+const ABSENT_NOTE='PIT @ TEN left the Week 12 feed; void for this contest.';
+const absentRequestFor=(c,action,o={})=>{
+  const out=need().buildAbsentRequest({contestId:o.contestId||(c.contestType==='survivor'?SV:PK),week:c.week,candidate:c,action,consequence:o.consequence??null,
+    publicNote:o.publicNote??ABSENT_NOTE,adminNote:o.adminNote??(action==='withdraw'||action==='rerule'?ADMIN_NOTE:null)});
+  assert(out.ok,`absent-game request builds: ${out.reason}`);return out.request;
+};
+const exact10=r=>{
+  assert.deepEqual(Object.keys(r),ABSENT_ARGS,'exactly the 10 approved absent-game keys, in order');
+  for(const k of [...FORBIDDEN,'p_incident_status','p_event_id','p_evidence_source'])assert(!(k in r),`never sends ${k}`);
+};
+// Survivor: the Week-2 SF @ ARI game (event 401547001) is no longer in the Week 2 feed; the same-week locked Pick'em slate
+// (2026 Week 2, revision 4) publishes it exactly once. D.C. picked SF, survivor-003 ARI.
+const svAbsentFeeds=()=>({1:svWeek(W1,1),2:svWeek(W2.filter(([a])=>a!=='SF'),2)});
+const svSlate=(games=[['SF','ARI','401547001'],['ATL','BAL','401547010']],o={})=>({season:2026,week:2,status:'locked',revision:4,config:{schemaVersion:1,season:2026,week:2,
+  tiebreakGameIndex:0,games:games.map(([away,home,eventId],i)=>({away,home,awayNumber:2*i+1,homeNumber:2*i+2,...(eventId?{eventId}:{})})),participants:[]},...o});
+const svAbsentCandidates=({config=svConfig(),feeds=svAbsentFeeds(),slate=svSlate(),source='nflscores2',data=svData()}={})=>
+  need().survivorCandidates({contestId:SV,season:2026,week:2,snapshot:{week:config.week,config},events:svEventsByWeek(feeds)[1],source,data,slate});
+const svAbsentChain=(consequences,o={})=>chainRows(SV,'survivor',{...SFARI,status:'STATUS_ABSENT'},consequences).map(r=>({...r,evidence_source:'commissioner-attestation',...o}));
+
+await regression('HDC-14 module surface: the absent-game RPC, its 10 arguments, its fixed error messages and its helpers',()=>{
+  const m=need();
+  assert.equal(m.ABSENT_RPC_FUNCTION,ABSENT_RPC);
+  assert.deepEqual([...(m.ABSENT_RPC_ARGUMENTS||[])],ABSENT_ARGS);
+  assert.deepEqual(Object.keys(m.HDC14_ERROR_TEXT||{}).sort(),[...HDC14_TOKENS].sort(),'a fixed message for every HDC14 token');
+  for(const token of HDC14_TOKENS)assert.match(m.HDC14_ERROR_TEXT[token],/Nothing was written/,token);
+  for(const name of ['buildAbsentRequest','absentWriteProbeRequest','absentHypotheticalRow','absencePhrase','absentActionPhrase','classifyAbsentReadBack','absentProbeOutcome','survivorAbsentPicks'])
+    assert.equal(typeof m[name],'function',`exports ${name}()`);
+  assert.equal(m.ABSENT_INCIDENT_STATUS,'STATUS_ABSENT');assert.equal(m.ATTESTATION_SOURCE,'commissioner-attestation');
+  assert.equal(m.RPC_FUNCTION,'nfl_append_incident_ruling','the HDC-13 function is unchanged');assert.deepEqual([...m.RPC_ARGUMENTS],RPC_ARGUMENTS);
+});
+await regression('HDC-14 Control C (the 2020 shape): PIT @ TEN absent from the Week 12 feed is refused by HDC-13 and offered by HDC-14, labelled ABSENT FROM ORIGINAL WEEK FEED',()=>{
+  const c=pk12Candidate();
+  assert.equal(c.actions.rule.ok,false,'the normal first ruling stays refused');assert.match(c.actions.rule.reason,HDC14);
+  assert.equal(c.absence?.eligible,true,c.absence?.reason);assert.deepEqual(absentOffered(c),['rule']);
+  assert.equal(c.absence.label,'ABSENT FROM ORIGINAL WEEK FEED');
+  assert.deepEqual(c.absence.evidence,{incidentStatus:'STATUS_ABSENT',eventId:'401438121',evidenceSource:'commissioner-attestation'},'server-derived: the published event, never a feed status');
+  assert.deepEqual(c.consequences,['void']);
+  const den=pk12Candidate({},'DEN@KC');
+  assert.equal(den.absence.eligible,false,'a listed final is never absent');assert.deepEqual(absentOffered(den),[]);
+  const bare=pk12Candidate({config:pk12Config({eventIds:false})});
+  assert.equal(bare.absence.eligible,true);assert.equal(bare.absence.evidence.eventId,null,'no published event: none is fabricated');
+});
+await regression('HDC-14 Controls A and B: a game canceled (2022) or postponed (2017) in its own week stays on the HDC-13 path; HDC-14 is not offered',()=>{
+  for(const [label,event] of [['canceled in place',pitTen12('STATUS_CANCELED','post')],['postponed in place, makeup elsewhere',pitTen12('STATUS_POSTPONED','pre')]]){
+    const c=pk12Candidate({events:pk12Events(denKc12(),event)});
+    assert.equal(c.actions.rule.ok,true,`${label}: HDC-13 offers its rule (${c.actions.rule.reason})`);
+    assert.equal(c.absence.eligible,false,`${label}: HDC-14 is not offered`);assert.deepEqual(absentOffered(c),[],label);
+  }
+});
+await regression('HDC-14 fails closed: a reversed, re-paired, relisted, conflicting, unreadable, forfeited or out-of-context listing in the week is not an absence',()=>{
+  const broken={...pitTen12(),competitions:[{competitors:[{homeAway:'away',team:{abbreviation:'PIT'}}]}]};
+  for(const [label,extra] of [['reversed (TEN @ PIT)',[espnEvent({id:'401438150',away:'TEN',home:'PIT',week:12,type:espnType('STATUS_SCHEDULED','pre')})]],
+    ['PIT re-paired against NYG',[espnEvent({id:'401438151',away:'PIT',home:'NYG',week:12,type:espnType('STATUS_SCHEDULED','pre')})]],
+    ['TEN re-paired against BUF',[espnEvent({id:'401438152',away:'BUF',home:'TEN',week:12,type:espnType('STATUS_SCHEDULED','pre')})]],
+    ['the published event id listed for other teams',[espnEvent({id:'401438121',away:'NYG',home:'DAL',week:12,type:espnType('STATUS_SCHEDULED','pre')})]],
+    ['relisted under two ids',[pitTen12(),{...pitTen12(),id:'401438153'}]],['conflicting copies',[pitTen12(),pitTen12('STATUS_IN_PROGRESS','in')]],
+    ['an unreadable listing naming PIT',[broken]],['a forfeit',[pitTen12('STATUS_FORFEIT','post')]],
+    ['the Week 13 makeup inside the Week 12 payload',[{...finalGame('PIT','TEN','401438199','24','27',13)}]]]){
+    const c=pk12Candidate({events:pk12Events(denKc12(),...extra)});
+    assert.equal(c.absence.eligible,false,label);assert.deepEqual(absentOffered(c),[],label);assert(c.absence.reason,`${label}: a reason`);
+  }
+});
+await regression('HDC-14 fails closed on the evidence it rests on: an unknown feed source, an unreadable feed, a game not published exactly once, a policy that is not ready',()=>{
+  for(const source of [null,'espn-scoreboard','nflscores'])assert.equal(pk12Candidate({source}).absence.eligible,false,`source ${source}`);
+  assert.equal(pk12Candidate({events:null}).absence.eligible,false,'feed unreadable');
+  const twice=pk12Candidates({config:pk12Config({extraGames:[{away:'PIT',home:'TEN',awayNumber:5,homeNumber:6,eventId:'401438160'}]})}).find(x=>x.key==='PIT@TEN');
+  assert.equal(twice.absence.eligible,false,'published twice');
+  const repaired=pk12Candidates({config:pk12Config({extraGames:[{away:'NYG',home:'PIT',awayNumber:5,homeNumber:6,eventId:'401438161'}]})}).find(x=>x.key==='PIT@TEN');
+  assert.equal(repaired.absence.eligible,false,'PIT published in another game');
+  const badPolicy=pk12Candidates({data:pkData([],[policyRow(PK,'pickem','eliminate')])});
+  assert(badPolicy.every(c=>!c.absence.eligible&&!absentOffered(c).length),'no write while the policy history does not validate');
+  const badEvent=pk12Candidate({config:pk12Config({extraGames:[]}),events:pk12Events()});
+  assert.equal(badEvent.absence.eligible,true,'control: the published event id is an event id');
+  const malformed=pk12Candidates({config:{...pk12Config(),games:pk12Config().games.map(g=>g.away==='PIT'?{...g,eventId:'4014x'}:g)}}).find(x=>x.key==='PIT@TEN');
+  assert.equal(malformed.absence.eligible,false,'a published eventId that is not an event id is never recorded');
+});
+await regression('HDC-14 chain ownership: an absence chain offers only absent-game actions; a feed chain only HDC-13 actions',()=>{
+  const active=pk12Candidate({data:pkData(absentChain(['void']))});
+  assert.deepEqual(offered(active),[],'no HDC-13 action continues an absence chain');
+  for(const a of ['reaffirm','withdraw','rerule'])assert.match(active.actions[a].reason,/absence|absent-game/i,a);
+  assert.deepEqual(absentOffered(active),['withdraw'],'absent and APPLIED: withdraw only (reaffirm needs UNDER REVIEW)');
+  assert.equal(active.absence.label,'ABSENT FROM ORIGINAL WEEK FEED');
+  const review=pk12Candidate({data:pkData(absentChain(['void'])),events:pk12Events(denKc12(),finalGame('PIT','TEN','401438121','24','27',12))});
+  assert(review.underReview,'listed again in Week 12: UNDER REVIEW');assert.deepEqual(absentOffered(review),['reaffirm','withdraw']);
+  const withdrawn=pk12Candidate({data:pkData(absentChain(['void','withdrawn']))});
+  assert.deepEqual(absentOffered(withdrawn),['rerule'],'still absent: re-rule is offered');assert.deepEqual(offered(withdrawn),[]);
+  const listedAgain=pk12Candidate({data:pkData(absentChain(['void','withdrawn'])),events:pk12Events(denKc12(),pitTen12('STATUS_SCHEDULED','pre'))});
+  assert.deepEqual(absentOffered(listedAgain),[],'no longer absent: no re-rule');
+  const unread=pk12Candidate({data:pkData(absentChain(['void'])),events:null});
+  assert.deepEqual(absentOffered(unread),['withdraw'],'a withdrawal never needs the feed');
+  const feed=pk12Candidate({data:pkData(feedChain12(['void'])),events:pk12Events(denKc12(),pitTen12())});
+  assert.deepEqual(offered(feed),['withdraw'],'the feed chain keeps its HDC-13 actions');assert.deepEqual(absentOffered(feed),[]);
+  assert.match(feed.absence.actions.withdraw.reason,/feed evidence/i);
+  const feedGone=pk12Candidate({data:pkData(feedChain12(['void','withdrawn']))});
+  assert.deepEqual(absentOffered(feedGone),[],'a withdrawn feed chain is never re-ruled as an absence');
+});
+await regression('HDC-14 Survivor: the absent pick\'s matchup is proved by the same-week locked Pick\'em slate, never by the feed or another week',()=>{
+  const list=svAbsentCandidates(),c=list.find(x=>x.key==='SF@ARI');
+  assert(c,'SF @ ARI is discovered from the slate');
+  assert.equal(c.absence.eligible,true,c.absence.reason);assert.deepEqual(absentOffered(c),['rule']);
+  assert.deepEqual(c.absence.evidence,{incidentStatus:'STATUS_ABSENT',eventId:'401547001',evidenceSource:'commissioner-attestation'});
+  assert.equal(c.absence.slateRevision,4);assert.equal(c.actions.rule.ok,false,'HDC-13 refuses');
+  for(const [label,slate] of [['no slate',null],['the slate omits SF (a Thursday game the sheet leaves out)',svSlate([['ATL','BAL','401547010']])],
+    ['SF twice on the slate',svSlate([['SF','ARI','401547001'],['SF','ARI','401547002']])],['ARI in another slate game',svSlate([['SF','ARI','401547001'],['ARI','DAL','401547003']])],
+    ['the slate reversed (ARI @ SF)',svSlate([['ARI','SF','401547001']])],['a draft slate',svSlate(undefined,{status:'draft'})],['a slate of another week',svSlate(undefined,{week:3})],
+    ['a slate whose configuration names another week',{...svSlate(),config:{...svSlate().config,week:3}}],['another season',svSlate(undefined,{season:2025})]]){
+    const found=svAbsentCandidates({slate}).find(x=>x.away==='SF'||x.home==='SF');
+    assert(!found||!found.absence.eligible,`${label}: no absent-game ruling`);
+    const report=need().survivorAbsentPicks({season:2026,week:2,snapshot:{week:2,config:svConfig()},events:svEventsByWeek(svAbsentFeeds())[1],slate});
+    assert(report.some(r=>r.team==='SF'&&!r.provable&&r.reason),`${label}: SF is reported unprovable with a reason`);
+  }
+  const opponentListed=svAbsentCandidates({feeds:{1:svWeek(W1,1),2:svWeek(W2.filter(([a])=>a!=='SF').concat([['ARI','DAL']]).filter(([a,h])=>!(a==='CLE'&&h==='DAL')),2)}}).find(x=>x.key==='SF@ARI');
+  assert(!opponentListed?.absence?.eligible,'ARI listed against DAL that week: a re-pairing, never an absence');
+  const listed=svCandidates().find(x=>x.key==='SF@ARI');
+  assert.equal(listed.absence.eligible,false,'SF @ ARI listed (canceled) in its week: the HDC-13 path, not HDC-14');
+  const report=need().survivorAbsentPicks({season:2026,week:2,snapshot:{week:2,config:svConfig()},events:svEventsByWeek(svAbsentFeeds())[1],slate:svSlate()});
+  assert.deepEqual(report.map(r=>[r.team,r.provable,r.away,r.home]),[['ARI',true,'SF','ARI'],['SF',true,'SF','ARI']]);
+});
+await regression('HDC-14 requests: exactly the 10 approved keys, no evidence, explicit NULLs, the compare-and-swap tokens',()=>{
+  const m=need(),rule=absentRequestFor(pk12Candidate(),'rule',{consequence:'void',adminNote:'  Checked the Week 12 feed.  '});
+  exact10(rule);
+  assert.deepEqual(rule,{p_contest_id:PK,p_week:12,p_away_team:'PIT',p_home_team:'TEN',p_action:'rule',p_consequence:'void',p_expected_policy_revision:1,
+    p_expected_parent_ruling_id:null,p_public_note:ABSENT_NOTE,p_admin_note:'Checked the Week 12 feed.'});
+  const withdraw=absentRequestFor(pk12Candidate({data:pkData(absentChain(['void','void']))}),'withdraw');
+  exact10(withdraw);assert.deepEqual([withdraw.p_action,withdraw.p_consequence,withdraw.p_expected_parent_ruling_id,withdraw.p_admin_note],['withdraw',null,2,ADMIN_NOTE]);
+  const rerule=absentRequestFor(pk12Candidate({data:pkData(absentChain(['void','withdrawn']))}),'rerule',{consequence:'void'});
+  assert.deepEqual([rerule.p_action,rerule.p_consequence,rerule.p_expected_parent_ruling_id],['rerule','void',2]);
+  const build=o=>m.buildAbsentRequest({contestId:PK,week:12,candidate:pk12Candidate(),publicNote:ABSENT_NOTE,adminNote:null,...o});
+  assert.equal(build({action:'withdraw'}).ok,false,'withdraw on an empty chain');assert.equal(build({action:'rule',consequence:'eliminate'}).ok,false,"eliminate in Pick'em");
+  assert.equal(build({action:'rule',consequence:'void',publicNote:''}).ok,false,'no public note');
+  assert.equal(m.buildAbsentRequest({contestId:PK,week:12,candidate:pk12Candidate({events:pk12Events(denKc12(),pitTen12())}),action:'rule',consequence:'void',publicNote:ABSENT_NOTE}).ok,false,'not offered: the game is listed');
+  assert.equal(build({action:'rule',consequence:'void',contestId:SV}).ok,false,'another contest');
+  const probe=m.absentWriteProbeRequest({contestId:PK,week:12,away:'DEN',home:'KC',policyRevision:1});
+  exact10(probe);assert.deepEqual([probe.p_action,probe.p_consequence,probe.p_expected_parent_ruling_id],['withdraw',null,9007199254740991]);
+});
+await regression('HDC-14 the hypothetical row: server-derived absence evidence on the root, the root copied on every later row, no private field',()=>{
+  const m=need(),c=pk12Candidate(),row=m.absentHypotheticalRow(absentRequestFor(c,'rule',{consequence:'void'}),{contestType:'pickem',chain:c.chain,eventId:c.absence.evidence.eventId,rulingId:1,createdAt:CREATED});
+  assert.deepEqual(Object.keys(row).sort(),[...PUBLIC_COLUMNS.rulings].sort());
+  assert.deepEqual([row.incident_status,row.event_id,row.evidence_source,row.consequence,row.chain_seq,row.parent_ruling_id],['STATUS_ABSENT','401438121','commissioner-attestation','void',1,null]);
+  const later=pk12Candidate({data:pkData(absentChain(['void'],{event_id:null}))});
+  const w=m.absentHypotheticalRow(absentRequestFor(later,'withdraw'),{contestType:'pickem',chain:later.chain,eventId:'999',rulingId:2,createdAt:CREATED});
+  assert.deepEqual([w.incident_status,w.event_id,w.evidence_source,w.consequence,w.parent_ruling_id],['STATUS_ABSENT',null,'commissioner-attestation','withdrawn',1],'a later row copies the root, never a new event');
+});
+await regression('HDC-14 typed confirmation names the week, the matchup and the absence; a generic or partial phrase never matches',()=>{
+  const m=need(),c=pk12Candidate(),phrase=m.absencePhrase(c);
+  assert.equal(phrase,'WEEK 12 PIT @ TEN ABSENT');
+  assert.equal(m.absentActionPhrase(c,'rule'),phrase);assert.equal(m.absentActionPhrase(c,'rerule'),phrase);
+  assert.equal(m.absentActionPhrase(c,'withdraw'),'PIT @ TEN');assert.equal(m.absentActionPhrase(c,'reaffirm'),'PIT @ TEN');
+  for(const typed of ['WEEK 12 PIT @ TEN ABSENT','week 12 pit @ ten absent','  Week 12  PIT@TEN  Absent '])assert.equal(m.confirmationMatches(typed,phrase),true,typed);
+  for(const typed of ['PIT @ TEN','CONFIRM','yes','WEEK 12 PIT @ TEN','WEEK 13 PIT @ TEN ABSENT','WEEK 12 TEN @ PIT ABSENT','WEEK 12 PIT @ TEN POSTPONED','',null])
+    assert.equal(m.confirmationMatches(typed,phrase),false,String(typed));
+});
+const pk12PreviewOf=({action='rule',consequence='void',rows=[],events=pk12Events(),config=pk12Config()}={})=>{
+  const m=need(),data=pkData(rows),c=pk12Candidate({data,events,config}),request=absentRequestFor(c,action,{consequence:action==='rule'||action==='rerule'?consequence:null});
+  return{c,request,preview:m.pickemPreview({contestId:PK,season:2026,week:12,config,events,data,request,candidate:c,path:'absence',rulingId:rows.length+1,createdAt:CREATED})};
+};
+await regression("HDC-14 Pick'em preview: BEFORE pending and remaining, AFTER VOID; absence evidence; affected entries; record, remaining, tiebreak and Rules card",()=>{
+  const {preview:p}=pk12PreviewOf();
+  assert.deepEqual([p.before.effect.kind,p.after.effect.kind],['nfl','void']);
+  assert.deepEqual([p.before.game?.completed,p.before.game?.void??false,p.after.game.void],[false,false,true],'BEFORE: the absent game is pending, never graded');
+  assert.deepEqual(p.entries.map(e=>[e.name,e.pick,e.before.cell,e.after.cell]),[['D.C.','PIT','pending','void'],['DJS','TEN','pending','void']]);
+  for(const e of p.entries)assert.deepEqual([e.after.w-e.before.w,e.after.l-e.before.l,e.after.left-e.before.left],[0,0,-1],e.name);
+  assert.deepEqual(p.remaining,{before:1,after:0});assert.deepEqual(p.tiebreak,{isTiebreakGame:false,beforeVoid:false,afterVoid:false});
+  const x=p.after.rules.incidents.find(i=>i.matchup==='PIT @ TEN');
+  assert.equal(x.status,'APPLIED');assert.equal(x.evidence,'Recorded incident: ABSENT FROM WEEK 12 FEED · commissioner attestation · original event 401438121');
+  assert.deepEqual(p.before.rules.incidents,[]);
+  const tb=pk12PreviewOf({config:pk12Config({tiebreakGameIndex:1})}).preview;
+  assert.deepEqual(tb.tiebreak,{isTiebreakGame:true,beforeVoid:false,afterVoid:true},'the absent game as the tiebreak game voids the tiebreak');
+  const w=pk12PreviewOf({action:'withdraw',rows:absentChain(['void'])}).preview;
+  assert.deepEqual([w.before.effect.kind,w.after.effect.kind],['void','nfl']);assert.deepEqual(w.remaining,{before:0,after:1});
+  assert.deepEqual(w.after.rules.incidents.map(i=>i.status),['WITHDRAWN']);
+});
+await regression("HDC-14 Pick'em parity: the Admin preview matches weekly-app.js before and after an absence VOID; the Week 13 feed is never consulted",async()=>{
+  const m=need(),{c,request,preview:p}=pk12PreviewOf();
+  const row=m.absentHypotheticalRow(request,{contestType:'pickem',chain:c.chain,eventId:c.absence.evidence.eventId,rulingId:1,createdAt:CREATED});
+  const before=await weeklyView({rows:[],events:[denKc12()],config:pk12Config()}),after=await weeklyView({rows:[row],events:[denKc12()],config:pk12Config()});
+  for(const e of p.entries){
+    assert.equal(before.cells[e.name][1],e.before.cell,`${e.name}: weekly-app before`);assert.equal(after.cells[e.name][1],e.after.cell,`${e.name}: weekly-app after`);
+    assert.deepEqual([after.records[e.name].w-before.records[e.name].w,after.records[e.name].l-before.records[e.name].l,after.records[e.name].left-before.records[e.name].left],
+      [e.after.w-e.before.w,e.after.l-e.before.l,e.after.left-e.before.left],`${e.name}: record delta`);
+  }
+  assert.deepEqual([before.left,after.left,after.finals],['1','0','1/2 · 1 void']);
+  assert(after.rules.includes('<span class="rules-status">APPLIED</span>'),'the public card shows APPLIED');
+  assert(unescape(after.rules).includes('Recorded incident: ABSENT FROM WEEK 12 FEED · commissioner attestation · original event 401438121'));
+});
+await regression('HDC-14 Survivor preview and parity: BEFORE pending, AFTER ALIVE (advance, team used) or OUT (eliminate), as survivor-app.js renders',async()=>{
+  const m=need(),feeds=svAbsentFeeds();
+  for(const [policy,consequence,label] of [['advance_team_used','advance_team_used','ALIVE'],['eliminate','eliminate','OUT']]){
+    const data=svData([],svPolicies(policy)),c=svAbsentCandidates({data}).find(x=>x.key==='SF@ARI'),request=absentRequestFor(c,'rule',{consequence});
+    const p=m.survivorPreview({contestId:SV,season:2026,week:2,snapshot:{week:2,config:svConfig()},eventsByWeek:svEventsByWeek(feeds),data,request,candidate:c,path:'absence',rulingId:1,createdAt:CREATED});
+    assert.deepEqual(p.entries.map(e=>[e.name,e.pick,e.before.label,e.after.label]),[['D.C.','SF','PENDING',label],['survivor-003','ARI','PENDING',label]],policy);
+    if(consequence==='advance_team_used')assert.deepEqual(p.entries[0].after.used,['PIT','SF'],'SF stays used');
+    const row=m.absentHypotheticalRow(request,{contestType:'survivor',chain:c.chain,eventId:c.absence.evidence.eventId,rulingId:1,createdAt:CREATED});
+    assert.deepEqual([row.incident_status,row.event_id,row.evidence_source],['STATUS_ABSENT','401547001','commissioner-attestation']);
+    const before=await survivorView({rows:{policy,rulings:[]},feeds}),after=await survivorView({rows:{policy,rulings:[row]},feeds});
+    for(const e of p.tracked){assert.equal(before.pills[e.name][0],e.before.label,`${policy} ${e.name} before`);assert.equal(after.pills[e.name][0],e.after.label,`${policy} ${e.name} after`)}
+    assert.deepEqual([after.stillIn,after.pending],[p.after.summary.active,p.after.summary.pending],`${policy}: summary after`);
+  }
+});
+await regression('HDC-14 read-back after a lost response: LANDED, NOT_WRITTEN or CHANGED against the server-derived absence row',()=>{
+  const m=need(),c=pk12Candidate(),request=absentRequestFor(c,'rule',{consequence:'void'});
+  const landed={...absentChain(['void'])[0],ruling_id:57,public_note:ABSENT_NOTE};
+  assert.equal(m.classifyAbsentReadBack({beforeRows:[],afterRows:[landed],request,chain:c.chain,eventId:'401438121'}),'LANDED');
+  assert.equal(m.classifyAbsentReadBack({beforeRows:[],afterRows:[],request,chain:c.chain,eventId:'401438121'}),'NOT_WRITTEN');
+  for(const [label,changed] of [['a feed status',{...landed,incident_status:'STATUS_POSTPONED',evidence_source:'nflscores2'}],['another event',{...landed,event_id:'401438199'}],
+    ['another note',{...landed,public_note:'Another tab.'}]])assert.equal(m.classifyAbsentReadBack({beforeRows:[],afterRows:[changed],request,chain:c.chain,eventId:'401438121'}),'CHANGED',label);
+});
+await regression('HDC-14 error tokens map to fixed safe messages; the write-access probe answers HDC14_STALE_CHAIN when authorized',()=>{
+  const m=need();
+  for(const token of HDC14_TOKENS){
+    const info=m.rpcErrorInfo({code:'P0001',message:`${token}: detail`,hint:token});
+    assert.deepEqual([info.token,info.known,info.definitive,info.text],[token,true,true,m.HDC14_ERROR_TEXT[token]],token);
+  }
+  assert.equal(m.rpcErrorInfo({code:'P0001',message:'HDC14_MADE_UP: x',hint:'HDC14_MADE_UP'}).known,false);
+  assert.equal(m.absentProbeOutcome({error:{code:'P0001',message:'HDC14_STALE_CHAIN: x',hint:'HDC14_STALE_CHAIN'}}).status,'authorized');
+  assert.equal(m.absentProbeOutcome({error:{code:'42501',message:'HDC14_NOT_COMMISSIONER: x',hint:'HDC14_NOT_COMMISSIONER'}}).status,'denied');
+  assert.equal(m.absentProbeOutcome({error:{code:'PGRST202',message:'Could not find the function public.nfl_append_absent_incident_ruling'}}).status,'inconclusive');
+  assert.equal(m.absentProbeOutcome({data:{ruling_id:1}}).status,'unexpected');
+});
+await regression('HDC-14 the preflight key changes when the absence evidence changes: the game listed again, another published event, another slate revision',()=>{
+  const m=need(),base=m.preflightKey(pk12Candidate());
+  assert.equal(m.preflightKey(pk12Candidate()),base);
+  assert.notEqual(m.preflightKey(pk12Candidate({events:pk12Events(denKc12(),pitTen12())})),base,'listed again');
+  assert.notEqual(m.preflightKey(pk12Candidate({config:pk12Config({eventIds:false})})),base,'published event');
+  const sv=svAbsentCandidates().find(x=>x.key==='SF@ARI'),sv5=svAbsentCandidates({slate:svSlate(undefined,{revision:5})}).find(x=>x.key==='SF@ARI');
+  assert.notEqual(m.preflightKey(sv),m.preflightKey(sv5),'slate revision');
+});
+
+// The Admin page workflow for HDC-14 (rulings-admin.js unmodified, fake DOM, mock Neon with the emulated absent-game RPC).
+const pk12Tables=(rulings=[])=>({nfl_pool_weeks:[pk12Row()],nfl_incident_rulings:rulings});
+const pk12Feeds=()=>({12:projected([denKc12()]),13:projected([finalGame('PIT','TEN','401438199','24','27',13)])});
+await regression('HDC-14 page: the absent game is listed with its absent-game action only, labelled ABSENT FROM ORIGINAL WEEK FEED; only Week 12 is read',async()=>{
+  const t=await boot({tables:pk12Tables(),feeds:pk12Feeds()});
+  await ready(t,{week:12,matchup:'PIT@TEN',action:null});
+  assert.deepEqual(t.options('actionSelect'),['absent-rule']);assert.deepEqual(t.options('consequenceSelect'),['void']);
+  assert.match(t.$('candidateInfo').innerHTML,/ABSENT FROM ORIGINAL WEEK FEED/);
+  assert.match(unescape(t.$('candidateInfo').innerHTML),/STATUS_ABSENT · event 401438121 · commissioner-attestation/);
+  assert.deepEqual([...new Set(t.net.calls.filter(u=>u.startsWith(NFLSCORES2)).map(u=>new URL(u).searchParams.get('week')))],['12'],'the Week 13 makeup feed is never requested');
+});
+await regression('HDC-14 page end to end: preview, typed absence confirmation, one RPC to the absent-game function with exactly the 10 arguments, read-back',async()=>{
+  const t=await boot({tables:pk12Tables(),feeds:pk12Feeds()});
+  await ready(t,{week:12,matchup:'PIT@TEN',action:'absent-rule',consequence:'void',publicNote:ABSENT_NOTE,adminNote:'Checked the Week 12 feed.'});
+  await t.click('previewBtn');
+  assert.equal(t.$('preview').hidden,false,t.$('message').textContent);
+  const summary=unescape(t.$('previewSummary').innerHTML);
+  for(const text of ['Week 12','PIT @ TEN','401438121','STATUS_ABSENT','commissioner-attestation','ABSENT FROM ORIGINAL WEEK FEED','void','2',ABSENT_NOTE,'Checked the Week 12 feed.'])
+    assert(summary.includes(text),`the confirmation shows ${text}`);
+  assert.doesNotMatch(summary,/nflscores2/,'the absence is never presented as feed evidence');
+  assert.match(t.$('previewBefore').innerHTML,/PENDING|not graded/i);assert.match(t.$('previewAfter').innerHTML,/VOID/);
+  assert.equal(t.$('confirmPhrase').textContent,'WEEK 12 PIT @ TEN ABSENT');
+  for(const typed of ['PIT @ TEN','CONFIRM','WEEK 12 PIT @ TEN']){await t.input('confirmMatchup',typed);assert.equal(t.$('submitBtn').disabled,true,typed)}
+  await t.input('confirmMatchup','week 12 pit @ ten absent');assert.equal(t.$('submitBtn').disabled,false);
+  await Promise.all([t.$('submitBtn').dispatch('click'),t.$('submitBtn').dispatch('click')]);await flush();
+  assert.equal(t.db.rpcCalls.length,1,'double click: one RPC');
+  const {fn,args}=t.db.rpcCalls[0];
+  assert.equal(fn,ABSENT_RPC);exact10(args);
+  assert.deepEqual(args,{p_contest_id:PK,p_week:12,p_away_team:'PIT',p_home_team:'TEN',p_action:'rule',p_consequence:'void',p_expected_policy_revision:1,
+    p_expected_parent_ruling_id:null,p_public_note:ABSENT_NOTE,p_admin_note:'Checked the Week 12 feed.'});
+  const [row]=t.db.tables.nfl_incident_rulings;
+  assert.deepEqual([row.incident_status,row.event_id,row.evidence_source],['STATUS_ABSENT','401438121','commissioner-attestation']);
+  assert.match(t.$('message').textContent,/recorded/i);assert.match(t.$('result').textContent,/matches the preview/i);
+});
+await regression('HDC-14 page: the game listed again before submitting cancels the submit (no RPC)',async()=>{
+  const t=await boot({tables:pk12Tables(),feeds:pk12Feeds()});
+  await ready(t,{week:12,matchup:'PIT@TEN',action:'absent-rule',consequence:'void',publicNote:ABSENT_NOTE});
+  await t.click('previewBtn');await t.input('confirmMatchup','WEEK 12 PIT @ TEN ABSENT');
+  t.net.feeds[12]=projected([denKc12(),pitTen12()]);
+  await t.click('submitBtn');
+  assert.equal(t.db.rpcCalls.length,0);assert.match(t.$('message').textContent,/changed/i);assert.equal(t.$('preview').hidden,true);
+});
+await regression('HDC-14 page: HDC14 refusals show their fixed messages; a lost response is read back and classified',async()=>{
+  for(const token of ['HDC14_STALE_CHAIN','HDC14_NOT_PUBLISHED','HDC14_NOT_ABSENCE_CHAIN']){
+    const t=await boot({tables:pk12Tables(),feeds:pk12Feeds(),rpc:()=>async()=>tokenError(token)});
+    await ready(t,{week:12,matchup:'PIT@TEN',action:'absent-rule',consequence:'void',publicNote:ABSENT_NOTE});
+    await t.click('previewBtn');await t.input('confirmMatchup','WEEK 12 PIT @ TEN ABSENT');await t.click('submitBtn');
+    assert.equal(t.$('message').textContent,need().HDC14_ERROR_TEXT[token],token);assert.equal(t.db.rpcCalls.length,1,token);
+  }
+  const lost={data:null,error:{code:'',message:'TypeError: Failed to fetch',hint:'',details:''}};
+  const landed=await boot({tables:pk12Tables(),feeds:pk12Feeds(),rpc:db=>async(fn,a)=>{await routeRpc(db)(fn,a);return lost}});
+  await ready(landed,{week:12,matchup:'PIT@TEN',action:'absent-rule',consequence:'void',publicNote:ABSENT_NOTE});
+  await landed.click('previewBtn');await landed.input('confirmMatchup','WEEK 12 PIT @ TEN ABSENT');await landed.click('submitBtn');
+  assert.match(landed.$('message').textContent,/LANDED/);
+});
+await regression('HDC-14 page: an absence chain is withdrawn through the absent-game function with the matchup typed; HDC-13 actions are never offered for it',async()=>{
+  const t=await boot({tables:pk12Tables(absentChain(['void'])),feeds:pk12Feeds()});
+  await ready(t,{week:12,matchup:'PIT@TEN',action:null});
+  assert.deepEqual(t.options('actionSelect'),['absent-withdraw']);
+  await t.change('actionSelect','absent-withdraw');await t.input('publicNote','Withdrawn.');await t.input('adminNote','Ruled in error.');
+  await t.click('previewBtn');assert.equal(t.$('confirmPhrase').textContent,'PIT @ TEN');
+  await t.input('confirmMatchup','PIT @ TEN');await t.click('submitBtn');
+  assert.equal(t.db.rpcCalls.length,1);assert.equal(t.db.rpcCalls[0].fn,ABSENT_RPC);
+  assert.deepEqual([t.db.rpcCalls[0].args.p_action,t.db.rpcCalls[0].args.p_expected_parent_ruling_id],['withdraw',1]);
+  assert.deepEqual(t.db.tables.nfl_incident_rulings.map(r=>[r.consequence,r.incident_status]),[['void','STATUS_ABSENT'],['withdrawn','STATUS_ABSENT']]);
+});
+await regression('HDC-14 page, Survivor: the absent SF @ ARI pick is offered from the same-week slate; advance previewed ALIVE and recorded',async()=>{
+  const feeds={1:projected(svAbsentFeeds()[1].events),2:projected(svAbsentFeeds()[2].events)};
+  const t=await boot({feeds,tables:{nfl_pool_weeks:[svSlate()]}});
+  await t.change('contestSelect',SV);await t.change('weekSelect',2);await t.click('loadBtn');
+  assert(t.options('matchupSelect').includes('SF@ARI'),'discovered from the slate');
+  assert(t.db.reads.some(r=>r.table==='nfl_pool_weeks'&&r.filters.includes('eq:week:2')&&r.filters.includes('eq:status:locked')),'the same-week locked slate is read');
+  await t.change('matchupSelect','SF@ARI');assert.deepEqual(t.options('actionSelect'),['absent-rule']);
+  await t.input('publicNote','SF @ ARI left the Week 2 feed; pickers advance.');await t.click('previewBtn');
+  assert.match(t.$('previewAfter').innerHTML,/ALIVE/);assert.match(t.$('previewBefore').innerHTML,/PENDING/);
+  await t.input('confirmMatchup','WEEK 2 SF @ ARI ABSENT');await t.click('submitBtn');
+  assert.equal(t.db.rpcCalls.length,1);assert.equal(t.db.rpcCalls[0].fn,ABSENT_RPC);assert.equal(t.db.rpcCalls[0].args.p_consequence,'advance_team_used');
+  assert.equal(t.db.tables.nfl_incident_rulings[0].event_id,'401547001');
+});
+await regression('HDC-14 page: the absent-game write-access check calls the absent-game function with the impossible parent and writes nothing',async()=>{
+  const t=await boot({tables:pk12Tables(),feeds:pk12Feeds()});
+  await t.change('contestSelect',PK);await t.change('weekSelect',12);await t.click('loadBtn');
+  await t.click('probeAbsentBtn');
+  assert.equal(t.db.rpcCalls.length,1);assert.equal(t.db.rpcCalls[0].fn,ABSENT_RPC);exact10(t.db.rpcCalls[0].args);
+  assert.equal(t.db.rpcCalls[0].args.p_expected_parent_ruling_id,9007199254740991);
+  assert.match(t.$('probeResult').textContent,/HDC14_STALE_CHAIN/);assert.match(t.$('probeResult').textContent,/0 rows written/);
+  assert.equal(t.db.tables.nfl_incident_rulings.length,0);
+});
+await regression('HDC-14 rulings.html: the absent-game write-access button is a labelled type="button"',()=>{
+  assert.match(pageHtml||'',/<button type="button" id="probeAbsentBtn" class="ghost">[^<]+<\/button>/);
+  assert.match(adminSource||'',/neon\.rpc\(ABSENT_RPC_FUNCTION,/);
+});
+
 assert.equal(failures.length,0,`HDC-13 incident-ruling write-path regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
-console.log('HDC-13 Admin incident-ruling write path: module surface, feed path, notes, selection, candidate discovery and eligibility, action state, 13-argument requests, previews, weekly-app and survivor-app parity, confirmation, preflight, errors, read-back, write-access check, page workflow and static accessibility regressions passed');
+console.log('HDC-13 and HDC-14 Admin incident-ruling write paths: module surface, feed path, notes, selection, candidate discovery and eligibility, action state, 13-argument requests, previews, weekly-app and survivor-app parity, confirmation, preflight, errors, read-back, write-access check, page workflow and static accessibility regressions passed');

@@ -1,4 +1,4 @@
--- HDC-13 SQL behavior harness fixtures. Run as the cluster superuser, connected to nfl_pool, after migrations 001-004.
+-- HDC-13 SQL behavior harness fixtures. Run as the cluster superuser, connected to nfl_pool, after migrations 001-005.
 -- Accounts are Neon Auth rows; the published Pick'em weeks and Survivor snapshots are what the Admin publishers write;
 -- the fixture contests are written as nfl_pool_owner, so the unchanged HDC-12 insert checks accept them. Every pair a
 -- behavior or race test rules on belongs to that test alone: ruling rows are append-only and are never cleaned up.
@@ -72,4 +72,68 @@ INSERT INTO public.nfl_contest_policies (contest_id, contest_type, revision, eff
   ('fixture-2026-survivor-eliminate', 'survivor', 1, 1, 'eliminate', 'Fixture policy: eliminate.'),
   ('fixture-2026-survivor-decides', 'survivor', 1, 1, 'commissioner_decides', 'Fixture policy: commissioner decides.'),
   ('fixture-2099-pickem', 'pickem', 1, 1, 'void', 'Fixture policy: void.');
+RESET ROLE;
+
+-- HDC-14: absent-game adjudication. Season 2026 Week 12 is the 2020-style week: PIT @ TEN was published with its schedule
+-- event (401438121), then left the Week 12 feed; Week 13 publishes the distinct makeup listing of the same pair (event
+-- 401438199), which a Week 12 ruling never reads. NYG @ DAL was published through a commissioner-confirmed absence
+-- exception and has no eventId; CIN @ CLE carries an eventId that is not an event id. Each other Week 12 pair belongs to
+-- one test or race. TB @ CAR is published only in Week 13.
+INSERT INTO public.nfl_pool_weeks (season, week, status, config, revision, published_at, locked_at) VALUES
+  (2026, 12, 'locked', '{"schemaVersion":1,"season":2026,"week":12,"tiebreakGameIndex":0,
+    "games":[{"away":"PIT","home":"TEN","awayNumber":1,"homeNumber":2,"eventId":"401438121"},
+             {"away":"NYG","home":"DAL","awayNumber":3,"homeNumber":4},
+             {"away":"JAC","home":"WSH","awayNumber":5,"homeNumber":6,"eventId":"401438123"},
+             {"away":"MIA","home":"NE","awayNumber":7,"homeNumber":8,"eventId":"401438124"},
+             {"away":"SEA","home":"SF","awayNumber":9,"homeNumber":10,"eventId":"401438125"},
+             {"away":"CHI","home":"GB","awayNumber":11,"homeNumber":12,"eventId":"401438126"},
+             {"away":"LAR","home":"ARI","awayNumber":13,"homeNumber":14,"eventId":"401438127"},
+             {"away":"IND","home":"HOU","awayNumber":15,"homeNumber":16,"eventId":"401438128"},
+             {"away":"CIN","home":"CLE","awayNumber":17,"homeNumber":18,"eventId":"40143812x"},
+             {"away":"LV","home":"KC","awayNumber":19,"homeNumber":20,"eventId":"401438130"},
+             {"away":"ATL","home":"NO","awayNumber":21,"homeNumber":22,"eventId":"401438131"}],
+    "publicationExceptions":[{"type":"absent-from-week-feed","week":12,"gameIndex":1,"away":"NYG","home":"DAL","confirmation":"WEEK 12 NYG @ DAL ABSENT"}],
+    "participants":[]}', 1, now(), now()),
+  (2026, 13, 'locked', '{"schemaVersion":1,"season":2026,"week":13,"tiebreakGameIndex":0,
+    "games":[{"away":"PIT","home":"TEN","awayNumber":1,"homeNumber":2,"eventId":"401438199"},
+             {"away":"TB","home":"CAR","awayNumber":3,"homeNumber":4,"eventId":"401438132"}],"participants":[]}', 1, now(), now()),
+  -- Season 2099: the same-week Pick'em slates that prove (or cannot prove) a Survivor matchup, and the policy-race weeks.
+  -- Week 2 names another week; Week 3 is a draft; Week 4 has no slate; Week 5 lists BUF twice and LV @ LAC twice and omits
+  -- TB (the Thursday game a sheet may leave out); Week 8 is the 2020-style week (its makeup listing is in Week 9).
+  (2099, 2, 'locked', '{"schemaVersion":1,"season":2099,"week":3,"tiebreakGameIndex":0,
+    "games":[{"away":"ATL","home":"CAR","awayNumber":1,"homeNumber":2,"eventId":"409900201"}],"participants":[]}', 1, now(), now()),
+  (2099, 3, 'draft', '{"schemaVersion":1,"season":2099,"week":3,"tiebreakGameIndex":0,
+    "games":[{"away":"ATL","home":"CAR","awayNumber":1,"homeNumber":2,"eventId":"409900301"}],"participants":[]}', 1, now(), NULL),
+  (2099, 5, 'locked', '{"schemaVersion":1,"season":2099,"week":5,"tiebreakGameIndex":0,
+    "games":[{"away":"KC","home":"DEN","awayNumber":1,"homeNumber":2,"eventId":"409900501"},
+             {"away":"BUF","home":"MIA","awayNumber":3,"homeNumber":4,"eventId":"409900502"},
+             {"away":"NYJ","home":"BUF","awayNumber":5,"homeNumber":6,"eventId":"409900503"},
+             {"away":"LV","home":"LAC","awayNumber":7,"homeNumber":8,"eventId":"409900504"},
+             {"away":"LV","home":"LAC","awayNumber":9,"homeNumber":10,"eventId":"409900505"}],"participants":[]}', 1, now(), now()),
+  (2099, 8, 'locked', '{"schemaVersion":1,"season":2099,"week":8,"tiebreakGameIndex":0,
+    "games":[{"away":"PIT","home":"TEN","awayNumber":1,"homeNumber":2,"eventId":"409900801"},
+             {"away":"NYG","home":"DAL","awayNumber":3,"homeNumber":4},
+             {"away":"JAC","home":"WSH","awayNumber":5,"homeNumber":6,"eventId":"409900803"},
+             {"away":"SEA","home":"SF","awayNumber":7,"homeNumber":8,"eventId":"409900804"},
+             {"away":"LAR","home":"ARI","awayNumber":9,"homeNumber":10,"eventId":"409900805"},
+             {"away":"CIN","home":"CLE","awayNumber":11,"homeNumber":12,"eventId":"bad-event"},
+             {"away":"MIA","home":"NE","awayNumber":13,"homeNumber":14,"eventId":"409900807"},
+             {"away":"IND","home":"HOU","awayNumber":15,"homeNumber":16,"eventId":"409900808"}],"participants":[]}', 1, now(), now()),
+  (2099, 9, 'locked', '{"schemaVersion":1,"season":2099,"week":9,"tiebreakGameIndex":0,
+    "games":[{"away":"PIT","home":"TEN","awayNumber":1,"homeNumber":2,"eventId":"409900999"},
+             {"away":"DAL","home":"WAS","awayNumber":3,"homeNumber":4,"eventId":"409900902"}],"participants":[]}', 1, now(), now()),
+  (2099, 10, 'locked', '{"schemaVersion":1,"season":2099,"week":10,"tiebreakGameIndex":0,
+    "games":[{"away":"CAR","home":"ATL","awayNumber":1,"homeNumber":2,"eventId":"409901001"}],"participants":[]}', 1, now(), now());
+
+-- A locked 2099 Survivor snapshot covering Weeks 1-9 (the HDC-14 Survivor proof also needs the same-week Pick'em slate).
+INSERT INTO public.nfl_survivor_weeks (season, week, status, config, revision, published_at, locked_at) VALUES
+  (2099, 9, 'locked', '{"schemaVersion":1,"season":2099,"week":9,"label":"Survivor Week 9","competitionSize":1,"currentWeekEntryCount":1,
+    "trackedEntries":[],"fieldEntries":[{"id":"survivor-001","picks":["ARI","ATL","BAL","BUF","CAR","CHI","CIN","PIT","DEN"]}]}', 1, now(), now());
+
+-- The HDC-14 Survivor fixture contest: season 2099, revision-1 policy commissioner_decides (both Survivor consequences).
+SET ROLE nfl_pool_owner;
+INSERT INTO public.nfl_contests (contest_id, season, contest_type, display_name, starts_at) VALUES
+  ('fixture-2099-survivor', 2099, 'survivor', 'Fixture 2099 Survivor', '2099-09-10T00:20:00+00:00');
+INSERT INTO public.nfl_contest_policies (contest_id, contest_type, revision, effective_week, halted_game_policy, public_note) VALUES
+  ('fixture-2099-survivor', 'survivor', 1, 1, 'commissioner_decides', 'Fixture policy: commissioner decides.');
 RESET ROLE;

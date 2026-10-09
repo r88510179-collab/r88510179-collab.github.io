@@ -348,4 +348,107 @@ const guardFor=(cfg,opts={})=>survivorPublishGuard(cfg,{resultsByWeek:verified.r
   assert.match(g.confirmText,/The 2 rows without a letter or digit listed above are not entrants\.$/);
 }
 
+// ---- HDC-14: the Survivor publication exception for a picked game the NFL feed no longer lists in its week. The
+// matchup is proved only by the locked Pick'em slate of the same season and week (exactly one game of the pair, no other
+// game of either team, neither team listed in that week's feed), and only an exact typed confirmation WEEK N AWAY @ HOME
+// ABSENT accepts it. Nothing is decided for the picks: they stay pending until a ruling exists. A bye pick, a matchup the
+// slate cannot prove (the Thursday game a sheet omits), a re-paired, duplicate, draft, other-season or other-week slate,
+// and a later-week makeup listing never prove an absence. Every regression reports through one collector.
+{
+  const failures=[];
+  const regression=(name,check)=>{try{check()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+  const slate=(pairs,{season=2026,week=2,status='locked',revision=3,configWeek=week,configSeason=season}={})=>({season,week,status,revision,config:{schemaVersion:1,season:configSeason,week:configWeek,games:pairs.map(([away,home],i)=>({away,home,awayNumber:2*i+1,homeNumber:2*i+2,eventId:String(402600+i)}))}});
+  const noSfAri=W2.filter(([a])=>a!=='SF');
+  const absent={1:payloads[1],2:payload(noSfAri,2)};
+  const SLATE=slate(W2),PHRASE='WEEK 2 SF @ ARI ABSENT';
+  const EXC={type:'absent-from-week-feed',week:2,away:'SF',home:'ARI',pickemRevision:3,confirmation:PHRASE};
+  const OLD_SF="Week 2: SF is not scheduled in verified NFL Week 2 (bye or invalid team) — 98 entries: D.C., DJS, survivor-086, survivor-087, survivor-088, survivor-089, survivor-090, survivor-091, +90 more. Check the sheet's Week 2 column for SF.";
+  const OLD_ARI="Week 2: ARI is not scheduled in verified NFL Week 2 (bye or invalid team) — 62 entries: survivor-182, survivor-183, survivor-184, survivor-185, survivor-186, survivor-187, survivor-188, survivor-189, +54 more. Check the sheet's Week 2 column for ARI.";
+  const HINT=" Pick'em Week 2 (revision 3) proves SF @ ARI, and neither team is listed in the NFL Week 2 feed: if that game was moved out of Week 2, type WEEK 2 SF @ ARI ABSENT under Absent games and Read & validate again.";
+  const stray=text=>`Absent-game confirmation "${text}" does not match a picked game that the same-week Pick'em slate proves and the NFL feed no longer lists. Correct or clear it, then Read & validate again.`;
+  const blocked=(v,expected,label)=>{assert.equal(v.ok,false,label);assert.deepEqual(v.errors,expected,label);assert.deepEqual(v.absentGames,[],label)};
+
+  regression('without Pick\'em evidence an absent pick keeps the unchanged bye-or-invalid error and nothing is offered',()=>{
+    const v=verifySurvivorSchedule(config,absent);
+    blocked(v,[OLD_SF,OLD_ARI]);assert.deepEqual(v.absenceRequests,[]);
+    assert.deepEqual(v.offSchedule,[{week:2,team:'SF',entries:98},{week:2,team:'ARI',entries:62}]);
+    // The two-argument call is the same as passing no slate and no confirmation.
+    assert.deepEqual(verifySurvivorSchedule(config,absent,{pickemSlates:[],absenceConfirmations:[]}).errors,v.errors);
+  });
+  regression('the same-week locked slate proves the matchup, but without the typed confirmation publication still blocks',()=>{
+    const v=verifySurvivorSchedule(config,absent,{pickemSlates:[SLATE]});
+    blocked(v,[OLD_SF+HINT,OLD_ARI+HINT]);
+    assert.deepEqual(v.absenceRequests,[{week:2,away:'SF',home:'ARI',pickemRevision:3,confirmation:PHRASE}]);
+  });
+  regression('a confirmation that is not the exact phrase never accepts the absence',()=>{
+    for(const text of ['week 2 sf @ ari absent','WEEK 2 ARI @ SF ABSENT','WEEK 3 SF @ ARI ABSENT','WEEK 2 SF @ ARI',' WEEK 2 SF @ ARI ABSENT','yes']){
+      const v=verifySurvivorSchedule(config,absent,{pickemSlates:[SLATE],absenceConfirmations:[text]});
+      blocked(v,[OLD_SF+HINT,OLD_ARI+HINT,stray(text)],text);
+    }
+  });
+  regression('the slate plus the exact confirmation verifies the sheet; the absent picks stay pending, nothing is invented',()=>{
+    const v=verifySurvivorSchedule(config,absent,{pickemSlates:[SLATE],absenceConfirmations:[PHRASE]});
+    assert.equal(v.ok,true,v.errors.join(' | '));assert.deepEqual(v.errors,[]);
+    assert.deepEqual(v.absentGames,[EXC]);assert.deepEqual(v.absenceRequests,[]);
+    const dc=survivorEntryState(config.trackedEntries[0],1,v.resultsByWeek),ari=survivorEntryState(config.fieldEntries[181],1,v.resultsByWeek);
+    assert.deepEqual(dc,{status:'pending',pick:'SF',week:2,reason:'SF not present in verified Week 2 feed/schedule',type:'absent'});
+    assert.equal(ari.status,'pending');assert.equal(ari.pick,'ARI');
+    assert.equal(v.resultsByWeek[1].has('SF')||v.resultsByWeek[1].has('ARI'),false,'no Week 2 result exists for either team');
+    assert.equal(survivorSummary([...config.trackedEntries,...config.fieldEntries],1,v.resultsByWeek).pending,160,'every SF/ARI pick is pending');
+  });
+  regression('a bye-week pick still blocks, with or without a typed phrase',()=>{
+    // SF and ARI are both off this week: neither the feed nor the Pick'em slate lists them.
+    const bye=slate(noSfAri);
+    blocked(verifySurvivorSchedule(config,absent,{pickemSlates:[bye]}),[OLD_SF,OLD_ARI]);
+    blocked(verifySurvivorSchedule(config,absent,{pickemSlates:[bye],absenceConfirmations:[PHRASE]}),[OLD_SF,OLD_ARI,stray(PHRASE)]);
+  });
+  regression('an unprovable Thursday matchup (left off the Pick\'em sheet) still blocks',()=>{
+    const thursday=structuredClone(config);thursday.fieldEntries[243].picks[1]='PHI';thursday.currentWeekEntryCount++;
+    const feed={1:payloads[1],2:payload(W2.filter(([a])=>a!=='PHI'),2)},sheet=slate(W2.filter(([a])=>a!=='PHI'));
+    const old="Week 2: PHI is not scheduled in verified NFL Week 2 (bye or invalid team) — 1 entry: survivor-244. Check the sheet's Week 2 column for PHI.";
+    blocked(verifySurvivorSchedule(thursday,feed,{pickemSlates:[sheet]}),[old]);
+    blocked(verifySurvivorSchedule(thursday,feed,{pickemSlates:[sheet],absenceConfirmations:['WEEK 2 PHI @ PIT ABSENT']}),[old,stray('WEEK 2 PHI @ PIT ABSENT')]);
+  });
+  regression('a re-paired matchup (the slate opponent listed against another team) still blocks',()=>{
+    const repaired={1:payloads[1],2:payload([...W2.filter(([a])=>a!=='SF'&&a!=='SEA'),['SEA','ARI']],2)};
+    const v=verifySurvivorSchedule(config,repaired,{pickemSlates:[SLATE],absenceConfirmations:[PHRASE]});
+    blocked(v,[OLD_SF,stray(PHRASE)]);assert.deepEqual(v.absenceRequests,[]);
+  });
+  regression('the slate must list the pair exactly once and no other game of either team',()=>{
+    for(const [label,pairs] of [['pair twice',[...W2,['SF','ARI']]],['SF twice',[...W2,['SF','LAR']]],['ARI twice',[...W2,['ARI','LAR']]],['reversed only',[['ARI','SF'],...W2.slice(1)]]]){
+      blocked(verifySurvivorSchedule(config,absent,{pickemSlates:[slate(pairs)],absenceConfirmations:[PHRASE]}),[OLD_SF,OLD_ARI,stray(PHRASE)],label);
+    }
+  });
+  regression('only a locked slate of the same season and week proves a matchup',()=>{
+    const cases=[['draft',slate(W2,{status:'draft'})],['row of another season',slate(W2,{season:2025})],['config of another season',slate(W2,{configSeason:2025})],
+      ['config of another week',slate(W2,{configWeek:3})],['slate of another week only',slate(W2,{week:3})],['games not an array',{...SLATE,config:{...SLATE.config,games:{}}}],
+      ['a malformed slate game',slate([...W2,['XXX','LAR']])],['lowercase codes',slate(W2.map(([a,h])=>a==='SF'?['sf','ari']:[a,h]))],['two rows for the week',[SLATE,slate(W2,{revision:4})]]];
+    for(const [label,rows] of cases){
+      blocked(verifySurvivorSchedule(config,absent,{pickemSlates:[rows].flat(),absenceConfirmations:[PHRASE]}),[OLD_SF,OLD_ARI,stray(PHRASE)],label);
+    }
+  });
+  regression('a later-week makeup listing never proves, resolves or links the absent pick',()=>{
+    const w3=structuredClone(config);w3.week=3;w3.label='Survivor Week 3';
+    for(const e of [...w3.trackedEntries,...w3.fieldEntries])e.picks=[...e.picks,null];
+    w3.currentWeekEntryCount=0;
+    // Week 3 lists SF @ ARI as a distinct, final makeup event; only Week 3's own slate lists it.
+    const feeds={...absent,3:payload(W2,3)},makeupSlate=slate(W2,{week:3,revision:7});
+    const v=verifySurvivorSchedule(w3,feeds,{pickemSlates:[SLATE,makeupSlate],absenceConfirmations:[PHRASE]});
+    assert.equal(v.ok,true,v.errors.join(' | '));assert.deepEqual(v.absentGames,[EXC],'the exception is Week 2 only');
+    assert.equal(survivorEntryState(w3.trackedEntries[0],1,v.resultsByWeek).status,'pending','the Week 3 makeup final never resolves the Week 2 pick');
+    blocked(verifySurvivorSchedule(w3,feeds,{pickemSlates:[makeupSlate],absenceConfirmations:[PHRASE]}),[OLD_SF,OLD_ARI,stray(PHRASE)],'a Week 3 slate never proves Week 2');
+  });
+  regression('a typed confirmation that matches no absent pick blocks publication',()=>{
+    blocked(verifySurvivorSchedule(config,payloads,{pickemSlates:[SLATE],absenceConfirmations:[PHRASE]}),[stray(PHRASE)]);
+  });
+  regression('the approved aliases (JAC -> JAX, WSH -> WAS) are the only slate normalization',()=>{
+    const ind=structuredClone(config);ind.fieldEntries[243].picks[1]='IND';ind.currentWeekEntryCount++;
+    const feed={1:payloads[1],2:payload(W2.filter(([a])=>a!=='IND'),2)};
+    const v=verifySurvivorSchedule(ind,feed,{pickemSlates:[slate(W2.map(([a,h])=>a==='IND'?['IND','JAC']:[a,h]))],absenceConfirmations:['WEEK 2 IND @ JAX ABSENT']});
+    assert.equal(v.ok,true,v.errors.join(' | '));
+    assert.deepEqual(v.absentGames,[{type:'absent-from-week-feed',week:2,away:'IND',home:'JAX',pickemRevision:3,confirmation:'WEEK 2 IND @ JAX ABSENT'}]);
+  });
+  assert.equal(failures.length,0,`HDC-14 Survivor publication-exception regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+}
+
 console.log('survivor schedule verification, bye/absent-team publication, and partial-week guard regressions passed');

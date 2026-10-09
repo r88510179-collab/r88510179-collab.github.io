@@ -846,7 +846,7 @@ console.log('weekly HDC-11 halted-game warning, ungraded halted game, unchanged 
   const esc=t=>String(t).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
   const banner=v=>v.$('error').children.map(c=>c.textContent).join('\n');
 
-  await regression('the page imports the HDC-12 evaluator',()=>assert.equal(rulingsFrom,"from './contest-rulings.js?v=1';",'weekly-app.js must import contest-rulings.js?v=1'));
+  await regression('the page imports the HDC-12 evaluator',()=>assert.match(rulingsFrom||'',/^from '\.\/contest-rulings\.js\?v=\d+';$/,'weekly-app.js must import the versioned contest-rulings.js'));
   await regression("the public loader requests only public columns of the Pick'em contest and the selected week's rulings, with the anonymous token",async()=>{
     const v=await page({rulings:[]});
     for(const table of Object.keys(RULING_COLUMNS)){
@@ -1147,4 +1147,108 @@ console.log('weekly HDC-11 halted-game warning, ungraded halted game, unchanged 
   assert.equal(failures.length,0,`HDC-12 Pick'em regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
 }
 
-console.log("weekly HDC-12 contest-ruling load, privacy, void, voided tiebreak, under-review, withdrawn, all-void, hold, fail-closed and Rules & rulings regressions passed");
+
+// HDC-14. Absent-game adjudication in Pick'em: the 2020 Week 4 PIT at TEN shape in Week 12. The published game PIT @ TEN
+// (event 401438121) is no longer listed in the Week 12 feed; the matchup later appears as a distinct Week 13 event. Without
+// a ruling the week stays INCOMPLETE, as before. A ruling whose evidence is an attested absence (STATUS_ABSENT,
+// commissioner-attestation) applies while the Week 12 feed still omits the game: VOID, no win, no loss, not remaining, the
+// week completes. If the game is listed again in Week 12 the VOID stays and is UNDER REVIEW; no other week is ever read.
+{
+  const failures=[];
+  const regression=async(name,check)=>{try{await check()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+  const absentConfig=(tiebreakGameIndex=0)=>({schemaVersion:1,season:2026,week:12,tiebreakGameIndex,
+    games:[{away:'DEN',home:'KC',awayNumber:1,homeNumber:2,date:'2026-11-29',eventId:'401438140'},{away:'PIT',home:'TEN',awayNumber:3,homeNumber:4,date:'2026-11-29',eventId:'401438121'}],
+    participants:[{id:'dc',displayName:'D.C.',pickNumbers:[1,3],tiebreak:41},{id:'djs',displayName:'DJS',pickNumbers:[2,4],tiebreak:44}]});
+  const absentRows=(consequences,o={},firstId=1)=>consequences.map((consequence,i)=>({ruling_id:firstId+i,contest_id:PK_CONTEST,contest_type:'pickem',week:12,away_team:'PIT',home_team:'TEN',
+    policy_revision:1,chain_seq:i+1,parent_ruling_id:i?firstId+i-1:null,consequence,incident_status:'STATUS_ABSENT',event_id:'401438121',evidence_source:'commissioner-attestation',
+    public_note:i?null:'PIT @ TEN left the Week 12 feed; void for this contest.',created_at:'2026-11-30T12:00:00+00:00',...PRIVATE,...o}));
+  const denKc=(awayScore='24',homeScore='17')=>game({week:12,away:'DEN',home:'KC',id:'401438140',awayScore,homeScore});
+  const pitTen=(o={})=>({...game({week:12,away:'PIT',home:'TEN',id:'401438121',awayScore:'24',homeScore:'27'}),...o});
+  const page=async({tiebreakGameIndex=0,events=[denKc()],rulings=absentRows(['void'])}={})=>
+    view({weekConfig:absentConfig(tiebreakGameIndex),initialScorePayload:{events},store:pickemStore({nfl_incident_rulings:rulings})});
+  const banner=v=>v.$('error').children.map(c=>c.textContent).join('\n');
+  const pitCard=v=>v.$('gamegrid').innerHTML.split('<div class="game').slice(1).find(g=>g.includes('<span class="abbr">PIT</span>'))||'';
+  const rules=v=>v.$('pickemRules').innerHTML;
+  const EVIDENCE='Recorded incident: ABSENT FROM WEEK 12 FEED · commissioner attestation · original event 401438121';
+
+  await regression('HDC-14: the page imports the evaluator at its HDC-14 version (contest-rulings.js?v=2)',()=>{
+    assert.equal(rulingsFrom,"from './contest-rulings.js?v=2';",'weekly-app.js must import contest-rulings.js?v=2');
+  });
+  await regression('HDC-14 preservation: without a ruling the absent published game stays INCOMPLETE, ungraded and remaining',async()=>{
+    const v=await page({rulings:[]});
+    assert.equal(v.warning(),'Some feed data was ignored to protect standings: PIT-TEN: expected game missing from feed');
+    assert.equal(syncLabel(v),'INCOMPLETE');assert.equal(v.$('finals').textContent,'1/2');assert.equal(v.$('left').textContent,'1');
+    assert.deepEqual(pickCells(v),['ok','pending','bad','pending'],'never VOID without a ruling');
+    assert.doesNotMatch(pitCard(v),/VOID/);
+  });
+  await regression('HDC-14 an active absence VOID is APPLIED: no win, no loss, not remaining, the week completes, LIVE with no warning',async()=>{
+    const v=await page();
+    assert.deepEqual(records(v),[['D.C.','1','0'],['DJS','0','1']],'only DEN-KC scores');
+    assert.deepEqual(pickCells(v),['ok','void','bad','void']);
+    assert.equal(v.$('finals').textContent,'1/2 · 1 void');assert.equal(v.$('left').textContent,'0');assert.equal(v.$('progressText').textContent,'100%');
+    assert.equal(v.warning(),'','the absent game the ruling covers is no longer a missing-game warning');
+    assert.equal(syncLabel(v),'LIVE');
+    assert.deepEqual([v.$('leaderKicker').textContent,v.$('leaderName').textContent],['Group winner','D.C.']);
+    assert.match(pitCard(v),/VOID · Commissioner ruling/);assert.doesNotMatch(pitCard(v),/UNDER REVIEW|FINAL|HOLD/);
+    assert.equal(v.$('tbNote').textContent,'Tiebreak final total: 41. Tiebreak differences are active.','the DEN-KC tiebreak is unaffected');
+    assert.match(rules(v),/<span class="rules-status">APPLIED<\/span>/);
+    assert(rules(v).includes(`<small>${EVIDENCE}</small>`),'the Rules card names the attested absence and the original event');
+    assert.doesNotMatch(rules(v),/nflscores2|STATUS_POSTPONED|STATUS_CANCELED|PRIVATE ADMIN NOTE|auth-user-7f3a/,'never a feed fact, never a private field');
+  });
+  await regression('HDC-14 tiebreak: the absent game as the tiebreak game voids the week tiebreak; co-winners when the scored record ties',async()=>{
+    const v=await page({tiebreakGameIndex:1,events:[denKc('20','20')]});
+    assert.equal(v.$('mnf').textContent,'VOID');
+    assert.match(v.$('tbNote').textContent,/no tiebreak this week/);assert.match(v.$('footerRule').textContent,/PIT–TEN tiebreak game voided by commissioner ruling: no tiebreak this week/);
+    assert.deepEqual([v.$('leaderKicker').textContent,v.$('leaderName').textContent],['Group co-winners','D.C. / DJS']);
+    const decided=await page({tiebreakGameIndex:1});
+    assert.deepEqual([decided.$('mnf').textContent,decided.$('leaderKicker').textContent,decided.$('leaderName').textContent],['VOID','Group winner','D.C.'],'the record decides; no other game becomes the tiebreak');
+  });
+  await regression('HDC-14 feed recovery: the game listed again in Week 12 keeps the VOID applied and UNDER REVIEW; the NFL final never scores while the ruling is active',async()=>{
+    for(const [label,listing] of [['a completed final',pitTen()],['scheduled',{...pitTen(),status:{type:{state:'pre',completed:false,name:'STATUS_SCHEDULED',shortDetail:'Sun 1:00 PM'}}}]]){
+      const v=await page({events:[denKc(),listing]});
+      assert.deepEqual(records(v),[['D.C.','1','0'],['DJS','0','1']],`${label}: TEN is never credited`);
+      assert.deepEqual(pickCells(v),['ok','void','bad','void'],`${label}: VOID stays`);
+      assert.match(pitCard(v),/VOID · Commissioner ruling · UNDER REVIEW/,label);
+      assert.match(banner(v),/UNDER REVIEW · PIT-TEN: VOID by commissioner ruling stays applied; the game is listed in this week's feed again/,label);
+      assert.equal(syncLabel(v),'UNDER REVIEW',label);
+      assert.match(rules(v),/<span class="rules-status">UNDER REVIEW<\/span>/,label);
+    }
+  });
+  await regression('HDC-14 the Week 13 makeup has zero effect: the page reads only its own week, and a Week 13 listing in the payload leaves the absence APPLIED',async()=>{
+    const v=await page();
+    const native=globalThis.fetch,weeks=[];
+    globalThis.fetch=async(url,init)=>{const u=new URL(url);if(u.searchParams.has('week')&&u.searchParams.has('dates'))weeks.push(u.searchParams.get('week'));return native(url,init)};
+    try{await v.refresh()}finally{globalThis.fetch=native}
+    assert.deepEqual([...new Set(weeks)],['12'],'only the Week 12 score feed is requested');
+    const makeup=await page({events:[denKc(),{...pitTen(),id:'401438199',week:{number:13}}]});
+    assert.deepEqual(pickCells(makeup),['ok','void','bad','void'],'still VOID');
+    assert.doesNotMatch(banner(makeup),/UNDER REVIEW/,'never under review because of another week');
+    assert.match(rules(makeup),/<span class="rules-status">APPLIED<\/span>/);
+  });
+  await regression('HDC-14 a withdrawn absence ruling restores the unruled week: INCOMPLETE, the game pending again',async()=>{
+    const v=await page({rulings:absentRows(['void','withdrawn'])});
+    assert.equal(v.warning(),'Some feed data was ignored to protect standings: PIT-TEN: expected game missing from feed');
+    assert.deepEqual(pickCells(v),['ok','pending','bad','pending']);assert.equal(syncLabel(v),'INCOMPLETE');
+    assert.match(rules(v),/<span class="rules-status">WITHDRAWN<\/span>/);
+  });
+  await regression('HDC-14 unusable absence evidence HOLDs the game (never VOID): a feed status claimed as an attestation, or a chain mixing evidence classes',async()=>{
+    for(const [label,rows] of [['STATUS_POSTPONED attested',absentRows(['void'],{incident_status:'STATUS_POSTPONED'})],
+      ['STATUS_ABSENT from nflscores2',absentRows(['void'],{evidence_source:'nflscores2'})],
+      ['absence root, feed re-ruling',absentRows(['void','withdrawn','void']).map((r,i)=>i===2?{...r,incident_status:'STATUS_POSTPONED',evidence_source:'nflscores2'}:r)]]){
+      const v=await page({rulings:rows});
+      assert.deepEqual(pickCells(v),['ok','hold','bad','hold'],label);
+      assert.match(v.warning(),/PIT-TEN: ruling on hold/,label);
+    }
+  });
+  await regression('HDC-14 preservation: a feed-evidence VOID whose game left the feed is still UNDER REVIEW with the missing-game warning (HDC-12 unchanged)',async()=>{
+    const v=await page({rulings:absentRows(['void'],{incident_status:'STATUS_POSTPONED',evidence_source:'nflscores2'})});
+    assert.deepEqual(pickCells(v),['ok','void','bad','void']);
+    assert.match(banner(v),/UNDER REVIEW · PIT-TEN: VOID by commissioner ruling stays applied; the game is no longer in this week's feed/);
+    assert.equal(v.warning(),'Some feed data was ignored to protect standings: PIT-TEN: expected game missing from feed');
+    assert.equal(syncLabel(v),'INCOMPLETE');
+  });
+
+  assert.equal(failures.length,0,`HDC-14 Pick'em absent-game regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+}
+
+console.log("weekly HDC-12 contest-ruling load and HDC-14 absent-game, privacy, void, voided tiebreak, under-review, withdrawn, all-void, hold, fail-closed and Rules & rulings regressions passed");

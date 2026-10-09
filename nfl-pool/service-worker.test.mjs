@@ -8,15 +8,14 @@ const index=readFileSync(new URL('./index.html',import.meta.url),'utf8');
 // end if any did.
 const hdc12Failures=[];
 const hdc12=async(name,check)=>{try{await check()}catch(error){hdc12Failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+const hdc14Failures=[];
+const hdc14=async(name,check)=>{try{await check()}catch(error){hdc14Failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
 // HDC-12 changes weekly-app.js, survivor-app.js, survivor-math.js, weekly.css and survivor.css and adds contest-rulings.js,
 // so each is precached and loaded at its new version and none at the version it replaces.
 await hdc12('HDC-12 precache and page versions',()=>{
   for(const asset of [
-    './weekly-app.js?v=weekly-v17',
     './public-math.js?v=2',
-    './survivor-app.js?v=7',
     './survivor-math.js?v=7',
-    './contest-rulings.js?v=1',
     './weekly.css?v=premium-v3',
     './survivor.css?v=4',
     './score-feed-proxy.js?v=2'
@@ -24,12 +23,20 @@ await hdc12('HDC-12 precache and page versions',()=>{
   for(const [asset,label] of [['./weekly-app.js?v=weekly-v16','weekly-v16 module'],['./survivor-app.js?v=6','survivor-app v6 module'],
     ['./survivor-math.js?v=6','survivor-math v6 module'],['./weekly.css?v=premium-v2','weekly.css premium-v2 stylesheet'],['./survivor.css?v=3','survivor.css v3 stylesheet']])
     assert(!source.includes(`'${asset}'`),`the superseded ${label} must no longer be precached`);
-  assert(index.includes('weekly-app.js?v=weekly-v17'),'the Pool Center page must load weekly-v17');
   assert(!index.includes('weekly-app.js?v=weekly-v16'),'the Pool Center page must no longer load weekly-v16');
-  assert(index.includes('survivor-app.js?v=7'),'the Pool Center page must load survivor-app v7');
   assert(!index.includes('survivor-app.js?v=6'),'the Pool Center page must no longer load survivor-app v6');
   assert(index.includes('weekly.css?v=premium-v3')&&!index.includes('weekly.css?v=premium-v2'),'the Pool Center page must load weekly.css premium-v3 only');
   assert(index.includes('survivor.css?v=4')&&!index.includes('survivor.css?v=3'),'the Pool Center page must load survivor.css v4 only');
+});
+// HDC-14 changes contest-rulings.js (the absence evidence) and, through their imports, weekly-app.js and survivor-app.js:
+// each is precached and loaded at its new version and none at the version it replaces. Nothing else moves.
+await hdc14('HDC-14 precache and page versions',()=>{
+  for(const asset of ['./weekly-app.js?v=weekly-v18','./survivor-app.js?v=8','./contest-rulings.js?v=2'])
+    assert(source.includes(`'${asset}'`),`precache must include ${asset}`);
+  for(const [asset,label] of [['./weekly-app.js?v=weekly-v17','weekly-v17 module'],['./survivor-app.js?v=7','survivor-app v7 module'],['./contest-rulings.js?v=1','contest-rulings v1 module']])
+    assert(!source.includes(`'${asset}'`),`the superseded ${label} must no longer be precached`);
+  assert(index.includes('weekly-app.js?v=weekly-v18')&&!index.includes('weekly-app.js?v=weekly-v17'),'the Pool Center page must load weekly-v18 only');
+  assert(index.includes('survivor-app.js?v=8')&&!index.includes('survivor-app.js?v=7'),'the Pool Center page must load survivor-app v8 only');
 });
 assert(!source.includes("'./weekly-app.js?v=weekly-v15'"),'the superseded weekly-v15 module must no longer be precached');
 assert(!source.includes("'./survivor-app.js?v=5'"),'the superseded survivor-app v5 module must no longer be precached');
@@ -49,7 +56,7 @@ const httpResponse=status=>{const response={status,ok:status>=200&&status<300,cl
 const cache={addAll:async requests=>{addAllCalls.push(Array.from(requests))},put:async(request,response)=>{putCalls.push({request,response})}};
 const caches={
   open:async name=>{opened.push(name);return cache},
-  keys:async()=>['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15','pool-center-shell-v16','pool-center-shell-v17','pool-center-shell-v18','pool-center-shell-v19','pool-center-shell-v20'],
+  keys:async()=>['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15','pool-center-shell-v16','pool-center-shell-v17','pool-center-shell-v18','pool-center-shell-v19','pool-center-shell-v20','pool-center-shell-v21'],
   delete:async key=>{deleted.push(key);return true},
   match:async key=>{matchCalls.push(key);return cached.get(typeof key==='string'?key:key.url)}
 };
@@ -78,8 +85,8 @@ listeners.install({waitUntil:p=>{installPromise=p}});await installPromise;
 // so a new shell cache holds one deployment.
 const shell=[
   './','./index.html','./style.css?v=premium-v3','./slate.css?v=slate-v1','./weekly.css?v=premium-v3',
-  './weekly-app.js?v=weekly-v17','./public-math.js?v=2','./survivor.css?v=4','./survivor-app.js?v=7','./survivor-math.js?v=7',
-  './contest-rulings.js?v=1','./score-feed-proxy.js?v=2','./pwa.js?v=1','./manifest.webmanifest',
+  './weekly-app.js?v=weekly-v18','./public-math.js?v=2','./survivor.css?v=4','./survivor-app.js?v=8','./survivor-math.js?v=7',
+  './contest-rulings.js?v=2','./score-feed-proxy.js?v=2','./pwa.js?v=1','./manifest.webmanifest',
   './assets/pool-center-icon.svg','./assets/pool-center-icon-192.svg','./assets/pool-center-icon-512.svg'
 ].map(path=>new URL(path,workerURL).href);
 assert.equal(addAllCalls.length,1,'install must precache the whole shell with one all-or-nothing Cache.addAll');
@@ -91,7 +98,10 @@ assert(precached.includes('https://example.test/nfl-pool/public-math.js?v=2'));
 assert(!precached.some(url=>new URL(url).pathname.startsWith('/nfl-pool/admin')),'Admin pages must not be precached');
 await hdc12('HDC-12 precached shell',()=>{
   assert(precached.includes('https://example.test/nfl-pool/survivor-math.js?v=7'),'survivor-math.js?v=7 must be precached');
-  assert(precached.includes('https://example.test/nfl-pool/contest-rulings.js?v=1'),'the HDC-12 ruling evaluator must be precached');
+  assert(precached.some(url=>/\/nfl-pool\/contest-rulings\.js\?v=\d+$/.test(url)),'the HDC-12 ruling evaluator must be precached');
+});
+await hdc14('HDC-14 precached shell',()=>{
+  assert(precached.includes('https://example.test/nfl-pool/contest-rulings.js?v=2'),'the HDC-14 ruling evaluator (v2) must be precached');
   assert.deepEqual(precached,shell,'install must precache exactly the public shell, each asset at its own URL');
 });
 assert.deepEqual(installRequests.map(request=>request.cache),precached.map(()=>'reload'),
@@ -100,11 +110,11 @@ for(const mode of ['default','no-cache','no-store','force-cache','only-if-cached
   assert(!installRequests.some(request=>request.cache===mode),`no shell asset may be requested with cache:"${mode}"`);
 }
 assert(installRequests.every(request=>request instanceof Request),'install must give Cache.addAll Request objects, not URL strings');
-await hdc12('HDC-12 weekly-v17 reload request',()=>assert.equal(installRequests[shell.indexOf('https://example.test/nfl-pool/weekly-app.js?v=weekly-v17')]?.url,
-  'https://example.test/nfl-pool/weekly-app.js?v=weekly-v17','the reload request must keep the weekly-v17 query string'));
+await hdc14('HDC-14 weekly-v18 reload request',()=>assert.equal(installRequests[shell.indexOf('https://example.test/nfl-pool/weekly-app.js?v=weekly-v18')]?.url,
+  'https://example.test/nfl-pool/weekly-app.js?v=weekly-v18','the reload request must keep the weekly-v18 query string'));
 assert.deepEqual([fetchCalls.length,putCalls.length],[0,0],'install must fetch and store the shell only through Cache.addAll');
 assert.equal(skipWaitingCalls,1,'a completed install skips waiting once');
-await hdc12('HDC-12 install cache generation',()=>assert.deepEqual(opened,['pool-center-shell-v20'],'install must write the shell to pool-center-shell-v20'));
+await hdc14('HDC-14 install cache generation',()=>assert.deepEqual(opened,['pool-center-shell-v21'],'install must write the shell to pool-center-shell-v21'));
 {
   // HDC-07 keeps Cache.addAll all-or-nothing. When any shell response is not OK the browser rejects addAll and stores none
   // of the shell; install must reject with that same error and never skip waiting, so the previous worker keeps control
@@ -122,7 +132,7 @@ await hdc12('HDC-12 install cache generation',()=>assert.deepEqual(opened,['pool
   assert.equal(failedSkips,0,'a failed install must never skip waiting');
   assert.equal(failedCalls.length,1,'a failed Cache.addAll must not be retried or replaced by a partial precache');
   assert.equal(failedCalls[0].length,precached.length);
-  await hdc12('HDC-12 failed-install cache generation',()=>assert.deepEqual(failedOpens,['pool-center-shell-v20']));
+  await hdc14('HDC-14 failed-install cache generation',()=>assert.deepEqual(failedOpens,['pool-center-shell-v21']));
 }
 
 let activatePromise;
@@ -139,8 +149,10 @@ listeners.activate({waitUntil:p=>{activatePromise=p}});await activatePromise;
 // holds the weekly-v15, survivor-app v5 and survivor-math v5 modules and the page that loads them, is deleted too.
 // HDC-12 rolls it to v20 with weekly-app.js?v=weekly-v17, survivor-app.js?v=7, survivor-math.js?v=7, weekly.css premium-v3,
 // survivor.css v4 and the new contest-rulings.js?v=1, so v19, which holds the modules, stylesheets and page they replace,
-// is deleted too. Only v20 is kept.
-await hdc12('HDC-12 activation rollover',()=>assert.deepEqual(deleted,['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15','pool-center-shell-v16','pool-center-shell-v17','pool-center-shell-v18','pool-center-shell-v19'],'activation must delete v12 through v19 and keep only v20'));
+// is deleted too. HDC-14 rolls it to v21 with weekly-app.js?v=weekly-v18, survivor-app.js?v=8 and contest-rulings.js?v=2, so
+// v20, which holds the weekly-v17, survivor-app v7 and contest-rulings v1 modules and the page that loads them, is deleted
+// too. Only v21 is kept.
+await hdc14('HDC-14 activation rollover',()=>assert.deepEqual(deleted,['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15','pool-center-shell-v16','pool-center-shell-v17','pool-center-shell-v18','pool-center-shell-v19','pool-center-shell-v20'],'activation must delete v12 through v20 and keep only v21'));
 
 const adminRequest={method:'GET',mode:'navigate',url:'https://example.test/nfl-pool/admin/survivor.html'};
 let adminResponse;
@@ -829,9 +841,9 @@ for(const path of ['/nfl-pool/admin/x%2F..%2F..%2Fstyle.css?v=premium-v3','/nfl-
   // answers the first with the public stylesheet). It is direct network in every request mode, never a cached copy.
   for(const mode of allModes)await assertDirectNetwork(ncLoad(path,mode,'/nfl-pool/admin/'),`${path} (${mode})`);
 }
-// Every cache the worker opened, at install and before each runtime cache.put above, is pool-center-shell-v20.
+// Every cache the worker opened, at install and before each runtime cache.put above, is pool-center-shell-v21.
 assert.equal(opened.length,1+putCalls.length,'install and each runtime cache.put open the shell cache once');
-await hdc12('HDC-12 runtime cache generation',()=>assert.deepEqual([...new Set(opened)],['pool-center-shell-v20'],'the worker must write only to pool-center-shell-v20'));
+await hdc14('HDC-14 runtime cache generation',()=>assert.deepEqual([...new Set(opened)],['pool-center-shell-v21'],'the worker must write only to pool-center-shell-v21'));
 
 // ---- HDC-12 version discipline. Each precached asset is checked against the bytes and version it had in
 // pool-center-shell-v19 (main 8caafa6): an asset whose bytes changed is requested at a new version, an asset whose bytes did
@@ -877,7 +889,6 @@ await hdc12('HDC-12 runtime cache generation',()=>assert.deepEqual([...new Set(o
     const shellChanged=entries.some(({path})=>!V19[path]||sha(path)!==V19[path][1])||Object.keys(V19).some(path=>!entries.some(e=>e.path===path));
     assert(shellChanged,'HDC-12 changes the shell');
     assert.notEqual(cacheName,'pool-center-shell-v19','a changed shell must not reuse pool-center-shell-v19');
-    assert.equal(cacheName,'pool-center-shell-v20');
   });
   await hdc12('HDC-12 references match the precache exactly',()=>{
     const shellVersion=new Map(entries.map(e=>[e.path,e.version]));
@@ -887,7 +898,7 @@ await hdc12('HDC-12 runtime cache generation',()=>assert.deepEqual([...new Set(o
       if(text)for(const m of text.matchAll(/(?:from|import)\s*\(?\s*'(\.\/[^']+)'/g))refs.push([file,m[1]]);
     }
     for(const app of ['weekly-app.js','survivor-app.js'])
-      assert(refs.some(([from,ref])=>from===app&&ref==='./contest-rulings.js?v=1'),`${app} must import ./contest-rulings.js?v=1`);
+      assert(refs.some(([from,ref])=>from===app&&/^\.\/contest-rulings\.js\?v=\d+$/.test(ref)),`${app} must import the versioned ./contest-rulings.js`);
     for(const [from,ref] of refs){
       const u=new URL(ref,'https://example.test/nfl-pool/'),path=u.pathname.replace('/nfl-pool/','');
       assert(shellVersion.has(path),`${from} loads ${ref}, which must be precached`);
@@ -920,6 +931,60 @@ await hdc12('HDC-12 runtime cache generation',()=>assert.deepEqual([...new Set(o
   });
 }
 
-assert.equal(hdc12Failures.length,0,`HDC-12 service-worker regressions failed (${hdc12Failures.length}):\n  ${hdc12Failures.join('\n  ')}`);
+// ---- HDC-14 version discipline. Each precached asset is checked against the bytes and version it had in
+// pool-center-shell-v20 (main 6a3c6a7, the production baseline): an asset whose bytes changed is requested at a new version,
+// an asset whose bytes did not change keeps its version (no unrelated bump), and any change to the shell's contents rolls
+// the shell cache to v21. The public modules reference the evaluator at exactly its precached version.
+{
+  const {createHash}=await import('node:crypto');
+  const bytes=path=>{try{return readFileSync(new URL(`./${path}`,import.meta.url))}catch{return null}};
+  const sha=path=>{const b=bytes(path);return b?createHash('sha256').update(b).digest('hex'):null};
+  const V20={
+    'index.html':[null,'73673852dbd92ac0661898b1cc4c9b51f9e7ffd4307657dea6231f7867352a9e'],
+    'style.css':['premium-v3','83cce4ed122a251791d3f272b9cf5bed94c849dac9a0ad74d39bef784dcdf815'],
+    'slate.css':['slate-v1','58f87ea913d974f98f9bab54c1c3d74bd608f723b47fe491128d96016937abdb'],
+    'weekly.css':['premium-v3','fe917b9123af034c887fc3290e052c07ba6d1a7ed72ff0e9286a6f53ea6a1f44'],
+    'weekly-app.js':['weekly-v17','98fbf75550a86aefe8a71271ed5934cfc8a96df6684609ae1f3cc401ed022974'],
+    'public-math.js':['2','1dd847931f83cc021341a657b8913eab208a8ab62721705b5cf4cd0803cc79db'],
+    'survivor.css':['4','ec104e2e22394460c9a0ee473e84d47d87eb5e72eb7cf1f67135f626978b4938'],
+    'survivor-app.js':['7','4b5e8256aabb60e4dc135751d6b8a09b958f1ac9859ae55f596c549a4c06eb25'],
+    'survivor-math.js':['7','3aebca4ad08412658e7d0fc4b9f0207d829e2b9f718579f556594e13373b634f'],
+    'contest-rulings.js':['1','10ce2d245e396c404697fb8d2628785a9d5dccfe7df3cac42e5722d51926556a'],
+    'score-feed-proxy.js':['2','b13635d4706099c67272b8ae739e9a363b21342bb2a87af1581847dc936747b7'],
+    'pwa.js':['1','febf3af70464731d65d56beb3a88ee5f8587808eeebf52f97b06211d47bb34da'],
+    'manifest.webmanifest':[null,'b6508c471231b597c8296084d4749d9004fe07cb33247a2e52e57775c35d53cf'],
+    'assets/pool-center-icon.svg':[null,'9fd6f65b0c367cee1988f3a573301279f1d11768577ef52ab1a72cf26d0604a3'],
+    'assets/pool-center-icon-192.svg':[null,'7cbd4c5a5fc061fb572e4b6e284ced95310da3d8a46c538c5ba3717d2d8a86e9'],
+    'assets/pool-center-icon-512.svg':[null,'9fd6f65b0c367cee1988f3a573301279f1d11768577ef52ab1a72cf26d0604a3']
+  };
+  const cacheName=source.match(/const CACHE='([^']+)'/)?.[1];
+  const entries=precached.map(url=>{const u=new URL(url),path=u.pathname.replace('/nfl-pool/','')||'index.html';return{url,path,version:u.searchParams.get('v')}});
+  await hdc14('HDC-14 changed bytes roll the version, unchanged bytes keep it (against pool-center-shell-v20)',()=>{
+    const problems=[];
+    for(const {path,version} of entries){
+      const before=V20[path];
+      if(!before){problems.push(`${path} is new to the shell: HDC-14 adds no shell asset`);continue}
+      if(before[0]===null)continue;
+      const changed=sha(path)!==before[1];
+      if(changed&&version===before[0])problems.push(`${path} changed but is still precached at v=${version}`);
+      if(!changed&&version!==before[0])problems.push(`${path} is unchanged but its version moved from v=${before[0]} to v=${version}`);
+    }
+    for(const path of ['contest-rulings.js','weekly-app.js','survivor-app.js'])if(sha(path)===V20[path][1])problems.push(`${path} must change for HDC-14`);
+    for(const path of ['survivor-math.js','public-math.js','style.css','slate.css','weekly.css','survivor.css','score-feed-proxy.js','pwa.js'])
+      if(sha(path)!==V20[path][1])problems.push(`${path} is outside HDC-14 and must keep its bytes`);
+    assert.deepEqual(problems,[]);
+  });
+  await hdc14('HDC-14 shell cache rolls from pool-center-shell-v20 to v21',()=>{
+    assert.notEqual(cacheName,'pool-center-shell-v20','a changed shell must not reuse pool-center-shell-v20');
+    assert.equal(cacheName,'pool-center-shell-v21');
+  });
+  await hdc14('HDC-14 both apps import the evaluator at its precached version (contest-rulings.js?v=2)',()=>{
+    for(const app of ['weekly-app.js','survivor-app.js'])
+      assert(bytes(app)?.toString('utf8').includes("from './contest-rulings.js?v=2';"),`${app} must import ./contest-rulings.js?v=2`);
+  });
+}
 
-console.log('service-worker precache graph, fresh (cache:"reload") precache requests, all-or-nothing install, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');
+assert.equal(hdc12Failures.length,0,`HDC-12 service-worker regressions failed (${hdc12Failures.length}):\n  ${hdc12Failures.join('\n  ')}`);
+assert.equal(hdc14Failures.length,0,`HDC-14 service-worker regressions failed (${hdc14Failures.length}):\n  ${hdc14Failures.join('\n  ')}`);
+
+console.log('service-worker precache graph (HDC-14 versions), fresh (cache:"reload") precache requests, all-or-nothing install, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# HDC-13 SQL race suite. Run by run.sh after behavior.sql, against the same throwaway PostgreSQL 17.11 container
+# HDC-13 and HDC-14 SQL race suite. Run by run.sh after behavior.sql, against the same throwaway PostgreSQL 17.11 container
 # ($HDC13_PG_CONTAINER). Every write session connects as authenticator and makes the call the way the Data API does
 # (request.jwt.claims for the transaction, SET LOCAL ROLE authenticated), so each race is two real concurrent requests.
 #
@@ -206,5 +206,109 @@ check "withdraw twice at once: the first withdrawal lands" "$(result_of race-a)"
 check "withdraw twice at once: the second is HDC13_STALE_CHAIN" "$(error_of race-b 'P0001: HDC13_STALE_CHAIN')" "$(show race-b)"
 check "withdraw twice at once: exactly one withdrawal" "$(q "SELECT string_agg(consequence, ',' ORDER BY chain_seq) = 'void,withdrawn' FROM public.nfl_incident_rulings WHERE week = 11 AND away_team = 'HOU'")"
 
-echo "HDC13-RACE-SUMMARY races=9 passed=$passed failed=$failed"
-[ "$failed" -eq 0 ] && [ "$passed" -eq 31 ]
+# ---------------------------------------------------------------------------------------------------------------------
+# HDC-14: the absent-game write path (public.nfl_append_absent_incident_ruling, migration 005) under the same locks: the
+# per-contest advisory lock of the HDC-12 insert checks and the published week (Pick'em) or same-week slate (Survivor)
+# read FOR SHARE.
+# ---------------------------------------------------------------------------------------------------------------------
+# SQL text of one Data API call of the absent-game RPC. Arguments are SQL literals (NULL for none), in the RPC's order.
+arpc() {
+  printf "SELECT 'RESULT ' || public.nfl_append_absent_incident_ruling(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)::text;\n" "$@"
+}
+arule() { # contest week away home consequence revision note
+  arpc "'$1'" "$2" "'$3'" "'$4'" "'rule'" "'$5'" "$6" NULL "'$7'" NULL
+}
+
+echo "== race 10: an absent-game first ruling against a normal first ruling of one incident: exactly one establishes the chain"
+gate_open
+start race-a authenticator "$( data_api_begin; arule pool-center-2026-pickem 12 MIA NE void 1 'Absent from the Week 12 feed; void.'; gate_wait_sql; echo 'COMMIT;'; )"; a=$pid
+wait_for "A waits on the gate" "$(waiting_on_gate race-a)" "$a"
+start race-b authenticator "$( data_api_begin; rule pool-center-2026-pickem 12 MIA NE void 401438124 'Canceled; void.'; echo 'COMMIT;'; )"; b=$pid
+wait_for "B is blocked on the per-contest lock" "$(waiting_on_contest_lock race-b)" "$b"
+check "absent first: the normal ruling was blocked behind the absent-game ruling on the per-contest lock" "$(q "$(waiting_on_contest_lock race-b)")"
+gate_release; wait "$a" "$b"
+check "absent first: the absent-game ruling lands" "$(result_of race-a)" "$(show race-a)"
+check "absent first: the normal first ruling is HDC13_STALE_CHAIN" "$(error_of race-b 'P0001: HDC13_STALE_CHAIN')" "$(show race-b)"
+check "absent first: exactly one root, an attested absence" "$(q "SELECT count(*) = 1 AND bool_and(incident_status = 'STATUS_ABSENT' AND evidence_source = 'commissioner-attestation') FROM public.nfl_incident_rulings WHERE contest_id = 'pool-center-2026-pickem' AND week = 12 AND away_team = 'MIA'")"
+gate_open
+start race-a authenticator "$( data_api_begin; rule pool-center-2026-pickem 12 LV KC void 401438130 'Canceled; void.'; gate_wait_sql; echo 'COMMIT;'; )"; a=$pid
+wait_for "A waits on the gate" "$(waiting_on_gate race-a)" "$a"
+start race-b authenticator "$( data_api_begin; arule pool-center-2026-pickem 12 LV KC void 1 'Absent from the Week 12 feed; void.'; echo 'COMMIT;'; )"; b=$pid
+wait_for "B is blocked on the per-contest lock" "$(waiting_on_contest_lock race-b)" "$b"
+check "normal first: the absent-game ruling was blocked behind the normal ruling on the per-contest lock" "$(q "$(waiting_on_contest_lock race-b)")"
+gate_release; wait "$a" "$b"
+check "normal first: the normal ruling lands" "$(result_of race-a)" "$(show race-a)"
+check "normal first: the absent-game first ruling is HDC14_STALE_CHAIN" "$(error_of race-b 'P0001: HDC14_STALE_CHAIN')" "$(show race-b)"
+check "normal first: exactly one root, feed evidence" "$(q "SELECT count(*) = 1 AND bool_and(incident_status = 'STATUS_CANCELED' AND evidence_source = 'nflscores2') FROM public.nfl_incident_rulings WHERE contest_id = 'pool-center-2026-pickem' AND week = 12 AND away_team = 'LV'")"
+
+echo "== race 11: an absent-game ruling against a republish of its week: serialized on the published row"
+gate_open
+start race-a authenticator "$( data_api_begin; echo "UPDATE public.nfl_pool_weeks w SET config = jsonb_set(w.config, '{games}', (SELECT jsonb_agg(g) FROM jsonb_array_elements(w.config->'games') g WHERE g->>'away' <> 'SEA')), revision = w.revision + 1, updated_at = now() WHERE w.season = 2026 AND w.week = 12 AND w.revision = 1 RETURNING 'UPDATED ' || w.revision;"; gate_wait_sql; echo 'COMMIT;'; )"; a=$pid
+wait_for "A waits on the gate" "$(waiting_on_gate race-a)" "$a"
+start race-b authenticator "$( data_api_begin; arule pool-center-2026-pickem 12 SEA SF void 1 'Absent from the Week 12 feed; void.'; echo 'COMMIT;'; )"; b=$pid
+wait_for "B is blocked on the published week row" "$(waiting_on_row race-b)" "$b"
+check "republish first: the absent-game ruling waited for the uncommitted republish of its week" "$(q "$(waiting_on_row race-b)")"
+gate_release; wait "$a" "$b"
+check "republish first: the republish lands (revision 2)" "$(grep -q '^UPDATED 2$' "$work/race-a.out" && echo t || echo f)" "$(show race-a)"
+check "republish first: the absent-game ruling for the game the republish removed is HDC14_NOT_PUBLISHED" "$(error_of race-b 'P0001: HDC14_NOT_PUBLISHED')" "$(show race-b)"
+check "republish first: no ruling was written for SEA @ SF" "$(q "SELECT count(*) = 0 FROM public.nfl_incident_rulings WHERE week = 12 AND away_team = 'SEA'")"
+gate_open
+start race-a authenticator "$( data_api_begin; arule pool-center-2026-pickem 12 ATL NO void 1 'Absent from the Week 12 feed; void.'; gate_wait_sql; echo 'COMMIT;'; )"; a=$pid
+wait_for "A waits on the gate" "$(waiting_on_gate race-a)" "$a"
+start race-b authenticator "$( data_api_begin; echo "UPDATE public.nfl_pool_weeks w SET config = jsonb_set(w.config, '{label}', '\"Week 12 (corrected)\"'), revision = w.revision + 1, updated_at = now() WHERE w.season = 2026 AND w.week = 12 AND w.revision = 2 RETURNING 'UPDATED ' || w.revision;"; echo 'COMMIT;'; )"; b=$pid
+wait_for "B is blocked on the published week row" "$(waiting_on_row race-b)" "$b"
+check "ruling first: the republish waited for the absent-game ruling that validated against its week" "$(q "$(waiting_on_row race-b)")"
+gate_release; wait "$a" "$b"
+check "ruling first: the absent-game ruling lands" "$(result_of race-a)" "$(show race-a)"
+check "ruling first: the republish lands after it (revision 3)" "$(grep -q '^UPDATED 3$' "$work/race-b.out" && echo t || echo f)" "$(show race-b)"
+
+echo "== race 12: an absent-game ruling submitted twice (double click) and retried: one lands, the others are HDC14_STALE_CHAIN"
+gate_open
+start race-a authenticator "$( data_api_begin; arule pool-center-2026-pickem 12 CHI GB void 1 'Absent from the Week 12 feed; void.'; gate_wait_sql; echo 'COMMIT;'; )"; a=$pid
+wait_for "A waits on the gate" "$(waiting_on_gate race-a)" "$a"
+start race-b authenticator "$( data_api_begin; arule pool-center-2026-pickem 12 CHI GB void 1 'Absent from the Week 12 feed; void.'; echo 'COMMIT;'; )"; b=$pid
+wait_for "B is blocked on the per-contest lock" "$(waiting_on_contest_lock race-b)" "$b"
+check "absent double submit: the second request was blocked behind the first on the per-contest lock" "$(q "$(waiting_on_contest_lock race-b)")"
+gate_release; wait "$a" "$b"
+check "absent double submit: the first request lands" "$(result_of race-a)" "$(show race-a)"
+check "absent double submit: the identical second request is HDC14_STALE_CHAIN" "$(error_of race-b 'P0001: HDC14_STALE_CHAIN')" "$(show race-b)"
+start race-c authenticator "$( data_api_begin; arule pool-center-2026-pickem 12 CHI GB void 1 'Absent from the Week 12 feed; void.'; echo 'COMMIT;'; )"; c=$pid
+wait "$c"
+check "absent retry after the response was lost: the resubmitted request is HDC14_STALE_CHAIN" "$(error_of race-c 'P0001: HDC14_STALE_CHAIN')" "$(show race-c)"
+check "absent double submit and retry: still exactly one row" "$(q "SELECT count(*) = 1 FROM public.nfl_incident_rulings WHERE week = 12 AND away_team = 'CHI'")"
+
+echo "== race 13: a policy revision against an absent-game ruling: the HDC-12 semantics, either order"
+gate_open
+start race-a nfl_pool_owner "$( echo 'BEGIN;'; echo "INSERT INTO public.nfl_contest_policies (contest_id, contest_type, revision, effective_week, halted_game_policy, public_note) VALUES ('fixture-2099-pickem', 'pickem', 3, 9, 'void', 'Revision 3 from Week 9.') RETURNING 'POLICY ' || revision;"; gate_wait_sql; echo 'COMMIT;'; )"; a=$pid
+wait_for "A waits on the gate" "$(waiting_on_gate race-a)" "$a"
+start race-b authenticator "$( data_api_begin; arule fixture-2099-pickem 9 DAL WAS void 2 'Absent from the Week 9 feed; void.'; echo 'COMMIT;'; )"; b=$pid
+wait_for "B is blocked on the per-contest lock" "$(waiting_on_contest_lock race-b)" "$b"
+gate_release; wait "$a" "$b"
+check "policy first: revision 3 is committed" "$(grep -q '^POLICY 3$' "$work/race-a.out" && echo t || echo f)" "$(show race-a)"
+check "policy first: the absent-game ruling naming revision 2 is HDC14_STALE_POLICY" "$(error_of race-b 'P0001: HDC14_STALE_POLICY')" "$(show race-b)"
+check "policy first: no ruling was written for Week 9" "$(q "SELECT count(*) = 0 FROM public.nfl_incident_rulings WHERE contest_id = 'fixture-2099-pickem' AND week = 9")"
+gate_open
+start race-a authenticator "$( data_api_begin; arule fixture-2099-pickem 10 CAR ATL void 3 'Absent from the Week 10 feed; void.'; gate_wait_sql; echo 'COMMIT;'; )"; a=$pid
+wait_for "A waits on the gate" "$(waiting_on_gate race-a)" "$a"
+start race-b nfl_pool_owner "$( echo 'BEGIN;'; echo "INSERT INTO public.nfl_contest_policies (contest_id, contest_type, revision, effective_week, halted_game_policy, public_note) VALUES ('fixture-2099-pickem', 'pickem', 4, 10, 'void', 'Revision 4 from Week 10.') RETURNING 'POLICY ' || revision;"; echo 'COMMIT;'; )"; b=$pid
+wait_for "B is blocked on the per-contest lock" "$(waiting_on_contest_lock race-b)" "$b"
+gate_release; wait "$a" "$b"
+check "absent ruling first: the absent-game ruling under revision 3 lands" "$(result_of race-a)" "$(show race-a)"
+check "absent ruling first: revision 4 reaching Week 10 is refused (23514, Week 10 already has a ruling)" \
+  "$( [ "$(error_of race-b '23514:')" = t ] && grep -q 'which already has a ruling' "$work/race-b.out" && echo t || echo f )" "$(show race-b)"
+check "absent ruling first: the contest still has three policy revisions" "$(q "SELECT count(*) = 3 FROM public.nfl_contest_policies WHERE contest_id = 'fixture-2099-pickem'")"
+
+echo "== race 14: a Survivor absent-game ruling against a republish of its same-week Pick'em slate"
+gate_open
+start race-a authenticator "$( data_api_begin; echo "UPDATE public.nfl_pool_weeks w SET config = jsonb_set(w.config, '{games}', (SELECT jsonb_agg(g) FROM jsonb_array_elements(w.config->'games') g WHERE g->>'away' <> 'IND')), revision = w.revision + 1, updated_at = now() WHERE w.season = 2099 AND w.week = 8 AND w.revision = 1 RETURNING 'UPDATED ' || w.revision;"; gate_wait_sql; echo 'COMMIT;'; )"; a=$pid
+wait_for "A waits on the gate" "$(waiting_on_gate race-a)" "$a"
+start race-b authenticator "$( data_api_begin; arule fixture-2099-survivor 8 IND HOU advance_team_used 1 'Absent from the Week 8 feed; pickers advance.'; echo 'COMMIT;'; )"; b=$pid
+wait_for "B is blocked on the slate row" "$(waiting_on_row race-b)" "$b"
+check "slate republish first: the Survivor ruling waited for the uncommitted republish of its same-week slate" "$(q "$(waiting_on_row race-b)")"
+gate_release; wait "$a" "$b"
+check "slate republish first: the republish lands (revision 2)" "$(grep -q '^UPDATED 2$' "$work/race-a.out" && echo t || echo f)" "$(show race-a)"
+check "slate republish first: the Survivor ruling the slate no longer proves is HDC14_ABSENCE_NOT_ATTESTABLE" "$(error_of race-b 'P0001: HDC14_ABSENCE_NOT_ATTESTABLE')" "$(show race-b)"
+check "slate republish first: no Survivor ruling was written for IND @ HOU" "$(q "SELECT count(*) = 0 FROM public.nfl_incident_rulings WHERE contest_id = 'fixture-2099-survivor' AND away_team = 'IND'")"
+
+echo "HDC13-RACE-SUMMARY races=14 passed=$passed failed=$failed"
+[ "$failed" -eq 0 ] && [ "$passed" -eq 61 ]

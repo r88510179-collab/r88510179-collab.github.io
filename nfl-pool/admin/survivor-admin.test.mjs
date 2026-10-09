@@ -6,10 +6,13 @@ import {parseSurvivorPages} from './survivor-parser.js';
 
 const here=new URL('.',import.meta.url);
 const source=readFileSync(new URL('./survivor-admin.js',import.meta.url),'utf8');
+// The survivor-publish-checks import is rewritten whatever its version; the HDC-14 regressions pin the version.
+const checksImport=source.match(/from '\.\/survivor-publish-checks\.js\?v=(\d+)';/);
+assert(checksImport,'harness expects a versioned survivor-publish-checks import');
 const replacements=[
   ["import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';","const {createClient}=globalThis.__survivorTest.neonModule;"],
   ["from './survivor-parser.js?v=3';",`from '${new URL('./survivor-parser.js?v=3',here).href}';`],
-  ["from './survivor-publish-checks.js?v=2';",`from '${new URL('./survivor-publish-checks.js?v=2',here).href}';`],
+  [checksImport[0],`from '${new URL(`./survivor-publish-checks.js?v=${checksImport[1]}`,here).href}';`],
   ["await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs')","globalThis.__survivorTest.pdfjs"]
 ];
 assert(source.includes('gridBreaks:c.review.gridBreaks'),'publisher must pass parser-proven grid restarts to the confirmation guard');
@@ -48,10 +51,12 @@ class El{
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});return{promise,resolve,reject}};
 const flush=async(n=8)=>{for(let i=0;i<n;i++)await new Promise(r=>setTimeout(r,0))};
 
-// ---- mock Neon (PostgREST-style builder over an in-memory table)
+// ---- mock Neon (PostgREST-style builder over in-memory tables). nfl_survivor_weeks is db.rows and logs [op, ...filters];
+// any other table (the locked Pick'em slates, nfl_pool_weeks, are db.pickem) logs [`${table}:${op}`, ...filters].
 function neonModule(db){
   class Query{
-    constructor(){this.op='select';this.filters=[];this.row=null}
+    constructor(table){this.table=table;this.op='select';this.filters=[];this.row=null}
+    get survivor(){return this.table==='nfl_survivor_weeks'}
     select(){return this}
     eq(k,v){this.filters.push([k,v]);return this}
     limit(){return this}
@@ -60,6 +65,7 @@ function neonModule(db){
     then(ok,fail){return this.run().then(ok,fail)}
     async run(){
       const match=r=>this.filters.every(([k,v])=>r[k]===v);
+      if(!this.survivor){db.log.push([`${this.table}:${this.op}`,...this.filters.map(f=>f.join('='))]);if(this.op!=='select')throw new Error(`unexpected ${this.op} on ${this.table}`);if(db.pickemFail){const e=db.pickemFail;db.pickemFail=null;throw e}return{data:(db.pickem||[]).filter(match).map(r=>structuredClone(r)),error:null}}
       if(this.op==='select'){db.log.push(['select',...this.filters.map(f=>f.join('='))]);if(db.readFail){const e=db.readFail;db.readFail=null;throw e}return{data:db.rows.filter(match).map(r=>structuredClone(r)),error:null}}
       db.log.push([this.op,...this.filters.map(f=>f.join('='))]);
       if(db.beforeWrite)await db.beforeWrite(this);
@@ -79,23 +85,24 @@ function neonModule(db){
     signOut:async()=>{db.session=null},
     emailOtp:{sendVerificationOtp:async()=>({error:null})},
     signIn:{emailOtp:async()=>{db.session=db.pendingSession;return{error:null}}}
-  },from:()=>new Query()})};
+  },from:table=>new Query(table)})};
 }
 
-async function boot({signedIn=true,rows=[],sheets={}}={}){
+async function boot({signedIn=true,rows=[],sheets={},pickem=[],feed=feedPayload}={}){
   const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new El(id));return els.get(id)};
-  const db={session:signedIn?{id:'admin-1',email:'djsmokke@gmail.com'}:null,pendingSession:{id:'admin-1',email:'djsmokke@gmail.com'},rows:structuredClone(rows),log:[]};
-  const net={fetches:0,gate:null,fail:null};
+  const db={session:signedIn?{id:'admin-1',email:'djsmokke@gmail.com'}:null,pendingSession:{id:'admin-1',email:'djsmokke@gmail.com'},rows:structuredClone(rows),pickem:structuredClone(pickem),log:[]};
+  // `net.feed` maps a requested week to the NFL score-feed payload; `net.weeks` records every requested week.
+  const net={fetches:0,gate:null,fail:null,feed,weeks:[]};
   globalThis.document={getElementById:$};
   globalThis.__survivorTest={
     neonModule:neonModule(db),
     pdfjs:{GlobalWorkerOptions:{},getDocument:({data})=>{const name=new TextDecoder().decode(data),pages=Array.isArray(sheets[name][0])?sheets[name]:[sheets[name]];return{promise:Promise.resolve({numPages:pages.length,getPage:async n=>({getTextContent:async()=>({items:pages[n-1]})})})}}}
   };
   globalThis.fetch=async url=>{
-    net.fetches++;const week=Number(new URL(url).searchParams.get('week'));
+    net.fetches++;const week=Number(new URL(url).searchParams.get('week'));net.weeks.push(week);
     if(net.gate)await net.gate.promise;
     if(net.fail)throw net.fail;
-    return{ok:true,status:200,json:async()=>feedPayload(week)};
+    return{ok:true,status:200,json:async()=>net.feed(week)};
   };
   await import(`data:text/javascript;base64,${Buffer.from(patched+`\n//instance ${++instance}`).toString('base64')}`);
   await flush();
@@ -301,6 +308,117 @@ const sheets={'week2.pdf':sheetItems(SHEET),'week2-complete.pdf':sheetItems(COMP
   assert.match(t.$('reviewTitle').textContent,/6 entries/);
   assert.match(t.$('publishChecks').innerHTML,/1 name-column row has no letter or digit and was NOT counted as an entrant: &quot;\*&quot; \(page 1\)/);
   assert.equal(t.$('confirmWrap').hidden,false);assert.equal(t.$('publishBtn').disabled,true);
+}
+
+// ---- HDC-14: the Survivor publisher's absent-game exception, end to end. SF @ ARI left the Week 2 feed; the locked
+// Pick'em Week 2 slate (revision 3) proves the matchup. Without the typed confirmation the sheet still cannot be
+// published; with WEEK 2 SF @ ARI ABSENT it publishes a snapshot that records the exception and leaves every pick as the
+// sheet has it. The publish re-checks the slate revision and the Week 2 feed before writing; an edited confirmation, a
+// bye pick, a changed slate or a game listed again writes nothing. Every regression reports through one collector.
+{
+  const failures=[];
+  const regression=async(name,check)=>{try{await check()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+  const html=readFileSync(new URL('./survivor.html',import.meta.url),'utf8');
+  const W2_NO_SF=W2.filter(([a])=>a!=='SF');
+  const absentFeed=week=>week===2?{...feedPayload(2),events:W2_NO_SF.map(([a,h])=>feedEvent(a,h,2))}:feedPayload(week);
+  const pickemRow=(pairs,revision=3)=>({season:2026,week:2,status:'locked',revision,config:{schemaVersion:1,season:2026,week:2,games:pairs.map(([away,home],i)=>({away,home,awayNumber:2*i+1,homeNumber:2*i+2,eventId:String(402600+i)}))}});
+  const PHRASE='WEEK 2 SF @ ARI ABSENT';
+  const EXC={type:'absent-from-week-feed',week:2,away:'SF',home:'ARI',pickemRevision:3,confirmation:PHRASE};
+  const OLD_SF="Week 2: SF is not scheduled in verified NFL Week 2 (bye or invalid team) — 2 entries: D.C., DJS. Check the sheet's Week 2 column for SF.";
+  const HINT=" Pick'em Week 2 (revision 3) proves SF @ ARI, and neither team is listed in the NFL Week 2 feed: if that game was moved out of Week 2, type WEEK 2 SF @ ARI ABSENT under Absent games and Read & validate again.";
+  const FAILED='NFL schedule verification failed; this sheet cannot be published: ';
+  const confirm=(t,text)=>{t.$('absenceConfirm').value=text;t.$('absenceConfirm').dispatch('input')};
+  const ready=async({text=PHRASE,pickem=[pickemRow(W2)],feed=absentFeed}={})=>{
+    const t=await boot({rows:[week1Row(COMPLETE)],sheets,pickem,feed});
+    if(text!==null)confirm(t,text);
+    t.choose('week2-complete.pdf');await t.parse();return t;
+  };
+  const writes=t=>t.db.log.filter(l=>l[0]==='insert'||l[0]==='update').length;
+
+  await regression('survivor.html: the Absent games field, its format, every element the script uses, and survivor-admin.js v4 importing checks v3',()=>{
+    assert(/<textarea id="absenceConfirm"[^>]*>/.test(html),'an #absenceConfirm textarea');
+    assert.match(html,/<label for="absenceConfirm">Absent games/);assert.match(html,/WEEK N AWAY @ HOME ABSENT/);
+    for(const [,id] of source.matchAll(/\$\('([A-Za-z]+)'\)/g))assert(html.includes(`id="${id}"`),`survivor.html lacks #${id}`);
+    assert.match(html,/<script type="module" src="survivor-admin\.js\?v=4"><\/script>/);
+    assert.equal(checksImport[1],'3','survivor-admin.js imports survivor-publish-checks.js v3');
+  });
+  await regression('without the typed confirmation the moved-game pick still blocks, naming the exact phrase',async()=>{
+    const t=await ready({text:null});
+    assert.equal(t.$('message').textContent,FAILED+OLD_SF+HINT);assert.equal(t.$('review').hidden,true);
+    await t.publish();assert.equal(writes(t),0);
+    assert(t.db.log.some(l=>l[0]==='nfl_pool_weeks:select'&&l.includes('season=2026')&&l.includes('status=locked')),'the locked 2026 Pick\'em slates are read');
+  });
+  await regression('with the exact confirmation the snapshot publishes with the exception and unchanged picks',async()=>{
+    const t=await ready();
+    assert.equal(t.$('review').hidden,false,t.$('message').textContent);
+    assert.match(t.$('validation').innerHTML,/SF @ ARI: ABSENT FROM WEEK 2 FEED/);
+    assert.match(t.$('validation').innerHTML,/stay pending until a ruling is recorded/);
+    assert.equal(t.$('publishBtn').disabled,false);
+    const before=t.net.fetches;await t.publish();
+    assert.equal(writes(t),1);assert.match(t.$('message').textContent,/published and locked\. Revision 1\./);
+    const row=t.db.rows.find(r=>r.week===2);
+    assert.deepEqual(row.config.publicationExceptions,[EXC]);
+    assert.deepEqual(row.config.trackedEntries.find(e=>e.displayName==='D.C.').picks,['PIT','SF'],'the pick is published as the sheet has it');
+    assert.equal(t.net.fetches,before+1,'the publish re-checks the Week 2 feed once');
+    assert.deepEqual([...new Set(t.net.weeks)].sort(),[1,2],'no later week is ever requested');
+  });
+  await regression('a bye pick (no slate game for SF) still blocks with the typed phrase',async()=>{
+    const t=await ready({pickem:[pickemRow(W2_NO_SF)]});
+    assert.equal(t.$('message').textContent,`${FAILED}${OLD_SF} · Absent-game confirmation "${PHRASE}" does not match a picked game that the same-week Pick'em slate proves and the NFL feed no longer lists. Correct or clear it, then Read & validate again.`);
+    assert.equal(t.$('review').hidden,true);await t.publish();assert.equal(writes(t),0);
+  });
+  await regression('ordinary sheets are unchanged: no slate read, no exception key, no publish-time feed read',async()=>{
+    const t=await ready({text:null,feed:feedPayload});
+    assert.equal(t.db.log.some(l=>String(l[0]).startsWith('nfl_pool_weeks')),false,'no Pick\'em slate is read');
+    const before=t.net.fetches;await t.publish();
+    assert.equal(writes(t),1);assert.equal('publicationExceptions' in t.db.rows.find(r=>r.week===2).config,false);
+    assert.equal(t.net.fetches,before,'no feed is read again');
+  });
+  await regression('a confirmation edited after validation invalidates the sheet; an unseen edit is refused at publish',async()=>{
+    const t=await ready();
+    confirm(t,'');
+    assert.equal(t.$('review').hidden,true);assert.equal(t.$('publishBtn').disabled,true);
+    assert.equal(t.$('message').textContent,'Absent-game confirmation changed. Read & validate the Survivor sheet again.');
+    await t.publish();assert.equal(writes(t),0);
+    const u=await ready();
+    u.$('absenceConfirm').value='';await u.publish();
+    assert.equal(writes(u),0);
+    assert.equal(u.$('message').textContent,'This Survivor sheet is not fully validated for the current file, season and account. Read & validate it again before publishing.');
+  });
+  await regression('the game listed in Week 2 again before the publish writes nothing',async()=>{
+    const t=await ready();
+    t.net.feed=feedPayload;await t.publish();
+    assert.equal(t.$('message').textContent,'Publish refused: SF @ ARI is no longer absent from the NFL Week 2 feed (a game of SF or ARI is listed), so its absence exception no longer holds. Nothing was written. Read & validate again.');
+    assert.equal(writes(t),0);assert.equal(t.$('publishBtn').disabled,true);
+  });
+  await regression('a Pick\'em slate changed or removed before the publish writes nothing',async()=>{
+    for(const [label,change] of [['revised',db=>{db.pickem[0].revision=4}],['removed',db=>{db.pickem.length=0}],['unlocked',db=>{db.pickem[0].status='draft'}]]){
+      const t=await ready();
+      change(t.db);await t.publish();
+      assert.equal(t.$('message').textContent,"Publish refused: Pick'em Week 2 changed since this sheet was validated, so the absence exception for SF @ ARI no longer holds. Nothing was written. Read & validate again.",label);
+      assert.equal(writes(t),0,label);assert.equal(t.$('publishBtn').disabled,true,label);
+    }
+  });
+  await regression('a feed that cannot be re-checked refuses the write and allows a retry',async()=>{
+    const t=await ready();
+    t.net.fail=new TypeError('Failed to fetch');await t.publish();
+    assert.equal(t.$('message').textContent,'Publish refused: the NFL Week 2 feed could not be re-checked for SF @ ARI (Failed to fetch). Nothing was written. You can retry Publish.');
+    assert.equal(writes(t),0);assert.equal(t.$('publishBtn').disabled,false);
+    t.net.fail=null;await t.publish();
+    assert.equal(writes(t),1);assert.deepEqual(t.db.rows.find(r=>r.week===2).config.publicationExceptions,[EXC]);
+  });
+  await regression('the confirmation is frozen while a publish is running',async()=>{
+    const t=await ready();
+    const gate=deferred();t.db.beforeWrite=async()=>{t.db.beforeWrite=null;await gate.promise};
+    const pending=t.publish();await flush();
+    assert.equal(t.$('absenceConfirm').disabled,true,'the field is disabled during the publish');
+    confirm(t,'');
+    assert.equal(t.$('absenceConfirm').value,PHRASE);
+    assert.equal(t.$('message').textContent,'Publishing is in progress. The absent-game confirmation cannot be changed until it finishes.');
+    gate.resolve();await pending;
+    assert.equal(writes(t),1);assert.deepEqual(t.db.rows.find(r=>r.week===2).config.publicationExceptions,[EXC]);
+  });
+  assert.equal(failures.length,0,`HDC-14 Survivor publisher regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
 }
 
 console.log('survivor publisher stale-context, confirmation, schedule, compare-and-swap, double-submit and write-outcome regressions passed');

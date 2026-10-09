@@ -1434,4 +1434,188 @@ console.log('survivor HDC-11 halted-game awaiting-ruling classification, ordinar
   assert.equal(failures.length,0,`HDC-12 contest-ruling regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
 }
 
-console.log('survivor HDC-12 contest policy, revision selection, ruling chain, published-slot, double-coverage, forfeit-boundary, conflict, fail-safe, Survivor-effect, Pick\'em-void, privacy and migration-contract regressions passed');
+
+// ---- HDC-14: absent-game adjudication in the shared evaluator. A game the original week's feed no longer lists (the 2020
+// Week 4 PIT at TEN shape: the listing disappeared, the matchup later appeared as a distinct event in Week 7) can carry a
+// commissioner ruling whose evidence is an explicit attestation, never a feed fact: incident_status STATUS_ABSENT,
+// evidence_source commissioner-attestation, event_id the original published game's event or none. While the original week's
+// feed still omits the game the ruling is APPLIED; if the matchup is listed again in that week it stays applied and is UNDER
+// REVIEW (a forfeit HOLDs); a listing in any other week has no effect at all. Feed-evidence rulings are unchanged.
+{
+  const failures=[];
+  const regression=async(name,check)=>{try{await check()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+  let CR=null;
+  try{CR=await import('./contest-rulings.js')}catch{CR=null}
+  const evaluator=()=>{assert(CR,'nfl-pool/contest-rulings.js is missing');return CR};
+  const SM=await import('./survivor-math.js');
+  const START='2026-09-01T00:00:00+00:00',WRITTEN='2026-10-08T12:00:00+00:00',INITIAL='2026-08-01T00:00:00+00:00';
+  const NAME={pickem:"Pool Center 2026 Pick'em",survivor:'Pool Center 2026 Survivor'},POLICY={pickem:'void',survivor:'advance_team_used'};
+  const cid=type=>`pool-center-2026-${type}`;
+  const ABSENT={incident_status:'STATUS_ABSENT',event_id:'401438121',evidence_source:'commissioner-attestation'};
+  const FEED={incident_status:'STATUS_POSTPONED',event_id:'401438121',evidence_source:'nflscores2'};
+  // One incident chain of PIT @ TEN in Week 12, each row naming the one before it.
+  const chain=(type,consequences,o={},firstId=1)=>consequences.map((consequence,i)=>({ruling_id:firstId+i,contest_id:cid(type),contest_type:type,week:12,
+    away_team:'PIT',home_team:'TEN',policy_revision:1,chain_seq:i+1,parent_ruling_id:i?firstId+i-1:null,consequence,...ABSENT,public_note:i?null:'PIT @ TEN left the Week 12 feed.',
+    created_at:WRITTEN,...o}));
+  const evaluate=(type,{rulings=[],policy=POLICY[type]}={})=>evaluator().evaluateContestRulings({contestId:cid(type),contestType:type,season:2026,
+    data:{contests:[{contest_id:cid(type),season:2026,contest_type:type,display_name:NAME[type],starts_at:START,created_at:WRITTEN}],
+      policies:[{contest_id:cid(type),contest_type:type,revision:1,effective_week:1,halted_game_policy:policy,public_note:null,created_at:INITIAL}],rulings}});
+  // An ESPN event of the given week (the original Week 12 or the makeup Week 13), shaped as the nflscores2 projection keeps it.
+  const event=({away='PIT',home='TEN',id='401438121',name='STATUS_SCHEDULED',state='pre',completed=false,week=12,as='0',hs='0'}={})=>({id,season:{year:2026,type:2},week:{number:week},
+    status:{type:{name,state,completed}},competitions:[{status:{type:{name,state,completed}},competitors:[{homeAway:'home',team:{abbreviation:home},score:hs},{homeAway:'away',team:{abbreviation:away},score:as}]}]});
+  const final=(o={})=>event({name:'STATUS_FINAL',state:'post',completed:true,as:'24',hs:'27',...o});
+  // The original Week 12 feed without PIT @ TEN, the Week 13 feed with the distinct makeup listing.
+  const week12=[final({away:'DEN',home:'KC',id:'401438140'}),final({away:'MIA',home:'NE',id:'401438141'})];
+  const makeup=final({id:'401438199',week:13});
+  const pickem=(ds,events=week12,away='PIT',home='TEN')=>evaluator().pickemSlotRuling(ds,{week:12,season:2026,away,home,events});
+  const survivor=(ds,eventsByWeek,team='PIT',week=12)=>evaluator().survivorRulingLookup(ds,{eventsByWeek,season:2026}).forPick(week,team);
+  const byWeek=(w12=week12,w13=[makeup])=>{const out=[];out[11]=w12;out[12]=w13;return out};
+  const card=(ds,slotState)=>evaluator().rulesModel(ds,{week:13,slotState}).incidents.find(x=>x.matchup==='PIT @ TEN');
+
+  await regression('HDC-14 exports the absence evidence vocabulary and keeps the feed vocabulary unchanged',()=>{
+    const m=evaluator();
+    assert.equal(m.ABSENT_INCIDENT_STATUS,'STATUS_ABSENT');assert.equal(m.ATTESTATION_SOURCE,'commissioner-attestation');
+    assert.equal(typeof m.isAbsenceEvidence,'function');
+    assert.equal(m.isAbsenceEvidence({incidentStatus:'STATUS_ABSENT',eventId:null,source:'commissioner-attestation'}),true);
+    for(const e of [{incidentStatus:'STATUS_ABSENT',source:'nflscores2'},{incidentStatus:'STATUS_POSTPONED',source:'commissioner-attestation'},{incidentStatus:'STATUS_CANCELED',source:'nflscores2'},null,undefined,{}])
+      assert.equal(m.isAbsenceEvidence(e),false,JSON.stringify(e));
+    assert.deepEqual([...m.SUPPORTED_INCIDENT_STATUSES],['STATUS_CANCELED','STATUS_POSTPONED','STATUS_SUSPENDED'],'STATUS_ABSENT is never a feed-reported halted status');
+    assert.deepEqual([...m.EVIDENCE_SOURCES],['espn-scoreboard','nflscores2'],'commissioner-attestation is never a feed source');
+  });
+  await regression('HDC-14 an attested absence ruling is a valid ruling: effective, with its explicit absence evidence',()=>{
+    for(const event_id of ['401438121',null]){
+      const ds=evaluate('pickem',{rulings:chain('pickem',['void'],{event_id})});
+      assert.equal(ds.status,'ready');
+      const x=ds.incidents[0];
+      assert.deepEqual([x.state,x.consequence],['effective','void'],`event ${event_id}`);
+      assert.deepEqual(x.evidence,{incidentStatus:'STATUS_ABSENT',eventId:event_id,source:'commissioner-attestation'});
+      assert.equal(evaluator().isAbsenceEvidence(x.evidence),true);
+    }
+  });
+  await regression('HDC-14 absence evidence is explicit and paired: STATUS_ABSENT without the attestation source, or a feed status claiming it, HOLDs',()=>{
+    for(const [label,o] of [['STATUS_ABSENT from nflscores2',{evidence_source:'nflscores2'}],['STATUS_ABSENT from the ESPN scoreboard',{evidence_source:'espn-scoreboard'}],
+      ['STATUS_ABSENT with no source',{evidence_source:null}],['a feed status attested by the commissioner',{incident_status:'STATUS_POSTPONED'}],
+      ['a canceled game attested by the commissioner',{incident_status:'STATUS_CANCELED'}],['an absence with a malformed event',{event_id:'4014x'}],['an absence named another way',{incident_status:'STATUS_MISSING'}]]){
+      const p=evaluator().rulingForSlot(evaluate('pickem',{rulings:chain('pickem',['void'],o)}),{week:12,away:'PIT',home:'TEN'});
+      assert.equal(p.state,'hold',`${label}: Pick'em holds`);
+      const s=evaluator().rulingForTeam(evaluate('survivor',{rulings:chain('survivor',['advance_team_used'],o)}),{week:12,team:'PIT'});
+      assert.equal(s.state,'hold',`${label}: Survivor holds`);
+    }
+  });
+  await regression('HDC-14 one evidence class per chain: a chain mixing an attested absence with feed evidence HOLDs, in either order',()=>{
+    for(const [label,rows] of [['absence root, feed later row',chain('pickem',['void','void']).map((r,i)=>i?{...r,...FEED}:r)],
+      ['feed root, absence later row',chain('pickem',['void','void']).map((r,i)=>i?r:{...r,...FEED})],
+      ['feed root, absence re-ruling',chain('pickem',['void','withdrawn','void']).map((r,i)=>i<2?{...r,...FEED}:r)]]){
+      const x=evaluate('pickem',{rulings:rows}).incidents[0];
+      assert.equal(x.state,'hold',label);assert.match(x.reason,/absence/i,`${label}: the reason names the mixed evidence`);
+    }
+    // Feed-evidence rows keep their HDC-12 tolerance: a later row may record another supported feed status.
+    const feedRows=chain('pickem',['void','void']).map((r,i)=>i?{...r,...FEED,incident_status:'STATUS_CANCELED',event_id:null}:{...r,...FEED});
+    assert.equal(evaluate('pickem',{rulings:feedRows}).incidents[0].state,'effective','feed rows of two supported statuses are one class');
+  });
+  await regression("HDC-14 Pick'em (Control C): an absence VOID while the original week's feed still omits the game is APPLIED, with no review",()=>{
+    const ds=evaluate('pickem',{rulings:chain('pickem',['void'])});
+    for(const [label,events] of [['the Week 12 feed without the game',week12],['an empty listing for the teams',[]]]){
+      const slot=pickem(ds,events);
+      assert.deepEqual([slot.state,slot.consequence,slot.underReview],['effective','void',null],label);
+      assert.equal(slot.feed.status,'agrees',`${label}: the absence agrees with the feed`);
+      assert.equal(evaluator().pickemSlotEffect(slot).kind,'void',label);
+      const g=evaluator().pickemEffectiveGame({away:'PIT',home:'TEN',state:'pre',completed:false,winner:null,awayScore:null,homeScore:null},evaluator().pickemSlotEffect(slot));
+      assert.deepEqual([g.void,g.completed,g.winner],[true,true,null],`${label}: VOID, resolved, never a tie or a result`);
+      const c=card(ds,()=>slot);
+      assert.equal(c.status,'APPLIED',label);assert.equal(c.review,null,label);
+      assert.equal(c.evidence,'Recorded incident: ABSENT FROM WEEK 12 FEED · commissioner attestation · original event 401438121',label);
+      assert.doesNotMatch(c.evidence,/nflscores2|espn|STATUS_POSTPONED|STATUS_CANCELED/,'never presented as a feed-reported status');
+    }
+    const bare=evaluate('pickem',{rulings:chain('pickem',['void'],{event_id:null})});
+    assert.equal(card(bare,()=>pickem(bare)).evidence,'Recorded incident: ABSENT FROM WEEK 12 FEED · commissioner attestation','no original event, none shown');
+  });
+  await regression("HDC-14 the original week's feed unavailable, or only a listing outside the week's context: the absence stays APPLIED",()=>{
+    const ds=evaluate('pickem',{rulings:chain('pickem',['void'])});
+    for(const [label,events] of [['feed unavailable',null],['the makeup listing inside the Week 12 payload, marked Week 13',[...week12,makeup]]]){
+      const slot=pickem(ds,events);
+      assert.deepEqual([slot.state,slot.consequence,slot.underReview],['effective','void',null],label);
+    }
+  });
+  await regression('HDC-14 feed recovery: the matchup listed again in its original week keeps the ruling applied and puts it UNDER REVIEW; nothing reverts automatically',()=>{
+    const ds=evaluate('pickem',{rulings:chain('pickem',['void'])}),sds=evaluate('survivor',{rulings:chain('survivor',['advance_team_used'])});
+    for(const [label,listing] of [['a completed final',final()],['live',event({name:'STATUS_IN_PROGRESS',state:'in'})],['scheduled',event()],
+      ['postponed in place',event({name:'STATUS_POSTPONED'})],['canceled in place',event({name:'STATUS_CANCELED',state:'post'})],
+      ['under another event id',final({id:'401438777'})],['without an event id',{...final(),id:undefined}]]){
+      const events=[...week12,listing];
+      const p=pickem(ds,events);
+      assert.deepEqual([p.state,p.consequence],['effective','void'],`${label}: the VOID stays applied`);
+      assert(p.underReview,`${label}: UNDER REVIEW`);assert.match(p.underReview,/listed|feed/i,label);
+      assert.equal(evaluator().pickemSlotEffect(p).kind,'void',`${label}: never switched to the NFL result while the ruling is active`);
+      assert.equal(card(ds,()=>p).status,'UNDER REVIEW',label);
+      const s=survivor(sds,byWeek(events));
+      assert.deepEqual([s.state,s.outcome],['effective','alive'],`${label}: the advance stays applied`);assert(s.underReview,label);
+    }
+  });
+  await regression('HDC-14 a reversed listing, a re-paired team, a relisted pair, conflicting copies or an unreadable listing in the original week: UNDER REVIEW, never APPLIED silently',()=>{
+    const ds=evaluate('pickem',{rulings:chain('pickem',['void'])});
+    const broken={...final({away:'NYG'}),competitions:[{competitors:[{homeAway:'away',team:{abbreviation:'PIT'}}]}]};
+    for(const [label,extra] of [['reversed (TEN @ PIT)',[final({away:'TEN',home:'PIT',id:'401438150'})]],['PIT re-paired against NYG',[final({home:'NYG',id:'401438151'})]],
+      ['TEN re-paired against BUF',[final({away:'BUF',id:'401438152'})]],['the pair twice',[final(),final({id:'401438153'})]],
+      ['conflicting copies of the original event',[final(),event()]],['an unreadable listing naming PIT',[broken]]]){
+      const slot=pickem(ds,[...week12,...extra]);
+      assert.deepEqual([slot.state,slot.consequence],['effective','void'],label);
+      assert(slot.underReview,`${label}: UNDER REVIEW`);
+    }
+  });
+  await regression('HDC-14 a forfeit listed for the pair in the original week HOLDs the absence ruling (the established safer state)',()=>{
+    const ds=evaluate('pickem',{rulings:chain('pickem',['void'])});
+    const slot=pickem(ds,[...week12,event({name:'STATUS_FORFEIT',state:'post'})]);
+    assert.equal(slot.state,'hold');assert.match(slot.reason,/forfeit/i);
+  });
+  await regression('HDC-14 other-week listings have zero effect: the Week 13 makeup never touches the Week 12 absence (Pick\'em and Survivor)',()=>{
+    const ds=evaluate('pickem',{rulings:chain('pickem',['void'])}),sds=evaluate('survivor',{rulings:chain('survivor',['advance_team_used'])});
+    const alone=pickem(ds,week12),withMakeup=pickem(ds,week12);
+    assert.deepEqual([alone.state,alone.underReview,withMakeup.state,withMakeup.underReview],['effective',null,'effective',null]);
+    for(const w13 of [[],[makeup],[final({id:'401438121',week:13})],[event({name:'STATUS_POSTPONED',week:13})]]){
+      const s=survivor(sds,byWeek(week12,w13));
+      assert.deepEqual([s.state,s.outcome,s.underReview],['effective','alive',null],`Week 13 ${JSON.stringify(w13.map(e=>e.id))}: no effect on Week 12`);
+    }
+    // The Week 13 pick of the same team is judged by Week 13 alone: the absence ruling of Week 12 never covers it.
+    assert.equal(survivor(sds,byWeek(week12,[makeup]),'PIT',13).state,'none','the makeup game is a separate NFL event with no ruling');
+  });
+  await regression('HDC-14 feed-evidence rulings keep their HDC-12 behavior: a postponed ruling whose game left the feed is UNDER REVIEW, not agreed',()=>{
+    const ds=evaluate('pickem',{rulings:chain('pickem',['void'],FEED)});
+    const slot=pickem(ds,week12);
+    assert.deepEqual([slot.state,slot.consequence],['effective','void']);assert.match(slot.underReview,/no longer in this week's feed/);
+    // Control B (2017 shape): the original listing stays postponed in its week while a makeup exists elsewhere: agrees.
+    const postponed=pickem(ds,[...week12,event({name:'STATUS_POSTPONED'})]);
+    assert.deepEqual([postponed.state,postponed.underReview,postponed.feed.status],['effective',null,'agrees']);
+    // Control A (2022 shape): canceled in place.
+    const canceled=evaluate('pickem',{rulings:chain('pickem',['void'],{...FEED,incident_status:'STATUS_CANCELED'})});
+    assert.equal(pickem(canceled,[...week12,event({name:'STATUS_CANCELED',state:'post'})]).feed.status,'agrees');
+    assert.equal(card(ds,()=>slot).evidence,'Recorded incident: STATUS_POSTPONED · event 401438121','the feed-evidence card line is unchanged');
+  });
+  await regression('HDC-14 Survivor: advance_team_used keeps the entrant ALIVE with the team burned; eliminate puts it OUT; no ruling leaves it pending',()=>{
+    const entry={picks:['ARI','ATL','BAL','BUF','CAR','CHI','CIN','CLE','DAL','DEN','DET','PIT']},results=[];
+    for(let i=0;i<11;i++)results[i]=new Map([[entry.picks[i],{completed:true,state:'post',winner:entry.picks[i],tie:false,opponent:'X'}]]);
+    results[11]=SM.survivorBuildResults(week12,{season:2026,week:12});
+    const lookup=rows=>evaluator().survivorRulingLookup(evaluate('survivor',{rulings:rows,policy:rows[0]?.consequence==='eliminate'?'eliminate':'advance_team_used'}),{eventsByWeek:byWeek(),season:2026});
+    const none=SM.survivorEntryState(entry,11,results,lookup([]));
+    assert.deepEqual([none.status,none.type],['pending','absent'],'no ruling: the absent pick stays pending, never alive or out automatically');
+    const alive=SM.survivorEntryState(entry,11,results,lookup(chain('survivor',['advance_team_used'])));
+    assert.deepEqual([alive.status,alive.type],['alive','ruling']);assert.match(alive.reason,/PIT stays used/);
+    const next={picks:[...entry.picks,'PIT']};
+    assert.equal(SM.survivorCurrentPickIsLegal(next,12),false,'PIT stays burned for the rest of the season');
+    const out=SM.survivorEntryState(entry,11,results,lookup(chain('survivor',['eliminate'])));
+    assert.deepEqual([out.status,out.eliminatedWeek,out.type],['out',12,'ruling']);
+    const withdrawn=SM.survivorEntryState(entry,11,results,lookup(chain('survivor',['advance_team_used','withdrawn'])));
+    assert.deepEqual([withdrawn.status,withdrawn.type],['pending','absent'],'a withdrawal restores the unruled NFL evaluation');
+  });
+  await regression('HDC-14 a HOLD is never an absence: unusable absence rows and double coverage hold, and a withdrawn absence restores the NFL evaluation',()=>{
+    const held=evaluate('pickem',{rulings:[...chain('pickem',['void']),...chain('pickem',['void'],{home_team:'NYG',ruling_id:9},9)]});
+    assert.equal(pickem(held).state,'hold','PIT covered twice in Week 12');
+    const withdrawn=evaluate('pickem',{rulings:chain('pickem',['void','withdrawn'])});
+    const slot=pickem(withdrawn);
+    assert.equal(slot.state,'withdrawn');assert.equal(evaluator().pickemSlotEffect(slot).kind,'nfl');
+    assert.equal(card(withdrawn,()=>slot).status,'WITHDRAWN');
+  });
+  assert.equal(failures.length,0,`HDC-14 absent-game evaluator regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+}
+
+console.log('survivor HDC-12 contest policy and HDC-14 absent-game evidence, revision selection, ruling chain, published-slot, double-coverage, forfeit-boundary, conflict, fail-safe, Survivor-effect, Pick\'em-void, privacy and migration-contract regressions passed');

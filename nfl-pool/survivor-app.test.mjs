@@ -553,7 +553,7 @@ console.log('survivor HDC-11 halted-game ruling, unfrozen board, ordinary-pendin
   const rules=v=>v.$('svRules').innerHTML;
 
   await regression('the view imports the evaluator and survivor-math at their HDC-12 versions',()=>{
-    assert.equal(rulingsFrom,"from './contest-rulings.js?v=1';",'survivor-app.js must import contest-rulings.js?v=1');
+    assert.match(rulingsFrom||'',/^from '\.\/contest-rulings\.js\?v=\d+';$/,'survivor-app.js must import the versioned contest-rulings.js');
     assert.equal(from,"from './survivor-math.js?v=7';",'survivor-app.js must import survivor-math.js?v=7');
   });
   await regression('the public loader requests only public columns of this contest, rulings through the selected week, with the anonymous token',async()=>{
@@ -806,4 +806,79 @@ console.log('survivor HDC-11 halted-game ruling, unfrozen board, ordinary-pendin
   assert.equal(failures.length,0,`HDC-12 Survivor view regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
 }
 
-console.log('survivor HDC-12 contest-ruling load, privacy, advance, eliminate, withdrawn, under-review, later-week, hold, fail-closed and Rules & rulings regressions passed');
+
+// ---- HDC-14: absent-game adjudication in the public Survivor view. The Week-2 SF @ ARI game (event 401547001) is no longer
+// listed in the Week 2 feed; a distinct SF @ ARI event appears in Week 3. D.C. picked SF and survivor-003 ARI in Week 2.
+// Without a ruling their picks stay pending, as before. An attested-absence ruling (STATUS_ABSENT, commissioner-attestation)
+// applies while the Week 2 feed still omits the game: advance_team_used keeps them ALIVE with the team burned, eliminate
+// puts them OUT. A Week 2 listing again puts the applied ruling UNDER REVIEW; the Week 3 makeup changes nothing.
+{
+  const failures=[];
+  const regression=async(name,check)=>{try{await check()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+  const absentW2=W2.filter(([a])=>a!=='SF');
+  const makeupW3=W3.map(([a,h])=>a==='ARI'?['SF','ARI']:[a,h]);
+  const feeds=(w2=week(absentW2,2),w3=week(makeupW3,3))=>({1:week(W1,1),2:w2,3:w3});
+  const absent=(consequences,o={},firstId=1)=>consequences.map((consequence,i)=>({ruling_id:firstId+i,contest_id:SV_CONTEST,contest_type:'survivor',week:2,away_team:'SF',home_team:'ARI',
+    policy_revision:1,chain_seq:i+1,parent_ruling_id:i?firstId+i-1:null,consequence,incident_status:'STATUS_ABSENT',event_id:'401547001',evidence_source:'commissioner-attestation',
+    public_note:i?null:'SF @ ARI left the Week 2 feed; commissioner ruling applied.',created_at:'2026-10-08T12:00:00+00:00',...PRIVATE,...o}));
+  const store=(policy,rows)=>rulingStore({nfl_contest_policies:[svPolicyRow(policy)],nfl_incident_rulings:rows});
+  const pill=(v,name)=>(v.row(name).match(/<span class="status-pill [^"]*">([^<]*)<\/span>/g)||[]).map(x=>x.replace(/<[^>]+>/g,''));
+  const small=(v,name)=>[...v.row(name).matchAll(/<small>([^<]*)<\/small>/g)].pop()?.[1]||'';
+  const rules=v=>v.$('svRules').innerHTML;
+  const EVIDENCE='Recorded incident: ABSENT FROM WEEK 2 FEED · commissioner attestation · original event 401547001';
+
+  await regression('HDC-14: the view imports the evaluator at its HDC-14 version (contest-rulings.js?v=2)',()=>{
+    assert.equal(rulingsFrom,"from './contest-rulings.js?v=2';",'survivor-app.js must import contest-rulings.js?v=2');
+  });
+  await regression('HDC-14 preservation: without a ruling the absent picks stay pending, never alive or out',async()=>{
+    const v=await view(feeds(),rulingRows,patched,store('advance_team_used',[]));
+    assert.deepEqual(pill(v,'D.C.'),['PENDING']);assert.match(small(v,'D.C.'),/SF not present in verified Week 2 feed\/schedule/);
+    assert.equal(v.$('svFeed').textContent,'LIVE · 2 TEAM RESULTS UNVERIFIED');
+    assert.equal(v.$('svPending').textContent,2,'D.C. and survivor-003 are pending');
+  });
+  await regression('HDC-14 advance_team_used: the absent picks are ALIVE by applied commissioner ruling, SF stays burned, the board serves D.C.',async()=>{
+    const v=await view(feeds(),rulingRows,patched,store('advance_team_used',absent(['advance_team_used'])));
+    assert.deepEqual(pill(v,'D.C.'),['ALIVE']);assert.match(small(v,'D.C.'),/alive by applied commissioner ruling; SF stays used/);
+    assert.equal(v.$('svStillIn').textContent,4);assert.equal(v.$('svPending').textContent,0);
+    assert.equal(v.$('svFeed').textContent,'LIVE · NFL results','an applied absence ruling is no unverified result');
+    const dc=board(v.$('svDecisionEntries').innerHTML)['D.C.'];
+    assert.equal(dc.head,'Week 3 Board');assert.deepEqual(dc.burned,['PIT','SF'],'SF stays burned');
+    assert(![...dc.safer,...dc.leverage].some(o=>o.startsWith('SF ')),'SF is never offered again');
+    assert.match(rules(v),/<span class="rules-status">APPLIED<\/span>/);
+    assert(rules(v).includes(`<small>${EVIDENCE}</small>`),'the Rules card names the attested absence');
+    assert.doesNotMatch(rules(v),/PRIVATE ADMIN NOTE|auth-user-7f3a|nflscores2/);
+  });
+  await regression('HDC-14 eliminate: the absent picks are OUT by applied commissioner ruling in Week 2',async()=>{
+    const v=await view(feeds(),rulingRows,patched,store('eliminate',absent(['eliminate'])));
+    assert.deepEqual(pill(v,'D.C.'),['OUT']);assert.match(small(v,'D.C.'),/eliminated by applied commissioner ruling/);
+    assert.equal(v.$('svStillIn').textContent,2);
+    assert.equal(board(v.$('svDecisionEntries').innerHTML)['D.C.'].head,'Out of Survivor');
+  });
+  await regression('HDC-14 feed recovery: SF @ ARI listed again in Week 2 keeps the advance applied and UNDER REVIEW',async()=>{
+    const v=await view(feeds(week(W2,2)),rulingRows,patched,store('advance_team_used',absent(['advance_team_used'])));
+    assert.deepEqual(pill(v,'D.C.'),['ALIVE','UNDER REVIEW']);
+    assert.match(small(v,'D.C.'),/UNDER REVIEW: the game is listed in this week's feed again/);
+    assert.equal(v.$('svFeed').textContent,'LIVE · 2 TEAM RESULTS UNDER REVIEW');
+  });
+  await regression('HDC-14 the Week 3 makeup has zero effect on the Week 2 absence',async()=>{
+    for(const w3 of [week(W3,3),week(makeupW3,3)]){
+      const v=await view(feeds(week(absentW2,2),w3),rulingRows,patched,store('advance_team_used',absent(['advance_team_used'])));
+      assert.deepEqual(pill(v,'D.C.'),['ALIVE'],'no review from another week');
+      assert.doesNotMatch(v.row('D.C.'),/UNDER REVIEW/);
+    }
+  });
+  await regression('HDC-14 a withdrawn absence ruling restores the pending picks',async()=>{
+    const v=await view(feeds(),rulingRows,patched,store('advance_team_used',absent(['advance_team_used','withdrawn'])));
+    assert.deepEqual(pill(v,'D.C.'),['PENDING']);assert.match(rules(v),/<span class="rules-status">WITHDRAWN<\/span>/);
+  });
+  await regression('HDC-14 unusable absence evidence HOLDs the picks, never ALIVE',async()=>{
+    for(const o of [{evidence_source:'nflscores2'},{incident_status:'STATUS_CANCELED'}]){
+      const v=await view(feeds(),rulingRows,patched,store('advance_team_used',absent(['advance_team_used'],o)));
+      assert.deepEqual(pill(v,'D.C.'),['HOLD'],JSON.stringify(o));
+    }
+  });
+
+  assert.equal(failures.length,0,`HDC-14 Survivor absent-game regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+}
+
+console.log('survivor HDC-12 contest-ruling load and HDC-14 absent-game, privacy, advance, eliminate, withdrawn, under-review, later-week, hold, fail-closed and Rules & rulings regressions passed');
