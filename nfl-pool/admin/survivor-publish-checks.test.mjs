@@ -432,7 +432,7 @@ const guardFor=(cfg,opts={})=>survivorPublishGuard(cfg,{resultsByWeek:verified.r
   regression('only a locked slate of the same season and week proves a matchup',()=>{
     const cases=[['draft',slate(W2,{status:'draft'})],['row of another season',slate(W2,{season:2025})],['config of another season',slate(W2,{configSeason:2025})],
       ['config of another week',slate(W2,{configWeek:3})],['slate of another week only',slate(W2,{week:3})],['games not an array',{...SLATE,config:{...SLATE.config,games:{}}}],
-      ['a malformed slate game',slate([...W2,['XXX','LAR']])],['lowercase codes',slate(W2.map(([a,h])=>a==='SF'?['sf','ari']:[a,h]))],['two rows for the week',[SLATE,slate(W2,{revision:4})]]];
+      ['a malformed slate game',slate([...W2,['XXX','LAR']])],['a slate eventId that is not an event id',{...SLATE,config:{...SLATE.config,games:SLATE.config.games.map((g,i)=>i===0?{...g,eventId:'4026x'}:g)}}],['lowercase codes',slate(W2.map(([a,h])=>a==='SF'?['sf','ari']:[a,h]))],['two rows for the week',[SLATE,slate(W2,{revision:4})]]];
     for(const [label,rows] of cases){
       blocked(verifySurvivorSchedule(config,absent,{pickemSlates:[rows].flat(),absenceConfirmations:[PHRASE]}),[OLD_SF,OLD_ARI,stray(PHRASE)],label);
     }

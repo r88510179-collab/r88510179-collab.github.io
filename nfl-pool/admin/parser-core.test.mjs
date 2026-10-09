@@ -1035,17 +1035,19 @@ const PUBLISH_FROZEN='Publishing is in progress. Total pool entries cannot be ch
 const FILE_FROZEN='Publishing is in progress. Wait for it to finish before changing files.';
 const FEED_TEAMS=[['CAR','ATL'],['NO','BAL'],['MIN','CHI'],['CIN','HOU'],['PIT','NE'],['GB','NYJ'],['CLE','TB'],['PHI','TEN'],['JAX','DEN'],['LV','LAC'],['SEA','ARI'],['WAS','DAL'],['MIA','SF'],['IND','KC'],['NYG','LAR']];
 const scheduleFeed={events:FEED_TEAMS.map(([away,home],i)=>({id:String(401+i),date:'2026-09-13T17:00:00Z',competitions:[{competitors:[{homeAway:'away',team:{abbreviation:away}},{homeAway:'home',team:{abbreviation:home}}]}]}))};
-function sheetPage(week,participantLines){
+function sheetPage(week,participantLines,games=matchups){
   const items=[];let y=760;
   const put=parts=>{for(const [x,str] of parts)items.push({str,transform:[1,0,0,1,x,y]});y-=12};
-  put([[10,`Week ${week} Pick Sheet`]]);for(const m of matchups)put([[10,m]]);
+  put([[10,`Week ${week} Pick Sheet`]]);for(const m of games)put([[10,m]]);
   for(const line of participantLines){const t=line.split(' ');put([[10,t.slice(0,-17).join(' ')],...t.slice(-17).map((v,i)=>[160+i*24,v])])}
   return items;
 }
 const ADMIN_SHEETS={
   'six.pdf':[sheetPage(2,[...tracked,anonA,anonB])],
   'summary.pdf':[sheetPage(2,[...tracked,anonA,'Winning Picks 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29 44 0'])],
-  'weeks.pdf':[sheetPage(2,[...tracked,anonA,anonB]),sheetPage(3,[...tracked,anonA])]
+  'weeks.pdf':[sheetPage(2,[...tracked,anonA,anonB]),sheetPage(3,[...tracked,anonA])],
+  // HDC-14: a sheet that names the Steelers in two games (game 15 is PIT @ LAR instead of NYG @ LAR); the parser accepts it.
+  'twice.pdf':[sheetPage(2,[...tracked,anonA,anonB],matchups.map((m,i)=>i===14?'29) Steelers at 30) Rams':m))]
 };
 // A JSONB column keeps no key order of its own: it returns object keys shorter first, then bytewise. Arrays keep theirs.
 const jsonbKeyOrder=v=>Array.isArray(v)?v.map(jsonbKeyOrder):v!==null&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort((a,b)=>Buffer.byteLength(a)-Buffer.byteLength(b)||Buffer.compare(Buffer.from(a),Buffer.from(b))).map(k=>[k,jsonbKeyOrder(v[k])])):v;
@@ -1944,10 +1946,10 @@ async function atInstant(iso,run){
   const OLD_MISMATCH='Schedule mismatch for PIT at NE. Found 0 matching NFL games.';
   const EXCEPTION={type:'absent-from-week-feed',week:2,gameIndex:4,away:'PIT',home:'NE',confirmation:PHRASE};
   const confirm=async(t,text)=>{t.$('absenceConfirm').value=text;await t.$('absenceConfirm').dispatch('input')};
-  const readWith=async({feed=absentWeeks,text=null,rows}={})=>{
+  const readWith=async({feed=absentWeeks,text=null,rows,sheet='six.pdf'}={})=>{
     const t=await bootAdmin(rows?{rows}:undefined);t.net.feed=feed;
     if(text!==null)await confirm(t,text);
-    await t.count('6');await t.choose('six.pdf');await t.parse();return t;
+    await t.count('6');await t.choose(sheet);await t.parse();return t;
   };
   const weeksRequested=t=>t.net.urls.map(u=>new URL(u).searchParams.get('week'));
 
@@ -2019,6 +2021,12 @@ async function atInstant(iso,run){
       assert.equal(t.$('message').textContent,expected,label);assert.equal(t.$('review').hidden,true,label);
       await t.publish();assert.equal(t.writes(),0,label);
     }
+  });
+  await regression('a team the sheet names in two games is never published as absent, even with both phrases typed',async()=>{
+    const teams=['PIT','NE','LAR'],feed=feedOf(BASE.filter(([a,h])=>!teams.includes(a)&&!teams.includes(h)));
+    const t=await readWith({feed:week=>week===2?feed:{events:[]},text:'WEEK 2 PIT @ NE ABSENT\nWEEK 2 PIT @ LAR ABSENT',sheet:'twice.pdf'});
+    assert.equal(t.$('message').textContent,OLD_MISMATCH);assert.equal(t.$('review').hidden,true);
+    await t.publish();assert.equal(t.writes(),0);
   });
   await regression('generic missing data is never an absence: an empty Week 2 feed still blocks with the typed exception',async()=>{
     const t=await readWith({feed:()=>({events:[]}),text:PHRASE});

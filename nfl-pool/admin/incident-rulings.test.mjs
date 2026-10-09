@@ -1188,6 +1188,10 @@ await regression('HDC-14 fails closed: a reversed, re-paired, relisted, conflict
     const c=pk12Candidate({events:pk12Events(denKc12(),...extra)});
     assert.equal(c.absence.eligible,false,label);assert.deepEqual(absentOffered(c),[],label);assert(c.absence.reason,`${label}: a reason`);
   }
+  // The nflscores2 projection drops each listing's season and week; a payload that keeps them (the raw ESPN shape) can carry
+  // a listing of the pair marked another week. That is never evidence of the Week 12 absence either.
+  const outside=pk12Candidate({events:[...pk12Events(denKc12()),finalGame('PIT','TEN','401438199','24','27',13)]});
+  assert.equal(outside.absence.eligible,false,'a listing of the pair outside the week context is no absence');assert.deepEqual(absentOffered(outside),[]);
 });
 await regression('HDC-14 fails closed on the evidence it rests on: an unknown feed source, an unreadable feed, a game not published exactly once, a policy that is not ready',()=>{
   for(const source of [null,'espn-scoreboard','nflscores'])assert.equal(pk12Candidate({source}).absence.eligible,false,`source ${source}`);
@@ -1231,7 +1235,7 @@ await regression('HDC-14 Survivor: the absent pick\'s matchup is proved by the s
   assert.equal(c.absence.slateRevision,4);assert.equal(c.actions.rule.ok,false,'HDC-13 refuses');
   for(const [label,slate] of [['no slate',null],['the slate omits SF (a Thursday game the sheet leaves out)',svSlate([['ATL','BAL','401547010']])],
     ['SF twice on the slate',svSlate([['SF','ARI','401547001'],['SF','ARI','401547002']])],['ARI in another slate game',svSlate([['SF','ARI','401547001'],['ARI','DAL','401547003']])],
-    ['a draft slate',svSlate(undefined,{status:'draft'})],['a slate of another week',svSlate(undefined,{week:3})],
+    ['a draft slate',svSlate(undefined,{status:'draft'})],['a slate of another week',svSlate(undefined,{week:3})],['a slate eventId that is not an event id',svSlate([['SF','ARI','4015x'],['ATL','BAL','401547010']])],
     ['a slate whose configuration names another week',{...svSlate(),config:{...svSlate().config,week:3}}],['another season',svSlate(undefined,{season:2025})]]){
     const found=svAbsentCandidates({slate}).find(x=>x.away==='SF'||x.home==='SF');
     assert(!found||!found.absence.eligible,`${label}: no absent-game ruling`);

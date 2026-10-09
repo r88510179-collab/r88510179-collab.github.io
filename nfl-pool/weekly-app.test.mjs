@@ -1240,6 +1240,18 @@ console.log('weekly HDC-11 halted-game warning, ungraded halted game, unchanged 
       assert.match(v.warning(),/PIT-TEN: ruling on hold/,label);
     }
   });
+  await regression('HDC-14 only an applied absence ruling silences the missing-game warning: never a feed-evidence VOID (even one the feed gives no usable evidence about), never an absence under review',async()=>{
+    const unreadable={...pitTen(),competitions:[{competitors:[{homeAway:'away',team:{abbreviation:'PIT'}}]}]};
+    const feed=await page({events:[denKc(),unreadable],rulings:absentRows(['void'],{incident_status:'STATUS_POSTPONED',evidence_source:'nflscores2'})});
+    assert.deepEqual(pickCells(feed),['ok','void','bad','void'],'the feed-evidence VOID stays applied');
+    assert.doesNotMatch(banner(feed),/UNDER REVIEW/,'an unreadable listing is no evidence against a feed-evidence ruling');
+    assert.equal(feed.warning(),'Some feed data was ignored to protect standings: PIT-TEN: expected game missing from feed','the missing-game warning stays');
+    assert.equal(syncLabel(feed),'INCOMPLETE');
+    const absence=await page({events:[denKc(),unreadable]});
+    assert.deepEqual(pickCells(absence),['ok','void','bad','void']);
+    assert.match(banner(absence),/UNDER REVIEW · PIT-TEN: VOID by commissioner ruling stays applied; this week's feed lists an unreadable game naming PIT or TEN/);
+    assert.equal(absence.warning(),'Some feed data was ignored to protect standings: PIT-TEN: expected game missing from feed','an absence under review never silences it');
+  });
   await regression('HDC-14 preservation: a feed-evidence VOID whose game left the feed is still UNDER REVIEW with the missing-game warning (HDC-12 unchanged)',async()=>{
     const v=await page({rulings:absentRows(['void'],{incident_status:'STATUS_POSTPONED',evidence_source:'nflscores2'})});
     assert.deepEqual(pickCells(v),['ok','void','bad','void']);
