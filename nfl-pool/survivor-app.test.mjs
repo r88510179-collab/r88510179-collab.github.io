@@ -857,7 +857,7 @@ console.log('survivor HDC-11 halted-game ruling, unfrozen board, ordinary-pendin
   await regression('HDC-14 feed recovery: SF @ ARI listed again in Week 2 keeps the advance applied and UNDER REVIEW',async()=>{
     const v=await view(feeds(week(W2,2)),rulingRows,patched,store('advance_team_used',absent(['advance_team_used'])));
     assert.deepEqual(pill(v,'D.C.'),['ALIVE','UNDER REVIEW']);
-    assert.match(small(v,'D.C.'),/UNDER REVIEW: the game is listed in this week's feed again/);
+    assert.match(small(v,'D.C.'),/UNDER REVIEW: the game is listed in this week&#39;s feed again/,'the row text is HTML-escaped');
     assert.equal(v.$('svFeed').textContent,'LIVE · 2 TEAM RESULTS UNDER REVIEW');
   });
   await regression('HDC-14 the Week 3 makeup has zero effect on the Week 2 absence',async()=>{

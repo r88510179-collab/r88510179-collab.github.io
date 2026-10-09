@@ -1231,13 +1231,18 @@ await regression('HDC-14 Survivor: the absent pick\'s matchup is proved by the s
   assert.equal(c.absence.slateRevision,4);assert.equal(c.actions.rule.ok,false,'HDC-13 refuses');
   for(const [label,slate] of [['no slate',null],['the slate omits SF (a Thursday game the sheet leaves out)',svSlate([['ATL','BAL','401547010']])],
     ['SF twice on the slate',svSlate([['SF','ARI','401547001'],['SF','ARI','401547002']])],['ARI in another slate game',svSlate([['SF','ARI','401547001'],['ARI','DAL','401547003']])],
-    ['the slate reversed (ARI @ SF)',svSlate([['ARI','SF','401547001']])],['a draft slate',svSlate(undefined,{status:'draft'})],['a slate of another week',svSlate(undefined,{week:3})],
+    ['a draft slate',svSlate(undefined,{status:'draft'})],['a slate of another week',svSlate(undefined,{week:3})],
     ['a slate whose configuration names another week',{...svSlate(),config:{...svSlate().config,week:3}}],['another season',svSlate(undefined,{season:2025})]]){
     const found=svAbsentCandidates({slate}).find(x=>x.away==='SF'||x.home==='SF');
     assert(!found||!found.absence.eligible,`${label}: no absent-game ruling`);
     const report=need().survivorAbsentPicks({season:2026,week:2,snapshot:{week:2,config:svConfig()},events:svEventsByWeek(svAbsentFeeds())[1],slate});
     assert(report.some(r=>r.team==='SF'&&!r.provable&&r.reason),`${label}: SF is reported unprovable with a reason`);
   }
+  // The slate is the only source of the matchup's orientation: a slate that publishes ARI @ SF proves ARI @ SF (the
+  // orientation the absent-game function checks), and SF @ ARI is never offered.
+  const reversed=svAbsentCandidates({slate:svSlate([['ARI','SF','401547001']])});
+  assert.equal(reversed.some(x=>x.key==='SF@ARI'),false,'the reversed orientation is never offered');
+  assert.equal(reversed.find(x=>x.key==='ARI@SF')?.absence?.eligible,true,"the slate's own orientation is the matchup");
   const opponentListed=svAbsentCandidates({feeds:{1:svWeek(W1,1),2:svWeek(W2.filter(([a])=>a!=='SF').concat([['ARI','DAL']]).filter(([a,h])=>!(a==='CLE'&&h==='DAL')),2)}}).find(x=>x.key==='SF@ARI');
   assert(!opponentListed?.absence?.eligible,'ARI listed against DAL that week: a re-pairing, never an absence');
   const listed=svCandidates().find(x=>x.key==='SF@ARI');

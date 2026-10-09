@@ -415,9 +415,19 @@ const guardFor=(cfg,opts={})=>survivorPublishGuard(cfg,{resultsByWeek:verified.r
     blocked(v,[OLD_SF,stray(PHRASE)]);assert.deepEqual(v.absenceRequests,[]);
   });
   regression('the slate must list the pair exactly once and no other game of either team',()=>{
-    for(const [label,pairs] of [['pair twice',[...W2,['SF','ARI']]],['SF twice',[...W2,['SF','LAR']]],['ARI twice',[...W2,['ARI','LAR']]],['reversed only',[['ARI','SF'],...W2.slice(1)]]]){
+    for(const [label,pairs] of [['pair twice',[...W2,['SF','ARI']]],['SF twice',[...W2,['SF','LAR']]],['ARI twice',[...W2,['ARI','LAR']]]]){
       blocked(verifySurvivorSchedule(config,absent,{pickemSlates:[slate(pairs)],absenceConfirmations:[PHRASE]}),[OLD_SF,OLD_ARI,stray(PHRASE)],label);
     }
+  });
+  regression("the slate's own orientation is the matchup: a slate publishing ARI @ SF needs WEEK 2 ARI @ SF ABSENT, never the reversed phrase",()=>{
+    const reversed=slate([['ARI','SF'],...W2.slice(1)]);
+    const hint=" Pick'em Week 2 (revision 3) proves ARI @ SF, and neither team is listed in the NFL Week 2 feed: if that game was moved out of Week 2, type WEEK 2 ARI @ SF ABSENT under Absent games and Read & validate again.";
+    const v=verifySurvivorSchedule(config,absent,{pickemSlates:[reversed],absenceConfirmations:[PHRASE]});
+    blocked(v,[OLD_SF+hint,OLD_ARI+hint,stray(PHRASE)]);
+    assert.deepEqual(v.absenceRequests,[{week:2,away:'ARI',home:'SF',pickemRevision:3,confirmation:'WEEK 2 ARI @ SF ABSENT'}]);
+    const ok=verifySurvivorSchedule(config,absent,{pickemSlates:[reversed],absenceConfirmations:['WEEK 2 ARI @ SF ABSENT']});
+    assert.equal(ok.ok,true,ok.errors.join(' | '));
+    assert.deepEqual(ok.absentGames,[{type:'absent-from-week-feed',week:2,away:'ARI',home:'SF',pickemRevision:3,confirmation:'WEEK 2 ARI @ SF ABSENT'}]);
   });
   regression('only a locked slate of the same season and week proves a matchup',()=>{
     const cases=[['draft',slate(W2,{status:'draft'})],['row of another season',slate(W2,{season:2025})],['config of another season',slate(W2,{configSeason:2025})],
