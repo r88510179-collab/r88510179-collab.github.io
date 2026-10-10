@@ -1340,7 +1340,7 @@ console.log("weekly HDC-12 contest-ruling load and HDC-14 absent-game, privacy, 
     assert.match(v.$('sync').textContent,/PUBLISHED DATA STALE/,`${label}: the header says the published data is stale`);
     assert.doesNotMatch(v.$('sync').textContent,/^LIVE\b/,`${label}: never LIVE`);
     assert.notEqual(v.$('dot').style.background,'var(--green)',`${label}: never the clean LIVE dot`);
-    assert.match(weekLine(v),/PUBLISHED DATA STALE/,`${label}: the week strip says so`);
+    assert.match(weekLine(v),/^(WEEK \d+ UNAVAILABLE · )?PUBLISHED DATA STALE · revision \d+ · /,`${label}: the week strip leads with it (a phone's ellipsis never cuts it), then the revision on screen`);
     assert.match(banner(v),/^PUBLISHED DATA STALE · /m,`${label}: a notice explains it`);
   };
   const current=(v,label)=>{
@@ -1431,7 +1431,7 @@ console.log("weekly HDC-12 contest-ruling load and HDC-14 absent-game, privacy, 
     let from=v.calls.length;await v.refresh();
     assert.equal(tally(v,from).row,1);
     assert.deepEqual(graded(v),before,'revision 3 still scores the page');
-    assert.match(weekLine(v),/^Week 3 · revision 3 · PUBLISHED DATA STALE · /);
+    assert.match(weekLine(v),/^PUBLISHED DATA STALE · revision 3 · /);
     stale(v,'HTTP 500');
     from=v.calls.length;await v.refresh();
     assert.equal(tally(v,from).row,1,'the next refresh retries revision 4');stale(v,'still failing');
@@ -1455,7 +1455,7 @@ console.log("weekly HDC-12 contest-ruling load and HDC-14 absent-game, privacy, 
       const from=v.calls.length;await v.refresh();
       assert.equal(tally(v,from).row,1,`${label}: the newer row is requested`);
       assert.deepEqual(graded(v),before,`${label}: revision 3 still scores the page`);
-      assert.match(weekLine(v),/^Week 3 · revision 3 · PUBLISHED DATA STALE · /,label);
+      assert.match(weekLine(v),/^PUBLISHED DATA STALE · revision 3 · /,label);
       stale(v,label);
     }
   });
@@ -1481,7 +1481,7 @@ console.log("weekly HDC-12 contest-ruling load and HDC-14 absent-game, privacy, 
       const from=v.calls.length;await v.refresh();
       assert.equal(tally(v,from).row,0,`${label}: no full row is downloaded`);
       assert.deepEqual({...graded(v),options:options(v),selected:v.$('weekSelect').value},before,`${label}: revision 3 and the selector are unchanged`);
-      assert.match(weekLine(v),/^Week 3 · revision 3 · PUBLISHED DATA STALE · /,label);
+      assert.match(weekLine(v),/^PUBLISHED DATA STALE · revision 3 · /,label);
       stale(v,label);
       delete v.hooks.index;v.pub[0]=pubRow(wk3(),3);await v.refresh();
       assert.match(weekLine(v),/^Week 3 · revision 3 · /,`${label}: recovered`);current(v,`${label}: a usable index verifying revision 3 again`);

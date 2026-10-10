@@ -194,9 +194,10 @@ function formatWeekDates(){
 }
 function tiebreakGuess(p){return Number.isInteger(p?.mnf)?String(p.mnf):'NO PICK'}
 function tiebreakDiff(p,t){return t.final?(Number.isInteger(p?.mnf)?Math.abs(p.mnf-t.total):Number.POSITIVE_INFINITY):null}
-// HDC-15: the week strip names the revision being scored, says when it could not be verified as the current publication,
-// and leads with a chosen week that could not be loaded.
-function weekLineText(){return`${SWITCH_ERROR?`WEEK ${SWITCH_ERROR.week} UNAVAILABLE · `:''}Week ${CFG.week} · revision ${PUB.revision}${PUB_STALE?' · PUBLISHED DATA STALE':''} · ${formatWeekDates()} · ${P.map(p=>p.name).join(' · ')}`}
+// HDC-15: the week strip names the revision being scored and leads with a chosen week that could not be loaded. While the
+// publication on screen cannot be verified as the current one, PUBLISHED DATA STALE takes the week's place at its start (the
+// selector beside it names the week), so a phone's ellipsis never cuts the marker or the revision.
+function weekLineText(){return`${SWITCH_ERROR?`WEEK ${SWITCH_ERROR.week} UNAVAILABLE · `:''}${PUB_STALE?'PUBLISHED DATA STALE':`Week ${CFG.week}`} · revision ${PUB.revision} · ${formatWeekDates()} · ${P.map(p=>p.name).join(' · ')}`}
 function renderWeekLine(){if(CFG)$('weekLine').textContent=weekLineText()}
 function renderStaticLabels(){
   $('weekLine').textContent=weekLineText();$('pulseWeek').textContent=`Week ${CFG.week}`;$('entryCount').textContent=fieldAvailable()?CFG.competitionSize:P.length;$('gameCount').textContent=M.length;$('finals').textContent=`0/${M.length}`;$('left').textContent=M.length;$('tbNote').textContent=`Tiebreak guesses: ${P.map(p=>`${p.name} ${tiebreakGuess(p)}`).join(' · ')}.`;$('footerRule').textContent=footerText();
