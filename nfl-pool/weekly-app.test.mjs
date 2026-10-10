@@ -62,36 +62,60 @@ function dataApi(table,rows,u){
   const keep=row=>filters.every(([k,v])=>{const [op,...rest]=v.split('.'),want=rest.join('.'),have=row[k],w=typeof have==='number'?Number(want):want;return op==='eq'?have===w:have<=w});
   return{ok:true,status:200,json:async()=>structuredClone(rows.filter(keep).map(row=>Object.fromEntries(select.map(c=>[c,row[c]]))))};
 }
+// HDC-15: the Pick'em publication table (nfl_pool_weeks) as the Data API serves it to the anonymous role: eq. filters and
+// the requested column list are applied (a missing value reads as null); rows keep the order the fixture lists them in,
+// which is the order a request asks for. A column the table does not have, or any other filter, is refused.
+const PUB_COLUMNS=['season','week','status','config','revision','published_at','locked_at','source_filename','source_sha256','created_at','updated_at'];
+function publicationApi(rows,u){
+  const select=(u.searchParams.get('select')||'*').split(',');
+  if(select.some(c=>c!=='*'&&!PUB_COLUMNS.includes(c)))return{ok:false,status:400,json:async()=>({message:'unknown column'})};
+  const filters=[...u.searchParams].filter(([k])=>k!=='select'&&k!=='order');
+  if(filters.some(([k,v])=>!PUB_COLUMNS.includes(k)||!/^eq\./.test(v)))return{ok:false,status:400,json:async()=>({message:'unsupported filter'})};
+  const keep=row=>filters.every(([k,v])=>String(row[k])===v.slice(3));
+  return{ok:true,status:200,json:async()=>structuredClone(rows.filter(keep).map(row=>select.includes('*')?row:Object.fromEntries(select.map(c=>[c,row[c]??null]))))};
+}
 
-async function view({weekConfig=config,initialScorePayload={events:[game()]},store=pickemStore()}={}){
+// HDC-15: the page's publication rows (by default the one locked row of the config, keyed by its own season and week), a log
+// of every request by kind (token, index: a publication read without a config, row: one with a config, rulings, score),
+// per-kind hooks that can answer a request instead of the default, the History API calls, the document's visibility and the
+// bottom-nav clicks. refresh() is a visible timer tick (the tick a browser runs), tick() the timer callback as the document
+// currently is, resume() a hidden-to-visible transition.
+async function view({weekConfig=config,initialScorePayload={events:[game()]},store=pickemStore(),published=null,search='?view=home',tokenTtl=3600}={}){
   const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new El());return els.get(id)},docListeners={};
   const doc={
     body:{dataset:{}},title:'',visibilityState:'hidden',
     getElementById:$,querySelectorAll(){return[]},
     createElement(){return new El()},
-    addEventListener(t,f){(docListeners[t]||=[]).push(f)}
+    addEventListener(t,f){(docListeners[t]||=[]).push(f)},
+    dispatchEvent(e){for(const fn of docListeners[e.type]||[])fn(e);return true}
   };
-  const windowListeners={};
+  const windowListeners={},historyCalls=[];
   globalThis.document=doc;
   globalThis.window={addEventListener(t,f){(windowListeners[t]||=[]).push(f)},scrollTo(){}};
-  globalThis.location={href:'https://example.test/nfl-pool/?view=home',search:'?view=home'};
-  globalThis.history={pushState(){},state:null};
-  let tick=null,scorePayload=structuredClone(initialScorePayload),scoreFailure=false,scoreCalls=0;const rulingRequests=[];
+  globalThis.location={href:`https://example.test/nfl-pool/${search}`,search};
+  globalThis.history={state:null,pushState(_s,_t,u){historyCalls.push(['push',String(u)])},replaceState(_s,_t,u){historyCalls.push(['replace',String(u)])}};
+  let tick=null,scorePayload=structuredClone(initialScorePayload),scoreFailure=false,scoreCalls=0;const rulingRequests=[],calls=[],hooks={};
+  const pub=published?structuredClone(published):[{season:weekConfig?.season??2026,week:weekConfig?.week??3,status:'locked',revision:1,config:structuredClone(weekConfig)}];
   globalThis.setInterval=(fn,ms)=>{assert.equal(ms,20000);tick=fn;return 0};
-  const token='x.'+Buffer.from(JSON.stringify({exp:Math.floor(Date.now()/1000)+3600})).toString('base64url')+'.y';
+  const mint=()=>'x.'+Buffer.from(JSON.stringify({exp:Math.floor(Date.now()/1000)+tokenTtl})).toString('base64url')+'.y',token=mint();
   globalThis.fetch=async (url,init={})=>{
     const u=new URL(url);
-    if(u.pathname.endsWith('/token/anonymous'))return{ok:true,json:async()=>({token})};
-    if(u.pathname.endsWith('/nfl_pool_weeks'))return{ok:true,json:async()=>[{season:2026,week:3,status:'locked',revision:1,config:structuredClone(weekConfig)}]};
+    if(u.pathname.endsWith('/token/anonymous')){calls.push({kind:'token',url:u});return{ok:true,json:async()=>({token:tokenTtl===3600?token:mint()})}}
+    if(u.pathname.endsWith('/nfl_pool_weeks')){
+      const kind=(u.searchParams.get('select')||'*').split(',').some(c=>c==='config'||c==='*')?'row':'index';
+      calls.push({kind,url:u,authorization:init.headers?.Authorization??null});
+      return hooks[kind]?.(u,init)??publicationApi(pub,u);
+    }
     const table=Object.keys(RULING_COLUMNS).find(t=>u.pathname.endsWith(`/${t}`));
     if(table){
-      rulingRequests.push({table,url:u,authorization:init.headers?.Authorization??null});
+      rulingRequests.push({table,url:u,authorization:init.headers?.Authorization??null});calls.push({kind:'rulings',url:u});
       const rows=store[table];
       if(typeof rows==='function')return rows(u,init);
       if(typeof rows==='number')return{ok:false,status:rows,json:async()=>({})};
       return dataApi(table,rows,u);
     }
-    scoreCalls++;
+    scoreCalls++;calls.push({kind:'score',url:u});
+    const hooked=hooks.score?.(u,init);if(hooked)return hooked;
     if(scoreFailure)return{ok:false,status:503,json:async()=>({})};
     return{ok:true,status:200,json:async()=>structuredClone(scorePayload)};
   };
@@ -99,13 +123,16 @@ async function view({weekConfig=config,initialScorePayload={events:[game()]},sto
   const mod=await import(`data:text/javascript;base64,${Buffer.from(patched+`\nexport {badge,raceStatus};\n//instance ${++instance}`).toString('base64')}`);
   await flush();
   const warning=()=>$('error').children[0]?.textContent||'';
+  const setVisibility=state=>{doc.visibilityState=state;for(const fn of docListeners.visibilitychange||[])fn()};
   return{
-    $,warning,mod,store,rulingRequests,token,
+    $,warning,mod,store,rulingRequests,token,doc,pub,calls,hooks,historyCalls,setVisibility,
     html:()=>[...els.values()].map(e=>`${e.innerHTML}\n${e.textContent}`).join('\n'),
     setPayload:v=>{scorePayload=v},
     setFailure:v=>{scoreFailure=v},
-    refresh:async()=>{tick();await flush()},
-    resume:async()=>{const before=scoreCalls;doc.visibilityState='visible';for(const fn of docListeners.visibilitychange||[])fn();await flush();return scoreCalls-before}
+    tick:()=>tick(),
+    click:target=>{for(const fn of docListeners.click||[])fn({target:{closest:s=>s==='[data-view-target]'?{dataset:{viewTarget:target}}:null},preventDefault(){}})},
+    refresh:async()=>{doc.visibilityState='visible';tick();await flush()},
+    resume:async()=>{const before=scoreCalls;setVisibility('hidden');setVisibility('visible');await flush();return scoreCalls-before}
   };
 }
 
@@ -1264,3 +1291,291 @@ console.log('weekly HDC-11 halted-game warning, ungraded halted game, unchanged 
 }
 
 console.log("weekly HDC-12 contest-ruling load and HDC-14 absent-game, privacy, void, voided tiebreak, under-review, withdrawn, all-void, hold, fail-closed and Rules & rulings regressions passed");
+
+
+// HDC-15. The public refresh lifecycle in Pick'em. Every full refresh first reads a lightweight publication index (season,
+// week, revision, published_at, status: never a config) and downloads a full published row only for the first selection, a
+// changed revision of the selected week, or a week the participant chooses. A newer revision is loaded and validated before it
+// replaces the active config and never mixes with it; one that cannot be loaded or validated leaves the last verified revision
+// on screen, marked PUBLISHED DATA STALE (never a plain LIVE), and is retried on the next refresh. A newly published week
+// enters the selector without moving the participant. Timer refreshes run only while the document is visible and a Pick'em
+// view is active; becoming visible, coming back from Survivor and REFRESH each run exactly one full refresh, and a late
+// response for an older revision or week never overwrites a newer one. Each regression reports through one collector; the
+// block fails at its end if any did.
+{
+  const failures=[];
+  const regression=async(name,check)=>{try{await check()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+  const PUBLISHED_AT='2026-09-27T16:43:08.115+00:00';
+  // Week 3: DEN at KC (DEN won 24-17) and BUF at CIN (BUF won 27-24, the tiebreak game). D.C. picked DEN and BUF, DJS KC and
+  // CIN. Revision 4 republishes D.C.'s ballot as KC and BUF, revision 5 as KC and CIN. Weeks 4 and 5 have one game each.
+  const wk3=(dc=[1,3])=>({schemaVersion:1,season:2026,week:3,tiebreakGameIndex:1,
+    games:[{away:'DEN',home:'KC',awayNumber:1,homeNumber:2,date:'2026-09-27'},{away:'BUF',home:'CIN',awayNumber:3,homeNumber:4,date:'2026-09-28'}],
+    participants:[{id:'dc',displayName:'D.C.',pickNumbers:dc,tiebreak:41},{id:'djs',displayName:'DJS',pickNumbers:[2,4],tiebreak:44}]});
+  const oneGame=(week,away,home,date)=>({schemaVersion:1,season:2026,week,tiebreakGameIndex:0,games:[{away,home,awayNumber:1,homeNumber:2,date}],
+    participants:[{id:'dc',displayName:'D.C.',pickNumbers:[1],tiebreak:40},{id:'djs',displayName:'DJS',pickNumbers:[2],tiebreak:38}]});
+  const wk4=()=>oneGame(4,'MIA','BUF','2026-10-04'),wk5=()=>oneGame(5,'NYJ','NE','2026-10-11');
+  const pubRow=(cfg,revision,o={})=>({season:cfg.season,week:cfg.week,status:'locked',revision,published_at:PUBLISHED_AT,locked_at:PUBLISHED_AT,config:structuredClone(cfg),...o});
+  const wk3Final=()=>({events:[game(),{...game({away:'BUF',home:'CIN',awayScore:'27',homeScore:'24'}),id:'401437947'}]});
+  // Each week's score feed answers for its own week: BUF beat MIA in Week 4, NYJ beat NE in Week 5.
+  const FEEDS={3:wk3Final(),4:{events:[game({week:4,away:'MIA',home:'BUF',awayScore:'10',homeScore:'20'})]},5:{events:[game({week:5,away:'NYJ',home:'NE',awayScore:'24',homeScore:'13'})]}};
+  const json=data=>({ok:true,status:200,json:async()=>structuredClone(data)}),httpError=status=>({ok:false,status,json:async()=>({})});
+  const byWeek=u=>FEEDS[u.searchParams.get('week')]?json(FEEDS[u.searchParams.get('week')]):undefined;
+  const open=async({published=[pubRow(wk3(),3)],search='?view=home&season=2026&week=3',tokenTtl=3600}={})=>{
+    const v=await view({published,search,tokenTtl,initialScorePayload:wk3Final()});v.hooks.score=byWeek;return v;
+  };
+  const tally=(v,from=0)=>{const t={token:0,index:0,row:0,rulings:0,score:0};for(const c of v.calls.slice(from))t[c.kind]++;return t};
+  const kinds=(v,from)=>v.calls.slice(from).map(c=>c.kind);
+  const rowWeeks=(v,from)=>v.calls.slice(from).filter(c=>c.kind==='row').map(c=>[c.url.searchParams.get('season'),c.url.searchParams.get('week')]);
+  const weekLine=v=>v.$('weekLine').textContent;
+  const options=v=>[...v.$('weekSelect').innerHTML.matchAll(/<option value="([^"]+)"/g)].map(m=>m[1]);
+  const banner=v=>v.$('error').children.map(c=>c.textContent).join('\n');
+  const PAGE=[...HALT_PAGE,'pickemRules','weekLine','pulseWeek','entryCount','gameCount'];
+  const panels=v=>Object.fromEntries(PAGE.map(id=>[id,`${v.$(id).innerHTML}|${v.$(id).textContent}`]));
+  const graded=v=>({records:records(v),cells:pickCells(v),games:v.$('gamegrid').innerHTML});
+  const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r});return{promise,resolve}};
+  const choose=async(v,value)=>{const select=v.$('weekSelect');select.value=value;for(const fn of select.listeners.change||[])fn();await flush()};
+  const FULL={token:0,index:1,row:0,rulings:3,score:1};
+  // Published data that could not be verified: kept on screen, and said so everywhere a participant looks.
+  const stale=(v,label)=>{
+    assert.match(v.$('sync').textContent,/PUBLISHED DATA STALE/,`${label}: the header says the published data is stale`);
+    assert.doesNotMatch(v.$('sync').textContent,/^LIVE\b/,`${label}: never LIVE`);
+    assert.notEqual(v.$('dot').style.background,'var(--green)',`${label}: never the clean LIVE dot`);
+    assert.match(weekLine(v),/PUBLISHED DATA STALE/,`${label}: the week strip says so`);
+    assert.match(banner(v),/^PUBLISHED DATA STALE · /m,`${label}: a notice explains it`);
+  };
+  const current=(v,label)=>{
+    assert.match(v.$('sync').textContent,/^LIVE · data \d+s old$/,`${label}: a clean LIVE`);
+    assert.equal(v.$('dot').style.background,'var(--green)',label);
+    assert.doesNotMatch(`${weekLine(v)}\n${banner(v)}`,/PUBLISHED DATA STALE/,`${label}: nothing is marked stale`);
+  };
+
+  await regression("boot reads the publication index (identity columns only, never a config) and then exactly one full row, the selected week's; the week strip shows that row's revision",async()=>{
+    const v=await open({published:[pubRow(wk3(),3),pubRow(wk4(),2)]});
+    assert.deepEqual(tally(v),{token:1,index:1,row:1,rulings:3,score:1},'boot: one index, one row, the rules and rulings, the score feed');
+    const index=v.calls.find(c=>c.kind==='index'),full=v.calls.find(c=>c.kind==='row'),columns=index.url.searchParams.get('select').split(',');
+    for(const c of ['season','week','revision','published_at','status'])assert(columns.includes(c),`the index reads ${c}`);
+    assert(columns.every(c=>['season','week','revision','published_at','status','locked_at'].includes(c)),`the index reads identity columns only: ${columns}`);
+    assert.equal(index.url.searchParams.get('status'),'eq.locked','the index lists locked rows');
+    assert.deepEqual(rowWeeks(v,0),[['eq.2026','eq.3']],'the full row is the selected week only');
+    assert(full.url.searchParams.get('select').split(',').includes('config'));
+    for(const c of [index,full])assert.equal(c.authorization,`Bearer ${v.token}`,'published rows are read with the anonymous token');
+    assert.deepEqual(options(v),['2026-3','2026-4']);assert.equal(v.$('weekSelect').value,'2026-3');
+    assert.match(weekLine(v),/^Week 3 · revision 3 · /);
+    assert.deepEqual(records(v),[['D.C.','2','0'],['DJS','0','2']]);
+    current(v,'boot');
+  });
+  await regression('an unchanged revision: each visible timer refresh reads the index once, the three HDC-12 tables and the score feed, never a full row, and changes nothing on the page',async()=>{
+    const v=await open(),before=panels(v);
+    for(let i=1;i<=3;i++){const from=v.calls.length;await v.refresh();assert.deepEqual(tally(v,from),FULL,`tick ${i}`)}
+    assert.deepEqual(panels(v),before,'scores, tiebreak, standings, picks, race and rules are exactly as before');
+    current(v,'unchanged');
+  });
+  await regression('hidden: timer ticks make no request at all, not even to renew an expired anonymous token',async()=>{
+    // The token is always inside its renewal minute, so any refresh would first ask for a new one.
+    const v=await open({tokenTtl:30});
+    v.setVisibility('hidden');
+    let from=v.calls.length;v.tick();v.tick();await flush();
+    assert.deepEqual(kinds(v,from),[],'no token, Data API or score-feed request from a hidden tick');
+    v.doc.visibilityState='visible';from=v.calls.length;v.tick();await flush();
+    assert(tally(v,from).token>=1&&tally(v,from).index===1,'control: the same tick while visible renews the token and refreshes');
+  });
+  await regression('Survivor active: visible Pick’em timer ticks make no request',async()=>{
+    const v=await open();v.doc.visibilityState='visible';
+    v.click('survivor');await flush();
+    const from=v.calls.length;v.tick();v.tick();await flush();
+    assert.deepEqual(kinds(v,from),[]);
+  });
+  await regression('becoming visible runs exactly one full refresh at once; with Survivor active it runs none',async()=>{
+    const v=await open();
+    let from=v.calls.length;await v.resume();
+    assert.deepEqual(tally(v,from),FULL,'one index, the HDC-12 tables and the score feed');
+    v.click('survivor');await flush();
+    from=v.calls.length;await v.resume();
+    assert.deepEqual(kinds(v,from),[],'Survivor active: not Pick’em’s to refresh');
+  });
+  await regression('becoming visible and timer ticks at the same moment still run one full refresh',async()=>{
+    const v=await open();v.setVisibility('hidden');
+    const from=v.calls.length;v.setVisibility('visible');v.tick();v.tick();await flush();
+    assert.deepEqual(tally(v,from),FULL);
+  });
+  await regression('REFRESH runs the full refresh: the publication is verified first, and a republished revision is installed',async()=>{
+    const v=await open(),click=()=>v.$('refresh').listeners.click[0]();
+    let from=v.calls.length;click();await flush();
+    assert.deepEqual(tally(v,from),FULL,'REFRESH verifies the publication, not only the scores');
+    v.pub[0]=pubRow(wk3([2,3]),4);
+    from=v.calls.length;click();await flush();
+    assert.deepEqual(rowWeeks(v,from),[['eq.2026','eq.3']]);
+    assert.match(weekLine(v),/^Week 3 · revision 4 · /);
+    assert.deepEqual(records(v),[['D.C.','1','1'],['DJS','0','2']]);
+  });
+  await regression('a republished revision (3 → 4) is fetched once, validated and installed whole: standings, picks and the revision label move together, and later unchanged ticks never download it again',async()=>{
+    const v=await open();
+    v.pub[0]=pubRow(wk3([2,3]),4);
+    let from=v.calls.length;await v.refresh();
+    assert.deepEqual(tally(v,from),{...FULL,row:1},'the changed revision adds exactly its own full row');
+    assert.deepEqual(rowWeeks(v,from),[['eq.2026','eq.3']]);
+    assert.match(weekLine(v),/^Week 3 · revision 4 · /);assert.doesNotMatch(weekLine(v),/revision 3/);
+    assert.deepEqual(records(v),[['D.C.','1','1'],['DJS','0','2']]);
+    assert.deepEqual(pickCells(v),['bad','ok','bad','bad'],'D.C. now holds KC (lost) and BUF (won)');
+    current(v,'installed');
+    assert.deepEqual(v.historyCalls,[],'the URL is unchanged');
+    from=v.calls.length;await v.refresh();await v.refresh();
+    assert.deepEqual(tally(v,from),{token:0,index:2,row:0,rulings:6,score:2},'later unchanged ticks never download the row again');
+    // Nothing of revision 3 is left: the page is exactly a fresh load of revision 4. (Last: the fresh page takes the document.)
+    const installed=panels(v),fresh=await view({published:[pubRow(wk3([2,3]),4)],initialScorePayload:wk3Final()});
+    assert.deepEqual(installed,panels(fresh),'the installed revision renders exactly as a fresh load of it');
+  });
+  await regression('a newer revision that cannot be loaded (HTTP 500) leaves revision 3 on screen, marked PUBLISHED DATA STALE and never LIVE; each later refresh retries it until it installs',async()=>{
+    const v=await open(),before=graded(v);
+    v.pub[0]=pubRow(wk3([2,3]),4);v.hooks.row=()=>httpError(500);
+    let from=v.calls.length;await v.refresh();
+    assert.equal(tally(v,from).row,1);
+    assert.deepEqual(graded(v),before,'revision 3 still scores the page');
+    assert.match(weekLine(v),/^Week 3 · revision 3 · PUBLISHED DATA STALE · /);
+    stale(v,'HTTP 500');
+    from=v.calls.length;await v.refresh();
+    assert.equal(tally(v,from).row,1,'the next refresh retries revision 4');stale(v,'still failing');
+    delete v.hooks.row;await v.refresh();
+    assert.match(weekLine(v),/^Week 3 · revision 4 · /);assert.deepEqual(records(v),[['D.C.','1','1'],['DJS','0','2']]);
+    current(v,'installed on retry');
+  });
+  await regression('a newer row that fails validation or is not exactly the published week is never installed: revision 3 stays on screen, marked stale',async()=>{
+    for(const [label,setup] of [
+      ['a config that fails validation',v=>{const bad=wk3([2,3]);bad.participants.pop();v.pub[0]=pubRow(bad,4)}],
+      ['a response that is not JSON',v=>{v.pub[0]=pubRow(wk3([2,3]),4);v.hooks.row=()=>({ok:true,status:200,json:async()=>{throw new SyntaxError('Unexpected token < in JSON at position 0')}})}],
+      ['a response that is not a list',v=>{v.pub[0]=pubRow(wk3([2,3]),4);v.hooks.row=()=>json(pubRow(wk3([2,3]),4))}],
+      ['no row',v=>{v.pub[0]=pubRow(wk3([2,3]),4);v.hooks.row=()=>json([])}],
+      ['two rows',v=>{v.pub[0]=pubRow(wk3([2,3]),4);v.hooks.row=()=>json([pubRow(wk3([2,3]),4),pubRow(wk3([2,3]),4)])}],
+      ['a row of another week',v=>{v.pub[0]=pubRow(wk3([2,3]),4);v.hooks.row=()=>json([{...pubRow(wk3([2,3]),4),week:2}])}],
+      ['a config of another week',v=>{const other=wk3([2,3]);other.week=5;v.pub[0]={...pubRow(other,4),week:3}}],
+      ['a row that is not locked',v=>{v.pub[0]=pubRow(wk3([2,3]),4);v.hooks.row=()=>json([pubRow(wk3([2,3]),4,{status:'draft'})])}],
+      ['a row older than the published revision',v=>{v.pub[0]=pubRow(wk3([2,3]),4);v.hooks.row=()=>json([pubRow(wk3(),3)])}]
+    ]){
+      const v=await open(),before=graded(v);
+      setup(v);
+      const from=v.calls.length;await v.refresh();
+      assert.equal(tally(v,from).row,1,`${label}: the newer row is requested`);
+      assert.deepEqual(graded(v),before,`${label}: revision 3 still scores the page`);
+      assert.match(weekLine(v),/^Week 3 · revision 3 · PUBLISHED DATA STALE · /,label);
+      stale(v,label);
+    }
+  });
+  await regression('an index that is unusable, ambiguous or goes backwards is never trusted: no row is downloaded, revision 3 and the selector stay, marked stale, and a usable index clears it',async()=>{
+    const id=(o={})=>({season:2026,week:3,revision:4,published_at:PUBLISHED_AT,status:'locked',...o});
+    for(const [label,answer] of [
+      ['the index request fails (HTTP 503)',()=>httpError(503)],
+      ['the index request never reaches the server',()=>{throw new TypeError('Failed to fetch')}],
+      ['an index that is not a list',()=>json({rows:[id()]})],
+      ['the selected week listed twice',()=>json([id(),id({revision:5})])],
+      ['a revision that is not an integer',()=>json([id({revision:4.5})])],
+      ['a revision given as text',()=>json([id({revision:'4'})])],
+      ['revision 0',()=>json([id({revision:0})])],
+      ['a row that is not locked',()=>json([id({status:'draft'})])],
+      ['a season given as text',()=>json([id({season:'2026'})])],
+      ['another row whose week is not an integer',()=>json([id(),id({week:3.5})])],
+      ['the selected week missing',()=>json([id({week:4,revision:1})])],
+      ['an empty index',()=>json([])],
+      ['a revision older than the one on screen',()=>json([id({revision:2})])]
+    ]){
+      const v=await open(),before={...graded(v),options:options(v),selected:v.$('weekSelect').value};
+      v.pub[0]=pubRow(wk3([2,3]),4);v.hooks.index=answer;
+      const from=v.calls.length;await v.refresh();
+      assert.equal(tally(v,from).row,0,`${label}: no full row is downloaded`);
+      assert.deepEqual({...graded(v),options:options(v),selected:v.$('weekSelect').value},before,`${label}: revision 3 and the selector are unchanged`);
+      assert.match(weekLine(v),/^Week 3 · revision 3 · PUBLISHED DATA STALE · /,label);
+      stale(v,label);
+      delete v.hooks.index;v.pub[0]=pubRow(wk3(),3);await v.refresh();
+      assert.match(weekLine(v),/^Week 3 · revision 3 · /,`${label}: recovered`);current(v,`${label}: a usable index verifying revision 3 again`);
+    }
+  });
+  await regression('a newly published week enters the selector without moving the participant: no automatic switch, no URL change, no download of its config',async()=>{
+    const v=await open({search:'?view=home'}),before=panels(v);
+    assert.deepEqual(options(v),['2026-3']);
+    v.pub.push(pubRow(wk4(),1));
+    const from=v.calls.length;await v.refresh();await v.refresh();
+    assert.deepEqual(options(v),['2026-3','2026-4'],'Week 4 appears once, after Week 3');
+    assert.equal(v.$('weekSelect').value,'2026-3','Week 3 stays selected');
+    assert.deepEqual(v.historyCalls,[],'the URL is never rewritten');
+    assert.equal(tally(v,from).row,0,'Week 4 is not downloaded until it is chosen');
+    assert.deepEqual(panels(v),before,'Week 3 is untouched');
+    current(v,'new week listed');
+  });
+  await regression('choosing a week downloads and validates exactly that row before it replaces the week on screen, and the URL follows the choice',async()=>{
+    const v=await open({published:[pubRow(wk3(),3),pubRow(wk4(),2)]});
+    const from=v.calls.length;await choose(v,'2026-4');
+    assert.deepEqual(rowWeeks(v,from),[['eq.2026','eq.4']],"exactly the chosen week's row");
+    assert.match(weekLine(v),/^Week 4 · revision 2 · /);
+    assert.deepEqual(records(v),[['DJS','1','0'],['D.C.','0','1']]);
+    assert.equal(v.$('weekSelect').value,'2026-4');
+    assert(v.calls.slice(from).some(c=>c.kind==='score'&&c.url.searchParams.get('week')==='4'),'the Week 4 scores are read');
+    const url=new URL(v.historyCalls.at(-1)?.[1]??'https://example.test/');
+    assert.deepEqual([url.searchParams.get('season'),url.searchParams.get('week')],['2026','4'],'the URL names the chosen week');
+    current(v,'switched');
+  });
+  await regression('a chosen week that cannot be loaded keeps the week on screen: the selector goes back, an explicit error is shown, nothing is reset and the URL is unchanged',async()=>{
+    for(const [label,answer] of [['HTTP 500',()=>httpError(500)],['a config that fails validation',()=>{const bad=wk4();bad.participants.pop();return json([pubRow(bad,2)])}]]){
+      const v=await open({published:[pubRow(wk3(),3),pubRow(wk4(),2)]}),before=graded(v);
+      v.hooks.row=u=>u.searchParams.get('week')==='eq.4'?answer():undefined;
+      await choose(v,'2026-4');
+      assert.equal(v.$('weekSelect').value,'2026-3',`${label}: the selector shows the week on screen again`);
+      assert.match(banner(v),/Unable to switch Pick.em week/,`${label}: an explicit error`);
+      assert.match(weekLine(v),/^WEEK 4 UNAVAILABLE · Week 3 · revision 3 · /,`${label}: the week strip says so`);
+      assert.deepEqual(graded(v),before,`${label}: Week 3 is untouched`);
+      assert.deepEqual(v.historyCalls,[],`${label}: the URL is unchanged`);
+    }
+  });
+  await regression('a late response for an older revision never overwrites a newer one',async()=>{
+    const v=await open(),late=deferred();
+    v.pub[0]=pubRow(wk3([2,3]),4);v.hooks.row=()=>late.promise;
+    await v.refresh();
+    // Revision 4's row is still on its way and its refresh has run past any stall limit, so the next tick replaces it.
+    const realNow=Date.now;Date.now=()=>realNow()+60000;
+    try{
+      v.pub[0]=pubRow(wk3([2,4]),5);delete v.hooks.row;
+      await v.refresh();
+      assert.match(weekLine(v),/^Week 3 · revision 5 · /);
+      late.resolve(json([pubRow(wk3([2,3]),4)]));await flush();
+      assert.match(weekLine(v),/^Week 3 · revision 5 · /,'revision 4 arriving last changes nothing');
+      assert.deepEqual(records(v),[['DJS','0','2'],['D.C.','0','2']]);
+      assert.deepEqual(pickCells(v),['bad','bad','bad','bad']);
+    }finally{Date.now=realNow}
+  });
+  await regression('a late response for a week the participant has since moved away from never replaces their newer choice',async()=>{
+    const v=await open({published:[pubRow(wk3(),3),pubRow(wk4(),2),pubRow(wk5(),1)]}),late=deferred();
+    v.hooks.row=u=>u.searchParams.get('week')==='eq.4'?late.promise:undefined;
+    await choose(v,'2026-4');
+    await choose(v,'2026-5');
+    assert.match(weekLine(v),/^Week 5 · revision 1 · /);
+    late.resolve(json([pubRow(wk4(),2)]));await flush();
+    assert.match(weekLine(v),/^Week 5 · revision 1 · /,'Week 4 arriving last changes nothing');
+    assert.deepEqual(records(v),[['D.C.','1','0'],['DJS','0','1']]);
+    assert.equal(v.$('weekSelect').value,'2026-5');
+    assert.deepEqual(v.historyCalls.map(([,u])=>new URL(u).searchParams.get('week')),['5'],'the URL only ever names Week 5');
+  });
+  await regression('a late score response for the week on screen before a switch never reaches the new week',async()=>{
+    const v=await open({published:[pubRow(wk3(),3),pubRow(wk4(),2)]}),late=deferred();
+    v.hooks.score=u=>u.searchParams.get('week')==='3'?late.promise:byWeek(u);
+    await v.refresh();
+    await choose(v,'2026-4');
+    assert.match(weekLine(v),/^Week 4 · revision 2 · /);
+    const settled=panels(v);
+    late.resolve(json({events:[game({awayScore:'3',homeScore:'38'}),{...game({away:'BUF',home:'CIN',awayScore:'0',homeScore:'41'}),id:'401437947'}]}));await flush();
+    assert.deepEqual(panels(v),settled,'the Week 3 response arriving last changes nothing on the Week 4 page');
+    assert.deepEqual(records(v),[['DJS','1','0'],['D.C.','0','1']]);
+  });
+  await regression('coming back from Survivor runs one full Pick’em refresh at once; moving between Pick’em views runs none; a tick at the same moment adds none',async()=>{
+    const v=await open();v.doc.visibilityState='visible';
+    v.click('survivor');await flush();
+    let from=v.calls.length;v.click('home');await flush();
+    assert.deepEqual(tally(v,from),FULL,'Survivor → Home');
+    from=v.calls.length;v.click('games');v.click('standings');v.click('picks');await flush();
+    assert.deepEqual(kinds(v,from),[],'between Pick’em views');
+    v.click('survivor');await flush();
+    from=v.calls.length;v.click('games');v.tick();await flush();
+    assert.deepEqual(tally(v,from),FULL,'a view change and a tick together');
+  });
+
+  assert.equal(failures.length,0,`HDC-15 Pick'em refresh-lifecycle regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+}
+
+console.log('weekly HDC-15 publication index, atomic revision install, published-data stale state, new-week discovery, week switching, request budget, visibility and active-view polling and late-response regressions passed');
