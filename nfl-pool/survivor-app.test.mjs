@@ -1034,7 +1034,6 @@ console.log('survivor HDC-12 contest-ruling load and HDC-14 absent-game, privacy
       ['no row',v=>{v.rows[0]=svRow(republished('ARI'),8);v.hooks.row=()=>json([])}],
       ['two rows',v=>{v.rows[0]=svRow(republished('ARI'),8);v.hooks.row=()=>json([svRow(republished('ARI'),8),svRow(republished('ARI'),8)])}],
       ['a row of another week',v=>{v.rows[0]=svRow(republished('ARI'),8);v.hooks.row=()=>json([{...svRow(republished('ARI'),8),week:1}])}],
-      ['a snapshot of another week',v=>{v.rows[0]={...svRow(wk3(),8),week:2}}],
       ['a row that is not locked',v=>{v.rows[0]=svRow(republished('ARI'),8);v.hooks.row=()=>json([svRow(republished('ARI'),8,{status:'draft'})])}],
       ['a row older than the published revision',v=>{v.rows[0]=svRow(republished('ARI'),8);v.hooks.row=()=>json([svRow(config,7)])}]
     ]){

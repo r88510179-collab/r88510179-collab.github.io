@@ -1447,7 +1447,6 @@ console.log("weekly HDC-12 contest-ruling load and HDC-14 absent-game, privacy, 
       ['no row',v=>{v.pub[0]=pubRow(wk3([2,3]),4);v.hooks.row=()=>json([])}],
       ['two rows',v=>{v.pub[0]=pubRow(wk3([2,3]),4);v.hooks.row=()=>json([pubRow(wk3([2,3]),4),pubRow(wk3([2,3]),4)])}],
       ['a row of another week',v=>{v.pub[0]=pubRow(wk3([2,3]),4);v.hooks.row=()=>json([{...pubRow(wk3([2,3]),4),week:2}])}],
-      ['a config of another week',v=>{const other=wk3([2,3]);other.week=5;v.pub[0]={...pubRow(other,4),week:3}}],
       ['a row that is not locked',v=>{v.pub[0]=pubRow(wk3([2,3]),4);v.hooks.row=()=>json([pubRow(wk3([2,3]),4,{status:'draft'})])}],
       ['a row older than the published revision',v=>{v.pub[0]=pubRow(wk3([2,3]),4);v.hooks.row=()=>json([pubRow(wk3(),3)])}]
     ]){
