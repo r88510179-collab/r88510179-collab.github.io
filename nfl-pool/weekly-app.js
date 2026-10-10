@@ -17,6 +17,14 @@ let CFG=null,M=[],P=[],S=[],F=[],TIEBREAK_INDEX=0,G=[],gen=0,ctl=null,lastFetche
 // first load), SLOTS the ruling state of each game, LAST_EVENTS the raw feed used only to check an applied ruling against
 // what the feed says now, and FEED_ISSUES the protected path's warnings by game.
 let NFL=[],RULINGS=null,SLOTS=[],LAST_EVENTS=null,FEED_ISSUES=[];
+// HDC-15. PUB is the identity of the published row CFG was installed from (season, week, revision, published_at), set in the
+// same step as CFG, so the revision on screen is always the one being scored. PUB_STALE says why that publication could not
+// be verified as the current one (null while it is), PUB_WEEKS is the last valid publication index (the selector's weeks)
+// and SWITCH_ERROR is a chosen week that could not be loaded. refreshStartedAt and switching let a timer, a resume or a view
+// change join a refresh that is already running instead of starting a second one.
+let PUB=null,PUB_STALE=null,PUB_WEEKS=[],SWITCH_ERROR=null,refreshStartedAt=0,switching=false;
+// A refresh still running after STALL_MS (a hung request) no longer holds the next timer refresh back.
+const STALL_MS=15000,PUB_INDEX_COLUMNS='season,week,revision,published_at,status',PUB_ROW_COLUMNS='season,week,status,revision,published_at,config';
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const norm=x=>ALIAS[x]||x;
@@ -24,7 +32,7 @@ const score=x=>{let n;if(typeof x==='string'){const v=x.trim();if(!v||!/^\d+$/.t
 const VALID_VIEWS=new Set(['home','standings','games','picks','survivor']);
 function currentView(){const q=new URLSearchParams(location.search).get('view');return VALID_VIEWS.has(q)?q:'home'}
 function setView(view,{push=false,scroll=true}={}){
-  const next=VALID_VIEWS.has(view)?view:'home';
+  const next=VALID_VIEWS.has(view)?view:'home',previous=document.body.dataset.view;
   document.querySelectorAll('[data-view-panel]').forEach(panel=>{panel.hidden=panel.dataset.viewPanel!==next});
   document.querySelectorAll('[data-view-target]').forEach(btn=>{if(btn.closest('.bottom-nav'))btn.setAttribute('aria-current',btn.dataset.viewTarget===next?'page':'false')});
   document.body.dataset.view=next;
@@ -32,6 +40,12 @@ function setView(view,{push=false,scroll=true}={}){
   if(push){const u=new URL(location.href);u.searchParams.set('view',next);history.pushState({view:next},'',u)}
   document.querySelectorAll('.app-menu[open]').forEach(menu=>menu.removeAttribute('open'));
   if(scroll)window.scrollTo({top:0,behavior:'smooth'});
+  // HDC-15: moving between Survivor and the Pick'em views hands the page to the other app, which refreshes once at once
+  // (Survivor learns of it from this event); moving between Pick'em views changes nothing.
+  if(VALID_VIEWS.has(previous)&&(previous==='survivor')!==(next==='survivor')){
+    document.dispatchEvent(new CustomEvent('poolcenter:viewchange',{detail:{view:next,previous}}));
+    autoRefresh();
+  }
 }
 function setupViewNavigation(){
   document.addEventListener('click',event=>{const hit=event.target.closest('[data-view-target]');if(!hit)return;event.preventDefault();setView(hit.dataset.viewTarget,{push:true})});
@@ -64,6 +78,48 @@ async function loadRulings(signal){
     ]);
     return{contests,policies,rulings};
   }finally{clearTimeout(t);signal?.removeEventListener?.('abort',abort)}
+}
+// HDC-15: one read of the Pick'em publication table, time-limited and abandoned with its refresh like the rules and rulings.
+async function readPublished(query,signal){
+  const c=new AbortController,abort=()=>c.abort(),t=setTimeout(abort,RULINGS_TIMEOUT_MS);
+  if(signal){if(signal.aborted)abort();else signal.addEventListener('abort',abort,{once:true})}
+  const fail=new Promise((_,reject)=>c.signal.addEventListener('abort',()=>{const e=new Error(signal?.aborted?'Aborted':'published week data timed out');e.name=signal?.aborted?'AbortError':'TimeoutError';reject(e)},{once:true}));
+  try{
+    const token=await Promise.race([anonymousToken(),fail]);
+    const r=await Promise.race([fetch(`${NEON_DATA_URL}/nfl_pool_weeks?${query}`,{cache:'no-store',headers:{Authorization:`Bearer ${token}`,Accept:'application/json'},signal:c.signal}),fail]);
+    if(!r.ok)throw new Error(`week data ${r.status}`);
+    const data=await Promise.race([r.json(),fail]);if(!Array.isArray(data))throw new Error('week data is not a list');return data;
+  }finally{clearTimeout(t);signal?.removeEventListener?.('abort',abort)}
+}
+// The identity of a published row: a locked season and week at a whole revision of at least 1. Anything else is refused.
+function publishedIdentity(x){
+  if(!x||typeof x!=='object'||Array.isArray(x))throw new Error('a published row is malformed');
+  const {season,week,revision,status,published_at:publishedAt=null}=x;
+  if(!Number.isSafeInteger(season)||season<1||!Number.isSafeInteger(week)||week<1)throw new Error('a published row has no valid season and week');
+  if(!Number.isSafeInteger(revision)||revision<1)throw new Error(`${season} Week ${week} has no valid revision`);
+  if(status!=='locked')throw new Error(`${season} Week ${week} is not locked`);
+  if(publishedAt!==null&&typeof publishedAt!=='string')throw new Error(`${season} Week ${week} has no valid publication time`);
+  return{season,week,revision,publishedAt};
+}
+// The publication index: which weeks are published, at which revision. Identity columns only, never a config; a malformed or
+// repeated week makes the whole index unusable, so no week is ever chosen from an ambiguous list.
+async function loadPublicationIndex(signal){
+  const seen=new Set();
+  return(await readPublished(`select=${PUB_INDEX_COLUMNS}&status=eq.locked&order=season.asc,week.asc`,signal)).map(x=>{
+    const id=publishedIdentity(x),key=`${id.season}-${id.week}`;
+    if(seen.has(key))throw new Error(`${id.season} Week ${id.week} is listed more than once`);
+    seen.add(key);return id;
+  });
+}
+// The full published row of one week, accepted only when it is exactly that locked week, at the listed revision or a later
+// one, and its config validates.
+async function loadPublishedWeek({season,week,revision},signal){
+  const data=await readPublished(`select=${PUB_ROW_COLUMNS}&season=eq.${season}&week=eq.${week}&status=eq.locked`,signal);
+  if(data.length!==1)throw new Error(data.length?`${season} Week ${week} came back more than once`:`${season} Week ${week} is not published`);
+  const row=publishedIdentity(data[0]);
+  if(row.season!==season||row.week!==week)throw new Error(`asked for ${season} Week ${week}, got ${row.season} Week ${row.week}`);
+  if(row.revision<revision)throw new Error(`got revision ${row.revision}, older than the published revision ${revision}`);
+  return{...row,config:validateConfig(data[0].config)};
 }
 function rulingsUnavailable(){return RULINGS!==null&&RULINGS.status==='hold'}
 // Rulings verified earlier this session and kept because the latest load failed: still applied, and always shown as stale.
@@ -118,8 +174,10 @@ function validateConfig(c){
   }
   return c;
 }
-function applyConfig(c){
-  CFG=validateConfig(c);M=CFG.games.map(g=>[norm(g.away),norm(g.home)]);
+// The config and the identity of the published row it came from are installed together, after validation, and everything
+// derived from the previous config is reset (HDC-15: also a newer revision of the same week).
+function applyConfig(c,publication){
+  CFG=validateConfig(c);PUB=publication;PUB_STALE=null;M=CFG.games.map(g=>[norm(g.away),norm(g.home)]);
   const numberMap=new Map();CFG.games.forEach((g,i)=>{numberMap.set(g.awayNumber,{i,team:norm(g.away)});numberMap.set(g.homeNumber,{i,team:norm(g.home)})});
   const mapTracked=(p,id,name)=>{const picks=Array(M.length).fill(null);p.pickNumbers.forEach(n=>{if(n===null)return;const hit=numberMap.get(n);if(hit)picks[hit.i]=hit.team});return{name,id,mnf:p.tiebreak,picks,pickNumbers:p.pickNumbers.slice(),noSubmission:isNoSubmission(p,M.length)}};
   const mapField=(p,fi)=>{const picks=p.pickNumbers.map((n,i)=>{const g=CFG.games[i];if(n===g.awayNumber)return norm(g.away);if(n===g.homeNumber)return norm(g.home);return null});return{name:null,id:p.id||`field-${fi+1}`,mnf:p.tiebreak,picks,pickNumbers:p.pickNumbers.slice()}};
@@ -136,8 +194,12 @@ function formatWeekDates(){
 }
 function tiebreakGuess(p){return Number.isInteger(p?.mnf)?String(p.mnf):'NO PICK'}
 function tiebreakDiff(p,t){return t.final?(Number.isInteger(p?.mnf)?Math.abs(p.mnf-t.total):Number.POSITIVE_INFINITY):null}
+// HDC-15: the week strip names the revision being scored, says when it could not be verified as the current publication,
+// and leads with a chosen week that could not be loaded.
+function weekLineText(){return`${SWITCH_ERROR?`WEEK ${SWITCH_ERROR.week} UNAVAILABLE · `:''}Week ${CFG.week} · revision ${PUB.revision}${PUB_STALE?' · PUBLISHED DATA STALE':''} · ${formatWeekDates()} · ${P.map(p=>p.name).join(' · ')}`}
+function renderWeekLine(){if(CFG)$('weekLine').textContent=weekLineText()}
 function renderStaticLabels(){
-  $('weekLine').textContent=`Week ${CFG.week} · ${formatWeekDates()} · ${P.map(p=>p.name).join(' · ')}`;$('pulseWeek').textContent=`Week ${CFG.week}`;$('entryCount').textContent=fieldAvailable()?CFG.competitionSize:P.length;$('gameCount').textContent=M.length;$('finals').textContent=`0/${M.length}`;$('left').textContent=M.length;$('tbNote').textContent=`Tiebreak guesses: ${P.map(p=>`${p.name} ${tiebreakGuess(p)}`).join(' · ')}.`;$('footerRule').textContent=footerText();
+  $('weekLine').textContent=weekLineText();$('pulseWeek').textContent=`Week ${CFG.week}`;$('entryCount').textContent=fieldAvailable()?CFG.competitionSize:P.length;$('gameCount').textContent=M.length;$('finals').textContent=`0/${M.length}`;$('left').textContent=M.length;$('tbNote').textContent=`Tiebreak guesses: ${P.map(p=>`${p.name} ${tiebreakGuess(p)}`).join(' · ')}.`;$('footerRule').textContent=footerText();
 }
 // HDC-12: a voided tiebreak game means no tiebreak that week; another game is never chosen after the fact.
 const tiebreakVoid=(games=G)=>games[TIEBREAK_INDEX]?.void===true;
@@ -313,7 +375,7 @@ function render(){
   if(rulesBox)rulesBox.innerHTML=rulesHtml(RULINGS?rulesModel(RULINGS,{week:CFG.week,slotState:cardSlot}):null);
   renderRace(race);renderSwings(race);
 }
-function warn(list,{hold=null,notes=[],stale=false}={}){const e=$('error');e.replaceChildren();const add=(cls,text)=>{const b=document.createElement('div');b.className=cls;b.textContent=text;e.appendChild(b)};if(list.length)add('error',`Some feed data was ignored to protect standings: ${list.join(' · ')}`);if(hold)add('error rules-hold-banner',`ON HOLD · Ruling data unavailable (${hold}). Standings are on hold until the contest rules and rulings load; no game is graded from the NFL feed alone.`);if(stale)add('notice rules-stale-banner','RULINGS STALE · The contest rules and rulings could not be refreshed just now. The rulings last verified on this page still apply until they load again.');if(notes.length)add('notice rules-review-banner',`UNDER REVIEW · ${notes.join(' · ')}`)}
+function warn(list,{hold=null,notes=[],stale=false}={}){const e=$('error');e.replaceChildren();const add=(cls,text)=>{const b=document.createElement('div');b.className=cls;b.textContent=text;e.appendChild(b)};if(list.length)add('error',`Some feed data was ignored to protect standings: ${list.join(' · ')}`);if(hold)add('error rules-hold-banner',`ON HOLD · Ruling data unavailable (${hold}). Standings are on hold until the contest rules and rulings load; no game is graded from the NFL feed alone.`);if(stale)add('notice rules-stale-banner','RULINGS STALE · The contest rules and rulings could not be refreshed just now. The rulings last verified on this page still apply until they load again.');if(notes.length)add('notice rules-review-banner',`UNDER REVIEW · ${notes.join(' · ')}`);if(PUB_STALE)add('notice publication-stale-banner',`PUBLISHED DATA STALE · ${PUB_STALE.reason}. The standings still use Week ${PUB.week} revision ${PUB.revision}, the last publication verified on this page, until the current one loads.`);if(SWITCH_ERROR)add('error week-switch-banner',`Unable to switch Pick'em week: ${SWITCH_ERROR.season} Week ${SWITCH_ERROR.week} could not be loaded (${SWITCH_ERROR.message}). Week ${PUB.week} stays on screen.`)}
 // HDC-12: the warnings, hold and review notes for this refresh. A void game is resolved by its ruling, so its HDC-11
 // "awaiting a pool ruling" warning no longer applies; every other HDC-09/10 warning stays, protection unchanged. A held game
 // is ungraded and says why. A void the feed now contradicts stays applied and is UNDER REVIEW. Rulings kept from an earlier
@@ -365,19 +427,96 @@ function eventContextWarning(e,a,h){
 }
 function selectEvent(events,a,h,old){const q=events.filter(e=>{const c=e?.competitions?.[0],competitors=Array.isArray(c?.competitors)?c.competitors:[],x=competitors.find(v=>v?.homeAway==='away'),y=competitors.find(v=>v?.homeAway==='home');return norm(x?.team?.abbreviation)===a&&norm(y?.team?.abbreviation)===h});if(!q.length)return{event:null,warning:`${a}-${h}: expected game missing from feed`,missing:true};if(q.length!==1)return{event:null,warning:`${a}-${h}: duplicate events ignored`};const e=q[0],pair=exactCompetitorPair(e);if(!pair||norm(pair.away?.team?.abbreviation)!==a||norm(pair.home?.team?.abbreviation)!==h)return{event:null,warning:`${a}-${h}: malformed competitor data ignored`};const contextWarning=eventContextWarning(e,a,h);if(contextWarning)return{event:null,warning:contextWarning};if(old.eventId&&e.id&&String(e.id)!==String(old.eventId))return{event:null,warning:`${a}-${h}: event identity changed`};return{event:e,warning:null}}
 function ageSeconds(ts){const ms=Date.parse(ts);if(!Number.isFinite(ms))return null;const delta=Date.now()-ms;if(delta<-60000)return null;return Math.max(0,Math.floor(delta/1000))}
-function setSync(fetchedAt,warnings=[],{hold=false,review=false,stale=false}={}){lastFetchedAt=typeof fetchedAt==='string'?fetchedAt:null;const age=ageSeconds(lastFetchedAt),delayed=age===null||age>30,incomplete=warnings.length>0,label=hold?'ON HOLD':incomplete?'INCOMPLETE':review?'UNDER REVIEW':delayed?'DELAYED':'LIVE',ageText=age===null?'age unknown':`data ${age}s old`;$('sync').textContent=`${label}${stale?' · RULINGS STALE':''} · ${ageText}${warnings.length?` · ${warnings.length} warning${warnings.length===1?'':'s'}`:''}`;$('dot').style.background=hold?'var(--red)':incomplete||delayed||review||stale?'var(--gold)':'var(--green)'}
+// HDC-15: published data that could not be verified is never LIVE: it takes LIVE's (or DELAYED's) place and rides along with
+// every more serious state, which keeps its precedence.
+function setSync(fetchedAt,warnings=[],{hold=false,review=false,stale=false}={}){lastFetchedAt=typeof fetchedAt==='string'?fetchedAt:null;const age=ageSeconds(lastFetchedAt),delayed=age===null||age>30,incomplete=warnings.length>0,published=PUB_STALE!==null,label=hold?'ON HOLD':incomplete?'INCOMPLETE':review?'UNDER REVIEW':published?'PUBLISHED DATA STALE':delayed?'DELAYED':'LIVE',ageText=age===null?'age unknown':`data ${age}s old`;$('sync').textContent=`${label}${published&&label!=='PUBLISHED DATA STALE'?' · PUBLISHED DATA STALE':''}${stale?' · RULINGS STALE':''} · ${ageText}${warnings.length?` · ${warnings.length} warning${warnings.length===1?'':'s'}`:''}`;$('dot').style.background=hold?'var(--red)':incomplete||delayed||review||stale||published?'var(--gold)':'var(--green)'}
 async function feed(signal){const url=`${ESPN_SCOREBOARD}?dates=${CFG.season}&seasontype=2&week=${CFG.week}&limit=100&_=${Date.now()}`,r=await fetch(url,{signal,cache:'no-store',headers:{Accept:'application/json'}});if(!r.ok)throw new Error(`ESPN ${r.status}`);const j=await r.json();if(!j||!Array.isArray(j.events))throw new Error('invalid ESPN payload');return{fetchedAt:new Date().toISOString(),events:j.events}}
 // Each refresh reads the scores and the contest's rules and rulings together. The protected feed path reads and writes
 // only the NFL facts (NFL[i] is the last verified game and carries the event id the HDC-09 guard compares); the scoring
 // view is derived again on every render. A rulings load that fails keeps rulings already verified this session, shown as
-// RULINGS STALE; with none, the contest holds and nothing is graded from the NFL feed alone.
-async function update(){if(!CFG)return;const id=++gen;if(ctl)ctl.abort();const c=new AbortController;ctl=c;$('refresh').disabled=true;$('sync').textContent='Updating…';try{const [scores,rulings]=await Promise.allSettled([feed(c.signal),CFG.season<FIRST_RULING_SEASON?Promise.resolve(null):loadRulings(c.signal)]);if(id!==gen)return;if(rulings.status==='rejected')console.warn(rulings.reason);RULINGS=evaluateContestRulings({contestId:contestIdFor(CFG.season,'pickem'),contestType:'pickem',season:CFG.season,...(rulings.status==='fulfilled'?{data:rulings.value}:{error:rulings.reason}),previous:RULINGS});if(scores.status==='rejected')throw scores.reason;const j=scores.value,issues=[],next=M.map(([a,h],i)=>{const s=selectEvent(j.events,a,h,NFL[i]);if(s.warning)issues.push({i,text:s.warning,missing:s.missing===true});if(!s.event)return NFL[i];const p=parseEvent(s.event,a,h,NFL[i],i===TIEBREAK_INDEX);if(p.warning)issues.push({i,text:p.warning,halted:p.halted});return p.game});if(id!==gen)return;NFL=next;LAST_EVENTS=j.events;FEED_ISSUES=issues;render();report(j.fetchedAt)}catch(e){if(e?.name==='AbortError'||id!==gen)return;render();const staleText=rulingsStale()?' · RULINGS STALE':'';$('sync').textContent=lastFetchedAt?`FEED UNAVAILABLE${staleText} · last good ${ageSeconds(lastFetchedAt)??'?'}s ago`:`FEED UNAVAILABLE${staleText}`;$('dot').style.background='var(--red)';warn(['Automatic score refresh failed. Existing results are preserved; tap REFRESH to retry.'],{hold:rulingsUnavailable()?RULINGS.reason:null,stale:rulingsStale()})}finally{if(id===gen){$('refresh').disabled=false;if(ctl===c)ctl=null}}}
+// RULINGS STALE; with none, the contest holds and nothing is graded from the NFL feed alone. HDC-15: it runs inside a refresh
+// generation (refresh() or a week switch), which owns the abort controller and the REFRESH button.
+async function update(id,signal){try{const [scores,rulings]=await Promise.allSettled([feed(signal),CFG.season<FIRST_RULING_SEASON?Promise.resolve(null):loadRulings(signal)]);if(id!==gen)return;if(rulings.status==='rejected')console.warn(rulings.reason);RULINGS=evaluateContestRulings({contestId:contestIdFor(CFG.season,'pickem'),contestType:'pickem',season:CFG.season,...(rulings.status==='fulfilled'?{data:rulings.value}:{error:rulings.reason}),previous:RULINGS});if(scores.status==='rejected')throw scores.reason;const j=scores.value,issues=[],next=M.map(([a,h],i)=>{const s=selectEvent(j.events,a,h,NFL[i]);if(s.warning)issues.push({i,text:s.warning,missing:s.missing===true});if(!s.event)return NFL[i];const p=parseEvent(s.event,a,h,NFL[i],i===TIEBREAK_INDEX);if(p.warning)issues.push({i,text:p.warning,halted:p.halted});return p.game});if(id!==gen)return;NFL=next;LAST_EVENTS=j.events;FEED_ISSUES=issues;render();report(j.fetchedAt)}catch(e){if(e?.name==='AbortError'||id!==gen)return;render();const staleText=`${PUB_STALE?' · PUBLISHED DATA STALE':''}${rulingsStale()?' · RULINGS STALE':''}`;$('sync').textContent=lastFetchedAt?`FEED UNAVAILABLE${staleText} · last good ${ageSeconds(lastFetchedAt)??'?'}s ago`:`FEED UNAVAILABLE${staleText}`;$('dot').style.background='var(--red)';warn(['Automatic score refresh failed. Existing results are preserved; tap REFRESH to retry.'],{hold:rulingsUnavailable()?RULINGS.reason:null,stale:rulingsStale()})}}
+// HDC-15. A full refresh: verify that the config on screen is still the published revision of its week (a newer revision is
+// loaded and validated before it replaces it whole), then read the scores and the rules and rulings for whatever config is
+// active. One generation covers both, so a later refresh or week switch supersedes all of it.
+async function refresh({verify=true}={}){
+  if(!CFG)return;
+  const id=++gen;if(ctl)ctl.abort();const c=new AbortController;ctl=c;refreshStartedAt=Date.now();switching=false;
+  $('refresh').disabled=true;$('sync').textContent='Updating…';
+  try{if(verify)await verifyPublication(id,c.signal);if(id===gen)await update(id,c.signal)}
+  finally{if(id===gen){$('refresh').disabled=false;if(ctl===c)ctl=null}}
+}
+// The index says which weeks are published and at which revision. An unchanged revision downloads nothing more; a changed one
+// downloads that week's full row only. Anything that cannot be verified (the index or the row unavailable, malformed,
+// ambiguous, not that week, or going backwards) leaves the last verified config on screen, marked PUBLISHED DATA STALE, and
+// is retried by the next refresh.
+async function verifyPublication(id,signal){
+  let index,row;
+  try{index=await loadPublicationIndex(signal)}
+  catch(e){if(e?.name!=='AbortError'&&id===gen)markStale(`the published week list could not be checked (${e.message||e})`);return}
+  if(id!==gen)return;
+  const entry=index.find(x=>x.season===PUB.season&&x.week===PUB.week);
+  if(!entry){markStale(`${PUB.season} Week ${PUB.week} is no longer listed as published`);return}
+  if(entry.revision<PUB.revision){markStale(`the published revision went back from ${PUB.revision} to ${entry.revision}`);return}
+  showWeeks(index);
+  if(entry.revision===PUB.revision){markVerified();return}
+  try{row=await loadPublishedWeek(entry,signal)}
+  catch(e){if(e?.name!=='AbortError'&&id===gen)markStale(`revision ${entry.revision} is published but could not be loaded (${e.message||e})`);return}
+  if(id===gen)installPublication(row);
+}
+function markStale(reason){PUB_STALE={reason};renderWeekLine()}
+function markVerified(){PUB_STALE=null;renderWeekLine()}
+// The selector lists the published weeks in the index's order; the week on screen stays selected, so a newly published week
+// appears without moving the participant or the URL.
+function showWeeks(index,selected=PUB){
+  const key=x=>`${x.season}-${x.week}`,select=$('weekSelect');
+  if(index.map(key).join()!==PUB_WEEKS.map(key).join()){select.innerHTML=index.map(x=>`<option value="${key(x)}">${x.season} · Week ${x.week}</option>`).join('');select.value=key(selected)}
+  PUB_WEEKS=index;
+}
+// A validated row replaces the config on screen whole (the initial/choose path); it renders at once as one revision.
+function installPublication(row){applyConfig(row.config,{season:row.season,week:row.week,revision:row.revision,publishedAt:row.publishedAt});warn([]);render()}
+// A chosen week replaces the week on screen only once its exact published row has loaded and validated. A failed load keeps
+// the week on screen, puts the selector back, says so (until the next choice), and refreshes the week on screen as usual.
+async function switchWeek(season,week){
+  if(PUB&&season===PUB.season&&week===PUB.week){if(switching)void refresh();return}
+  const id=++gen;if(ctl)ctl.abort();const c=new AbortController;ctl=c;refreshStartedAt=Date.now();switching=true;SWITCH_ERROR=null;
+  $('refresh').disabled=true;if(CFG)$('sync').textContent='Updating…';
+  try{
+    let row;
+    try{row=await loadPublishedWeek({season,week,revision:PUB_WEEKS.find(x=>x.season===season&&x.week===week)?.revision??1},c.signal)}
+    catch(e){
+      if(e?.name==='AbortError'||id!==gen)return;
+      switching=false;console.warn(e);
+      if(!CFG){$('error').innerHTML=`<div class="error">Unable to load weekly pool data: ${esc(e.message||String(e))}</div>`;return}
+      $('weekSelect').value=`${PUB.season}-${PUB.week}`;SWITCH_ERROR={season,week,message:e.message||String(e)};renderWeekLine();
+      await verifyPublication(id,c.signal);if(id===gen)await update(id,c.signal);
+      return;
+    }
+    if(id!==gen)return;
+    switching=false;installPublication(row);
+    const u=new URL(location.href);u.searchParams.set('season',String(season));u.searchParams.set('week',String(week));history.replaceState(history.state,'',u);
+    await update(id,c.signal);
+  }finally{if(id===gen){switching=false;$('refresh').disabled=false;if(ctl===c)ctl=null}}
+}
+// Timer refreshes, resume and view activation refresh only the active Pick'em view of a visible page, decided before any
+// request is made, and join a refresh that is already running (unless it has stalled) instead of starting a second one.
+function autoRefresh(){if(CFG&&document.visibilityState==='visible'&&document.body.dataset.view!=='survivor'&&!switching&&(!ctl||Date.now()-refreshStartedAt>=STALL_MS))void refresh()}
+// HDC-15: boot reads the publication index, chooses the requested (or latest) week, and installs that week's full row once it
+// has validated; the scores and the rules and rulings follow. The selector is filled from the index first, so another week
+// can still be chosen if this one cannot be loaded; a week chosen while it loads takes the page over, and boot then installs
+// and reports nothing.
 async function loadWeeks(){
-  const token=await anonymousToken(),url=`${NEON_DATA_URL}/nfl_pool_weeks?select=season,week,status,config,revision,published_at,locked_at&status=eq.locked&order=season.asc,week.asc`,r=await fetch(url,{cache:'no-store',headers:{Authorization:`Bearer ${token}`,Accept:'application/json'}});if(!r.ok)throw new Error(`week data ${r.status}`);const data=await r.json();if(!Array.isArray(data)||!data.length)throw new Error('No published pool weeks found');
-  const select=$('weekSelect');select.innerHTML=data.map(x=>`<option value="${x.season}-${x.week}">${x.season} · Week ${x.week}</option>`).join('');const qs=new URLSearchParams(location.search),requested=Number(qs.get('week')),season=Number(qs.get('season'))||Math.max(...data.map(x=>x.season));let chosen=requested?data.find(x=>x.season===season&&x.week===requested):null;if(!chosen)chosen=data[data.length-1];select.value=`${chosen.season}-${chosen.week}`;select.addEventListener('change',()=>{const [s,w]=select.value.split('-');const u=new URL(location.href);u.searchParams.set('season',s);u.searchParams.set('week',w);location.href=u.toString()});applyConfig(chosen.config);render();await update();
+  const index=await loadPublicationIndex();if(!index.length)throw new Error('No published pool weeks found');
+  const qs=new URLSearchParams(location.search),requested=Number(qs.get('week')),season=Number(qs.get('season'))||Math.max(...index.map(x=>x.season));let chosen=requested?index.find(x=>x.season===season&&x.week===requested):null;if(!chosen)chosen=index[index.length-1];
+  const select=$('weekSelect');showWeeks(index,chosen);select.addEventListener('change',()=>{const [s,w]=select.value.split('-').map(Number);void switchWeek(s,w)});
+  const bootGen=gen;let row;
+  try{row=await loadPublishedWeek(chosen)}catch(e){if(gen!==bootGen)return;throw e}
+  if(gen!==bootGen)return;
+  applyConfig(row.config,{season:row.season,week:row.week,revision:row.revision,publishedAt:row.publishedAt});render();await refresh({verify:false});
 }
 setupViewNavigation();
-$('refresh').addEventListener('click',update);
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&CFG&&document.body.dataset.view!=='survivor')update()});
+$('refresh').addEventListener('click',()=>void refresh());
+document.addEventListener('visibilitychange',autoRefresh);
 loadWeeks().catch(e=>{$('sync').textContent='CONFIG UNAVAILABLE';$('dot').style.background='var(--red)';$('error').innerHTML=`<div class="error">Unable to load weekly pool data: ${esc(e.message)}</div>`;console.error(e)});
-setInterval(()=>{if(CFG)update()},20000);
+setInterval(autoRefresh,20000);

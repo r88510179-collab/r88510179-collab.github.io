@@ -7,10 +7,18 @@ const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aw
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
 const ESPN_SCOREBOARD='https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
 const LOGO_CODE={WAS:'wsh'};
-let rows=[],cfg=null,resultsByWeek=[],nextWeekMatchups=[],nextWeekFetchedAt=0,nextWeekError='',anonToken=null,anonExpiresAt=0,anonRequest=null,refreshId=0,nextWeekRequestId=0,nextWeekController=null;
+let cfg=null,resultsByWeek=[],nextWeekMatchups=[],nextWeekFetchedAt=0,nextWeekError='',anonToken=null,anonExpiresAt=0,anonRequest=null,refreshId=0,nextWeekRequestId=0,nextWeekController=null;
 // HDC-12: the contest's validated rules and rulings (null until the first load for the selected week) and the raw events
 // of each week, kept only to check an applied ruling against what the feed says now.
 let rulingData=null,rawEventsByWeek=[];
+// HDC-15. pub is the identity of the published snapshot cfg was installed from (season, week, revision, published_at), set in
+// the same step as cfg, so the revision on screen is always the one being shown. pubStale says why that publication could not
+// be verified as the current one (null while it is), pubWeeks is the last valid publication index (the selector's weeks) and
+// switchError a chosen week that could not be loaded. running, refreshStartedAt and switching let a timer, a resume or a view
+// change join a refresh that is already running instead of starting a second one.
+let pub=null,pubStale=null,pubWeeks=[],switchError='',running=0,refreshStartedAt=0,switching=false;
+// A refresh still running after STALL_MS (a hung request) no longer holds the next timer refresh back.
+const STALL_MS=15000,PUB_INDEX_COLUMNS='season,week,revision,published_at,status',PUB_ROW_COLUMNS='season,week,status,revision,published_at,config';
 const activeScoreControllers=new Set();
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
@@ -36,6 +44,43 @@ async function loadRulings(contestId,week,signal){
     get('nfl_incident_rulings',PUBLIC_COLUMNS.rulings,`contest_id=eq.${id}&week=lte.${week}&order=week.asc,chain_seq.asc`)
   ]);
   return{contests,policies,rulings};
+}
+// HDC-15: one read of the Survivor publication table. Callers run it through withinTime, so it is time-limited and abandoned
+// with its refresh like the score feeds.
+async function readPublished(query,signal){
+  const token=await anonymousToken(),r=await fetch(`${NEON_DATA_URL}/nfl_survivor_weeks?${query}`,{cache:'no-store',headers:{Authorization:`Bearer ${token}`,Accept:'application/json'},signal});
+  if(!r.ok)throw new Error(`Survivor data ${r.status}`);
+  const data=await r.json();if(!Array.isArray(data))throw new Error('Survivor data is not a list');return data;
+}
+// The identity of a published snapshot: a locked season and week at a whole revision of at least 1. Anything else is refused.
+function publishedIdentity(x){
+  if(!x||typeof x!=='object'||Array.isArray(x))throw new Error('a published Survivor row is malformed');
+  const {season,week,revision,status,published_at:publishedAt=null}=x;
+  if(!Number.isSafeInteger(season)||season<1||!Number.isSafeInteger(week)||week<1)throw new Error('a published Survivor row has no valid season and week');
+  if(!Number.isSafeInteger(revision)||revision<1)throw new Error(`${season} Survivor Week ${week} has no valid revision`);
+  if(status!=='locked')throw new Error(`${season} Survivor Week ${week} is not locked`);
+  if(publishedAt!==null&&typeof publishedAt!=='string')throw new Error(`${season} Survivor Week ${week} has no valid publication time`);
+  return{season,week,revision,publishedAt};
+}
+// The publication index: which Survivor weeks are published, at which revision. Identity columns only, never a snapshot; a
+// malformed or repeated week makes the whole index unusable, so no week is ever chosen from an ambiguous list.
+async function loadPublicationIndex(signal){
+  const seen=new Set();
+  return(await readPublished(`select=${PUB_INDEX_COLUMNS}&status=eq.locked&order=season.asc,week.asc`,signal)).map(x=>{
+    const id=publishedIdentity(x),key=`${id.season}-${id.week}`;
+    if(seen.has(key))throw new Error(`Survivor ${id.season} Week ${id.week} is listed more than once`);
+    seen.add(key);return id;
+  });
+}
+// The full published snapshot of one week, accepted only when it is exactly that locked week, at the listed revision or a
+// later one, and its config validates.
+async function loadPublishedWeek({season,week,revision},signal){
+  const data=await readPublished(`select=${PUB_ROW_COLUMNS}&season=eq.${season}&week=eq.${week}&status=eq.locked`,signal);
+  if(data.length!==1)throw new Error(data.length?`Survivor ${season} Week ${week} came back more than once`:`Survivor ${season} Week ${week} is not published`);
+  const row=publishedIdentity(data[0]);
+  if(row.season!==season||row.week!==week)throw new Error(`asked for Survivor ${season} Week ${week}, got ${row.season} Week ${row.week}`);
+  if(row.revision<revision)throw new Error(`got Survivor revision ${row.revision}, older than the published revision ${revision}`);
+  return{...row,config:validateConfig(data[0].config)};
 }
 // The ruling overlay survivor-math reads, or null before the first load (nothing is graded then: no results either).
 function rulingLookup(){return rulingData&&cfg?survivorRulingLookup(rulingData,{eventsByWeek:rawEventsByWeek,season:cfg.season}):null}
@@ -162,8 +207,11 @@ function render(){
   renderDecision(summary,ruling,held,R);
   const rules=$('svRules');
   if(rules)rules.innerHTML=rulesHtml(rulingData?rulesModel(rulingData,{week:cfg.week,slotState:x=>R?.forPick(x.week,x.away||x.home)||null}):null);
-  $('svMeta').textContent=`Week ${cfg.week} · revision ${rows.find(r=>r.config===cfg)?.revision||'—'}`;
+  $('svMeta').textContent=metaText();
 }
+function metaText(){return`Week ${cfg.week} · revision ${pub.revision}${pubStale?' · PUBLISHED DATA STALE':''}`}
+// The chosen week that could not be loaded, and why the publication on screen is stale.
+function renderNotices(){$('survivorError').innerHTML=`${switchError?`<div class="error">${esc(switchError)}</div>`:''}${pubStale?`<div class="notice">PUBLISHED DATA STALE · ${esc(pubStale.reason)}. Survivor still shows Week ${pub.week} revision ${pub.revision}, the last publication verified on this page, until the current one loads.</div>`:''}`}
 
 async function updateDecisionSchedule(force=false){
   if(!cfg)return;const scheduleCfg=cfg;
@@ -201,8 +249,9 @@ function withinTime(task,label){
   });
 }
 
-async function updateScores(){
-  if(!cfg)return;abortActiveScoreRequests();const id=++refreshId,scoreCfg=cfg;
+// HDC-15: it runs inside a refresh generation (refresh() or a week switch), which aborts the requests it supersedes.
+async function updateScores(id){
+  if(!cfg)return;const scoreCfg=cfg;
   try{
     const current=scoreCfg.week-1,indexes=Array.from({length:scoreCfg.week},(_,i)=>i).filter(i=>i===current||!weekSettled(i));
     // HDC-12: the contest's rules and rulings load with the scores, under the same time limit and cancellation.
@@ -225,35 +274,100 @@ async function updateScores(){
     failed.forEach(f=>console.warn(f.reason));
     if(failed.some(f=>f.i===current||!(resultsByWeek[f.i] instanceof Map)))throw failed.find(f=>f.i===current||!(resultsByWeek[f.i] instanceof Map)).reason;
     // Rulings kept from an earlier load (stale) still apply, and the feed status always says so.
-    const R=rulingLookup(),flags=R?.status==='hold'?null:[...feedFlags(R),...(rulingData?.stale?['RULINGS STALE']:[])];
-    $('svFeed').textContent=!flags?'ON HOLD · RULING DATA UNAVAILABLE':flags.length?`LIVE · ${flags.join(' · ')}`:'LIVE · NFL results';$('svFeed').className=`survivor-feed ${!flags||flags.length?'warn':'ok'}`;render();void updateDecisionSchedule();
-  }catch(e){if(id!==refreshId||cfg!==scoreCfg)return;$('svFeed').textContent=`RESULT FEED UNAVAILABLE${rulingData?.stale?' · RULINGS STALE':''}`;$('svFeed').className='survivor-feed warn';render();console.warn(e)}
+    // HDC-15: a snapshot that could not be verified as the current publication is never LIVE.
+    const R=rulingLookup(),flags=R?.status==='hold'?null:[...feedFlags(R),...(rulingData?.stale?['RULINGS STALE']:[])],lead=pubStale?'PUBLISHED DATA STALE':'LIVE';
+    $('svFeed').textContent=!flags?`ON HOLD · RULING DATA UNAVAILABLE${pubStale?' · PUBLISHED DATA STALE':''}`:flags.length?`${lead} · ${flags.join(' · ')}`:`${lead} · NFL results`;$('svFeed').className=`survivor-feed ${!flags||flags.length||pubStale?'warn':'ok'}`;render();void updateDecisionSchedule();
+  }catch(e){if(id!==refreshId||cfg!==scoreCfg)return;$('svFeed').textContent=`RESULT FEED UNAVAILABLE${pubStale?' · PUBLISHED DATA STALE':''}${rulingData?.stale?' · RULINGS STALE':''}`;$('svFeed').className='survivor-feed warn';render();console.warn(e)}
 }
 
-function choose(row,{push=false}={}){
+// A validated snapshot replaces the one on screen whole (the choose path): everything derived from the previous one is reset
+// and the view renders at once as one revision.
+function install(row){
   const nextCfg=validateConfig(row.config);
-  abortActiveScoreRequests();refreshId++;
   if(nextWeekController){nextWeekController.abort();nextWeekController=null}
   nextWeekRequestId++;
-  cfg=nextCfg;resultsByWeek=[];rawEventsByWeek=[];rulingData=null;nextWeekMatchups=[];nextWeekFetchedAt=0;nextWeekError='';
-  $('survivorWeekSelect').value=`${row.season}-${row.week}`;$('survivorError').innerHTML='';render();void updateScores();
-  if(push){const u=new URL(location.href);u.searchParams.set('view','survivor');u.searchParams.set('sw',String(row.week));u.searchParams.set('season',String(row.season));history.replaceState(history.state,'',u)}
+  cfg=nextCfg;pub={season:row.season,week:row.week,revision:row.revision,publishedAt:row.publishedAt};pubStale=null;
+  resultsByWeek=[];rawEventsByWeek=[];rulingData=null;nextWeekMatchups=[];nextWeekFetchedAt=0;nextWeekError='';
+  $('survivorWeekSelect').value=`${row.season}-${row.week}`;$('svFeed').textContent='LOADING RESULTS';$('svFeed').className='survivor-feed';renderNotices();render();
 }
+// HDC-15. A full refresh: verify that the snapshot on screen is still the published revision of its week (a newer revision is
+// loaded and validated before it replaces it whole), then read the score feeds and the rules and rulings for whatever snapshot
+// is active. One generation covers both, so a later refresh or week switch supersedes all of it.
+async function refresh({verify=true}={}){
+  if(!cfg)return;
+  abortActiveScoreRequests();const id=++refreshId;running=id;refreshStartedAt=Date.now();switching=false;
+  try{if(verify)await verifyPublication(id);if(id===refreshId)await updateScores(id)}
+  finally{if(running===id)running=0}
+}
+// The index says which weeks are published and at which revision. An unchanged revision downloads nothing more; a changed one
+// downloads that week's snapshot only. Anything that cannot be verified (the index or the snapshot unavailable, malformed,
+// ambiguous, not that week, or going backwards) leaves the last verified snapshot on screen, marked PUBLISHED DATA STALE, and
+// is retried by the next refresh.
+async function verifyPublication(id){
+  let index,row;
+  try{index=await withinTime(signal=>loadPublicationIndex(signal),'Survivor publication list')}
+  catch(e){if(id===refreshId)markStale(`the published week list could not be checked (${e.message||e})`);return}
+  if(id!==refreshId)return;
+  const entry=index.find(x=>x.season===pub.season&&x.week===pub.week);
+  if(!entry){markStale(`${pub.season} Week ${pub.week} is no longer listed as published`);return}
+  if(entry.revision<pub.revision){markStale(`the published revision went back from ${pub.revision} to ${entry.revision}`);return}
+  showWeeks(index);
+  if(entry.revision===pub.revision){markVerified();return}
+  try{row=await withinTime(signal=>loadPublishedWeek(entry,signal),'Survivor publication')}
+  catch(e){if(id===refreshId)markStale(`revision ${entry.revision} is published but could not be loaded (${e.message||e})`);return}
+  if(id===refreshId)install(row);
+}
+function markStale(reason){pubStale={reason};$('svMeta').textContent=metaText();renderNotices()}
+function markVerified(){pubStale=null;$('svMeta').textContent=metaText();renderNotices()}
+// The selector lists the published weeks in the index's order; the week on screen stays selected, so a newly published week
+// appears without moving the participant or the URL.
+function showWeeks(index,selected=pub){
+  const key=x=>`${x.season}-${x.week}`,select=$('survivorWeekSelect');
+  if(index.map(key).join()!==pubWeeks.map(key).join()){select.innerHTML=index.map(x=>`<option value="${key(x)}">${x.season} · Week ${x.week}</option>`).join('');select.value=key(selected)}
+  pubWeeks=index;
+}
+// A chosen week replaces the week on screen only once its exact published snapshot has loaded and validated. A failed load
+// keeps the week on screen, puts the selector back, says so (until the next choice), and refreshes the week on screen as usual.
+async function switchWeek(season,week){
+  const select=$('survivorWeekSelect');
+  if(pub&&season===pub.season&&week===pub.week){if(switching)void refresh();return}
+  abortActiveScoreRequests();const id=++refreshId;running=id;refreshStartedAt=Date.now();switching=true;switchError='';
+  try{
+    let row;
+    try{row=await withinTime(signal=>loadPublishedWeek({season,week,revision:pubWeeks.find(x=>x.season===season&&x.week===week)?.revision??1},signal),'Survivor publication')}
+    catch(e){
+      if(id!==refreshId)return;
+      switching=false;console.warn(e);switchError=`Unable to switch Survivor week: ${e.message||String(e)}`;
+      if(!cfg){$('survivorError').innerHTML=`<div class="error">${esc(switchError)}</div>`;return}
+      select.value=`${pub.season}-${pub.week}`;renderNotices();
+      await verifyPublication(id);if(id===refreshId)await updateScores(id);
+      return;
+    }
+    if(id!==refreshId)return;
+    switching=false;install(row);
+    const u=new URL(location.href);u.searchParams.set('view','survivor');u.searchParams.set('sw',String(week));u.searchParams.set('season',String(season));history.replaceState(history.state,'',u);
+    await updateScores(id);
+  }finally{if(running===id){running=0;switching=false}}
+}
+// Timer refreshes, resume and view activation refresh Survivor only while it is the active view of a visible page, decided
+// before any request is made, and join a refresh that is already running (unless it has stalled) instead of starting a second.
+function autoRefresh(){if(cfg&&document.visibilityState==='visible'&&document.body.dataset.view==='survivor'&&!switching&&(!running||Date.now()-refreshStartedAt>=STALL_MS))void refresh()}
 
+// HDC-15: boot reads the publication index, chooses the requested (or latest) week, and installs that week's snapshot once it
+// has validated; the score feeds and the rules and rulings follow. The selector is filled from the index first, so another
+// week can still be chosen if this one cannot be loaded; a week chosen while it loads takes the view over, and boot then
+// installs and reports nothing.
 async function load(){
-  const token=await anonymousToken(),url=`${NEON_DATA_URL}/nfl_survivor_weeks?select=season,week,status,config,revision,published_at&status=eq.locked&order=season.asc,week.asc`,r=await fetch(url,{cache:'no-store',headers:{Authorization:`Bearer ${token}`,Accept:'application/json'}});
-  if(!r.ok)throw new Error(`Survivor data ${r.status}`);rows=await r.json();if(!Array.isArray(rows)||!rows.length)throw new Error('No published Survivor weeks found');
-  const sel=$('survivorWeekSelect');sel.innerHTML=rows.map(x=>`<option value="${x.season}-${x.week}">${x.season} · Week ${x.week}</option>`).join('');
-  const qs=new URLSearchParams(location.search),requested=Number(qs.get('sw')),season=Number(qs.get('season'))||rows[rows.length-1].season;let chosen=requested?rows.find(x=>x.season===season&&x.week===requested):null;if(!chosen)chosen=rows[rows.length-1];
-  sel.addEventListener('change',()=>{
-    const previous=cfg?`${cfg.season}-${cfg.week}`:sel.value,[s,w]=sel.value.split('-').map(Number),row=rows.find(x=>x.season===s&&x.week===w);
-    if(!row)return;
-    try{choose(row,{push:true})}
-    catch(e){sel.value=previous;$('survivorError').innerHTML=`<div class="error">Unable to switch Survivor week: ${esc(e.message||String(e))}</div>`;console.warn(e)}
-  });
-  choose(chosen);
+  const index=await withinTime(signal=>loadPublicationIndex(signal),'Survivor publication list');if(!index.length)throw new Error('No published Survivor weeks found');
+  const qs=new URLSearchParams(location.search),requested=Number(qs.get('sw')),season=Number(qs.get('season'))||index[index.length-1].season;let chosen=requested?index.find(x=>x.season===season&&x.week===requested):null;if(!chosen)chosen=index[index.length-1];
+  const sel=$('survivorWeekSelect');showWeeks(index,chosen);sel.addEventListener('change',()=>{const [s,w]=sel.value.split('-').map(Number);void switchWeek(s,w)});
+  const bootId=refreshId;let row;
+  try{row=await withinTime(signal=>loadPublishedWeek(chosen,signal),'Survivor publication')}catch(e){if(refreshId!==bootId)return;throw e}
+  if(refreshId!==bootId)return;
+  install(row);await refresh({verify:false});
 }
 
 load().catch(e=>{$('survivorError').innerHTML=`<div class="error">Survivor is not published yet: ${esc(e.message)}</div>`;console.warn(e)});
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&cfg&&document.body.dataset.view==='survivor')updateScores()});
-setInterval(()=>{if(cfg&&document.body.dataset.view==='survivor')updateScores()},20000);
+document.addEventListener('visibilitychange',autoRefresh);
+document.addEventListener('poolcenter:viewchange',autoRefresh);
+setInterval(autoRefresh,20000);
