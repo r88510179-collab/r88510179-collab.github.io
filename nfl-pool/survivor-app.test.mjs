@@ -71,11 +71,12 @@ const publicationKind=u=>(u.searchParams.get('select')||'*').split(',').some(c=>
 
 // HDC-15 additions: the published rows (a copy, so a test can republish or add a week), a log of every request by kind (token,
 // index: a publication read without a config, row: one with a config, rulings, score), per-kind hooks that can answer a
-// request instead of the default, the History API calls and the document's visibility. refresh() is a visible timer tick (the
+// request instead of the default (bootHooks are in place before the view boots), the History API calls and the document's
+// visibility. refresh() is a visible timer tick (the
 // tick a browser runs), tick() the timer callback as the document currently is, resume() a hidden-to-visible transition.
-async function view(feeds,rowsOverride=null,app=patched,store=rulingStore(),{tokenTtl=3600,search='?view=survivor'}={}){
+async function view(feeds,rowsOverride=null,app=patched,store=rulingStore(),{tokenTtl=3600,search='?view=survivor',bootHooks={}}={}){
   const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new El());return els.get(id)},docListeners={};
-  const seen=[],signals=[],rulingRequests=[],calls=[],hooks={},historyCalls=[],doc={getElementById:$,body:{dataset:{view:'survivor'}},visibilityState:'hidden',addEventListener(t,f){(docListeners[t]||=[]).push(f)},dispatchEvent(e){for(const fn of docListeners[e.type]||[])fn(e);return true}};
+  const seen=[],signals=[],rulingRequests=[],calls=[],hooks={...bootHooks},historyCalls=[],doc={getElementById:$,body:{dataset:{view:'survivor'}},visibilityState:'hidden',addEventListener(t,f){(docListeners[t]||=[]).push(f)},dispatchEvent(e){for(const fn of docListeners[e.type]||[])fn(e);return true}};
   globalThis.document=doc;
   globalThis.location={href:`https://example.test/nfl-pool/${search}`,search};
   globalThis.history={state:null,replaceState(_s,_t,u){historyCalls.push(['replace',String(u)])},pushState(_s,_t,u){historyCalls.push(['push',String(u)])}};
@@ -932,7 +933,7 @@ console.log('survivor HDC-12 contest-ruling load and HDC-14 absent-game, privacy
   };
   const feeds=()=>({1:week(W1,1),2:week(W2,2),3:week(W3,3)});
   const json=data=>({ok:true,status:200,json:async()=>structuredClone(data)}),httpError=status=>({ok:false,status,json:async()=>({})});
-  const open=({rows=[svRow(config,7)],search,tokenTtl}={})=>view(feeds(),rows,patched,rulingStore(),{...(search?{search}:{}),...(tokenTtl?{tokenTtl}:{})});
+  const open=({rows=[svRow(config,7)],search,tokenTtl,store=rulingStore()}={})=>view(feeds(),rows,patched,store,{...(search?{search}:{}),...(tokenTtl?{tokenTtl}:{})});
   const tally=(v,from=0)=>{const t={token:0,index:0,row:0,rulings:0,score:0};for(const c of v.calls.slice(from))t[c.kind]++;return t};
   const kinds=(v,from)=>v.calls.slice(from).map(c=>c.kind);
   const rowWeeks=(v,from)=>v.calls.slice(from).filter(c=>c.kind==='row').map(c=>[c.url.searchParams.get('season'),c.url.searchParams.get('week')]);
@@ -942,6 +943,9 @@ console.log('survivor HDC-12 contest-ruling load and HDC-14 absent-game, privacy
   const SNAPSHOT_HTML=['svTracked','svDistribution','svProgress','svDecisionEntries','svRules'],SNAPSHOT_TEXT=['svSummaryNote','svPoolSize','svEntered','svStillIn','svPending','svDecisionWeek','svDecisionNote'];
   const page=v=>Object.fromEntries([...SNAPSHOT_HTML.map(id=>[id,v.$(id).innerHTML]),...SNAPSHOT_TEXT.map(id=>[id,v.$(id).textContent])]);
   const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r});return{promise,resolve}};
+  // This file shortens every long time limit to 5 ms. A late-response race needs the superseded request still waiting when
+  // the newer refresh or choice starts, so those regressions give each limit a second instead (restored afterwards).
+  const withSlowLimits=async check=>{const fast=globalThis.setTimeout;globalThis.setTimeout=(fn,ms,...a)=>realSetTimeout(fn,ms>=10000?1000:ms,...a);try{await check()}finally{globalThis.setTimeout=fast}};
   const FULL={token:0,index:1,row:0,rulings:3,score:1};
   const stale=(v,label)=>{
     assert.equal(meta(v),'Week 2 · revision 7 · PUBLISHED DATA STALE',`${label}: the revision on screen is marked stale`);
@@ -977,8 +981,11 @@ console.log('survivor HDC-12 contest-ruling load and HDC-14 absent-game, privacy
   });
   await regression('hidden: Survivor timer ticks make no request at all, not even to renew an expired anonymous token',async()=>{
     const v=await open({tokenTtl:30});
-    v.setVisibility('hidden');
-    let from=v.calls.length;v.tick();v.tick();await flush();
+    // Going hidden makes no request either. Each tick is counted with nothing in flight, so a token request one of them
+    // starts cannot hide behind one already on its way.
+    let from=v.calls.length;v.setVisibility('hidden');await flush();
+    assert.deepEqual(kinds(v,from),[],'going hidden makes no request');
+    from=v.calls.length;v.tick();await flush();v.tick();await flush();
     assert.deepEqual(kinds(v,from),[],'no token, Data API or score-feed request from a hidden tick');
     v.doc.visibilityState='visible';from=v.calls.length;v.tick();await flush();
     assert(tally(v,from).token>=1&&tally(v,from).index===1,'control: the same tick while visible renews the token and refreshes');
@@ -1060,7 +1067,8 @@ console.log('survivor HDC-12 contest-ruling load and HDC-14 absent-game, privacy
       ['another row whose week is not an integer',()=>json([id(),id({week:2.5})])],
       ['the selected week missing',()=>json([id({week:3,revision:1})])],
       ['an empty index',()=>json([])],
-      ['a revision older than the one on screen',()=>json([id({revision:6})])]
+      ['a revision older than the one on screen',()=>json([id({revision:6})])],
+      ['a revision older than the one on screen, listed with a new week',()=>json([id({revision:6}),id({week:3,revision:1})])]
     ]){
       const v=await open(),before={...page(v),options:options(v),selected:v.$('survivorWeekSelect').value};
       v.rows[0]=svRow(republished('ARI'),8);v.hooks.index=answer;
@@ -1071,6 +1079,30 @@ console.log('survivor HDC-12 contest-ruling load and HDC-14 absent-game, privacy
       delete v.hooks.index;v.rows[0]=svRow(config,7);await v.refresh();
       current(v,`${label}: a usable index verifying revision 7 again`,7);
     }
+  });
+  await regression('a stale publication never hides a more serious state: ON HOLD, RESULT FEED UNAVAILABLE, unverified results and RULINGS STALE keep their place, and PUBLISHED DATA STALE rides along with each',async()=>{
+    const staleNext=v=>{v.rows[0]=svRow(republished('ARI'),8);v.hooks.row=()=>httpError(500)};
+    const shows=(v,label,feed)=>{
+      assert.equal(v.$('svFeed').textContent,feed,`${label}: the feed status`);
+      assert.match(v.$('svFeed').className,/\bwarn\b/,label);
+      assert.equal(meta(v),'Week 2 · revision 7 · PUBLISHED DATA STALE',`${label}: the revision on screen is marked stale`);
+      assert.match(notices(v),/PUBLISHED DATA STALE · /,`${label}: the publication notice`);
+    };
+    // ON HOLD: the rules and rulings never loaded on this page.
+    const hold=await open({store:rulingStore({nfl_incident_rulings:503})});staleNext(hold);await hold.refresh();
+    shows(hold,'ON HOLD','ON HOLD · RULING DATA UNAVAILABLE · PUBLISHED DATA STALE');
+    assert.match(hold.$('svSummaryNote').textContent,/^ON HOLD · Ruling data unavailable/,'ON HOLD: the summary still says so');
+    // A Week 2 final with no score: one team result cannot be verified.
+    const unverified=await open();staleNext(unverified);unverified.feeds[2]=week(W2,2,{SF:(a,h,n)=>game(a,h,n,{as:null,hs:''})});await unverified.refresh();
+    shows(unverified,'an unverified result','PUBLISHED DATA STALE · 1 TEAM RESULT UNVERIFIED');
+    // RULINGS STALE: a ruling refresh fails after a verified load.
+    const rulings=await open();staleNext(rulings);rulings.store.nfl_incident_rulings=503;await rulings.refresh();
+    shows(rulings,'RULINGS STALE','PUBLISHED DATA STALE · RULINGS STALE');
+    // RESULT FEED UNAVAILABLE, and then with the rulings stale as well.
+    const down=await open();staleNext(down);delete down.feeds[2];await down.refresh();
+    shows(down,'RESULT FEED UNAVAILABLE','RESULT FEED UNAVAILABLE · PUBLISHED DATA STALE');
+    down.store.nfl_incident_rulings=503;await down.refresh();
+    shows(down,'RESULT FEED UNAVAILABLE and RULINGS STALE','RESULT FEED UNAVAILABLE · PUBLISHED DATA STALE · RULINGS STALE');
   });
   await regression('a newly published week enters the selector without moving the participant: no automatic switch, no URL change, no download of its snapshot',async()=>{
     const v=await open(),before=page(v);
@@ -1102,11 +1134,30 @@ console.log('survivor HDC-12 contest-ruling load and HDC-14 absent-game, privacy
     assert.deepEqual(page(v),before,'Week 2 is untouched');
     assert.equal(meta(v),'Week 2 · revision 7');
     assert.deepEqual(v.historyCalls,[],'the URL is unchanged');
+    // The error stays until the next choice, even when a newer revision of the week on screen installs meanwhile.
+    v.rows[0]=svRow(republished('ARI'),8);await v.refresh();
+    assert.equal(meta(v),'Week 2 · revision 8','revision 8 installs');
+    assert.match(notices(v),/Unable to switch Survivor week/,'the failed choice is still reported');
+    delete v.hooks.row;await choose(v,'2026-3');
+    assert.equal(meta(v),'Week 3 · revision 2','the next choice clears it');assert.doesNotMatch(notices(v),/Unable to switch/);
   });
-  await regression('a late response for an older revision never overwrites a newer one',async()=>{
+  await regression('a week chosen while the first week is still loading takes the view over; the first week arriving later changes nothing',()=>withSlowLimits(async()=>{
+    const late=deferred();
+    const v=await view(feeds(),[svRow(config,7),svRow(wk3(),2)],patched,rulingStore(),{search:'?view=survivor&sw=2&season=2026',bootHooks:{row:u=>u.searchParams.get('week')==='eq.2'?late.promise:undefined}});
+    assert.deepEqual(options(v),['2026-2','2026-3'],'the selector is filled from the index first');
+    assert.doesNotMatch(meta(v),/revision/,'Week 2 is still on its way');assert.equal(notices(v),'','and nothing timed out');
+    await choose(v,'2026-3');
+    assert.equal(meta(v),'Week 3 · revision 2');
+    late.resolve(json([svRow(config,7)]));await flush();await flush();
+    assert.equal(meta(v),'Week 3 · revision 2','Week 2 arriving last changes nothing');
+    assert.equal(v.$('survivorWeekSelect').value,'2026-3');
+    assert.deepEqual(v.historyCalls.map(([,u])=>new URL(u).searchParams.get('sw')),['3'],'the URL only ever names Week 3');
+  }));
+  await regression('a late response for an older revision never overwrites a newer one',()=>withSlowLimits(async()=>{
     const v=await open(),late=deferred();
     v.rows[0]=svRow(republished('ARI'),8);v.hooks.row=()=>late.promise;
     await v.refresh();
+    assert.equal(meta(v),'Week 2 · revision 7','revision 8 is still on its way: nothing installed, nothing timed out');
     // Revision 8's snapshot is still on its way and its refresh has run past any stall limit, so the next tick replaces it.
     const realNow=Date.now;Date.now=()=>realNow()+60000;
     try{
@@ -1118,19 +1169,20 @@ console.log('survivor HDC-12 contest-ruling load and HDC-14 absent-game, privacy
       assert.match(v.row('D.C.'),/ALIVE/,'D.C. holds BUF (revision 9), never ARI (revision 8)');
       assert.match(v.row('D.C.'),/<small>W2<\/small>BUF/);
     }finally{Date.now=realNow}
-  });
-  await regression('a late response for a week the participant has since moved away from never replaces their newer choice',async()=>{
+  }));
+  await regression('a late response for a week the participant has since moved away from never replaces their newer choice',()=>withSlowLimits(async()=>{
     const wk1=()=>{const c=structuredClone(config);c.week=1;c.label='Survivor Week 1';for(const e of [...c.trackedEntries,...c.fieldEntries])e.picks=e.picks.slice(0,1);c.currentWeekEntryCount=6;return c};
     const v=await open({rows:[svRow(wk1(),1),svRow(config,7),svRow(wk3(),2)],search:'?view=survivor&sw=2&season=2026'}),late=deferred();
     v.hooks.row=u=>u.searchParams.get('week')==='eq.1'?late.promise:undefined;
     await choose(v,'2026-1');
+    assert.equal(meta(v),'Week 2 · revision 7','Week 1 is still on its way: nothing installed');assert.doesNotMatch(notices(v),/Unable to switch/,'and nothing timed out');
     await choose(v,'2026-3');
     assert.equal(meta(v),'Week 3 · revision 2');
     late.resolve(json([svRow(wk1(),1)]));await flush();await flush();
     assert.equal(meta(v),'Week 3 · revision 2','Week 1 arriving last changes nothing');
     assert.equal(v.$('survivorWeekSelect').value,'2026-3');
     assert.deepEqual(v.historyCalls.map(([,u])=>new URL(u).searchParams.get('sw')),['3'],'the URL only ever names Week 3');
-  });
+  }));
 
   assert.equal(failures.length,0,`HDC-15 Survivor refresh-lifecycle regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
 }

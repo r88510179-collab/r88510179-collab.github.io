@@ -77,10 +77,10 @@ function publicationApi(rows,u){
 
 // HDC-15: the page's publication rows (by default the one locked row of the config, keyed by its own season and week), a log
 // of every request by kind (token, index: a publication read without a config, row: one with a config, rulings, score),
-// per-kind hooks that can answer a request instead of the default, the History API calls, the document's visibility and the
-// bottom-nav clicks. refresh() is a visible timer tick (the tick a browser runs), tick() the timer callback as the document
+// per-kind hooks that can answer a request instead of the default (bootHooks are in place before the page boots), the History
+// API calls, the document's visibility and the bottom-nav clicks. refresh() is a visible timer tick (the tick a browser runs), tick() the timer callback as the document
 // currently is, resume() a hidden-to-visible transition.
-async function view({weekConfig=config,initialScorePayload={events:[game()]},store=pickemStore(),published=null,search='?view=home',tokenTtl=3600}={}){
+async function view({weekConfig=config,initialScorePayload={events:[game()]},store=pickemStore(),published=null,search='?view=home',tokenTtl=3600,bootHooks={}}={}){
   const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new El());return els.get(id)},docListeners={};
   const doc={
     body:{dataset:{}},title:'',visibilityState:'hidden',
@@ -94,7 +94,7 @@ async function view({weekConfig=config,initialScorePayload={events:[game()]},sto
   globalThis.window={addEventListener(t,f){(windowListeners[t]||=[]).push(f)},scrollTo(){}};
   globalThis.location={href:`https://example.test/nfl-pool/${search}`,search};
   globalThis.history={state:null,pushState(_s,_t,u){historyCalls.push(['push',String(u)])},replaceState(_s,_t,u){historyCalls.push(['replace',String(u)])}};
-  let tick=null,scorePayload=structuredClone(initialScorePayload),scoreFailure=false,scoreCalls=0;const rulingRequests=[],calls=[],hooks={};
+  let tick=null,scorePayload=structuredClone(initialScorePayload),scoreFailure=false,scoreCalls=0;const rulingRequests=[],calls=[],hooks={...bootHooks};
   const pub=published?structuredClone(published):[{season:weekConfig?.season??2026,week:weekConfig?.week??3,status:'locked',revision:1,config:structuredClone(weekConfig)}];
   globalThis.setInterval=(fn,ms)=>{assert.equal(ms,20000);tick=fn;return 0};
   const mint=()=>'x.'+Buffer.from(JSON.stringify({exp:Math.floor(Date.now()/1000)+tokenTtl})).toString('base64url')+'.y',token=mint();
@@ -1320,8 +1320,8 @@ console.log("weekly HDC-12 contest-ruling load and HDC-14 absent-game, privacy, 
   const FEEDS={3:wk3Final(),4:{events:[game({week:4,away:'MIA',home:'BUF',awayScore:'10',homeScore:'20'})]},5:{events:[game({week:5,away:'NYJ',home:'NE',awayScore:'24',homeScore:'13'})]}};
   const json=data=>({ok:true,status:200,json:async()=>structuredClone(data)}),httpError=status=>({ok:false,status,json:async()=>({})});
   const byWeek=u=>FEEDS[u.searchParams.get('week')]?json(FEEDS[u.searchParams.get('week')]):undefined;
-  const open=async({published=[pubRow(wk3(),3)],search='?view=home&season=2026&week=3',tokenTtl=3600}={})=>{
-    const v=await view({published,search,tokenTtl,initialScorePayload:wk3Final()});v.hooks.score=byWeek;return v;
+  const open=async({published=[pubRow(wk3(),3)],search='?view=home&season=2026&week=3',tokenTtl=3600,store=pickemStore()}={})=>{
+    const v=await view({published,search,tokenTtl,store,initialScorePayload:wk3Final()});v.hooks.score=byWeek;return v;
   };
   const tally=(v,from=0)=>{const t={token:0,index:0,row:0,rulings:0,score:0};for(const c of v.calls.slice(from))t[c.kind]++;return t};
   const kinds=(v,from)=>v.calls.slice(from).map(c=>c.kind);
@@ -1373,8 +1373,11 @@ console.log("weekly HDC-12 contest-ruling load and HDC-14 absent-game, privacy, 
   await regression('hidden: timer ticks make no request at all, not even to renew an expired anonymous token',async()=>{
     // The token is always inside its renewal minute, so any refresh would first ask for a new one.
     const v=await open({tokenTtl:30});
-    v.setVisibility('hidden');
-    let from=v.calls.length;v.tick();v.tick();await flush();
+    // Going hidden makes no request either. Each tick is counted with nothing in flight, so a token request one of them
+    // starts cannot hide behind one already on its way.
+    let from=v.calls.length;v.setVisibility('hidden');await flush();
+    assert.deepEqual(kinds(v,from),[],'going hidden makes no request');
+    from=v.calls.length;v.tick();await flush();v.tick();await flush();
     assert.deepEqual(kinds(v,from),[],'no token, Data API or score-feed request from a hidden tick');
     v.doc.visibilityState='visible';from=v.calls.length;v.tick();await flush();
     assert(tally(v,from).token>=1&&tally(v,from).index===1,'control: the same tick while visible renews the token and refreshes');
@@ -1474,7 +1477,8 @@ console.log("weekly HDC-12 contest-ruling load and HDC-14 absent-game, privacy, 
       ['another row whose week is not an integer',()=>json([id(),id({week:3.5})])],
       ['the selected week missing',()=>json([id({week:4,revision:1})])],
       ['an empty index',()=>json([])],
-      ['a revision older than the one on screen',()=>json([id({revision:2})])]
+      ['a revision older than the one on screen',()=>json([id({revision:2})])],
+      ['a revision older than the one on screen, listed with a new week',()=>json([id({revision:2}),id({week:4,revision:1})])]
     ]){
       const v=await open(),before={...graded(v),options:options(v),selected:v.$('weekSelect').value};
       v.pub[0]=pubRow(wk3([2,3]),4);v.hooks.index=answer;
@@ -1486,6 +1490,35 @@ console.log("weekly HDC-12 contest-ruling load and HDC-14 absent-game, privacy, 
       delete v.hooks.index;v.pub[0]=pubRow(wk3(),3);await v.refresh();
       assert.match(weekLine(v),/^Week 3 · revision 3 · /,`${label}: recovered`);current(v,`${label}: a usable index verifying revision 3 again`);
     }
+  });
+  await regression('a stale publication never hides a more serious state: ON HOLD, INCOMPLETE, UNDER REVIEW, FEED UNAVAILABLE and RULINGS STALE keep their place, colour and notice, and PUBLISHED DATA STALE rides along with each',async()=>{
+    const staleNext=v=>{v.pub[0]=pubRow(wk3([2,3]),4);v.hooks.row=()=>httpError(500)};
+    const shows=(v,label,sync,dot,notice)=>{
+      assert.match(v.$('sync').textContent,sync,`${label}: the header`);
+      assert.equal(v.$('dot').style.background,dot,`${label}: the dot`);
+      assert.match(weekLine(v),/^PUBLISHED DATA STALE · revision 3 · /,`${label}: the week strip`);
+      assert.match(banner(v),/^PUBLISHED DATA STALE · /m,`${label}: the publication notice`);
+      assert.match(banner(v),notice,`${label}: its own notice stays`);
+    };
+    // ON HOLD: the rules and rulings never loaded on this page.
+    const hold=await open({store:pickemStore({nfl_incident_rulings:503})});staleNext(hold);await hold.refresh();
+    shows(hold,'ON HOLD',/^ON HOLD · PUBLISHED DATA STALE · data \d+s old$/,'var(--red)',/^ON HOLD · Ruling data unavailable/m);
+    // INCOMPLETE: the BUF-CIN game is missing from the feed.
+    const incomplete=await open();staleNext(incomplete);incomplete.hooks.score=()=>json({events:[game()]});await incomplete.refresh();
+    shows(incomplete,'INCOMPLETE',/^INCOMPLETE · PUBLISHED DATA STALE · data \d+s old · 1 warning$/,'var(--gold)',/BUF-CIN: expected game missing from feed/);
+    // UNDER REVIEW: BUF-CIN was voided as canceled, and the feed now reports the same event as a completed final.
+    const voided={ruling_id:1,contest_id:PK_CONTEST,contest_type:'pickem',week:3,away_team:'BUF',home_team:'CIN',policy_revision:1,chain_seq:1,parent_ruling_id:null,consequence:'void',
+      incident_status:'STATUS_CANCELED',event_id:'401437947',evidence_source:'nflscores2',public_note:'League canceled the game; voided for this contest.',created_at:'2026-10-08T12:00:00+00:00',...PRIVATE};
+    const review=await open({store:pickemStore({nfl_incident_rulings:[voided]})});staleNext(review);await review.refresh();
+    shows(review,'UNDER REVIEW',/^UNDER REVIEW · PUBLISHED DATA STALE · data \d+s old$/,'var(--gold)',/^UNDER REVIEW · BUF-CIN: VOID by commissioner ruling stays applied/m);
+    // RULINGS STALE: a ruling refresh fails after a verified load.
+    const rulings=await open();staleNext(rulings);rulings.store.nfl_incident_rulings=503;await rulings.refresh();
+    shows(rulings,'RULINGS STALE',/^PUBLISHED DATA STALE · RULINGS STALE · data \d+s old$/,'var(--gold)',/^RULINGS STALE · /m);
+    // FEED UNAVAILABLE, and then with the rulings stale as well.
+    const down=await open();staleNext(down);down.hooks.score=()=>httpError(503);await down.refresh();
+    shows(down,'FEED UNAVAILABLE',/^FEED UNAVAILABLE · PUBLISHED DATA STALE · last good \d+s ago$/,'var(--red)',/Automatic score refresh failed/);
+    down.store.nfl_incident_rulings=503;await down.refresh();
+    shows(down,'FEED UNAVAILABLE and RULINGS STALE',/^FEED UNAVAILABLE · PUBLISHED DATA STALE · RULINGS STALE · last good \d+s ago$/,'var(--red)',/^RULINGS STALE · /m);
   });
   await regression('a newly published week enters the selector without moving the participant: no automatic switch, no URL change, no download of its config',async()=>{
     const v=await open({search:'?view=home'}),before=panels(v);
@@ -1522,11 +1555,37 @@ console.log("weekly HDC-12 contest-ruling load and HDC-14 absent-game, privacy, 
       assert.deepEqual(graded(v),before,`${label}: Week 3 is untouched`);
       assert.deepEqual(v.historyCalls,[],`${label}: the URL is unchanged`);
     }
+    // The error stays until the next choice, even when a newer revision of the week on screen installs meanwhile.
+    const v=await open({published:[pubRow(wk3(),3),pubRow(wk4(),2)]});
+    v.hooks.row=u=>u.searchParams.get('week')==='eq.4'?httpError(500):undefined;
+    await choose(v,'2026-4');
+    v.pub[0]=pubRow(wk3([2,3]),4);await v.refresh();
+    assert.match(weekLine(v),/^WEEK 4 UNAVAILABLE · Week 3 · revision 4 · /,'revision 4 installs; the failed choice is still reported');
+    assert.match(banner(v),/Unable to switch Pick.em week/);
+    delete v.hooks.row;await choose(v,'2026-4');
+    assert.match(weekLine(v),/^Week 4 · revision 2 · /,'the next choice clears it');assert.doesNotMatch(banner(v),/Unable to switch/);
+  });
+  await regression('a week chosen while the first week is still loading takes the page over; the first week arriving later changes nothing',async()=>{
+    const late=deferred();
+    const v=await view({published:[pubRow(wk3(),3),pubRow(wk4(),2)],search:'?view=home&season=2026&week=3',initialScorePayload:wk3Final(),
+      bootHooks:{row:u=>u.searchParams.get('week')==='eq.3'?late.promise:undefined}});
+    v.hooks.score=byWeek;
+    assert.deepEqual(options(v),['2026-3','2026-4'],'the selector is filled from the index first');
+    assert.doesNotMatch(weekLine(v),/revision/,'Week 3 is still on its way');
+    await choose(v,'2026-4');
+    assert.match(weekLine(v),/^Week 4 · revision 2 · /);
+    late.resolve(json([pubRow(wk3(),3)]));await flush();
+    assert.match(weekLine(v),/^Week 4 · revision 2 · /,'Week 3 arriving last changes nothing');
+    assert.deepEqual(records(v),[['DJS','1','0'],['D.C.','0','1']]);
+    assert.equal(v.$('weekSelect').value,'2026-4');
+    assert.deepEqual(v.historyCalls.map(([,u])=>new URL(u).searchParams.get('week')),['4'],'the URL only ever names Week 4');
+    current(v,'chosen during boot');
   });
   await regression('a late response for an older revision never overwrites a newer one',async()=>{
     const v=await open(),late=deferred();
     v.pub[0]=pubRow(wk3([2,3]),4);v.hooks.row=()=>late.promise;
     await v.refresh();
+    assert.match(weekLine(v),/^Week 3 · revision 3 · /,'revision 4 is still on its way: nothing installed, nothing timed out');
     // Revision 4's row is still on its way and its refresh has run past any stall limit, so the next tick replaces it.
     const realNow=Date.now;Date.now=()=>realNow()+60000;
     try{
@@ -1543,6 +1602,7 @@ console.log("weekly HDC-12 contest-ruling load and HDC-14 absent-game, privacy, 
     const v=await open({published:[pubRow(wk3(),3),pubRow(wk4(),2),pubRow(wk5(),1)]}),late=deferred();
     v.hooks.row=u=>u.searchParams.get('week')==='eq.4'?late.promise:undefined;
     await choose(v,'2026-4');
+    assert.match(weekLine(v),/^Week 3 · revision 3 · /,'Week 4 is still on its way: nothing installed');assert.doesNotMatch(banner(v),/Unable to switch/,'and nothing timed out');
     await choose(v,'2026-5');
     assert.match(weekLine(v),/^Week 5 · revision 1 · /);
     late.resolve(json([pubRow(wk4(),2)]));await flush();
