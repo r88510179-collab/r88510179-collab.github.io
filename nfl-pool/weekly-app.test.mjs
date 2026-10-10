@@ -1574,6 +1574,28 @@ console.log("weekly HDC-12 contest-ruling load and HDC-14 absent-game, privacy, 
     assert.deepEqual(tally(v,from),FULL,'a view change and a tick together');
   });
 
+  await regression("while Survivor has the page the Pick'em header says PICK'EM PAUSED, never a frozen LIVE, even when a refresh lands after the switch; coming back refreshes it",async()=>{
+    const PAUSED="PICK'EM PAUSED · refreshes on return";
+    const v=await open();v.doc.visibilityState='visible';
+    assert.match(v.$('sync').textContent,/^LIVE · /);
+    v.click('survivor');
+    assert.deepEqual([v.$('sync').textContent,v.$('dot').style.background],[PAUSED,'var(--dim)'],'Survivor takes the page');
+    v.click('home');await flush();
+    assert.match(v.$('sync').textContent,/^LIVE · data \d+s old$/,'coming back refreshes it');
+    for(const [label,answer] of [['scores that load',()=>json(wk3Final())],['a score feed that fails',()=>httpError(503)]]){
+      const late=deferred();v.hooks.score=()=>late.promise;
+      v.tick();v.click('survivor');   // a refresh still on its way when Survivor takes the page
+      late.resolve(answer());await flush();
+      assert.deepEqual([v.$('sync').textContent,v.$('dot').style.background],[PAUSED,'var(--dim)'],`${label}: landing after the switch keeps the pause`);
+      v.hooks.score=byWeek;v.click('home');await flush();
+      assert.match(v.$('sync').textContent,/^LIVE · data \d+s old$/,`${label}: coming back refreshes it`);
+    }
+    const s=await open({search:'?view=survivor&season=2026&week=3'});
+    assert.equal(s.$('sync').textContent,PAUSED,'a page opened on Survivor shows Pick’em paused from the start');
+    s.doc.visibilityState='visible';s.click('standings');await flush();
+    assert.match(s.$('sync').textContent,/^LIVE · data \d+s old$/);
+  });
+
   assert.equal(failures.length,0,`HDC-15 Pick'em refresh-lifecycle regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
 }
 
