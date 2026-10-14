@@ -538,6 +538,9 @@ function autoRefresh(){if(CFG&&document.visibilityState==='visible'&&document.bo
 // can still be chosen if this one cannot be loaded; a week chosen while it loads takes the page over, and boot then installs
 // and reports nothing.
 async function loadWeeks(){
+  // The anonymous token has its own time limit and is fetched first, so each boot read's limit is the read's alone: on a
+  // slow network the token and the index read together could outlast one limit, and boot is not retried.
+  await anonymousToken();
   const index=await loadPublicationIndex();if(!index.length)throw new Error('No published pool weeks found');
   const qs=new URLSearchParams(location.search),requested=Number(qs.get('week')),season=Number(qs.get('season'))||Math.max(...index.map(x=>x.season));let chosen=requested?index.find(x=>x.season===season&&x.week===requested):null;if(!chosen)chosen=index[index.length-1];
   const select=$('weekSelect');showWeeks(index,chosen);select.addEventListener('change',()=>{const [s,w]=select.value.split('-').map(Number);void switchWeek(s,w)});

@@ -369,6 +369,9 @@ function autoRefresh(){if(cfg&&document.visibilityState==='visible'&&document.bo
 // week can still be chosen if this one cannot be loaded; a week chosen while it loads takes the view over, and boot then
 // installs and reports nothing.
 async function load(){
+  // The anonymous token has its own time limit and is fetched first, so each boot read's limit is the read's alone: on a
+  // slow network the token and the index read together could outlast one limit, and boot is not retried.
+  await anonymousToken();
   const index=await withinTime(signal=>loadPublicationIndex(signal),'Survivor publication list');if(!index.length)throw new Error('No published Survivor weeks found');
   const qs=new URLSearchParams(location.search),requested=Number(qs.get('sw')),season=Number(qs.get('season'))||index[index.length-1].season;let chosen=requested?index.find(x=>x.season===season&&x.week===requested):null;if(!chosen)chosen=index[index.length-1];
   const sel=$('survivorWeekSelect');showWeeks(index,chosen);sel.addEventListener('change',()=>{const [s,w]=sel.value.split('-').map(Number);void switchWeek(s,w)});
