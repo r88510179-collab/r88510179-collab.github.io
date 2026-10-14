@@ -87,6 +87,9 @@ async function loadRulings(signal){
   }finally{clearTimeout(t);signal?.removeEventListener?.('abort',abort)}
 }
 // HDC-15: one read of the Pick'em publication table, time-limited and abandoned with its refresh like the rules and rulings.
+// A read that runs out of time fails as a timeout (the publication is then marked stale, or a chosen week reported as not
+// loaded); one abandoned with its refresh fails as an abort. As for the score feed, the timeout is told apart by which signal
+// fired, never by which rejection reached the race first.
 async function readPublished(query,signal){
   const c=new AbortController,abort=()=>c.abort(),t=setTimeout(abort,RULINGS_TIMEOUT_MS);
   if(signal){if(signal.aborted)abort();else signal.addEventListener('abort',abort,{once:true})}
@@ -96,7 +99,8 @@ async function readPublished(query,signal){
     const r=await Promise.race([fetch(`${NEON_DATA_URL}/nfl_pool_weeks?${query}`,{cache:'no-store',headers:{Authorization:`Bearer ${token}`,Accept:'application/json'},signal:c.signal}),fail]);
     if(!r.ok)throw new Error(`week data ${r.status}`);
     const data=await Promise.race([r.json(),fail]);if(!Array.isArray(data))throw new Error('week data is not a list');return data;
-  }finally{clearTimeout(t);signal?.removeEventListener?.('abort',abort)}
+  }catch(e){if(c.signal.aborted&&!signal?.aborted){const x=new Error('published week data timed out');x.name='TimeoutError';throw x}throw e}
+  finally{clearTimeout(t);signal?.removeEventListener?.('abort',abort)}
 }
 // The identity of a published row: a locked season and week at a whole revision of at least 1. Anything else is refused.
 function publishedIdentity(x){
