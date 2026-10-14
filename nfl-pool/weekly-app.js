@@ -23,8 +23,7 @@ let NFL=[],RULINGS=null,SLOTS=[],LAST_EVENTS=null,FEED_ISSUES=[];
 // and SWITCH_ERROR is a chosen week that could not be loaded. refreshStartedAt and switching let a timer, a resume or a view
 // change join a refresh that is already running instead of starting a second one.
 let PUB=null,PUB_STALE=null,PUB_WEEKS=[],SWITCH_ERROR=null,refreshStartedAt=0,switching=false;
-// A refresh still running after STALL_MS (a hung request) no longer holds the next timer refresh back.
-const STALL_MS=15000,PUB_INDEX_COLUMNS='season,week,revision,published_at,status',PUB_ROW_COLUMNS='season,week,status,revision,published_at,config';
+const PUB_INDEX_COLUMNS='season,week,revision,published_at,status',PUB_ROW_COLUMNS='season,week,status,revision,published_at,config';
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const norm=x=>ALIAS[x]||x;
@@ -59,6 +58,12 @@ function jwtExpiry(token){try{const part=token.split('.')[1],json=atob(part.repl
 // The token and the rules and rulings are read on every refresh, so neither may hold a refresh up: each request is
 // abandoned after RULINGS_TIMEOUT_MS (a refresh then holds or keeps the rulings already verified) and retried next time.
 const RULINGS_TIMEOUT_MS=15000;
+// HDC-15: the score feed has the same limit (SCORE_FEED_TIMEOUT_MS, as in Survivor), so every request a refresh waits for is
+// time-limited. A refresh waits for at most three of them one after another: the publication index, the row of a changed
+// revision, then the score feed with the rules and rulings side by side. However slow the network, a refresh therefore
+// settles within the sum of those three limits (45 s); one still running a second later has stalled (its time limits never
+// fired, as in a page frozen in the background), and only then may a timer tick, a resume or a view change replace it.
+const SCORE_FEED_TIMEOUT_MS=15000,STALL_MS=RULINGS_TIMEOUT_MS+RULINGS_TIMEOUT_MS+Math.max(SCORE_FEED_TIMEOUT_MS,RULINGS_TIMEOUT_MS)+1000;
 async function anonymousToken(){if(anonToken&&Date.now()<anonExpiresAt-60000)return anonToken;if(!anonRequest){const c=new AbortController,t=setTimeout(()=>c.abort(),RULINGS_TIMEOUT_MS);anonRequest=fetch(`${NEON_AUTH_URL}/token/anonymous`,{cache:'no-store',headers:{Accept:'application/json'},signal:c.signal}).then(async r=>{if(!r.ok)throw new Error(`anonymous auth ${r.status}`);const j=await r.json();if(!j?.token)throw new Error('anonymous auth returned no token');anonToken=j.token;anonExpiresAt=jwtExpiry(anonToken)||Date.now()+5*60*1000;return anonToken}).finally(()=>{clearTimeout(t);anonRequest=null})}return anonRequest}
 // HDC-12: read-only public load of the Pick'em contest, its policy history and the selected week's rulings. Only the public
 // columns are requested (never created_by or admin_note); the pure evaluator validates what comes back.
@@ -434,7 +439,22 @@ function ageSeconds(ts){const ms=Date.parse(ts);if(!Number.isFinite(ms))return n
 // every more serious state, which keeps its precedence.
 function showPaused(){$('sync').textContent="PICK'EM PAUSED · refreshes on return";$('dot').style.background='var(--dim)'}
 function setSync(fetchedAt,warnings=[],{hold=false,review=false,stale=false}={}){lastFetchedAt=typeof fetchedAt==='string'?fetchedAt:null;if(document.body.dataset.view==='survivor'){showPaused();return}const age=ageSeconds(lastFetchedAt),delayed=age===null||age>30,incomplete=warnings.length>0,published=PUB_STALE!==null,label=hold?'ON HOLD':incomplete?'INCOMPLETE':review?'UNDER REVIEW':published?'PUBLISHED DATA STALE':delayed?'DELAYED':'LIVE',ageText=age===null?'age unknown':`data ${age}s old`;$('sync').textContent=`${label}${published&&label!=='PUBLISHED DATA STALE'?' · PUBLISHED DATA STALE':''}${stale?' · RULINGS STALE':''} · ${ageText}${warnings.length?` · ${warnings.length} warning${warnings.length===1?'':'s'}`:''}`;$('dot').style.background=hold?'var(--red)':incomplete||delayed||review||stale||published?'var(--gold)':'var(--green)'}
-async function feed(signal){const url=`${ESPN_SCOREBOARD}?dates=${CFG.season}&seasontype=2&week=${CFG.week}&limit=100&_=${Date.now()}`,r=await fetch(url,{signal,cache:'no-store',headers:{Accept:'application/json'}});if(!r.ok)throw new Error(`ESPN ${r.status}`);const j=await r.json();if(!j||!Array.isArray(j.events))throw new Error('invalid ESPN payload');return{fetchedAt:new Date().toISOString(),events:j.events}}
+// HDC-15: the score feed (headers and body) is time-limited and abandoned with its refresh, like the publication reads. One
+// that runs out of time fails as a timeout, which the refresh reports as FEED UNAVAILABLE; one abandoned because a newer
+// refresh or week took over fails as an abort, which update() reports nothing for. So a timeout is told apart by which
+// signal fired, never by which rejection reached the race first.
+async function feed(signal){
+  const c=new AbortController,abort=()=>c.abort(),t=setTimeout(abort,SCORE_FEED_TIMEOUT_MS);
+  if(signal){if(signal.aborted)abort();else signal.addEventListener('abort',abort,{once:true})}
+  const fail=new Promise((_,reject)=>c.signal.addEventListener('abort',()=>{const e=new Error(signal?.aborted?'Aborted':'the score feed timed out');e.name=signal?.aborted?'AbortError':'TimeoutError';reject(e)},{once:true}));
+  try{
+    const url=`${ESPN_SCOREBOARD}?dates=${CFG.season}&seasontype=2&week=${CFG.week}&limit=100&_=${Date.now()}`,r=await Promise.race([fetch(url,{signal:c.signal,cache:'no-store',headers:{Accept:'application/json'}}),fail]);
+    if(!r.ok)throw new Error(`ESPN ${r.status}`);
+    const j=await Promise.race([r.json(),fail]);if(!j||!Array.isArray(j.events))throw new Error('invalid ESPN payload');
+    return{fetchedAt:new Date().toISOString(),events:j.events};
+  }catch(e){if(c.signal.aborted&&!signal?.aborted){const x=new Error('the score feed timed out');x.name='TimeoutError';throw x}throw e}
+  finally{clearTimeout(t);signal?.removeEventListener?.('abort',abort)}
+}
 // Each refresh reads the scores and the contest's rules and rulings together. The protected feed path reads and writes
 // only the NFL facts (NFL[i] is the last verified game and carries the event id the HDC-09 guard compares); the scoring
 // view is derived again on every render. A rulings load that fails keeps rulings already verified this session, shown as
@@ -494,6 +514,8 @@ async function switchWeek(season,week){
       switching=false;console.warn(e);
       if(!CFG){$('error').innerHTML=`<div class="error">Unable to load weekly pool data: ${esc(e.message||String(e))}</div>`;return}
       $('weekSelect').value=`${PUB.season}-${PUB.week}`;SWITCH_ERROR={season,week,message:e.message||String(e)};renderWeekLine();
+      // The refresh of the week on screen starts now, so the stall limit counts from here, as for any refresh.
+      refreshStartedAt=Date.now();
       await verifyPublication(id,c.signal);if(id===gen)await update(id,c.signal);
       return;
     }
@@ -504,7 +526,8 @@ async function switchWeek(season,week){
   }finally{if(id===gen){switching=false;$('refresh').disabled=false;if(ctl===c)ctl=null}}
 }
 // Timer refreshes, resume and view activation refresh only the active Pick'em view of a visible page, decided before any
-// request is made, and join a refresh that is already running (unless it has stalled) instead of starting a second one.
+// request is made, and join a refresh that is already running (unless it has outlived STALL_MS, the longest a refresh can
+// take) instead of starting a second one.
 function autoRefresh(){if(CFG&&document.visibilityState==='visible'&&document.body.dataset.view!=='survivor'&&!switching&&(!ctl||Date.now()-refreshStartedAt>=STALL_MS))void refresh()}
 // HDC-15: boot reads the publication index, chooses the requested (or latest) week, and installs that week's full row once it
 // has validated; the scores and the rules and rulings follow. The selector is filled from the index first, so another week

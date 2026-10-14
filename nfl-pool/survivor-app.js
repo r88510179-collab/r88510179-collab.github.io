@@ -17,8 +17,7 @@ let rulingData=null,rawEventsByWeek=[];
 // switchError a chosen week that could not be loaded. running, refreshStartedAt and switching let a timer, a resume or a view
 // change join a refresh that is already running instead of starting a second one.
 let pub=null,pubStale=null,pubWeeks=[],switchError='',running=0,refreshStartedAt=0,switching=false;
-// A refresh still running after STALL_MS (a hung request) no longer holds the next timer refresh back.
-const STALL_MS=15000,PUB_INDEX_COLUMNS='season,week,revision,published_at,status',PUB_ROW_COLUMNS='season,week,status,revision,published_at,config';
+const PUB_INDEX_COLUMNS='season,week,revision,published_at,status',PUB_ROW_COLUMNS='season,week,status,revision,published_at,config';
 const activeScoreControllers=new Set();
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
@@ -238,6 +237,12 @@ async function updateDecisionSchedule(force=false){
 
 // Each score request must settle before the next 20 s refresh, so a hung week can never hold up the others.
 const SCORE_FEED_TIMEOUT_MS=15000;
+// HDC-15: every request a refresh waits for runs within that limit (withinTime). A refresh waits for at most three of them
+// one after another: the publication index, the snapshot of a changed revision, then the score feeds with the rules and
+// rulings side by side. However slow the network, a refresh therefore settles within the sum of those three limits (45 s);
+// one still running a second later has stalled (its time limits never fired, as in a page frozen in the background), and
+// only then may a timer tick, a resume or a view change replace it.
+const STALL_MS=3*SCORE_FEED_TIMEOUT_MS+1000;
 function abortActiveScoreRequests(){for(const controller of activeScoreControllers)controller.abort();activeScoreControllers.clear()}
 function withinTime(task,label){
   const controller=new AbortController;activeScoreControllers.add(controller);
@@ -317,7 +322,10 @@ async function verifyPublication(id){
   catch(e){if(id===refreshId)markStale(`revision ${entry.revision} is published but could not be loaded (${e.message||e})`);return}
   if(id===refreshId)install(row);
 }
-function markStale(reason){pubStale={reason};$('svMeta').textContent=metaText();renderNotices()}
+// A feed status still claiming LIVE from before the publication was found stale says PUBLISHED DATA STALE in its place at
+// once, worded as updateScores words it, instead of waiting for the score load in progress. LIVE comes back only with a
+// completed score load of a verified publication.
+function markStale(reason){pubStale={reason};$('svMeta').textContent=metaText();renderNotices();const feed=$('svFeed');if(feed.textContent.startsWith('LIVE · ')){feed.textContent=`PUBLISHED DATA STALE${feed.textContent.slice('LIVE'.length)}`;feed.className='survivor-feed warn'}}
 function markVerified(){pubStale=null;$('svMeta').textContent=metaText();renderNotices()}
 // The selector lists the published weeks in the index's order; the week on screen stays selected, so a newly published week
 // appears without moving the participant or the URL.
@@ -340,6 +348,8 @@ async function switchWeek(season,week){
       switching=false;console.warn(e);switchError=`Unable to switch Survivor week: ${e.message||String(e)}`;
       if(!cfg){$('survivorError').innerHTML=`<div class="error">${esc(switchError)}</div>`;return}
       select.value=`${pub.season}-${pub.week}`;renderNotices();
+      // The refresh of the week on screen starts now, so the stall limit counts from here, as for any refresh.
+      refreshStartedAt=Date.now();
       await verifyPublication(id);if(id===refreshId)await updateScores(id);
       return;
     }
@@ -350,7 +360,8 @@ async function switchWeek(season,week){
   }finally{if(running===id){running=0;switching=false}}
 }
 // Timer refreshes, resume and view activation refresh Survivor only while it is the active view of a visible page, decided
-// before any request is made, and join a refresh that is already running (unless it has stalled) instead of starting a second.
+// before any request is made, and join a refresh that is already running (unless it has outlived STALL_MS, the longest a
+// refresh can take) instead of starting a second.
 function autoRefresh(){if(cfg&&document.visibilityState==='visible'&&document.body.dataset.view==='survivor'&&!switching&&(!running||Date.now()-refreshStartedAt>=STALL_MS))void refresh()}
 
 // HDC-15: boot reads the publication index, chooses the requested (or latest) week, and installs that week's snapshot once it
