@@ -1663,3 +1663,421 @@ console.log("weekly HDC-12 contest-ruling load and HDC-14 absent-game, privacy, 
 }
 
 console.log('weekly HDC-15 publication index, atomic revision install, published-data stale state, new-week discovery, week switching, request budget, visibility and active-view polling and late-response regressions passed');
+
+
+// A virtual clock for the HDC-15 remediation regressions below. Every timer keeps its real duration and fires in time order
+// as the clock advances; timers due at the same moment fire in the order they were set (a repeating timer is set again as
+// it fires, before it runs), as in a browser, and every promise settles before the next timer fires. Date.now() and
+// new Date() read the virtual time. A 0 ms timer (the harness's flush) is left to the real event loop. jump() is a frozen
+// page: time passes and no timer fires; when the clock next advances, each overdue timer fires once, in order.
+function virtualClock(){
+  const real={setTimeout:globalThis.setTimeout,clearTimeout:globalThis.clearTimeout,Date:globalThis.Date},RealDate=real.Date,timers=new Map();
+  let now=RealDate.parse('2026-10-11T17:00:00.000Z'),seq=0;
+  const add=(fn,ms,args,every)=>{const id=++seq;timers.set(id,{fn,args,every,at:now+Math.max(0,Number(ms)||0),seq:id});return id};
+  class VirtualDate extends RealDate{constructor(...a){super(...(a.length?a:[now]))}static now(){return now}}
+  globalThis.setTimeout=(fn,ms,...args)=>Number(ms)>0?add(fn,ms,args,0):real.setTimeout(fn,0,...args);
+  globalThis.clearTimeout=id=>{if(!timers.delete(id))real.clearTimeout(id)};
+  globalThis.Date=VirtualDate;
+  const settle=async()=>{for(let i=0;i<3;i++)await new Promise(r=>setImmediate(r))};
+  const next=end=>{let hit=null;for(const [id,t] of timers)if(t.at<=end&&(!hit||t.at<hit.t.at||(t.at===hit.t.at&&t.seq<hit.t.seq)))hit={id,t};return hit};
+  return{
+    now:()=>now,
+    every:(ms,fn)=>add(fn,ms,[],ms),
+    async advance(ms){
+      const end=now+ms;await settle();
+      for(let hit=next(end);hit;hit=next(end)){
+        const {id,t}=hit;now=Math.max(now,t.at);
+        if(t.every){t.at=now+t.every;t.seq=++seq}else timers.delete(id);
+        t.fn(...t.args);await settle();
+      }
+      now=end;await settle();
+    },
+    jump(ms){now+=ms},
+    restore(){globalThis.setTimeout=real.setTimeout;globalThis.clearTimeout=real.clearTimeout;globalThis.Date=real.Date}
+  };
+}
+
+// HDC-15 remediation (F-1, refresh starvation). The rejected candidate (60760a1) let a timer tick replace any refresh still
+// running 15 s after it started, while a full refresh runs up to three requests one after another (the publication index,
+// the row of a changed revision, then the score feed with the rules and rulings side by side), each allowed 15 s, and the
+// Pick'em score feed had no time limit at all. At 10-14 s a request no refresh ever completed: each was replaced at the next
+// 20 s tick, the header stayed on "Updating…", and a score feed that never answered never reached FEED UNAVAILABLE. These
+// regressions run the page on the virtual clock above, which keeps every real duration (the network latency, the 15 s time
+// limits, the 20 s timer and the stall limit), so they relate exactly as in a browser; nothing is shortened. Each regression
+// reports through one collector; the block fails at its end if any did.
+{
+  const failures=[];
+  const regression=async(name,check)=>{try{await check()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+  const S=1000,PERIOD=20*S,LIMIT=15*S,PUBLISHED_AT='2026-09-27T16:43:08.115+00:00';
+  // Week 3 (DEN at KC, BUF at CIN, the tiebreak game) as in the HDC-15 regressions above: revision 3 has D.C. on DEN and BUF,
+  // revision 4 on KC and BUF, revision 5 on KC and CIN. Weeks 4 and 5 have one game each.
+  const wk3=(dc=[1,3])=>({schemaVersion:1,season:2026,week:3,tiebreakGameIndex:1,
+    games:[{away:'DEN',home:'KC',awayNumber:1,homeNumber:2,date:'2026-09-27'},{away:'BUF',home:'CIN',awayNumber:3,homeNumber:4,date:'2026-09-28'}],
+    participants:[{id:'dc',displayName:'D.C.',pickNumbers:dc,tiebreak:41},{id:'djs',displayName:'DJS',pickNumbers:[2,4],tiebreak:44}]});
+  const oneGame=(week,away,home,date)=>({schemaVersion:1,season:2026,week,tiebreakGameIndex:0,games:[{away,home,awayNumber:1,homeNumber:2,date}],
+    participants:[{id:'dc',displayName:'D.C.',pickNumbers:[1],tiebreak:40},{id:'djs',displayName:'DJS',pickNumbers:[2],tiebreak:38}]});
+  const wk4=()=>oneGame(4,'MIA','BUF','2026-10-04'),wk5=()=>oneGame(5,'NYJ','NE','2026-10-11');
+  const pubRow=(cfg,revision)=>({season:cfg.season,week:cfg.week,status:'locked',revision,published_at:PUBLISHED_AT,locked_at:PUBLISHED_AT,config:structuredClone(cfg)});
+  const FEEDS={3:{events:[game(),{...game({away:'BUF',home:'CIN',awayScore:'27',homeScore:'24'}),id:'401437947'}]},
+    4:{events:[game({week:4,away:'MIA',home:'BUF',awayScore:'10',homeScore:'20'})]},5:{events:[game({week:5,away:'NYJ',home:'NE',awayScore:'24',homeScore:'13'})]}};
+  const json=data=>({ok:true,status:200,json:async()=>structuredClone(data)});
+  const R4=[['D.C.','1','1'],['DJS','0','2']],R5=[['DJS','0','2'],['D.C.','0','2']];
+  // A Pick'em page on the virtual clock, visible, its 20 s timer running on the clock from boot. Every publication read, rules
+  // and rulings read and score-feed request is answered lag(kind, request) ms after it is sent (Infinity: never), from the
+  // data as it was when it was sent; one the page abandons fails at once with an AbortError, as fetch does, unless
+  // deaf(kind, request): a response already on its way, which arrives anyway. The anonymous token is minted at boot and stays
+  // valid throughout, so no phase waits on a renewal. Every request is logged (its kind, when it was sent, when it ended and
+  // how: answered, aborted or still open), and so is every change to the header, its dot, the week strip and the REFRESH
+  // button, with its time. A refresh has completed when its generation re-enables REFRESH.
+  const slowPage=async({lag=()=>0,deaf=()=>false,scoreResponse=()=>null,published=[pubRow(wk3(),3)],search='?view=home&season=2026&week=3'}={})=>{
+    const clock=virtualClock(),life=[],seen=[],ticks=[];let v=null;
+    try{
+      const send=(kind,url,init,response)=>{
+        const rec={kind,url,sent:clock.now(),ended:null,how:'open'};life.push(rec);
+        const ms=lag(kind,rec),signal=deaf(kind,rec)?null:init?.signal;
+        return new Promise((resolve,reject)=>{
+          const answer=()=>{signal?.removeEventListener('abort',abandoned);rec.ended=clock.now();rec.how='answered';resolve(response)};
+          let timer=null;
+          function abandoned(){if(timer!==null)clearTimeout(timer);rec.ended=clock.now();rec.how='aborted';const e=new Error('The operation was aborted.');e.name='AbortError';reject(e)}
+          if(signal?.aborted)return abandoned();
+          if(ms===0)return answer();
+          signal?.addEventListener('abort',abandoned,{once:true});
+          if(Number.isFinite(ms))timer=setTimeout(answer,ms);
+        });
+      };
+      const rows=()=>structuredClone(v?v.pub:published);
+      const rulings=table=>(u,init)=>send('rulings',u,init,dataApi(table,pickemStore()[table],u));
+      v=await view({published,search,initialScorePayload:FEEDS[3],
+        store:{nfl_contests:rulings('nfl_contests'),nfl_contest_policies:rulings('nfl_contest_policies'),nfl_incident_rulings:rulings('nfl_incident_rulings')},
+        bootHooks:{index:(u,init)=>send('index',u,init,publicationApi(rows(),u)),row:(u,init)=>send('row',u,init,publicationApi(rows(),u)),
+          score:(u,init)=>send('score',u,init,scoreResponse(u)??json(FEEDS[u.searchParams.get('week')]))}});
+      const watch=(label,el,prop)=>{let value=el[prop];seen.push({t:clock.now(),label,value});Object.defineProperty(el,prop,{configurable:true,enumerable:true,get:()=>value,set:x=>{value=prop==='textContent'?(x==null?'':String(x)):x;seen.push({t:clock.now(),label,value})}})};
+      watch('sync',v.$('sync'),'textContent');watch('dot',v.$('dot').style,'background');watch('weekLine',v.$('weekLine'),'textContent');watch('refresh',v.$('refresh'),'disabled');
+      v.doc.visibilityState='visible';
+      const start=clock.now();clock.every(PERIOD,()=>{ticks.push(clock.now());v.tick()});
+      const since=from=>life.slice(from);
+      return{v,clock,life,seen,ticks,
+        sync:()=>v.$('sync').textContent,dot:()=>v.$('dot').style.background,weekLine:()=>v.$('weekLine').textContent,
+        banner:()=>v.$('error').children.map(c=>c.textContent).join('\n'),
+        toNextTick:()=>(ticks.length?ticks[ticks.length-1]:start)+PERIOD-clock.now(),
+        // The refreshes that completed after seen[from]: when, and the header and dot they left.
+        settled:(from=0)=>{const out=[];let sync=null,dot=null;seen.forEach((s,i)=>{if(s.label==='sync')sync=s.value;if(s.label==='dot')dot=s.value;if(i>=from&&s.label==='refresh'&&s.value===false&&s.t>=0)out.push({t:s.t,sync,dot})});return out},
+        // The header text over time after seen[from], as [time, text].
+        headers:(from=0)=>seen.slice(from).filter(s=>s.label==='sync').map(s=>[s.t,s.value]),
+        tally:(from=0,until=Infinity)=>{const t={index:0,row:0,rulings:0,score:0};for(const r of since(from))if(r.sent<=until)t[r.kind]++;return t},
+        sentAt:(from,at)=>since(from).filter(r=>r.sent===at).map(r=>r.kind),
+        aborted:(from=0)=>since(from).filter(r=>r.how==='aborted').map(r=>({kind:r.kind,sent:r.sent,after:r.ended-r.sent})),
+        // The most requests of each kind open at once.
+        maxOpen:(from=0)=>{const out={index:0,row:0,rulings:0,score:0},list=since(from);for(const r of list){const n=list.filter(x=>x.kind===r.kind&&x.sent<=r.sent&&(x.ended===null||x.ended>r.sent)).length;out[r.kind]=Math.max(out[r.kind],n)}return out},
+        trace:(from=0,t0=0)=>since(from).map(r=>`${r.kind}@${(r.sent-t0)/S}-${r.ended===null?'open':(r.ended-t0)/S}:${r.how}`).join(' ')};
+    }catch(error){clock.restore();throw error}
+  };
+  // Runs check on a slow page and always restores the real timers afterwards.
+  const onSlowPage=async(options,check)=>{const p=await slowPage(options);try{await check(p)}finally{p.clock.restore()}};
+  const graded=v=>({records:records(v),cells:pickCells(v),games:v.$('gamegrid').innerHTML});
+  const choose=(v,value)=>{const select=v.$('weekSelect');select.value=value;for(const fn of select.listeners.change||[])fn()};
+  const click=v=>v.$('refresh').listeners.click[0]();
+  const FULL={index:1,row:0,rulings:3,score:1};
+
+  for(const L of [10,11,12,14]){
+    await regression(`${L} s a request: a healthy refresh (the index, then the scores with the rules and rulings: ${2*L} s) completes, the timer ticks while it runs join it instead of replacing it, nothing is abandoned, and six timer periods complete at least two refreshes`,()=>onSlowPage({lag:()=>L*S},async p=>{
+      await p.clock.advance(3*L*S);
+      assert.equal(p.sync(),'LIVE · data 0s old','boot (the index, the row, then the scores with the rules and rulings) completes');
+      const from=p.seen.length,sent=p.life.length,t0=p.clock.now();
+      await p.clock.advance(6*PERIOD);
+      const done=p.settled(from),starts=p.life.slice(sent).filter(r=>r.kind==='index').map(r=>r.sent);
+      assert.equal(p.ticks.filter(t=>t>t0).length,6,'six timer periods');
+      assert(done.length>=2,`completed refreshes: ${done.length}, want at least 2; requests: ${p.trace(sent,t0)}`);
+      for(const d of done)assert.deepEqual([d.sync,d.dot],['LIVE · data 0s old','var(--green)'],`the refresh completed at +${(d.t-t0)/S} s`);
+      assert.deepEqual(p.aborted(sent),[],'no request is abandoned');
+      starts.slice(1).forEach((s,k)=>assert(s>=done[k].t,`refresh ${k+2} started at +${(s-t0)/S} s, before refresh ${k+1} completed at +${(done[k].t-t0)/S} s`));
+      assert(starts.length===done.length||starts.length===done.length+1,`${starts.length} refreshes started, ${done.length} completed`);
+      done.forEach((d,k)=>assert.deepEqual(p.tally(sent,d.t),Object.fromEntries(Object.entries(FULL).map(([kind,n])=>[kind,n*(k+1)])),`requests through refresh ${k+1}: one index, the three HDC-12 tables and one score feed each, never a row`));
+      assert.deepEqual(p.maxOpen(sent),FULL,'one refresh at a time');
+    }));
+  }
+
+  for(const L of [12,14]){
+    await regression(`a republished revision (3 → 4) over ${L} s a request (the index, the row, then the scores with the rules and rulings: ${3*L} s) is installed whole and its refresh completes; the timer ticks during it join it and nothing is abandoned`,()=>onSlowPage({lag:()=>L*S},async p=>{
+      await p.clock.advance(3*L*S);
+      assert.match(p.weekLine(),/^Week 3 · revision 3 · /);
+      p.v.pub[0]=pubRow(wk3([2,3]),4);
+      const from=p.seen.length,sent=p.life.length;
+      await p.clock.advance(p.toNextTick());const T=p.clock.now();
+      await p.clock.advance(3*L*S);
+      assert.deepEqual(p.settled(from).map(d=>[(d.t-T)/S,d.sync]),[[3*L,'LIVE · data 0s old']],`one refresh, completed at ${3*L} s; requests: ${p.trace(sent,T)}`);
+      assert.match(p.weekLine(),/^Week 3 · revision 4 · /);
+      assert.deepEqual(records(p.v),R4);assert.deepEqual(pickCells(p.v),['bad','ok','bad','bad'],'D.C. holds KC (lost) and BUF (won)');
+      assert.deepEqual(p.tally(sent),{index:1,row:1,rulings:3,score:1},'the index, the row of revision 4, then its scores and rulings; the ticks during it sent nothing');
+      assert.deepEqual(p.life.slice(sent).map(r=>[r.kind,(r.sent-T)/S]),[['index',0],['row',L],['score',2*L],['rulings',2*L],['rulings',2*L],['rulings',2*L]],'one phase after another');
+      assert.deepEqual(p.aborted(sent),[],'nothing is abandoned');
+      const next=p.life.length;await p.clock.advance(p.toNextTick()+2*L*S);
+      assert.deepEqual(p.tally(next),FULL,'the next refresh finds revision 4 unchanged: no row');
+      assert.match(p.weekLine(),/^Week 3 · revision 4 · /);assert.equal(p.sync(),'LIVE · data 0s old');
+    }));
+  }
+
+  for(const [label,lagScore,scoreResponse] of [
+    ['never answers',Infinity,()=>null],
+    ['answers but never delivers its body',0,()=>({ok:true,status:200,json:()=>new Promise(()=>{})})]
+  ]){
+    await regression(`a Pick’em score feed that ${label} is abandoned at its 15 s limit: the header says FEED UNAVAILABLE (red) at 15 s, not before; never LIVE again, never "Updating…" for longer than the limit, and each later refresh fails the same way, one score request at a time`,async()=>{
+      let hang=false;
+      await onSlowPage({lag:kind=>kind==='score'&&hang?lagScore:0,scoreResponse:()=>hang?scoreResponse():null},async p=>{
+        await p.clock.advance(0);
+        assert.equal(p.sync(),'LIVE · data 0s old','boot');
+        hang=true;
+        const from=p.seen.length,sent=p.life.length;
+        await p.clock.advance(p.toNextTick());const T=p.clock.now();
+        assert.equal(p.sync(),'Updating…');
+        await p.clock.advance(LIMIT-1);
+        assert.equal(p.sync(),'Updating…','within its 15 s limit the feed is still awaited: no failure is reported early');
+        await p.clock.advance(1);
+        assert.match(p.sync(),/^FEED UNAVAILABLE · last good \d+s ago$/,'at its limit the feed is abandoned and the refresh reports it');
+        assert.equal(p.dot(),'var(--red)');
+        assert.match(p.banner(),/Automatic score refresh failed/);
+        if(lagScore===Infinity)assert.deepEqual(p.aborted(sent),[{kind:'score',sent:T,after:LIMIT}],'the request is abandoned at its limit, not before');
+        await p.clock.advance(5*PERIOD);
+        const done=p.settled(from);
+        assert.deepEqual(done.map(d=>(d.t-T)/S),[15,35,55,75,95,115],`a refresh at each tick, each failing at its limit; requests: ${p.trace(sent,T)}`);
+        for(const d of done)assert.match(d.sync,/^FEED UNAVAILABLE · last good \d+s ago$/);
+        const headers=p.headers(from);
+        assert(!headers.some(([,text])=>/^LIVE\b/.test(text)),'never LIVE');
+        headers.forEach(([t,text],i)=>{if(text==='Updating…'){const end=headers[i+1]?.[0]??p.clock.now();assert(end-t<=LIMIT,`"Updating…" from +${(t-T)/S} s lasted ${(end-t)/S} s`)}});
+        assert(p.maxOpen(sent).score<=1,'one score request at a time');
+        if(lagScore===Infinity)assert(p.aborted(sent).every(r=>r.kind==='score'&&r.after===LIMIT),'every score request is abandoned exactly at its limit');
+      });
+    });
+  }
+
+  await regression('an outage that hangs the publication index and then the score feed: the refresh marks PUBLISHED DATA STALE at 15 s and reports FEED UNAVAILABLE at 30 s, keeps the verified revision, never says LIVE, and the tick in between joins it',async()=>{
+    let hang=false;
+    await onSlowPage({lag:kind=>hang&&(kind==='index'||kind==='score')?Infinity:0},async p=>{
+      await p.clock.advance(0);
+      const before=graded(p.v);
+      hang=true;
+      const from=p.seen.length,sent=p.life.length;
+      await p.clock.advance(p.toNextTick());const T=p.clock.now();
+      await p.clock.advance(LIMIT);
+      assert.match(p.weekLine(),/^PUBLISHED DATA STALE · revision 3 · /,'at 15 s the index is abandoned and the week strip says the publication is stale at once');
+      assert.equal(p.sync(),'Updating…','the scores are still awaited: the header claims nothing');
+      await p.clock.advance(LIMIT);
+      assert.match(p.sync(),/^FEED UNAVAILABLE · PUBLISHED DATA STALE · last good \d+s ago$/,'at 30 s the score feed is abandoned and the refresh completes');
+      assert.equal(p.dot(),'var(--red)');
+      assert.match(p.banner(),/^PUBLISHED DATA STALE · the published week list could not be checked \(published week data timed out\)/m);
+      assert.match(p.banner(),/Automatic score refresh failed/);
+      assert.deepEqual(graded(p.v),before,'revision 3 still scores the page');
+      await p.clock.advance(6*PERIOD-2*LIMIT);
+      const done=p.settled(from);
+      assert.deepEqual(done.map(d=>(d.t-T)/S),[30,70,110],`one refresh every two ticks, each taking its two 15 s limits; requests: ${p.trace(sent,T)}`);
+      for(const d of done)assert.match(d.sync,/^FEED UNAVAILABLE · PUBLISHED DATA STALE · last good \d+s ago$/);
+      assert(!p.headers(from).some(([,text])=>/^LIVE\b/.test(text)),'never LIVE');
+      assert(p.aborted(sent).every(r=>r.after===LIMIT),'nothing is abandoned before its own limit: no refresh is replaced');
+      assert.deepEqual([p.maxOpen(sent).index,p.maxOpen(sent).score],[1,1],'one refresh at a time');
+    });
+  });
+
+  await regression('a fast network is unchanged: each visible timer tick runs one full refresh (one index, the three HDC-12 tables, one score feed, no row) that completes at the tick, LIVE, and nothing is abandoned',()=>onSlowPage({},async p=>{
+    await p.clock.advance(0);
+    for(let i=1;i<=6;i++){
+      const from=p.seen.length,sent=p.life.length;
+      await p.clock.advance(p.toNextTick());const T=p.clock.now();
+      assert.deepEqual(p.tally(sent),FULL,`tick ${i}`);
+      assert.deepEqual(p.settled(from).map(d=>[d.t-T,d.sync,d.dot]),[[0,'LIVE · data 0s old','var(--green)']],`tick ${i}: completes at once`);
+    }
+    assert.deepEqual(p.aborted(0),[]);
+  }));
+
+  await regression('a refresh that reaches every phase’s full 15 s limit (the index answering at 14.9 s with revision 4, its row and then the score feed never answering) is never replaced: it completes at 44.9 s with PUBLISHED DATA STALE and FEED UNAVAILABLE; ticks at 4.5, 24.5 and 44.5 s join it',async()=>{
+    let T=Infinity;
+    await onSlowPage({lag:(kind,r)=>r.sent<T?0:kind==='index'?14.9*S:kind==='row'||kind==='score'?Infinity:0},async p=>{
+      await p.clock.advance(p.toNextTick()+15.5*S);
+      p.v.pub[0]=pubRow(wk3([2,3]),4);
+      const from=p.seen.length,sent=p.life.length;T=p.clock.now();
+      click(p.v);
+      await p.clock.advance(46*S);
+      assert.deepEqual(p.ticks.filter(t=>t>T).map(t=>(t-T)/S),[4.5,24.5,44.5]);
+      assert.deepEqual(p.settled(from).map(d=>(d.t-T)/S),[44.9],`one refresh, completed at 44.9 s; requests: ${p.trace(sent,T)}`);
+      assert.match(p.sync(),/^FEED UNAVAILABLE · PUBLISHED DATA STALE · last good \d+s ago$/);
+      assert.match(p.weekLine(),/^PUBLISHED DATA STALE · revision 3 · /);
+      assert.match(p.banner(),/revision 4 is published but could not be loaded \(published week data timed out\)/);
+      assert.deepEqual(p.tally(sent),{index:1,row:1,rulings:3,score:1},'the ticks during it sent nothing');
+      assert.deepEqual(p.aborted(sent).map(r=>[r.kind,r.after/S]),[['row',15],['score',15]],'only the time limits abandon a request');
+    });
+  });
+
+  await regression('a week choice that times out falls back to refreshing the week on screen, and that refresh is not replaced by the stall limit: the fallback (a republished revision, then the scores, 14 s a request) completes and installs it; the ticks during it join it',async()=>{
+    let T=Infinity;
+    await onSlowPage({published:[pubRow(wk3(),3),pubRow(wk4(),2)],lag:(kind,r)=>r.sent<T?0:kind==='row'&&r.sent===T?Infinity:14*S},async p=>{
+      await p.clock.advance(p.toNextTick()+10*S);
+      p.v.pub[0]=pubRow(wk3([2,3]),4);
+      const from=p.seen.length,sent=p.life.length;T=p.clock.now();
+      choose(p.v,'2026-4');
+      await p.clock.advance(60*S);
+      assert.deepEqual(p.ticks.filter(t=>t>T).map(t=>(t-T)/S),[10,30,50]);
+      assert.deepEqual(p.settled(from).map(d=>[(d.t-T)/S,d.sync]),[[57,'LIVE · data 0s old']],`the choice fails at 15 s; its fallback (index 14 s, row 14 s, scores 14 s) completes at 57 s; requests: ${p.trace(sent,T)}`);
+      assert.match(p.weekLine(),/^WEEK 4 UNAVAILABLE · Week 3 · revision 4 · /);
+      assert.deepEqual(records(p.v),R4);
+      assert.deepEqual(p.aborted(sent).map(r=>[r.kind,r.after/S]),[['row',15]],'only the chosen week’s row is abandoned, at its limit');
+      assert.deepEqual(p.tally(sent),{index:1,row:2,rulings:3,score:1},'the ticks during the choice and its fallback sent nothing');
+    });
+  });
+
+  await regression('a late response under long latency never overwrites a newer revision: a refresh slowed to 12 s a request is superseded by REFRESH, which installs revision 5; its own revision 4 row arriving afterwards changes nothing',async()=>{
+    let T=Infinity,R=Infinity;
+    await onSlowPage({lag:(kind,r)=>r.sent>=T&&r.sent<R?12*S:0,deaf:(kind,r)=>r.sent>=T&&r.sent<R},async p=>{
+      await p.clock.advance(0);
+      p.v.pub[0]=pubRow(wk3([2,3]),4);
+      await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+      await p.clock.advance(1+16*S);
+      assert.match(p.weekLine(),/^Week 3 · revision 3 · /,'revision 4 is still on its way');
+      p.v.pub[0]=pubRow(wk3([2,4]),5);R=p.clock.now();
+      click(p.v);await p.clock.advance(0);
+      assert.match(p.weekLine(),/^Week 3 · revision 5 · /);
+      await p.clock.advance(3*PERIOD);
+      assert(p.life.some(r=>r.kind==='row'&&r.sent===T+12*S&&r.how==='answered'&&r.ended===T+24*S),'revision 4’s row did arrive, late');
+      assert.match(p.weekLine(),/^Week 3 · revision 5 · /,'revision 4 arriving last changes nothing');
+      assert.deepEqual(records(p.v),R5);assert.deepEqual(pickCells(p.v),['bad','bad','bad','bad']);
+      assert.equal(p.sync(),'LIVE · data 0s old');
+    });
+  });
+
+  await regression('a late response under long latency never replaces a newer week choice: Week 4’s row, slowed to 12 s, arrives after Week 5 was chosen and installed, and changes nothing',async()=>{
+    const weekFour=(kind,r)=>kind==='row'&&r.url.searchParams.get('week')==='eq.4';
+    await onSlowPage({published:[pubRow(wk3(),3),pubRow(wk4(),2),pubRow(wk5(),1)],lag:(kind,r)=>weekFour(kind,r)?12*S:0,deaf:weekFour},async p=>{
+      await p.clock.advance(0);
+      choose(p.v,'2026-4');await p.clock.advance(5*S);
+      assert.match(p.weekLine(),/^Week 3 · revision 3 · /,'Week 4 is still on its way');
+      choose(p.v,'2026-5');await p.clock.advance(0);
+      assert.match(p.weekLine(),/^Week 5 · revision 1 · /);
+      await p.clock.advance(2*PERIOD);
+      assert(p.life.some(r=>weekFour(r.kind,r)&&r.how==='answered'),'Week 4’s row did arrive, late');
+      assert.match(p.weekLine(),/^Week 5 · revision 1 · /,'Week 4 arriving last changes nothing');
+      assert.deepEqual(records(p.v),[['D.C.','1','0'],['DJS','0','1']]);
+      assert.equal(p.v.$('weekSelect').value,'2026-5');
+    });
+  });
+
+  await regression('a superseded refresh’s score request is abandoned with it at once, not left to its own time limit: a week chosen while a 12 s score request is on its way aborts that request',async()=>{
+    let T=Infinity;
+    await onSlowPage({published:[pubRow(wk3(),3),pubRow(wk4(),2)],lag:(kind,r)=>r.sent>=T&&r.sent<T+PERIOD&&(kind==='score'||kind==='rulings')?12*S:0},async p=>{
+      await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+      const sent=p.life.length;
+      await p.clock.advance(1+5*S);
+      assert.deepEqual(p.life.slice(sent).filter(r=>r.how==='open').map(r=>r.kind).sort(),['rulings','rulings','rulings','score'],'the refresh is waiting for its scores and rulings');
+      choose(p.v,'2026-4');await p.clock.advance(0);
+      assert.deepEqual(p.aborted(sent).map(r=>[r.kind,r.after/S]).sort(),[['rulings',5],['rulings',5],['rulings',5],['score',5]],'the superseded score and ruling requests are abandoned at the choice');
+      assert.match(p.weekLine(),/^Week 4 · revision 2 · /);
+    });
+  });
+
+  await regression('Survivor taking the page during a slow Pick’em refresh: the header says PICK’EM PAUSED at once and keeps it when that refresh lands; the Pick’em timer sends nothing while Survivor has the page; coming back runs one full refresh that completes',async()=>{
+    const PAUSED="PICK'EM PAUSED · refreshes on return";
+    let T=Infinity;
+    await onSlowPage({lag:(kind,r)=>r.sent>=T?12*S:0},async p=>{
+      await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+      await p.clock.advance(1+5*S);
+      const sent=p.life.length;
+      p.v.click('survivor');
+      assert.equal(p.sync(),PAUSED);
+      await p.clock.advance(2*PERIOD);
+      assert.equal(p.sync(),PAUSED,'the refresh that landed meanwhile keeps the pause');
+      assert.deepEqual(p.tally(sent),{index:0,row:0,rulings:3,score:1},'only the refresh already on its way continues; the timer sends nothing');
+      const back=p.life.length,from=p.seen.length;
+      p.v.click('home');const B=p.clock.now();
+      await p.clock.advance(2*12*S);
+      assert.deepEqual(p.tally(back),FULL,'one full refresh');
+      assert.deepEqual(p.settled(from).map(d=>[(d.t-B)/S,d.sync]),[[24,'LIVE · data 0s old']]);
+      assert.deepEqual(p.aborted(0),[]);
+    });
+  });
+
+  await regression('hidden during a slow refresh: the refresh already on its way may finish, no timer tick sends a request while hidden, and becoming visible again runs one full refresh',async()=>{
+    let T=Infinity;
+    await onSlowPage({lag:(kind,r)=>r.sent>=T?12*S:0},async p=>{
+      await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+      await p.clock.advance(1+5*S);
+      p.v.setVisibility('hidden');
+      const sent=p.life.length;
+      await p.clock.advance(3*PERIOD);
+      assert.deepEqual(p.tally(sent),{index:0,row:0,rulings:3,score:1},'only the refresh already on its way continues (its scores and rulings); hidden ticks send nothing');
+      assert.equal(p.sync(),'LIVE · data 0s old','the refresh on its way completed');
+      const back=p.life.length;p.v.setVisibility('visible');
+      await p.clock.advance(0);
+      assert.deepEqual(p.tally(back),{index:1,row:0,rulings:0,score:0},'becoming visible starts one full refresh at once');
+      await p.clock.advance(24*S);
+      assert.deepEqual(p.tally(back),FULL);assert.equal(p.sync(),'LIVE · data 0s old');
+    });
+  });
+
+  await regression('becoming visible while a slow refresh is still within its time limits joins it instead of starting a second: a republished revision 30 s into its 42 s refresh still installs, nothing is abandoned',async()=>{
+    let T=Infinity;
+    await onSlowPage({lag:(kind,r)=>r.sent>=T?14*S:0},async p=>{
+      await p.clock.advance(0);
+      p.v.pub[0]=pubRow(wk3([2,3]),4);
+      await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+      const sent=p.life.length,from=p.seen.length;
+      await p.clock.advance(1+25*S);
+      p.v.setVisibility('hidden');await p.clock.advance(5*S);
+      const back=p.life.length;p.v.setVisibility('visible');await p.clock.advance(0);
+      assert.deepEqual(p.tally(back),{index:0,row:0,rulings:0,score:0},'becoming visible 30 s in starts nothing');
+      await p.clock.advance(12*S);
+      assert.deepEqual(p.settled(from).map(d=>[(d.t-T)/S,d.sync]),[[42,'LIVE · data 0s old']],`requests: ${p.trace(sent,T)}`);
+      assert.match(p.weekLine(),/^Week 3 · revision 4 · /);assert.deepEqual(records(p.v),R4);
+      assert.deepEqual(p.aborted(sent),[]);
+    });
+  });
+
+  await regression('a page frozen in the background past the longest a refresh can take: becoming visible replaces the refresh it left behind, at once and only once, and the new refresh completes',async()=>{
+    let T=Infinity;
+    await onSlowPage({lag:(kind,r)=>r.sent>=T?12*S:0},async p=>{
+      await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+      const sent=p.life.length,from=p.seen.length;
+      await p.clock.advance(1+5*S);
+      p.v.setVisibility('hidden');
+      p.clock.jump(300*S);
+      const V=p.clock.now();
+      p.v.setVisibility('visible');
+      await p.clock.advance(0);
+      assert.deepEqual(p.aborted(sent).map(r=>[r.kind,(r.sent-T)/S,(r.sent+r.after-T)/S]),[['index',0,305]],'the frozen refresh is abandoned as the page becomes visible');
+      assert.deepEqual(p.life.slice(sent).filter(r=>r.sent===V).map(r=>r.kind),['index'],'one new full refresh starts at once');
+      await p.clock.advance(24*S);
+      assert.deepEqual(p.settled(from).map(d=>[(d.t-V)/S,d.sync]),[[24,'LIVE · data 0s old']],`requests: ${p.trace(sent,T)}`);
+      assert.deepEqual(p.tally(sent),{index:2,row:0,rulings:3,score:1});
+    });
+  });
+
+  await regression('a refresh left behind by a page frozen in the background never lets a timer tick start a new refresh while the page is still hidden, however long it has run; becoming visible does',async()=>{
+    let T=Infinity;
+    await onSlowPage({lag:(kind,r)=>r.sent>=T?12*S:0},async p=>{
+      await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+      const sent=p.life.length;
+      await p.clock.advance(1+5*S);
+      p.v.setVisibility('hidden');
+      p.clock.jump(300*S);
+      await p.clock.advance(2*PERIOD);
+      assert.deepEqual(p.life.slice(sent).filter(r=>r.kind==='index').map(r=>(r.sent-T)/S),[0],'unfrozen but still hidden: the timer ticks start no refresh');
+      const back=p.life.length;p.v.setVisibility('visible');await p.clock.advance(0);
+      assert.deepEqual(p.tally(back),{index:1,row:0,rulings:0,score:0},'becoming visible starts one full refresh');
+    });
+  });
+
+  await regression('a Pick’em refresh left behind by a frozen page never lets Pick’em refresh while Survivor has the page, however long it has run',async()=>{
+    let T=Infinity;
+    await onSlowPage({lag:(kind,r)=>r.sent>=T?12*S:0},async p=>{
+      await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+      const sent=p.life.length;
+      await p.clock.advance(1+5*S);
+      p.v.click('survivor');p.v.setVisibility('hidden');
+      p.clock.jump(300*S);
+      p.v.setVisibility('visible');
+      await p.clock.advance(2*PERIOD);
+      assert.deepEqual(p.life.slice(sent).filter(r=>r.kind==='index').map(r=>(r.sent-T)/S),[0],'Survivor has the page: Pick’em starts no refresh, on resume or on a tick');
+      assert.equal(p.sync(),"PICK'EM PAUSED · refreshes on return");
+    });
+  });
+
+  assert.equal(failures.length,0,`HDC-15 Pick'em slow-network regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+}
+
+console.log('weekly HDC-15 slow-network regressions passed: slow refreshes complete, hung feeds fail at their limits, no refresh is replaced within its bounded lifetime');

@@ -1219,7 +1219,9 @@ const pickemWeek={schemaVersion:1,season:2026,week:3,tiebreakGameIndex:0,games:[
   participants:[{id:'dc',displayName:'D.C.',pickNumbers:[1],tiebreak:41},{id:'djs',displayName:'DJS',pickNumbers:[2],tiebreak:44}]};
 const pickemFeed={events:[{id:'den-kc',season:{year:2026,type:2},week:{number:3},status:{type:{state:'post',completed:true,shortDetail:'Final'}},
   competitions:[{competitors:[{homeAway:'away',team:{abbreviation:'DEN'},score:'24'},{homeAway:'home',team:{abbreviation:'KC'},score:'17'}]}]}]};
-async function poolPage(view){
+// respond(app, kind, url, init, answer) may answer a request later (the HDC-15 slow-network regressions at the end of this
+// file); by default every request is answered at once, as before.
+async function poolPage(view,{respond=(app,kind,u,init,answer)=>answer}={}){
   const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new PageEl());return els.get(id)},listeners={},timers=[],calls=[];
   const doc={body:{dataset:{}},title:'',visibilityState:'visible',getElementById:$,querySelectorAll(){return[]},createElement(){return new PageEl()},
     addEventListener(t,f){(listeners[t]||=[]).push(f)},dispatchEvent(e){for(const f of listeners[e.type]||[])f(e);return true}};
@@ -1231,17 +1233,17 @@ async function poolPage(view){
   const token='x.'+Buffer.from(JSON.stringify({exp:Math.floor(Date.now()/1000)+3600})).toString('base64url')+'.y';
   const rows={pickem:[{season:2026,week:3,status:'locked',revision:1,published_at:null,config:structuredClone(pickemWeek)}],survivor:[{season:2026,week:2,status:'locked',revision:7,published_at:null,config:structuredClone(config)}]};
   const stores={pickem:pickemRulingStore(),survivor:rulingStore()},feeds={1:week(W1,1),2:week(W2,2),3:week(W3,3)};
-  globalThis.fetch=async url=>{
+  globalThis.fetch=async (url,init={})=>{
     const u=new URL(url),log=(app,kind)=>calls.push({app,kind});
     if(u.pathname.endsWith('/token/anonymous')){log('auth','token');return{ok:true,json:async()=>({token})}}
     for(const [table,app] of [['nfl_pool_weeks','pickem'],['nfl_survivor_weeks','survivor']])
-      if(u.pathname.endsWith(`/${table}`)){log(app,publicationKind(u));return publicationApi(rows[app],u)}
+      if(u.pathname.endsWith(`/${table}`)){const kind=publicationKind(u);log(app,kind);return respond(app,kind,u,init,publicationApi(rows[app],u))}
     const table=Object.keys(RULING_COLUMNS).find(t=>u.pathname.endsWith(`/${t}`));
-    if(table){const app=u.searchParams.get('contest_id')===`eq.${PK_CONTEST}`?'pickem':'survivor';log(app,'rulings');return dataApi(table,stores[app][table],u)}
+    if(table){const app=u.searchParams.get('contest_id')===`eq.${PK_CONTEST}`?'pickem':'survivor';log(app,'rulings');return respond(app,'rulings',u,init,dataApi(table,stores[app][table],u))}
     // The Pick'em score feed asks for limit=100; Survivor's week feeds do not.
-    if(u.searchParams.has('limit')){log('pickem','score');return{ok:true,status:200,json:async()=>structuredClone(pickemFeed)}}
+    if(u.searchParams.has('limit')){log('pickem','score');return respond('pickem','score',u,init,{ok:true,status:200,json:async()=>structuredClone(pickemFeed)})}
     log('survivor','score');const payload=feeds[Number(u.searchParams.get('week'))];
-    return payload?{ok:true,status:200,json:async()=>structuredClone(payload)}:{ok:false,status:404,json:async()=>({})};
+    return respond('survivor','score',u,init,payload?{ok:true,status:200,json:async()=>structuredClone(payload)}:{ok:false,status:404,json:async()=>({})});
   };
   await import(`data:text/javascript;base64,${Buffer.from(weeklySource+`\n//page ${++instance}`).toString('base64')}`);
   await import(`data:text/javascript;base64,${Buffer.from(patched+`\n//page ${++instance}`).toString('base64')}`);
@@ -1308,3 +1310,468 @@ async function poolPage(view){
 }
 
 console.log('pool page HDC-15 single-owner polling, hidden-page silence, one-refresh resume and view-activation regressions passed');
+
+
+// A virtual clock for the HDC-15 remediation regressions below (as in weekly-app.test.mjs). Every timer keeps its real
+// duration and fires in time order as the clock advances; timers due at the same moment fire in the order they were set (a
+// repeating timer is set again as it fires, before it runs), as in a browser, and every promise settles before the next
+// timer fires. Date.now() and new Date() read the virtual time. A 0 ms timer (the harness's flush) is left to the real
+// event loop. jump() is a frozen page: time passes and no timer fires; when the clock next advances, each overdue timer fires
+// once, in order. Installing it replaces this file's shortened timers until restore().
+function virtualClock(){
+  const real={setTimeout:globalThis.setTimeout,clearTimeout:globalThis.clearTimeout,Date:globalThis.Date},RealDate=real.Date,timers=new Map();
+  let now=RealDate.parse('2026-10-11T17:00:00.000Z'),seq=0;
+  const add=(fn,ms,args,every)=>{const id=++seq;timers.set(id,{fn,args,every,at:now+Math.max(0,Number(ms)||0),seq:id});return id};
+  class VirtualDate extends RealDate{constructor(...a){super(...(a.length?a:[now]))}static now(){return now}}
+  globalThis.setTimeout=(fn,ms,...args)=>Number(ms)>0?add(fn,ms,args,0):real.setTimeout(fn,0,...args);
+  globalThis.clearTimeout=id=>{if(!timers.delete(id))real.clearTimeout(id)};
+  globalThis.Date=VirtualDate;
+  const settle=async()=>{for(let i=0;i<3;i++)await new Promise(r=>setImmediate(r))};
+  const next=end=>{let hit=null;for(const [id,t] of timers)if(t.at<=end&&(!hit||t.at<hit.t.at||(t.at===hit.t.at&&t.seq<hit.t.seq)))hit={id,t};return hit};
+  return{
+    now:()=>now,
+    every:(ms,fn)=>add(fn,ms,[],ms),
+    async advance(ms){
+      const end=now+ms;await settle();
+      for(let hit=next(end);hit;hit=next(end)){
+        const {id,t}=hit;now=Math.max(now,t.at);
+        if(t.every){t.at=now+t.every;t.seq=++seq}else timers.delete(id);
+        t.fn(...t.args);await settle();
+      }
+      now=end;await settle();
+    },
+    jump(ms){now+=ms},
+    restore(){globalThis.setTimeout=real.setTimeout;globalThis.clearTimeout=real.clearTimeout;globalThis.Date=real.Date}
+  };
+}
+
+// HDC-15 remediation (F-1, refresh starvation) in Survivor and on the whole page. The rejected candidate (60760a1) let a timer
+// tick replace any refresh still running 15 s after it started, while a full Survivor refresh runs up to three requests one
+// after another (the publication index, the snapshot of a changed revision, then the score feeds with the rules and rulings
+// side by side), each allowed 15 s. At 10-14 s a request no refresh completed after boot, so the feed status stayed on its
+// last "LIVE · NFL results" and a score feed that never answered never reached RESULT FEED UNAVAILABLE; and a publication
+// found stale left the feed status saying LIVE until the scores came back. These regressions run on the virtual clock above,
+// which keeps every real duration; nothing is shortened. Each regression reports through one collector; the block fails at
+// its end if any did.
+{
+  const failures=[];
+  const regression=async(name,check)=>{try{await check()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+  const S=1000,PERIOD=20*S,LIMIT=15*S,PUBLISHED_AT='2026-09-21T19:30:44.641+00:00',LIVE='LIVE · NFL results';
+  const svRow=(cfg,revision)=>({season:cfg.season,week:cfg.week,status:'locked',revision,published_at:PUBLISHED_AT,locked_at:PUBLISHED_AT,config:structuredClone(cfg)});
+  // Revision 8 republishes D.C.'s Week 2 pick as ARI, which lost to SF. A Week 3 snapshot: the Week 2 field plus its Week 3 picks.
+  const republished=team=>{const c=structuredClone(config);c.trackedEntries[0].picks=['PIT',team];return c};
+  const wk3=()=>{
+    const c=structuredClone(config);c.week=3;c.label='Survivor Week 3';
+    const third={dc:'DEN',djs:'MIA',thaddeus:null,'survivor-001':'PIT','survivor-002':null,'survivor-003':null};
+    for(const e of [...c.trackedEntries,...c.fieldEntries])e.picks.push(third[e.id]);
+    c.currentWeekEntryCount=3;return c;
+  };
+  const FEEDS={1:week(W1,1),2:week(W2,2),3:week(W3,3)};
+  const json=data=>({ok:true,status:200,json:async()=>structuredClone(data)}),httpError=status=>({ok:false,status,json:async()=>({})});
+  // A request answered lag(kind, request) ms after it is sent (Infinity: never), with the answer given when it was sent; one
+  // the page abandons fails at once with an AbortError, as fetch does, unless deaf(kind, request): a response already on its
+  // way, which arrives anyway. Each is logged in life with its kind, url, when it was sent, when it ended and how.
+  const network=(clock,life,lag,deaf)=>(kind,url,init,response,app)=>{
+    const rec={kind,url,app,sent:clock.now(),ended:null,how:'open'};life.push(rec);
+    const ms=lag(kind,rec),signal=deaf(kind,rec)?null:init?.signal;
+    return new Promise((resolve,reject)=>{
+      const answer=()=>{signal?.removeEventListener('abort',abandoned);rec.ended=clock.now();rec.how='answered';resolve(response)};
+      let timer=null;
+      function abandoned(){if(timer!==null)clearTimeout(timer);rec.ended=clock.now();rec.how='aborted';const e=new Error('The operation was aborted.');e.name='AbortError';reject(e)}
+      if(signal?.aborted)return abandoned();
+      if(ms===0)return answer();
+      signal?.addEventListener('abort',abandoned,{once:true});
+      if(Number.isFinite(ms))timer=setTimeout(answer,ms);
+    });
+  };
+  const watcher=(clock,seen)=>(label,el,prop)=>{let value=el[prop];seen.push({t:clock.now(),label,value});Object.defineProperty(el,prop,{configurable:true,enumerable:true,get:()=>value,set:x=>{value=prop==='textContent'?(x==null?'':String(x)):x;seen.push({t:clock.now(),label,value})}})};
+  const logTools=(life,S0=0)=>({
+    tally:(from=0,until=Infinity)=>{const t={index:0,row:0,rulings:0,score:0};for(const r of life.slice(from))if(r.sent<=until&&r.kind in t)t[r.kind]++;return t},
+    // Requests abandoned (the week-ahead schedule, which no refresh waits for, is left out), with how long after being sent.
+    aborted:(from=0)=>life.slice(from).filter(r=>r.how==='aborted'&&r.kind!=='schedule').map(r=>({kind:r.kind,sent:r.sent,after:r.ended-r.sent})),
+    maxOpen:(from=0)=>{const out={index:0,row:0,rulings:0,score:0},list=life.slice(from).filter(r=>r.kind in out);for(const r of list){const n=list.filter(x=>x.kind===r.kind&&x.sent<=r.sent&&(x.ended===null||x.ended>r.sent)).length;out[r.kind]=Math.max(out[r.kind],n)}return out},
+    trace:(from=0,t0=S0)=>life.slice(from).map(r=>`${r.kind}${r.kind==='score'||r.kind==='schedule'?r.url.searchParams.get('week'):''}@${(r.sent-t0)/S}-${r.ended===null?'open':(r.ended-t0)/S}:${r.how}`).join(' ')
+  });
+  // The Survivor refreshes that completed after seen[from]: a refresh writes the feed status and renders the view at once
+  // (installing a snapshot writes LOADING RESULTS; marking the publication stale renders nothing).
+  const svSettled=(seen,from=0)=>{const out=[];let feed=null;seen.forEach((s,i)=>{if(s.label==='feed')feed={t:s.t,value:s.value,i,cls:null,counted:false};else if(s.label==='feedClass'&&feed)feed.cls=s.value;else if(s.label==='summary'&&feed&&!feed.counted&&s.t===feed.t&&feed.value!=='LOADING RESULTS'){feed.counted=true;if(feed.i>=from)out.push({t:feed.t,feed:feed.value,cls:feed.cls})}});return out};
+  // A Survivor page on the virtual clock, visible, its 20 s timer running on the clock from boot. Every publication read,
+  // rules and rulings read and score-feed request goes through network(); answer[kind](url) can replace the default answer.
+  // A score-feed request for a week after the one on screen is the week-ahead schedule the page loads after its scores
+  // without waiting for it: its own kind, 'schedule'. Every change to the feed status, its class, the meta line and the
+  // summary is logged with its time. The anonymous token is minted at boot and stays valid throughout.
+  const slowSurvivor=async({lag=()=>0,deaf=()=>false,rows=[svRow(config,7)],search='?view=survivor'}={})=>{
+    const clock=virtualClock(),life=[],seen=[],ticks=[],answer={};let v=null;
+    try{
+      const send=network(clock,life,lag,deaf);
+      const shown=()=>{const m=/^Week (\d+)/.exec(globalThis.document.getElementById('svMeta').textContent);return m?Number(m[1]):Infinity};
+      const espn=(u,init)=>{const w=Number(u.searchParams.get('week')),kind=w>shown()?'schedule':'score';return send(kind,u,init,answer[kind]?.(u)??(FEEDS[w]?json(FEEDS[w]):httpError(404)))};
+      const published=()=>structuredClone(v?v.rows:rows);
+      const rulings=table=>(u,init)=>send('rulings',u,init,answer.rulings?.(u)??dataApi(table,rulingStore()[table],u));
+      v=await view(FEEDS,rows,patched,{nfl_contests:rulings('nfl_contests'),nfl_contest_policies:rulings('nfl_contest_policies'),nfl_incident_rulings:rulings('nfl_incident_rulings')},
+        {search,bootHooks:{index:(u,init)=>send('index',u,init,answer.index?.(u)??publicationApi(published(),u)),row:(u,init)=>send('row',u,init,answer.row?.(u)??publicationApi(published(),u)),score:espn}});
+      const watch=watcher(clock,seen);
+      watch('feed',v.$('svFeed'),'textContent');watch('feedClass',v.$('svFeed'),'className');watch('meta',v.$('svMeta'),'textContent');watch('summary',v.$('svSummaryNote'),'textContent');
+      v.doc.visibilityState='visible';
+      const start=clock.now();clock.every(PERIOD,()=>{ticks.push(clock.now());v.tick()});
+      return{v,clock,life,seen,ticks,answer,...logTools(life),
+        feed:()=>v.$('svFeed').textContent,feedClass:()=>v.$('svFeed').className,meta:()=>v.$('svMeta').textContent,notices:()=>v.$('survivorError').innerHTML,
+        toNextTick:()=>(ticks.length?ticks[ticks.length-1]:start)+PERIOD-clock.now(),
+        settled:(from=0)=>svSettled(seen,from),
+        feeds:(from=0)=>seen.slice(from).filter(s=>s.label==='feed').map(s=>[s.t,s.value])};
+    }catch(error){clock.restore();throw error}
+  };
+  const onSlow=async(options,check)=>{const p=await slowSurvivor(options);try{await check(p)}finally{p.clock.restore()}};
+  const choose=(v,value)=>{const select=v.$('survivorWeekSelect');select.value=value;for(const fn of select.listeners.change||[])fn()};
+  const FULL={index:1,row:0,rulings:3,score:1};
+
+  for(const L of [10,11,12,14]){
+    await regression(`${L} s a request: a healthy Survivor refresh (the index, then the score feed with the rules and rulings: ${2*L} s) completes, the timer ticks while it runs join it instead of replacing it, nothing is abandoned, and six timer periods complete at least two refreshes`,()=>onSlow({lag:()=>L*S},async p=>{
+      await p.clock.advance(3*L*S);
+      assert.equal(p.feed(),LIVE,'boot (the index, the snapshot, then the score feeds with the rules and rulings) completes');
+      const from=p.seen.length,sent=p.life.length,t0=p.clock.now();
+      await p.clock.advance(6*PERIOD);
+      const done=p.settled(from),starts=p.life.slice(sent).filter(r=>r.kind==='index').map(r=>r.sent);
+      assert(done.length>=2,`completed refreshes: ${done.length}, want at least 2; requests: ${p.trace(sent,t0)}`);
+      for(const d of done)assert.deepEqual([d.feed,d.cls],[LIVE,'survivor-feed ok'],`the refresh completed at +${(d.t-t0)/S} s`);
+      assert.deepEqual(p.aborted(sent),[],'no request is abandoned');
+      starts.slice(1).forEach((s,k)=>assert(s>=done[k].t,`refresh ${k+2} started at +${(s-t0)/S} s, before refresh ${k+1} completed at +${(done[k].t-t0)/S} s`));
+      assert(starts.length===done.length||starts.length===done.length+1,`${starts.length} refreshes started, ${done.length} completed`);
+      done.forEach((d,k)=>assert.deepEqual(p.tally(sent,d.t),Object.fromEntries(Object.entries(FULL).map(([kind,n])=>[kind,n*(k+1)])),`requests through refresh ${k+1}: one index, the three HDC-12 tables and the current week's score feed each, never a snapshot`));
+      assert.deepEqual(p.maxOpen(sent),FULL,'one refresh at a time');
+    }));
+  }
+
+  for(const L of [12,14]){
+    await regression(`a republished Survivor revision (7 → 8) over ${L} s a request (the index, the snapshot, then the score feeds with the rules and rulings: ${3*L} s) is installed whole and its refresh completes; the timer ticks during it join it and nothing is abandoned`,()=>onSlow({lag:()=>L*S},async p=>{
+      await p.clock.advance(3*L*S);
+      assert.equal(p.meta(),'Week 2 · revision 7');assert.equal(p.feed(),LIVE,'boot completes');
+      p.v.rows[0]=svRow(republished('ARI'),8);
+      const from=p.seen.length,sent=p.life.length;
+      await p.clock.advance(p.toNextTick());const T=p.clock.now();
+      await p.clock.advance(3*L*S);
+      assert.deepEqual(p.settled(from).map(d=>[(d.t-T)/S,d.feed]),[[3*L,LIVE]],`one refresh, completed at ${3*L} s; requests: ${p.trace(sent,T)}`);
+      assert.equal(p.meta(),'Week 2 · revision 8');assert.match(p.v.row('D.C.'),/OUT/);assert.match(p.v.row('D.C.'),/ARI lost in Week 2/);
+      assert.deepEqual(p.tally(sent),{index:1,row:1,rulings:3,score:2},'the index, the snapshot of revision 8, then the score feeds a fresh load reads; the ticks during it sent nothing');
+      assert.deepEqual(p.aborted(sent),[],'nothing is abandoned');
+    }));
+  }
+
+  for(const X of [0,8,12]){
+    await regression(`a current-week Survivor score feed that never answers, after an index answering in ${X} s: RESULT FEED UNAVAILABLE at the feed’s 15 s limit (${X+15} s), not before; never LIVE again, and each later refresh fails the same way, one score request at a time`,async()=>{
+      let hang=false;
+      await onSlow({lag:(kind,r)=>!hang?0:kind==='index'?X*S:kind==='score'&&r.url.searchParams.get('week')==='2'?Infinity:0},async p=>{
+        await p.clock.advance(0);
+        assert.equal(p.feed(),LIVE,'boot');
+        hang=true;
+        const from=p.seen.length,sent=p.life.length;
+        await p.clock.advance(p.toNextTick());const T=p.clock.now();
+        await p.clock.advance(X*S+LIMIT-1);
+        assert.equal(p.feed(),LIVE,'within its 15 s limit the feed is still awaited: no failure is reported early');
+        await p.clock.advance(1);
+        assert.equal(p.feed(),'RESULT FEED UNAVAILABLE','at its limit the feed is abandoned and the refresh reports it');
+        assert.match(p.feedClass(),/\bwarn\b/);
+        await p.clock.advance(6*PERIOD-X*S-LIMIT);
+        const done=p.settled(from),expected=[];
+        for(let start=0;start<6*PERIOD;){const end=start+X*S+LIMIT;if(end>6*PERIOD)break;expected.push(end/S);start=Math.ceil(end/PERIOD)*PERIOD}
+        assert.deepEqual(done.map(d=>(d.t-T)/S),expected,`each refresh fails at its limit and the next tick starts the next; requests: ${p.trace(sent,T)}`);
+        for(const d of done)assert.equal(d.feed,'RESULT FEED UNAVAILABLE');
+        assert(!p.feeds(from).some(([,text])=>/^LIVE\b/.test(text)),'never LIVE');
+        assert(p.aborted(sent).every(r=>r.kind==='score'&&r.after===LIMIT),'only the time limits abandon a request');
+        assert.equal(p.maxOpen(sent).score,1,'one score request at a time');
+      });
+    });
+  }
+
+  await regression('an outage that hangs the Survivor publication index and then the score feed: PUBLISHED DATA STALE at 15 s, in the feed status as well at once, and RESULT FEED UNAVAILABLE · PUBLISHED DATA STALE at 30 s; never LIVE; the tick in between joins the refresh',async()=>{
+    let hang=false;
+    await onSlow({lag:(kind,r)=>hang&&(kind==='index'||(kind==='score'&&r.url.searchParams.get('week')==='2'))?Infinity:0},async p=>{
+      await p.clock.advance(0);
+      const before=p.v.$('svTracked').innerHTML;
+      hang=true;
+      const from=p.seen.length,sent=p.life.length;
+      await p.clock.advance(p.toNextTick());const T=p.clock.now();
+      await p.clock.advance(LIMIT);
+      assert.equal(p.meta(),'Week 2 · revision 7 · PUBLISHED DATA STALE','at 15 s the index is abandoned and the publication marked stale');
+      assert.match(p.notices(),/PUBLISHED DATA STALE · the published week list could not be checked \(Survivor publication list timed out\)/);
+      assert.equal(p.feed(),'PUBLISHED DATA STALE · NFL results','the feed status stops saying LIVE at once, while the scores are still awaited');
+      assert.match(p.feedClass(),/\bwarn\b/);
+      await p.clock.advance(LIMIT);
+      assert.equal(p.feed(),'RESULT FEED UNAVAILABLE · PUBLISHED DATA STALE','at 30 s the score feed is abandoned and the refresh completes');
+      assert.equal(p.v.$('svTracked').innerHTML,before,'revision 7 still decides every entry');
+      await p.clock.advance(6*PERIOD-2*LIMIT);
+      assert.deepEqual(p.settled(from).map(d=>[(d.t-T)/S,d.feed]),[[30,'RESULT FEED UNAVAILABLE · PUBLISHED DATA STALE'],[70,'RESULT FEED UNAVAILABLE · PUBLISHED DATA STALE'],[110,'RESULT FEED UNAVAILABLE · PUBLISHED DATA STALE']],`one refresh every two ticks; requests: ${p.trace(sent,T)}`);
+      assert(!p.feeds(from).some(([t,text])=>t>T&&/^LIVE\b/.test(text)),'never LIVE');
+      assert(p.aborted(sent).every(r=>r.after===LIMIT),'nothing is abandoned before its own limit: no refresh is replaced');
+    });
+  });
+
+  for(const [label,setup,reason] of [
+    ['the publication index cannot be read (HTTP 503)',p=>{p.answer.index=()=>httpError(503)},/the published week list could not be checked \(Survivor data 503\)/],
+    ['revision 8 is published but its snapshot cannot be read (HTTP 500)',p=>{p.v.rows[0]=svRow(republished('ARI'),8);p.answer.row=()=>httpError(500)},/revision 8 is published but could not be loaded \(Survivor data 500\)/]
+  ]){
+    await regression(`the feed status stops saying LIVE the moment the publication is found stale, while a slow score feed is still on its way (${label}); LIVE returns only with a completed score load of a verified publication`,async()=>{
+      let T=Infinity;
+      await onSlow({lag:(kind,r)=>r.sent<T?0:kind==='index'||kind==='row'?1*S:12*S},async p=>{
+        await p.clock.advance(0);
+        assert.equal(p.feed(),LIVE,'boot');
+        setup(p);
+        const from=p.seen.length;
+        await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+        await p.clock.advance(1);
+        await p.clock.advance(3*S);
+        assert.match(p.notices(),reason);
+        assert.equal(p.feed(),'PUBLISHED DATA STALE · NFL results','the feed status says PUBLISHED DATA STALE at once');
+        assert.match(p.feedClass(),/\bwarn\b/);
+        await p.clock.advance(12*S);
+        const done=p.settled(from);
+        assert.equal(done.length,1,'the refresh completes');assert.equal(done[0].feed,'PUBLISHED DATA STALE · NFL results');
+        assert(!p.feeds(from).some(([,text])=>/^LIVE\b/.test(text)),'never LIVE while the publication is stale');
+        delete p.answer.index;delete p.answer.row;
+        const back=p.seen.length;
+        await p.clock.advance(p.toNextTick());const V=p.clock.now();
+        await p.clock.advance(16*S);
+        const live=p.feeds(back).filter(([,text])=>text===LIVE).map(([t])=>t);
+        assert.deepEqual(live,p.settled(back).map(d=>d.t),'LIVE is written only by a completed score load');
+        assert(live.length===1&&live[0]>=V+12*S,'and only once the score load of the verified publication completed');
+      });
+    });
+  }
+
+  await regression('a fast network is unchanged: each visible Survivor timer tick runs one full refresh (one index, the three HDC-12 tables, the current week’s score feed, no snapshot) that completes at the tick, LIVE, and nothing is abandoned',()=>onSlow({},async p=>{
+    await p.clock.advance(0);
+    for(let i=1;i<=6;i++){
+      const from=p.seen.length,sent=p.life.length;
+      await p.clock.advance(p.toNextTick());const T=p.clock.now();
+      assert.deepEqual(p.tally(sent),FULL,`tick ${i}`);
+      assert.deepEqual(p.settled(from).map(d=>[d.t-T,d.feed,d.cls]),[[0,LIVE,'survivor-feed ok']],`tick ${i}: completes at once`);
+    }
+    assert.deepEqual(p.aborted(0),[]);
+  }));
+
+  await regression('a Survivor refresh that reaches every phase’s full 15 s limit (the index answering at 14.9 s with revision 8, its snapshot and then the score feed never answering) is never replaced: it completes at 44.9 s with RESULT FEED UNAVAILABLE · PUBLISHED DATA STALE; ticks at 4.5, 24.5 and 44.5 s join it',async()=>{
+    let T=Infinity;
+    await onSlow({lag:(kind,r)=>r.sent<T?0:kind==='index'?14.9*S:kind==='row'||kind==='score'?Infinity:0},async p=>{
+      await p.clock.advance(p.toNextTick()+15.5*S);
+      p.v.rows[0]=svRow(republished('ARI'),8);
+      const from=p.seen.length,sent=p.life.length;T=p.clock.now();
+      p.v.setVisibility('hidden');p.v.setVisibility('visible');
+      await p.clock.advance(46*S);
+      assert.deepEqual(p.ticks.filter(t=>t>T).map(t=>(t-T)/S),[4.5,24.5,44.5]);
+      assert.deepEqual(p.settled(from).map(d=>[(d.t-T)/S,d.feed]),[[44.9,'RESULT FEED UNAVAILABLE · PUBLISHED DATA STALE']],`one refresh, completed at 44.9 s; requests: ${p.trace(sent,T)}`);
+      assert.equal(p.meta(),'Week 2 · revision 7 · PUBLISHED DATA STALE');
+      assert.match(p.notices(),/revision 8 is published but could not be loaded \(Survivor publication timed out\)/);
+      assert.deepEqual(p.tally(sent),{index:1,row:1,rulings:3,score:1},'the ticks during it sent nothing');
+      assert.deepEqual(p.aborted(sent).map(r=>[r.kind,r.after/S]),[['row',15],['score',15]],'only the time limits abandon a request');
+    });
+  });
+
+  await regression('a Survivor week choice that times out falls back to refreshing the week on screen, and that refresh is not replaced by the stall limit: the fallback (a republished revision, then the score feeds, 14 s a request) completes and installs it; the ticks during it join it',async()=>{
+    let T=Infinity;
+    await onSlow({rows:[svRow(config,7),svRow(wk3(),2)],search:'?view=survivor&sw=2&season=2026',lag:(kind,r)=>r.sent<T?0:kind==='row'&&r.sent===T?Infinity:14*S},async p=>{
+      await p.clock.advance(p.toNextTick()+10*S);
+      p.v.rows[0]=svRow(republished('ARI'),8);
+      const from=p.seen.length,sent=p.life.length;T=p.clock.now();
+      choose(p.v,'2026-3');
+      await p.clock.advance(60*S);
+      assert.deepEqual(p.ticks.filter(t=>t>T).map(t=>(t-T)/S),[10,30,50]);
+      assert.deepEqual(p.settled(from).map(d=>[(d.t-T)/S,d.feed]),[[57,LIVE]],`the choice fails at 15 s; its fallback (index 14 s, snapshot 14 s, scores 14 s) completes at 57 s; requests: ${p.trace(sent,T)}`);
+      assert.equal(p.meta(),'Week 2 · revision 8');assert.match(p.notices(),/Unable to switch Survivor week/);
+      assert.deepEqual(p.aborted(sent).map(r=>[r.kind,r.after/S]),[['row',15]],'only the chosen week’s snapshot is abandoned, at its limit');
+      assert.deepEqual(p.tally(sent),{index:1,row:2,rulings:3,score:2},'the ticks during the choice and its fallback sent nothing');
+    });
+  });
+
+  await regression('a late response under long latency never overwrites a newer choice: revision 8’s snapshot, slowed to 12 s, arrives after Week 3 was chosen and installed, and changes nothing',async()=>{
+    let T=Infinity,C=Infinity;
+    const slow=(kind,r)=>r.sent>=T&&r.sent<C;
+    await onSlow({rows:[svRow(config,7),svRow(wk3(),2)],search:'?view=survivor&sw=2&season=2026',lag:(kind,r)=>slow(kind,r)?12*S:0,deaf:slow},async p=>{
+      await p.clock.advance(0);
+      p.v.rows[0]=svRow(republished('ARI'),8);
+      await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+      await p.clock.advance(1+16*S);
+      assert.equal(p.meta(),'Week 2 · revision 7','revision 8 is still on its way');
+      C=p.clock.now();choose(p.v,'2026-3');await p.clock.advance(0);
+      assert.equal(p.meta(),'Week 3 · revision 2');
+      await p.clock.advance(3*PERIOD);
+      assert(p.life.some(r=>r.kind==='row'&&r.sent===T+12*S&&r.how==='answered'&&r.ended===T+24*S),'revision 8’s snapshot did arrive, late');
+      assert.equal(p.meta(),'Week 3 · revision 2','revision 8 arriving last changes nothing');
+      assert.equal(p.v.$('survivorWeekSelect').value,'2026-3');
+      assert.deepEqual(p.v.historyCalls.map(([,u])=>new URL(u).searchParams.get('sw')),['3']);
+    });
+  });
+
+  await regression('a superseded Survivor refresh’s requests are abandoned with it at once, not left to their time limits: a week chosen while a 12 s score feed and the rules and rulings are on their way aborts them',async()=>{
+    let T=Infinity;
+    await onSlow({rows:[svRow(config,7),svRow(wk3(),2)],search:'?view=survivor&sw=2&season=2026',lag:(kind,r)=>r.sent>=T&&r.sent<T+PERIOD&&(kind==='score'||kind==='rulings')?12*S:0},async p=>{
+      await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+      const sent=p.life.length;
+      await p.clock.advance(1+5*S);
+      assert.deepEqual(p.life.slice(sent).filter(r=>r.how==='open').map(r=>r.kind).sort(),['rulings','rulings','rulings','score'],'the refresh is waiting for its score feed and rulings');
+      choose(p.v,'2026-3');await p.clock.advance(0);
+      assert.deepEqual(p.aborted(sent).map(r=>[r.kind,r.after/S]).sort(),[['rulings',5],['rulings',5],['rulings',5],['score',5]],'the superseded requests are abandoned at the choice');
+      assert.equal(p.meta(),'Week 3 · revision 2');
+    });
+  });
+
+  await regression('a Pick’em view taking the page during a slow Survivor refresh: the refresh already on its way lands, the Survivor timer sends nothing while Pick’em has the page, and coming back runs one full refresh that completes',async()=>{
+    let T=Infinity;
+    await onSlow({lag:(kind,r)=>r.sent>=T&&kind!=='schedule'?12*S:0},async p=>{
+      const viewTo=view=>{p.v.doc.body.dataset.view=view;p.v.doc.dispatchEvent({type:'poolcenter:viewchange',detail:{view}})};
+      await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+      await p.clock.advance(1+5*S);
+      const sent=p.life.length;
+      viewTo('home');
+      await p.clock.advance(2*PERIOD);
+      assert.deepEqual(p.tally(sent),{index:0,row:0,rulings:3,score:1},'only the refresh already on its way continues; the timer sends nothing');
+      const back=p.life.length,from=p.seen.length;
+      viewTo('survivor');const B=p.clock.now();
+      await p.clock.advance(24*S);
+      assert.deepEqual(p.tally(back),FULL,'one full refresh');
+      assert.deepEqual(p.settled(from).map(d=>[(d.t-B)/S,d.feed]),[[24,LIVE]]);
+      assert.deepEqual(p.aborted(0),[]);
+    });
+  });
+
+  await regression('hidden during a slow Survivor refresh: the refresh already on its way may finish, no timer tick sends a request while hidden, and becoming visible again runs one full refresh',async()=>{
+    let T=Infinity;
+    await onSlow({lag:(kind,r)=>r.sent>=T&&kind!=='schedule'?12*S:0},async p=>{
+      await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+      await p.clock.advance(1+5*S);
+      p.v.setVisibility('hidden');
+      const sent=p.life.length;
+      await p.clock.advance(3*PERIOD);
+      assert.deepEqual(p.tally(sent),{index:0,row:0,rulings:3,score:1},'only the refresh already on its way continues; hidden ticks send nothing');
+      assert.equal(p.feed(),LIVE,'the refresh on its way completed');
+      const back=p.life.length,from=p.seen.length;p.v.setVisibility('visible');const V=p.clock.now();
+      await p.clock.advance(0);
+      assert.deepEqual(p.tally(back),{index:1,row:0,rulings:0,score:0},'becoming visible starts one full refresh at once');
+      await p.clock.advance(24*S);
+      assert.deepEqual(p.tally(back),FULL);assert.deepEqual(p.settled(from).map(d=>[(d.t-V)/S,d.feed]),[[24,LIVE]]);
+    });
+  });
+
+  await regression('becoming visible while a slow Survivor refresh is still within its time limits joins it instead of starting a second: a republished revision 30 s into its 42 s refresh still installs, nothing is abandoned',async()=>{
+    let T=Infinity;
+    await onSlow({lag:(kind,r)=>r.sent>=T&&kind!=='schedule'?14*S:0},async p=>{
+      await p.clock.advance(0);
+      p.v.rows[0]=svRow(republished('ARI'),8);
+      await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+      const sent=p.life.length,from=p.seen.length;
+      await p.clock.advance(1+25*S);
+      p.v.setVisibility('hidden');await p.clock.advance(5*S);
+      const back=p.life.length;p.v.setVisibility('visible');await p.clock.advance(0);
+      assert.deepEqual(p.tally(back),{index:0,row:0,rulings:0,score:0},'becoming visible 30 s in starts nothing');
+      await p.clock.advance(12*S);
+      assert.deepEqual(p.settled(from).map(d=>[(d.t-T)/S,d.feed]),[[42,LIVE]],`requests: ${p.trace(sent,T)}`);
+      assert.equal(p.meta(),'Week 2 · revision 8');assert.match(p.v.row('D.C.'),/ARI lost in Week 2/);
+      assert.deepEqual(p.aborted(sent),[]);
+    });
+  });
+
+  await regression('a Survivor page frozen in the background past the longest a refresh can take: becoming visible replaces the refresh it left behind, at once and only once, and the new refresh completes',async()=>{
+    let T=Infinity;
+    await onSlow({lag:(kind,r)=>r.sent>=T&&kind!=='schedule'?12*S:0},async p=>{
+      await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+      const sent=p.life.length,from=p.seen.length;
+      await p.clock.advance(1+5*S);
+      p.v.setVisibility('hidden');
+      p.clock.jump(300*S);
+      const V=p.clock.now();
+      p.v.setVisibility('visible');
+      await p.clock.advance(0);
+      assert.deepEqual(p.aborted(sent).map(r=>[r.kind,(r.sent-T)/S,(r.sent+r.after-T)/S]),[['index',0,305]],'the frozen refresh is abandoned as the page becomes visible');
+      assert.deepEqual(p.life.slice(sent).filter(r=>r.sent===V).map(r=>r.kind),['index'],'one new full refresh starts at once');
+      await p.clock.advance(24*S);
+      assert.deepEqual(p.settled(from).map(d=>[(d.t-V)/S,d.feed]),[[24,LIVE]],`requests: ${p.trace(sent,T)}`);
+      assert.deepEqual(p.tally(sent),{index:2,row:0,rulings:3,score:1});
+    });
+  });
+
+  await regression('a Survivor refresh left behind by a page frozen in the background never lets a timer tick start a new refresh while the page is still hidden, however long it has run; becoming visible does',async()=>{
+    let T=Infinity;
+    await onSlow({lag:(kind,r)=>r.sent>=T&&kind!=='schedule'?12*S:0},async p=>{
+      await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+      const sent=p.life.length;
+      await p.clock.advance(1+5*S);
+      p.v.setVisibility('hidden');
+      p.clock.jump(300*S);
+      await p.clock.advance(2*PERIOD);
+      assert.deepEqual(p.life.slice(sent).filter(r=>r.kind==='index').map(r=>(r.sent-T)/S),[0],'unfrozen but still hidden: the timer ticks start no refresh');
+      const back=p.life.length;p.v.setVisibility('visible');await p.clock.advance(0);
+      assert.deepEqual(p.tally(back),{index:1,row:0,rulings:0,score:0},'becoming visible starts one full refresh');
+    });
+  });
+
+  await regression('a Survivor refresh left behind by a frozen page never lets Survivor refresh while a Pick’em view has the page, however long it has run',async()=>{
+    let T=Infinity;
+    await onSlow({lag:(kind,r)=>r.sent>=T&&kind!=='schedule'?12*S:0},async p=>{
+      await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+      const sent=p.life.length;
+      await p.clock.advance(1+5*S);
+      p.v.doc.body.dataset.view='home';p.v.doc.dispatchEvent({type:'poolcenter:viewchange',detail:{view:'home'}});
+      p.v.setVisibility('hidden');
+      p.clock.jump(300*S);
+      p.v.setVisibility('visible');
+      await p.clock.advance(2*PERIOD);
+      assert.deepEqual(p.life.slice(sent).filter(r=>r.kind==='index').map(r=>(r.sent-T)/S),[0],'a Pick’em view has the page: Survivor starts no refresh, on resume or on a tick');
+    });
+  });
+
+  // The whole page (both apps, as index.html loads them) on the virtual clock, every Data API and score-feed request of the
+  // given apps answered lag(app, kind, request) ms after it is sent. Both 20 s timers run on the clock from boot.
+  const slowPool=async(viewName,lag)=>{
+    const clock=virtualClock(),life=[],seen=[],ticks=[];
+    try{
+      const send=network(clock,life,(kind,r)=>lag(r.app,kind,r),()=>false);
+      const p=await poolPage(viewName,{respond:(app,kind,u,init,answer)=>send(kind,u,init,answer,app)});
+      const watch=watcher(clock,seen);
+      watch('sync',p.$('sync'),'textContent');watch('refresh',p.$('refresh'),'disabled');watch('feed',p.$('svFeed'),'textContent');watch('feedClass',p.$('svFeed'),'className');watch('summary',p.$('svSummaryNote'),'textContent');
+      const start=clock.now();clock.every(PERIOD,()=>{ticks.push(clock.now());p.tickAll()});
+      return{...p,clock,life,seen,ticks,
+        toNextTick:()=>(ticks.length?ticks[ticks.length-1]:start)+PERIOD-clock.now(),
+        sent:(app,from=0)=>life.slice(from).filter(r=>r.app===app).map(r=>r.kind),
+        aborted:(from=0)=>life.slice(from).filter(r=>r.how==='aborted').map(r=>[r.app,r.kind]),
+        pickemSettled:(from=0)=>{const out=[];let sync=null;seen.forEach((s,i)=>{if(s.label==='sync')sync=s.value;if(i>=from&&s.label==='refresh'&&s.value===false)out.push({t:s.t,sync})});return out},
+        survivorSettled:(from=0)=>svSettled(seen,from)};
+    }catch(error){clock.restore();throw error}
+  };
+  const onPool=async(viewName,lag,check)=>{const p=await slowPool(viewName,lag);try{await check(p)}finally{p.clock.restore()}};
+  // Survivor's week-ahead schedule (Week 3 on this page), which no refresh waits for, answers at once.
+  const scheduleRequest=(app,kind,r)=>app==='survivor'&&kind==='score'&&r.url.searchParams.get('week')==='3';
+  const PAUSED="PICK'EM PAUSED · refreshes on return";
+
+  await regression('page: Survivor taking the page during a slow Pick’em refresh runs one Survivor refresh that completes (12 s a request) and is not replaced by the tick during it; the Pick’em refresh already on its way lands under PICK’EM PAUSED and the Pick’em timer sends nothing more',async()=>{
+    let T=Infinity;
+    await onPool('home',(app,kind,r)=>r.sent>=T&&!scheduleRequest(app,kind,r)?12*S:0,async p=>{
+      await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+      await p.clock.advance(1+5*S);
+      const from=p.seen.length,sent=p.life.length;
+      p.click('survivor');const C=p.clock.now();
+      assert.equal(p.$('sync').textContent,PAUSED);
+      await p.clock.advance(2*PERIOD);
+      assert.deepEqual(p.survivorSettled(from).map(d=>[(d.t-C)/S,d.feed]),[[24,LIVE]],`Survivor's refresh completes; requests: ${p.life.slice(sent).map(r=>`${r.app}.${r.kind}@${(r.sent-C)/S}-${r.ended===null?'open':(r.ended-C)/S}:${r.how}`).join(' ')}`);
+      assert.deepEqual(p.sent('pickem',sent).sort(),['rulings','rulings','rulings','score'],'Pick’em: only the refresh already on its way continues (its scores and rulings)');
+      assert.equal(p.$('sync').textContent,PAUSED,'it lands under PICK’EM PAUSED');
+      assert.deepEqual(p.aborted(sent),[],'nothing is abandoned');
+    });
+  });
+
+  await regression('page: a Pick’em view taking the page during a slow Survivor refresh runs one Pick’em refresh that completes (12 s a request) and is not replaced by the tick during it; the Survivor refresh already on its way lands and the Survivor timer sends nothing more',async()=>{
+    let T=Infinity;
+    await onPool('survivor',(app,kind,r)=>r.sent>=T&&!scheduleRequest(app,kind,r)?12*S:0,async p=>{
+      await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+      await p.clock.advance(1+5*S);
+      const from=p.seen.length,sent=p.life.length;
+      p.click('home');const C=p.clock.now();
+      await p.clock.advance(2*PERIOD);
+      assert.deepEqual(p.pickemSettled(from).map(d=>[(d.t-C)/S,d.sync]),[[24,'LIVE · data 0s old']],`Pick’em's refresh completes; requests: ${p.life.slice(sent).map(r=>`${r.app}.${r.kind}@${(r.sent-C)/S}-${r.ended===null?'open':(r.ended-C)/S}:${r.how}`).join(' ')}`);
+      assert.deepEqual(p.life.slice(sent).filter(r=>r.app==='survivor'&&!scheduleRequest(r.app,r.kind,r)).map(r=>r.kind).sort(),['rulings','rulings','rulings','score'],'Survivor: only the refresh already on its way continues (its score feed and rulings)');
+      assert.deepEqual(p.aborted(sent),[],'nothing is abandoned');
+    });
+  });
+
+  assert.equal(failures.length,0,`HDC-15 Survivor and page slow-network regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+}
+
+console.log('survivor and page HDC-15 slow-network regressions passed: slow refreshes complete, hung feeds fail at their limits, stale publications never read LIVE, no refresh is replaced within its bounded lifetime');
