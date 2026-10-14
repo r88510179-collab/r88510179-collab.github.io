@@ -1742,15 +1742,26 @@ function virtualClock(){
           if(signal?.aborted)return abandoned();
           if(ms===0)return answer();
           signal?.addEventListener('abort',abandoned,{once:true});
+          if(signal)EARLY.set(signal,[...(EARLY.get(signal)||[]),()=>{if(timer!==null)clearTimeout(timer);rec.ended=clock.now();rec.how='aborted';reject(new DOMException('The operation was aborted.','AbortError'))}]);
           if(Number.isFinite(ms))timer=setTimeout(answer,ms);
         });
       };
       const rows=()=>structuredClone(v?v.pub:published);
       const rulings=table=>(u,init)=>send('rulings',u,init,dataApi(table,pickemStore()[table],u));
-      v=await view({published,search,initialScorePayload:FEEDS[3],
-        store:{nfl_contests:rulings('nfl_contests'),nfl_contest_policies:rulings('nfl_contest_policies'),nfl_incident_rulings:rulings('nfl_incident_rulings')},
-        bootHooks:{index:(u,init)=>send('index',u,init,publicationApi(rows(),u)),row:(u,init)=>send('row',u,init,publicationApi(rows(),u)),
-          score:(u,init)=>send('score',u,init,scoreResponse(u)??json(FEEDS[u.searchParams.get('week')]))}});
+      const store={nfl_contests:rulings('nfl_contests'),nfl_contest_policies:rulings('nfl_contest_policies'),nfl_incident_rulings:rulings('nfl_incident_rulings')};
+      const hooks={index:(u,init)=>send('index',u,init,publicationApi(rows(),u)),row:(u,init)=>send('row',u,init,publicationApi(rows(),u)),
+        score:(u,init)=>send('score',u,init,scoreResponse(u)??json(FEEDS[u.searchParams.get('week')]))};
+      v=await view({published,search,initialScorePayload:FEEDS[3],store,bootHooks:hooks});
+      // From boot on, fetch returns the request's own promise, as a browser's fetch does (the harness's async fetch adds
+      // promise ticks a browser does not); only the anonymous token still goes through the harness.
+      const harnessFetch=globalThis.fetch;
+      globalThis.fetch=(url,init={})=>{
+        const u=new URL(url),table=Object.keys(RULING_COLUMNS).find(t=>u.pathname.endsWith(`/${t}`));
+        if(u.pathname.endsWith('/nfl_pool_weeks'))return(u.searchParams.get('select')||'*').split(',').some(c=>c==='config'||c==='*')?hooks.row(u,init):hooks.index(u,init);
+        if(table)return store[table](u,init);
+        if(u.pathname.endsWith('/scoreboard'))return hooks.score(u,init);
+        return harnessFetch(url,init);
+      };
       const watch=(label,el,prop)=>{let value=el[prop];seen.push({t:clock.now(),label,value});Object.defineProperty(el,prop,{configurable:true,enumerable:true,get:()=>value,set:x=>{value=prop==='textContent'?(x==null?'':String(x)):x;seen.push({t:clock.now(),label,value})}})};
       watch('sync',v.$('sync'),'textContent');watch('dot',v.$('dot').style,'background');watch('weekLine',v.$('weekLine'),'textContent');watch('refresh',v.$('refresh'),'disabled');
       v.doc.visibilityState='visible';
@@ -1774,6 +1785,16 @@ function virtualClock(){
   };
   // Runs check on a slow page and always restores the real timers afterwards.
   const onSlowPage=async(options,check)=>{const p=await slowPage(options);try{await check(p)}finally{p.clock.restore()}};
+  // An engine whose fetch follows the caller's signal through an abort algorithm, run before the signal's 'abort' event (the
+  // DOM's earlier "follow" model): aborting a controller first rejects each request it was given with the engine's own
+  // AbortError, and only then do the signal's 'abort' listeners run. Chromium runs the listeners first; the page must tell
+  // a time limit from a superseded refresh either way.
+  const EARLY=new WeakMap();
+  const abortAlgorithmsFirst=async check=>{
+    const native=AbortController.prototype.abort;
+    AbortController.prototype.abort=function(...a){for(const reject of EARLY.get(this.signal)||[])reject();return native.apply(this,a)};
+    try{await check()}finally{AbortController.prototype.abort=native}
+  };
   const graded=v=>({records:records(v),cells:pickCells(v),games:v.$('gamegrid').innerHTML});
   const choose=(v,value)=>{const select=v.$('weekSelect');select.value=value;for(const fn of select.listeners.change||[])fn()};
   const click=v=>v.$('refresh').listeners.click[0]();
@@ -2076,6 +2097,62 @@ function virtualClock(){
       assert.equal(p.sync(),"PICK'EM PAUSED · refreshes on return");
     });
   });
+
+  await regression('the stall limit is the longest a refresh can take plus a second (46 s): a refresh left behind by a page frozen until 45.9 s after it started is joined when the page becomes visible, one frozen until 46 s is replaced',async()=>{
+    for(const [frozenUntil,replaced] of [[45900,false],[46000,true]]){
+      let T=Infinity;
+      await onSlowPage({lag:(kind,r)=>r.sent>=T?12*S:0},async p=>{
+        await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+        const sent=p.life.length;
+        await p.clock.advance(1+5*S);
+        p.v.setVisibility('hidden');
+        p.clock.jump(frozenUntil-5*S);
+        const V=p.clock.now();
+        p.v.setVisibility('visible');
+        await p.clock.advance(0);
+        assert.deepEqual(p.life.slice(sent).filter(r=>r.sent===V&&r.kind==='index').map(r=>r.kind),replaced?['index']:[],`frozen until ${frozenUntil/S} s: the refresh is ${replaced?'replaced':'joined'}`);
+        assert.deepEqual(p.aborted(sent).map(r=>[r.kind,(r.sent+r.after-T)/S]),replaced?[['index',frozenUntil/S]]:[],`frozen until ${frozenUntil/S} s`);
+      });
+    }
+  });
+
+  await regression('where fetch’s own abort error reaches the race first, a score feed that runs out of time is still a timeout: FEED UNAVAILABLE at 15 s, never a silent "Updating…"',()=>abortAlgorithmsFirst(async()=>{
+    let hang=false;
+    await onSlowPage({lag:kind=>kind==='score'&&hang?Infinity:0},async p=>{
+      await p.clock.advance(0);hang=true;
+      await p.clock.advance(p.toNextTick());
+      await p.clock.advance(LIMIT);
+      assert.match(p.sync(),/^FEED UNAVAILABLE · last good \d+s ago$/);assert.equal(p.dot(),'var(--red)');
+    });
+  }));
+
+  await regression('where fetch’s own abort error reaches the race first, a publication index that runs out of time is still a timeout: PUBLISHED DATA STALE at 15 s, and the refresh never says LIVE',()=>abortAlgorithmsFirst(async()=>{
+    let hang=false;
+    await onSlowPage({lag:kind=>kind==='index'&&hang?Infinity:0},async p=>{
+      await p.clock.advance(0);hang=true;
+      const from=p.seen.length;
+      await p.clock.advance(p.toNextTick());
+      await p.clock.advance(LIMIT);
+      assert.match(p.weekLine(),/^PUBLISHED DATA STALE · revision 3 · /,'the publication is marked stale at its limit');
+      assert.match(p.sync(),/^PUBLISHED DATA STALE · data 0s old$/,'the refresh completes with the stale state, not LIVE');
+      assert(!p.headers(from).some(([,text])=>/^LIVE\b/.test(text)),'never LIVE');
+      assert.match(p.banner(),/^PUBLISHED DATA STALE · the published week list could not be checked \(published week data timed out\)/m);
+    });
+  }));
+
+  await regression('where fetch’s own abort error reaches the race first, a chosen week whose row runs out of time is still a failed choice: at 15 s the error is shown, the selector goes back and the week on screen is refreshed',()=>abortAlgorithmsFirst(async()=>{
+    let T=Infinity;
+    await onSlowPage({published:[pubRow(wk3(),3),pubRow(wk4(),2)],lag:(kind,r)=>kind==='row'&&r.sent>=T?Infinity:0},async p=>{
+      await p.clock.advance(p.toNextTick()+5*S);
+      const sent=p.life.length;T=p.clock.now();
+      choose(p.v,'2026-4');
+      await p.clock.advance(LIMIT);
+      assert.match(p.banner(),/Unable to switch Pick.em week: 2026 Week 4 could not be loaded \(published week data timed out\)/);
+      assert.match(p.weekLine(),/^WEEK 4 UNAVAILABLE · Week 3 · revision 3 · /);assert.equal(p.v.$('weekSelect').value,'2026-3');
+      assert.deepEqual(p.tally(sent),{index:1,row:1,rulings:3,score:1},'the week on screen is refreshed at once');
+      assert.equal(p.sync(),'LIVE · data 0s old');
+    });
+  }));
 
   assert.equal(failures.length,0,`HDC-15 Pick'em slow-network regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
 }

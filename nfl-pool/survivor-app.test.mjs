@@ -1381,8 +1381,19 @@ function virtualClock(){
       if(signal?.aborted)return abandoned();
       if(ms===0)return answer();
       signal?.addEventListener('abort',abandoned,{once:true});
+      if(signal)EARLY.set(signal,[...(EARLY.get(signal)||[]),()=>{if(timer!==null)clearTimeout(timer);rec.ended=clock.now();rec.how='aborted';reject(new DOMException('The operation was aborted.','AbortError'))}]);
       if(Number.isFinite(ms))timer=setTimeout(answer,ms);
     });
+  };
+  // An engine whose fetch follows the caller's signal through an abort algorithm, run before the signal's 'abort' event (the
+  // DOM's earlier "follow" model): aborting a controller first rejects each request it was given with the engine's own
+  // AbortError, and only then do the signal's 'abort' listeners run. Chromium runs the listeners first; the page must tell
+  // a time limit from a superseded refresh either way.
+  const EARLY=new WeakMap();
+  const abortAlgorithmsFirst=async check=>{
+    const native=AbortController.prototype.abort;
+    AbortController.prototype.abort=function(...a){for(const reject of EARLY.get(this.signal)||[])reject();return native.apply(this,a)};
+    try{await check()}finally{AbortController.prototype.abort=native}
   };
   const watcher=(clock,seen)=>(label,el,prop)=>{let value=el[prop];seen.push({t:clock.now(),label,value});Object.defineProperty(el,prop,{configurable:true,enumerable:true,get:()=>value,set:x=>{value=prop==='textContent'?(x==null?'':String(x)):x;seen.push({t:clock.now(),label,value})}})};
   const logTools=(life,S0=0)=>({
@@ -1408,8 +1419,19 @@ function virtualClock(){
       const espn=(u,init)=>{const w=Number(u.searchParams.get('week')),kind=w>shown()?'schedule':'score';return send(kind,u,init,answer[kind]?.(u)??(FEEDS[w]?json(FEEDS[w]):httpError(404)))};
       const published=()=>structuredClone(v?v.rows:rows);
       const rulings=table=>(u,init)=>send('rulings',u,init,answer.rulings?.(u)??dataApi(table,rulingStore()[table],u));
-      v=await view(FEEDS,rows,patched,{nfl_contests:rulings('nfl_contests'),nfl_contest_policies:rulings('nfl_contest_policies'),nfl_incident_rulings:rulings('nfl_incident_rulings')},
-        {search,bootHooks:{index:(u,init)=>send('index',u,init,answer.index?.(u)??publicationApi(published(),u)),row:(u,init)=>send('row',u,init,answer.row?.(u)??publicationApi(published(),u)),score:espn}});
+      const store={nfl_contests:rulings('nfl_contests'),nfl_contest_policies:rulings('nfl_contest_policies'),nfl_incident_rulings:rulings('nfl_incident_rulings')};
+      const hooks={index:(u,init)=>send('index',u,init,answer.index?.(u)??publicationApi(published(),u)),row:(u,init)=>send('row',u,init,answer.row?.(u)??publicationApi(published(),u)),score:espn};
+      v=await view(FEEDS,rows,patched,store,{search,bootHooks:hooks});
+      // From boot on, fetch returns the request's own promise, as a browser's fetch does (the harness's async fetch adds
+      // promise ticks a browser does not); only the anonymous token still goes through the harness.
+      const harnessFetch=globalThis.fetch;
+      globalThis.fetch=(url,init={})=>{
+        const u=new URL(url),table=Object.keys(RULING_COLUMNS).find(t=>u.pathname.endsWith(`/${t}`));
+        if(u.pathname.endsWith('/nfl_survivor_weeks'))return publicationKind(u)==='row'?hooks.row(u,init):hooks.index(u,init);
+        if(table)return store[table](u,init);
+        if(u.pathname.endsWith('/scoreboard'))return hooks.score(u,init);
+        return harnessFetch(url,init);
+      };
       const watch=watcher(clock,seen);
       watch('feed',v.$('svFeed'),'textContent');watch('feedClass',v.$('svFeed'),'className');watch('meta',v.$('svMeta'),'textContent');watch('summary',v.$('svSummaryNote'),'textContent');
       v.doc.visibilityState='visible';
@@ -1717,6 +1739,36 @@ function virtualClock(){
       assert.deepEqual(p.life.slice(sent).filter(r=>r.kind==='index').map(r=>(r.sent-T)/S),[0],'a Pick’em view has the page: Survivor starts no refresh, on resume or on a tick');
     });
   });
+
+  await regression('the Survivor stall limit is the longest a refresh can take plus a second (46 s): a refresh left behind by a page frozen until 45.9 s after it started is joined when the page becomes visible, one frozen until 46 s is replaced',async()=>{
+    for(const [frozenUntil,replaced] of [[45900,false],[46000,true]]){
+      let T=Infinity;
+      await onSlow({lag:(kind,r)=>r.sent>=T&&kind!=='schedule'?12*S:0},async p=>{
+        await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
+        const sent=p.life.length;
+        await p.clock.advance(1+5*S);
+        p.v.setVisibility('hidden');
+        p.clock.jump(frozenUntil-5*S);
+        const V=p.clock.now();
+        p.v.setVisibility('visible');
+        await p.clock.advance(0);
+        assert.deepEqual(p.life.slice(sent).filter(r=>r.sent===V&&r.kind==='index').map(r=>r.kind),replaced?['index']:[],`frozen until ${frozenUntil/S} s: the refresh is ${replaced?'replaced':'joined'}`);
+        assert.deepEqual(p.aborted(sent).map(r=>[r.kind,(r.sent+r.after-T)/S]),replaced?[['index',frozenUntil/S]]:[],`frozen until ${frozenUntil/S} s`);
+      });
+    }
+  });
+
+  await regression('where fetch’s own abort error reaches the race first, a Survivor index that runs out of time is still a timeout: PUBLISHED DATA STALE at 15 s, in the feed status too',()=>abortAlgorithmsFirst(async()=>{
+    let hang=false;
+    await onSlow({lag:kind=>kind==='index'&&hang?Infinity:0},async p=>{
+      await p.clock.advance(0);hang=true;
+      await p.clock.advance(p.toNextTick());
+      await p.clock.advance(LIMIT);
+      assert.equal(p.meta(),'Week 2 · revision 7 · PUBLISHED DATA STALE');
+      assert.match(p.notices(),/the published week list could not be checked \(Survivor publication list timed out\)/);
+      assert.equal(p.feed(),'PUBLISHED DATA STALE · NFL results');
+    });
+  }));
 
   // The whole page (both apps, as index.html loads them) on the virtual clock, every Data API and score-feed request of the
   // given apps answered lag(app, kind, request) ms after it is sent. Both 20 s timers run on the clock from boot.
