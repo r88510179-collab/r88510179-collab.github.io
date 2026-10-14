@@ -100,7 +100,7 @@ async function view({weekConfig=config,initialScorePayload={events:[game()]},sto
   const mint=()=>'x.'+Buffer.from(JSON.stringify({exp:Math.floor(Date.now()/1000)+tokenTtl})).toString('base64url')+'.y',token=mint();
   globalThis.fetch=async (url,init={})=>{
     const u=new URL(url);
-    if(u.pathname.endsWith('/token/anonymous')){calls.push({kind:'token',url:u});return{ok:true,json:async()=>({token:tokenTtl===3600?token:mint()})}}
+    if(u.pathname.endsWith('/token/anonymous')){calls.push({kind:'token',url:u});const answer={ok:true,json:async()=>({token:tokenTtl===3600?token:mint()})};return hooks.token?.(u,init,answer)??answer}
     if(u.pathname.endsWith('/nfl_pool_weeks')){
       const kind=(u.searchParams.get('select')||'*').split(',').some(c=>c==='config'||c==='*')?'row':'index';
       calls.push({kind,url:u,authorization:init.headers?.Authorization??null});
@@ -1729,12 +1729,12 @@ function virtualClock(){
   // valid throughout, so no phase waits on a renewal. Every request is logged (its kind, when it was sent, when it ended and
   // how: answered, aborted or still open), and so is every change to the header, its dot, the week strip and the REFRESH
   // button, with its time. A refresh has completed when its generation re-enables REFRESH.
-  const slowPage=async({lag=()=>0,deaf=()=>false,scoreResponse=()=>null,published=[pubRow(wk3(),3)],search='?view=home&season=2026&week=3'}={})=>{
+  const slowPage=async({lag=()=>0,tokenLag=()=>0,deaf=()=>false,scoreResponse=()=>null,published=[pubRow(wk3(),3)],search='?view=home&season=2026&week=3'}={})=>{
     const clock=virtualClock(),life=[],seen=[],ticks=[];let v=null;
     try{
       const send=(kind,url,init,response)=>{
         const rec={kind,url,sent:clock.now(),ended:null,how:'open'};life.push(rec);
-        const ms=lag(kind,rec),signal=deaf(kind,rec)?null:init?.signal;
+        const ms=kind==='token'?tokenLag(rec):lag(kind,rec),signal=deaf(kind,rec)?null:init?.signal;
         return new Promise((resolve,reject)=>{
           const answer=()=>{signal?.removeEventListener('abort',abandoned);rec.ended=clock.now();rec.how='answered';resolve(response)};
           let timer=null;
@@ -1750,7 +1750,7 @@ function virtualClock(){
       const rulings=table=>(u,init)=>send('rulings',u,init,dataApi(table,pickemStore()[table],u));
       const store={nfl_contests:rulings('nfl_contests'),nfl_contest_policies:rulings('nfl_contest_policies'),nfl_incident_rulings:rulings('nfl_incident_rulings')};
       const hooks={index:(u,init)=>send('index',u,init,publicationApi(rows(),u)),row:(u,init)=>send('row',u,init,publicationApi(rows(),u)),
-        score:(u,init)=>send('score',u,init,scoreResponse(u)??json(FEEDS[u.searchParams.get('week')]))};
+        score:(u,init)=>send('score',u,init,scoreResponse(u)??json(FEEDS[u.searchParams.get('week')])),token:(u,init,answer)=>send('token',u,init,answer)};
       v=await view({published,search,initialScorePayload:FEEDS[3],store,bootHooks:hooks});
       // From boot on, fetch returns the request's own promise, as a browser's fetch does (the harness's async fetch adds
       // promise ticks a browser does not); only the anonymous token still goes through the harness.
@@ -1775,11 +1775,11 @@ function virtualClock(){
         settled:(from=0)=>{const out=[];let sync=null,dot=null;seen.forEach((s,i)=>{if(s.label==='sync')sync=s.value;if(s.label==='dot')dot=s.value;if(i>=from&&s.label==='refresh'&&s.value===false&&s.t>=0)out.push({t:s.t,sync,dot})});return out},
         // The header text over time after seen[from], as [time, text].
         headers:(from=0)=>seen.slice(from).filter(s=>s.label==='sync').map(s=>[s.t,s.value]),
-        tally:(from=0,until=Infinity)=>{const t={index:0,row:0,rulings:0,score:0};for(const r of since(from))if(r.sent<=until)t[r.kind]++;return t},
+        tally:(from=0,until=Infinity)=>{const t={index:0,row:0,rulings:0,score:0};for(const r of since(from))if(r.sent<=until&&r.kind in t)t[r.kind]++;return t},
         sentAt:(from,at)=>since(from).filter(r=>r.sent===at).map(r=>r.kind),
         aborted:(from=0)=>since(from).filter(r=>r.how==='aborted').map(r=>({kind:r.kind,sent:r.sent,after:r.ended-r.sent})),
         // The most requests of each kind open at once.
-        maxOpen:(from=0)=>{const out={index:0,row:0,rulings:0,score:0},list=since(from);for(const r of list){const n=list.filter(x=>x.kind===r.kind&&x.sent<=r.sent&&(x.ended===null||x.ended>r.sent)).length;out[r.kind]=Math.max(out[r.kind],n)}return out},
+        maxOpen:(from=0)=>{const out={index:0,row:0,rulings:0,score:0},list=since(from).filter(r=>r.kind in out);for(const r of list){const n=list.filter(x=>x.kind===r.kind&&x.sent<=r.sent&&(x.ended===null||x.ended>r.sent)).length;out[r.kind]=Math.max(out[r.kind],n)}return out},
         trace:(from=0,t0=0)=>since(from).map(r=>`${r.kind}@${(r.sent-t0)/S}-${r.ended===null?'open':(r.ended-t0)/S}:${r.how}`).join(' ')};
     }catch(error){clock.restore();throw error}
   };
@@ -2153,6 +2153,22 @@ function virtualClock(){
       assert.equal(p.sync(),'LIVE · data 0s old');
     });
   }));
+
+  for(const L of [10,12,14]){
+    await regression(`${L} s for every request from the very first, the anonymous token included: boot completes (the token, then the index, the row and the scores with the rules and rulings: ${4*L} s), then so do the refreshes; no read waits for the token inside its own time limit`,()=>onSlowPage({lag:()=>L*S,tokenLag:()=>L*S},async p=>{
+      await p.clock.advance(4*L*S);
+      assert.equal(p.sync(),'LIVE · data 0s old',`boot completes at ${4*L} s`);
+      assert.match(p.weekLine(),/^Week 3 · revision 3 · /);
+      assert.deepEqual(p.life.map(r=>[r.kind,r.sent/S-p.life[0].sent/S]).filter(([kind])=>kind!=='rulings'),[['token',0],['index',L],['row',2*L],['score',3*L]],'one phase after another, the token first');
+      const from=p.seen.length,sent=p.life.length;
+      await p.clock.advance(6*PERIOD);
+      const done=p.settled(from);
+      assert(done.length>=2,`completed refreshes after boot: ${done.length}, want at least 2`);
+      for(const d of done)assert.equal(d.sync,'LIVE · data 0s old');
+      assert.deepEqual(p.aborted(0),[],'nothing is abandoned, at boot or after');
+      assert.equal(p.life.slice(sent).filter(r=>r.kind==='token').length,0,'the token is not fetched again');
+    }));
+  }
 
   assert.equal(failures.length,0,`HDC-15 Pick'em slow-network regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
 }

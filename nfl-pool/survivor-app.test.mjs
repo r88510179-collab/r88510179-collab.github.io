@@ -85,7 +85,7 @@ async function view(feeds,rowsOverride=null,app=patched,store=rulingStore(),{tok
   const defaultRows=[{season:2026,week:2,status:'locked',revision:7,config:structuredClone(config)}],rowsData=structuredClone(rowsOverride||defaultRows);
   globalThis.fetch=async (url,init={})=>{
     const u=new URL(url);
-    if(u.pathname.endsWith('/token/anonymous')){calls.push({kind:'token',url:u});return{ok:true,json:async()=>({token:tokenTtl===3600?token:mint()})}}
+    if(u.pathname.endsWith('/token/anonymous')){calls.push({kind:'token',url:u});const answer={ok:true,json:async()=>({token:tokenTtl===3600?token:mint()})};return hooks.token?.(u,init,answer)??answer}
     if(u.pathname.endsWith('/nfl_survivor_weeks')){
       const kind=publicationKind(u);calls.push({kind,url:u,authorization:init.headers?.Authorization??null});
       return hooks[kind]?.(u,init)??publicationApi(rowsData,u);
@@ -1371,9 +1371,9 @@ function virtualClock(){
   // A request answered lag(kind, request) ms after it is sent (Infinity: never), with the answer given when it was sent; one
   // the page abandons fails at once with an AbortError, as fetch does, unless deaf(kind, request): a response already on its
   // way, which arrives anyway. Each is logged in life with its kind, url, when it was sent, when it ended and how.
-  const network=(clock,life,lag,deaf)=>(kind,url,init,response,app)=>{
+  const network=(clock,life,lag,deaf,tokenLag=()=>0)=>(kind,url,init,response,app)=>{
     const rec={kind,url,app,sent:clock.now(),ended:null,how:'open'};life.push(rec);
-    const ms=lag(kind,rec),signal=deaf(kind,rec)?null:init?.signal;
+    const ms=kind==='token'?tokenLag(rec):lag(kind,rec),signal=deaf(kind,rec)?null:init?.signal;
     return new Promise((resolve,reject)=>{
       const answer=()=>{signal?.removeEventListener('abort',abandoned);rec.ended=clock.now();rec.how='answered';resolve(response)};
       let timer=null;
@@ -1400,6 +1400,7 @@ function virtualClock(){
     tally:(from=0,until=Infinity)=>{const t={index:0,row:0,rulings:0,score:0};for(const r of life.slice(from))if(r.sent<=until&&r.kind in t)t[r.kind]++;return t},
     // Requests abandoned (the week-ahead schedule, which no refresh waits for, is left out), with how long after being sent.
     aborted:(from=0)=>life.slice(from).filter(r=>r.how==='aborted'&&r.kind!=='schedule').map(r=>({kind:r.kind,sent:r.sent,after:r.ended-r.sent})),
+    tokens:(from=0)=>life.slice(from).filter(r=>r.kind==='token').length,
     maxOpen:(from=0)=>{const out={index:0,row:0,rulings:0,score:0},list=life.slice(from).filter(r=>r.kind in out);for(const r of list){const n=list.filter(x=>x.kind===r.kind&&x.sent<=r.sent&&(x.ended===null||x.ended>r.sent)).length;out[r.kind]=Math.max(out[r.kind],n)}return out},
     trace:(from=0,t0=S0)=>life.slice(from).map(r=>`${r.kind}${r.kind==='score'||r.kind==='schedule'?r.url.searchParams.get('week'):''}@${(r.sent-t0)/S}-${r.ended===null?'open':(r.ended-t0)/S}:${r.how}`).join(' ')
   });
@@ -1411,16 +1412,17 @@ function virtualClock(){
   // A score-feed request for a week after the one on screen is the week-ahead schedule the page loads after its scores
   // without waiting for it: its own kind, 'schedule'. Every change to the feed status, its class, the meta line and the
   // summary is logged with its time. The anonymous token is minted at boot and stays valid throughout.
-  const slowSurvivor=async({lag=()=>0,deaf=()=>false,rows=[svRow(config,7)],search='?view=survivor'}={})=>{
+  const slowSurvivor=async({lag=()=>0,tokenLag=()=>0,deaf=()=>false,rows=[svRow(config,7)],search='?view=survivor'}={})=>{
     const clock=virtualClock(),life=[],seen=[],ticks=[],answer={};let v=null;
     try{
-      const send=network(clock,life,lag,deaf);
+      const send=network(clock,life,lag,deaf,tokenLag);
       const shown=()=>{const m=/^Week (\d+)/.exec(globalThis.document.getElementById('svMeta').textContent);return m?Number(m[1]):Infinity};
       const espn=(u,init)=>{const w=Number(u.searchParams.get('week')),kind=w>shown()?'schedule':'score';return send(kind,u,init,answer[kind]?.(u)??(FEEDS[w]?json(FEEDS[w]):httpError(404)))};
       const published=()=>structuredClone(v?v.rows:rows);
       const rulings=table=>(u,init)=>send('rulings',u,init,answer.rulings?.(u)??dataApi(table,rulingStore()[table],u));
       const store={nfl_contests:rulings('nfl_contests'),nfl_contest_policies:rulings('nfl_contest_policies'),nfl_incident_rulings:rulings('nfl_incident_rulings')};
-      const hooks={index:(u,init)=>send('index',u,init,answer.index?.(u)??publicationApi(published(),u)),row:(u,init)=>send('row',u,init,answer.row?.(u)??publicationApi(published(),u)),score:espn};
+      const hooks={index:(u,init)=>send('index',u,init,answer.index?.(u)??publicationApi(published(),u)),row:(u,init)=>send('row',u,init,answer.row?.(u)??publicationApi(published(),u)),score:espn,
+        token:(u,init,reply)=>send('token',u,init,reply)};
       v=await view(FEEDS,rows,patched,store,{search,bootHooks:hooks});
       // From boot on, fetch returns the request's own promise, as a browser's fetch does (the harness's async fetch adds
       // promise ticks a browser does not); only the anonymous token still goes through the harness.
@@ -1769,6 +1771,22 @@ function virtualClock(){
       assert.equal(p.feed(),'PUBLISHED DATA STALE · NFL results');
     });
   }));
+
+  for(const L of [10,12,14]){
+    await regression(`${L} s for every Survivor request from the very first, the anonymous token included: boot completes (the token, then the index, the snapshot and the score feeds with the rules and rulings: ${4*L} s), then so do the refreshes; no read waits for the token inside its own time limit`,()=>onSlow({lag:kind=>kind==='schedule'?0:L*S,tokenLag:()=>L*S},async p=>{
+      await p.clock.advance(4*L*S);
+      assert.equal(p.feed(),LIVE,`boot completes at ${4*L} s`);
+      assert.equal(p.meta(),'Week 2 · revision 7');
+      assert.deepEqual(p.life.filter(r=>r.kind==='token'||r.kind==='index'||r.kind==='row').map(r=>[r.kind,(r.sent-p.life[0].sent)/S]),[['token',0],['index',L],['row',2*L]],'one phase after another, the token first');
+      const from=p.seen.length,sent=p.life.length;
+      await p.clock.advance(6*PERIOD);
+      const done=p.settled(from);
+      assert(done.length>=2,`completed refreshes after boot: ${done.length}, want at least 2`);
+      for(const d of done)assert.equal(d.feed,LIVE);
+      assert.deepEqual(p.aborted(0),[],'nothing is abandoned, at boot or after');
+      assert.equal(p.tokens(sent),0,'the token is not fetched again');
+    }));
+  }
 
   // The whole page (both apps, as index.html loads them) on the virtual clock, every Data API and score-feed request of the
   // given apps answered lag(app, kind, request) ms after it is sent. Both 20 s timers run on the clock from boot.
