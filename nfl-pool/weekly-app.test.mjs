@@ -912,7 +912,7 @@ console.log('weekly HDC-11 halted-game warning, ungraded halted game, unchanged 
   });
   await regression('voided tiebreak: no tiebreak that week, ranking by scored record only, tied leaders are co-winners, no fallback game',async()=>{
     const v=await page({tiebreakGameIndex:1,events:[espnFinal({awayScore:'20',homeScore:'20'}),bufCin()]});
-    assert.deepEqual(records(v),[['D.C.','0','0'],['DJS','0','0']]);
+    assert.deepEqual(records(v),[['D.C.','0','1'],['DJS','0','1']],'the unvoided NFL tie costs both entries a loss; only BUF-CIN is void');
     assert.equal(v.$('mnf').textContent,'VOID');
     assert.match(v.$('tbNote').textContent,/no tiebreak this week/);
     assert.match(v.$('footerRule').textContent,/BUF–CIN tiebreak game voided by commissioner ruling: no tiebreak this week/);
@@ -1153,7 +1153,7 @@ console.log('weekly HDC-11 halted-game warning, ungraded halted game, unchanged 
       assert.match(v.warning(),/BUF-CIN: duplicate events ignored/,`${label}: the HDC-09 duplicate warning stays`);
     }
     const t=await page({tiebreakGameIndex:1,events:[espnFinal({awayScore:'20',homeScore:'20'}),bufCin(),bufCin(),forfeitB]});
-    assert.deepEqual(pickCells(t),['neutral','hold','neutral','hold'],'tiebreak game: HOLD, never VOID');
+    assert.deepEqual(pickCells(t),['bad','hold','bad','hold'],'the separate NFL tie is a loss on both sides; tiebreak game: HOLD, never VOID');
     assert.notEqual(t.$('mnf').textContent,'VOID','tiebreak game: no voided tiebreak');
     assert.doesNotMatch(`${t.$('tbNote').textContent} ${t.$('footerRule').textContent} ${t.$('leaderNote').textContent}`,/no tiebreak this week|tiebreak game voided|tiebreak game void/,'tiebreak game: never resolved as a voided tiebreak');
   });
