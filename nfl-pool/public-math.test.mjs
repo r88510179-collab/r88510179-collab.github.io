@@ -54,7 +54,7 @@ import {competitionRanks,ownershipShare,scoreEntry,tiebreakState} from './public
     {completed:true,winner:null},
     {completed:false,winner:null}
   ]);
-  assert.deepEqual(tied,{w:0,l:0,left:1});
+  assert.deepEqual(tied,{w:0,l:1,left:1});
 }
 {
   assert.deepEqual(tiebreakState({completed:false,state:'pre',awayScore:null,homeScore:null}),{final:false,total:null});

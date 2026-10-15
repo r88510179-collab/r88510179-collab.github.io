@@ -132,13 +132,13 @@
     <section class="view-panel" data-view-panel="picks" hidden>
       <section class="page-title"><span class="section-kicker">Weekly selections</span><h1>Picks</h1><p>Side-by-side picks for D.C., JC, DJS and Thaddeus. Matchup headers show full-field ownership when available.</p></section>
       <section class="card picks" aria-labelledby="picks-title">
-        <div class="head"><h2 id="picks-title">Pick Board</h2><div class="meta">✓ correct · ✕ incorrect · tie = 0 · VOID = removed by commissioner ruling</div></div>
+        <div class="head"><h2 id="picks-title">Pick Board</h2><div class="meta">✓ correct · ✕ incorrect · tie = 1 loss · VOID = removed by commissioner ruling</div></div>
         <div class="scroll"><table><thead id="pickHead"></thead><tbody id="pickBody"></tbody></table></div>
       </section>
     </section>
   </div>
 
-  <footer class="foot"><span id="footerRule">Final NFL outcomes only · NFL ties = 0 points.</span><span>Pool Center · ESPN live scoreboard</span></footer>
+  <footer class="foot"><span id="footerRule">Final NFL outcomes only · NFL ties = 1 loss for both picks.</span><span>Pool Center · ESPN live scoreboard</span></footer>
 </main>
 
 <nav class="bottom-nav" aria-label="Primary">
@@ -150,7 +150,7 @@
 </nav>
 
 <script src="score-feed-proxy.js?v=2"></script>
-<script type="module" src="weekly-app.js?v=weekly-v19"></script>
+<script type="module" src="weekly-app.js?v=weekly-v20"></script>
 <script type="module" src="survivor-app.js?v=9"></script>
 <script src="pwa.js?v=1" defer></script>
 </body>
