@@ -1,13 +1,13 @@
 'use strict';
-const CACHE='pool-center-shell-v22';
+const CACHE='pool-center-shell-v23';
 const SHELL=[
   './',
   './index.html',
   './style.css?v=premium-v3',
   './slate.css?v=slate-v1',
   './weekly.css?v=premium-v3',
-  './weekly-app.js?v=weekly-v19',
-  './public-math.js?v=2',
+  './weekly-app.js?v=weekly-v20',
+  './public-math.js?v=3',
   './survivor.css?v=4',
   './survivor-app.js?v=9',
   './survivor-math.js?v=7',

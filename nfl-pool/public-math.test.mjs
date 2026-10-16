@@ -41,11 +41,20 @@ import {competitionRanks,ownershipShare,scoreEntry,tiebreakState} from './public
   assert.equal(a.pct+b.pct,100);
 }
 {
+  // NFL Pool rule: an officially completed NFL tie is a LOSS for either team picked,
+  // but a commissioner VOID and an unfinalized score must never be graded as losses.
+  const finalTie={away:'BUF',home:'CIN',completed:true,state:'post',winner:null,awayScore:20,homeScore:20};
+  assert.deepEqual(scoreEntry(['BUF'],[finalTie]),{w:0,l:1,left:0},'final tie: away picker loses');
+  assert.deepEqual(scoreEntry(['CIN'],[finalTie]),{w:0,l:1,left:0},'final tie: home picker loses');
+  assert.deepEqual(scoreEntry(['BUF'],[{...finalTie,void:true,awayScore:null,homeScore:null}]),{w:0,l:0,left:0},'commissioner VOID never becomes a loss');
+  assert.deepEqual(scoreEntry(['BUF'],[{...finalTie,completed:false}]),{w:0,l:0,left:1},'unfinalized game stays pending');
+}
+{
   const tied=scoreEntry(['A','B'],[
     {completed:true,winner:null},
     {completed:false,winner:null}
   ]);
-  assert.deepEqual(tied,{w:0,l:0,left:1});
+  assert.deepEqual(tied,{w:0,l:1,left:1});
 }
 {
   assert.deepEqual(tiebreakState({completed:false,state:'pre',awayScore:null,homeScore:null}),{final:false,total:null});

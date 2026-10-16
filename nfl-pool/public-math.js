@@ -18,7 +18,7 @@ export function ownershipShare(entries,gameIndex,team,validTeams){
 export function scoreEntry(picks,games){
   let w=0,l=0,left=0;
   (games||[]).forEach((game,i)=>{
-    if(game?.completed){if(game.winner)(picks||[])[i]===game.winner?w++:l++}
+    if(game?.completed){if(game.void===true||game.hold)return;if(game.winner)(picks||[])[i]===game.winner?w++:l++;else l++}
     else left++;
   });
   return{w,l,left};

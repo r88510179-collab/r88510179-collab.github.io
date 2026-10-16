@@ -1,6 +1,6 @@
 'use strict';
 
-import {competitionRanks,ownershipShare,scoreEntry,tiebreakState} from './public-math.js?v=2';
+import {competitionRanks,ownershipShare,scoreEntry,tiebreakState} from './public-math.js?v=3';
 import {PUBLIC_COLUMNS,FIRST_RULING_SEASON,contestIdFor,evaluateContestRulings,pickemSlotRuling,pickemSlotEffect,pickemEffectiveGame,rulesModel,isAbsenceEvidence} from './contest-rulings.js?v=2';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
@@ -215,7 +215,7 @@ function renderStaticLabels(){
 }
 // HDC-12: a voided tiebreak game means no tiebreak that week; another game is never chosen after the fact.
 const tiebreakVoid=(games=G)=>games[TIEBREAK_INDEX]?.void===true;
-function footerText(){const [a,h]=M[TIEBREAK_INDEX];return`Final NFL outcomes only · NFL ties = 0 points · ${tiebreakVoid()?`${a}–${h} tiebreak game voided by commissioner ruling: no tiebreak this week.`:`${a}–${h} tiebreak activates when that game is final.`}${G.some(g=>g.void)?' VOID = removed from scoring by commissioner ruling.':''}${fieldAvailable()?' Full-field entries are stored without competitor names.':''}`}
+function footerText(){const [a,h]=M[TIEBREAK_INDEX];return`Final NFL outcomes only · NFL ties = 1 loss for both picks · ${tiebreakVoid()?`${a}–${h} tiebreak game voided by commissioner ruling: no tiebreak this week.`:`${a}–${h} tiebreak activates when that game is final.`}${G.some(g=>g.void)?' VOID = removed from scoring by commissioner ruling.':''}${fieldAvailable()?' Full-field entries are stored without competitor names.':''}`}
 function stats(p,games=G){return scoreEntry(p.picks,games)}
 function tiebreak(games=G){return tiebreakState(games[TIEBREAK_INDEX])}
 function rows(games=G){const t=tiebreak(games);return P.map((p,i)=>({...p,...stats(p,games),diff:tiebreakDiff(p,t),i})).sort((a,b)=>b.w-a.w||a.l-b.l||(t.final?a.diff-b.diff:0)||a.i-b.i)}
@@ -366,7 +366,7 @@ function render(){
     const away=fieldShare(i,a),home=fieldShare(i,h),ownership=away&&home?`<div class="matchup-ownership"><span>${away.pct}%</span><span>${home.pct}%</span></div>`:'';
     return`<th class="c matchup-head"><span class="matchup-team">${badge(a,'tiny')}${esc(a)}</span><span class="matchup-slash">/</span><span class="matchup-team">${badge(h,'tiny')}${esc(h)}</span>${ownership}</th>`;
   }).join('')+'</tr>';
-  $('pickBody').innerHTML=P.map(p=>'<tr><td class="name">'+esc(p.name)+'</td>'+p.picks.map((pick,i)=>{const g=G[i];if(g.void||g.hold)return`<td class="c ${g.void?'void':'hold'}"><span class="pick-choice">${pickTeam(pick)}<span class="pick-result">${g.void?'VOID':'HOLD'}</span></span></td>`;const done=g.completed,ok=done&&g.winner&&pick===g.winner,tie=done&&!g.winner;return`<td class="c ${tie?'neutral':done?(ok?'ok':'bad'):'pending'}"><span class="pick-choice">${pickTeam(pick)}<span class="pick-result">${tie?'0':done?(ok?'✓':'✕'):''}</span></span></td>`}).join('')+'</tr>').join('');
+  $('pickBody').innerHTML=P.map(p=>'<tr><td class="name">'+esc(p.name)+'</td>'+p.picks.map((pick,i)=>{const g=G[i];if(g.void||g.hold)return`<td class="c ${g.void?'void':'hold'}"><span class="pick-choice">${pickTeam(pick)}<span class="pick-result">${g.void?'VOID':'HOLD'}</span></span></td>`;const done=g.completed,ok=done&&g.winner&&pick===g.winner;return`<td class="c ${done?(ok?'ok':'bad'):'pending'}"><span class="pick-choice">${pickTeam(pick)}<span class="pick-result">${done?(ok?'✓':'✕'):''}</span></span></td>`}).join('')+'</tr>').join('');
 
   $('finals').textContent=voids?`${nflFinals}/${M.length} · ${voids} void`:`${nflFinals}/${M.length}`;$('liveCount').textContent=live;$('left').textContent=M.length-f;$('mnf').textContent=tbVoid?'VOID':t.total==null?'—':t.total+(t.final?'':'*');
   if(onHold){

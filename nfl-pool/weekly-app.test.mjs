@@ -8,11 +8,11 @@ const appSource=readFileSync(new URL('./weekly-app.js',import.meta.url),'utf8');
 // page still loads from a data: URL. Before HDC-12 there is no such import and the source is used as it is.
 const rulingsFrom=appSource.match(/from '\.\/contest-rulings\.js\?v=\d+';/)?.[0]??null;
 const source=rulingsFrom?appSource.replace(rulingsFrom,`from '${new URL(rulingsFrom.slice("from '".length,-"';".length),import.meta.url).href}';`):appSource;
-const from="from './public-math.js?v=2';";
+const from="from './public-math.js?v=3';";
 assert(source.includes(from),'harness expects the public-math import');
 assert(source.includes("if(ctl)ctl.abort()"),'overlapping Pick’em refreshes must abort the older request');
 assert(source.includes("if(id!==gen)return"),'late Pick’em responses must be generation-gated');
-const patched=source.replace(from,`from '${new URL('./public-math.js?v=2',import.meta.url).href}';`);
+const patched=source.replace(from,`from '${new URL('./public-math.js?v=3',import.meta.url).href}';`);
 let instance=0;
 
 class El{
@@ -691,8 +691,8 @@ const PROJECTED_AT='2026-09-27T20:00:00.000Z';
 {
   // HDC-10 R4. Valid finals grade exactly as before, absent evidence included, and the projected feed (what nflscores2
   // serves) renders the identical page.
-  const expected={DEN:[['D.C.','1','0'],['DJS','0','1']],KC:[['DJS','1','0'],['D.C.','0','1']],tie:[['D.C.','0','0'],['DJS','0','0']]};
-  const cells={DEN:['ok','bad'],KC:['bad','ok'],tie:['neutral','neutral']};
+  const expected={DEN:[['D.C.','1','0'],['DJS','0','1']],KC:[['DJS','1','0'],['D.C.','0','1']],tie:[['D.C.','0','1'],['DJS','0','1']]};
+  const cells={DEN:['ok','bad'],KC:['bad','ok'],tie:['bad','bad']};
   for(const [label,final,result] of VALID_FINALS){
     const v=await view({initialScorePayload:{events:[structuredClone(final)]}}),page=graded(v);
     assert.equal(page.warning,'',`${label}: no warning`);
@@ -710,12 +710,12 @@ const PROJECTED_AT='2026-09-27T20:00:00.000Z';
   // HDC-10 R5. One shared fixture set, so the two public surfaces cannot drift apart again: Pick'em and Survivor
   // (survivorBuildResults, which the Survivor view and Admin use) must reach the same verdict on every event, from the raw
   // ESPN event and from its projection: the winner, a tie, or no safe final (null).
-  const pickem={ok:'DEN',bad:'KC',neutral:'tie',pending:null};
+  const pickem={ok:'DEN',bad:'KC',pending:null};
   for(const [label,event,expected] of [...VALID_FINALS,...CONTRADICTORY_FINALS.map(([label,event])=>[label,event,null])]){
     const verdicts={};
     for(const [source,payload] of [['raw',{events:[structuredClone(event)]}],['projected',projectScoreboard({events:[structuredClone(event)]},PROJECTED_AT)]]){
       const v=await view({initialScorePayload:payload}),result=survivorBuildResults(payload.events,{season:2026,week:3}).get('DEN');
-      verdicts[`Pick'em ${source}`]=pickem[pickCells(v)[0]];
+      verdicts[`Pick'em ${source}`]=/class="game final tie"/.test(v.$('gamegrid').innerHTML)?'tie':pickem[pickCells(v)[0]];
       verdicts[`Survivor ${source}`]=result?.completed===true&&!result.unresolved?(result.tie?'tie':result.winner):null;
     }
     assert.deepEqual(verdicts,{"Pick'em raw":expected,'Survivor raw':expected,"Pick'em projected":expected,'Survivor projected':expected},`${label}: Pick'em and Survivor agree, raw and projected`);
@@ -912,7 +912,7 @@ console.log('weekly HDC-11 halted-game warning, ungraded halted game, unchanged 
   });
   await regression('voided tiebreak: no tiebreak that week, ranking by scored record only, tied leaders are co-winners, no fallback game',async()=>{
     const v=await page({tiebreakGameIndex:1,events:[espnFinal({awayScore:'20',homeScore:'20'}),bufCin()]});
-    assert.deepEqual(records(v),[['D.C.','0','0'],['DJS','0','0']]);
+    assert.deepEqual(records(v),[['D.C.','0','1'],['DJS','0','1']],'the unvoided NFL tie costs both entries a loss; only BUF-CIN is void');
     assert.equal(v.$('mnf').textContent,'VOID');
     assert.match(v.$('tbNote').textContent,/no tiebreak this week/);
     assert.match(v.$('footerRule').textContent,/BUF–CIN tiebreak game voided by commissioner ruling: no tiebreak this week/);
@@ -1153,7 +1153,7 @@ console.log('weekly HDC-11 halted-game warning, ungraded halted game, unchanged 
       assert.match(v.warning(),/BUF-CIN: duplicate events ignored/,`${label}: the HDC-09 duplicate warning stays`);
     }
     const t=await page({tiebreakGameIndex:1,events:[espnFinal({awayScore:'20',homeScore:'20'}),bufCin(),bufCin(),forfeitB]});
-    assert.deepEqual(pickCells(t),['neutral','hold','neutral','hold'],'tiebreak game: HOLD, never VOID');
+    assert.deepEqual(pickCells(t),['bad','hold','bad','hold'],'the separate NFL tie is a loss on both sides; tiebreak game: HOLD, never VOID');
     assert.notEqual(t.$('mnf').textContent,'VOID','tiebreak game: no voided tiebreak');
     assert.doesNotMatch(`${t.$('tbNote').textContent} ${t.$('footerRule').textContent} ${t.$('leaderNote').textContent}`,/no tiebreak this week|tiebreak game voided|tiebreak game void/,'tiebreak game: never resolved as a voided tiebreak');
   });
