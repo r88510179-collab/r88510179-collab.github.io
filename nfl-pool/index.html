@@ -16,6 +16,7 @@
 <link rel="stylesheet" href="slate.css?v=slate-v1">
 <link rel="stylesheet" href="weekly.css?v=premium-v3">
 <link rel="stylesheet" href="survivor.css?v=4">
+<link rel="stylesheet" href="share.css?v=1">
 </head>
 <body>
 <div class="stadium-glow" aria-hidden="true"></div>
@@ -98,7 +99,7 @@
     <section class="view-panel" data-view-panel="standings" hidden>
       <section class="page-title"><span class="section-kicker">Your group vs the field</span><h1>Standings</h1><p>Only your four entries are shown. Overall rank, percentile, gap and ceiling use every valid entry from the uploaded pool sheet.</p></section>
       <section class="card standings" aria-labelledby="stand-title">
-        <div class="head"><h2 id="stand-title">Your Group</h2><div class="meta" id="fieldSummary">Field data unavailable</div></div>
+        <div class="head"><h2 id="stand-title">Your Group</h2><div class="meta" id="fieldSummary">Field data unavailable</div><button type="button" class="share-btn" data-share-card="pickem" aria-label="Share Pick'em standings" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12M7 8l5-5 5 5M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Share</span></button></div>
         <div class="table-wrap"><table><thead><tr><th>Group</th><th>Entry</th><th class="c">Overall</th><th class="c">W</th><th class="c">L</th><th class="c">Left</th><th class="c">Back</th><th class="c">Ceiling</th><th class="c">TB</th></tr></thead><tbody id="standings"></tbody></table></div>
       </section>
     </section>
@@ -122,7 +123,7 @@
     <section class="view-panel" data-view-panel="survivor" hidden>
       <section class="page-title survivor-title"><div><span class="section-kicker">Survivor / Suicide</span><h1>Survivor</h1><p>Weekly selections, attrition and live NFL outcome status across the full Survivor field.</p></div><select id="survivorWeekSelect" class="week-select" aria-label="Choose Survivor week"><option>Loading…</option></select></section>
       <div id="survivorError"></div>
-      <section class="card survivor-hero"><div class="survivor-hero-head"><div><span class="section-kicker">Field status</span><h2>Survivor Pool</h2><div class="meta" id="svMeta">—</div></div><span id="svFeed" class="survivor-feed">LOADING RESULTS</span></div><div class="survivor-metrics"><div class="survivor-metric"><span>Original pool</span><b id="svPoolSize">—</b></div><div class="survivor-metric"><span>Week entries</span><b id="svEntered">—</b></div><div class="survivor-metric"><span>Still in</span><b id="svStillIn">—</b></div><div class="survivor-metric"><span>Pending</span><b id="svPending">—</b></div></div><div class="survivor-note" id="svSummaryNote">Waiting for published Survivor data.</div></section>
+      <section class="card survivor-hero"><div class="survivor-hero-head"><div><span class="section-kicker">Field status</span><h2>Survivor Pool</h2><div class="meta" id="svMeta">—</div></div><div class="share-slot"><span id="svFeed" class="survivor-feed">LOADING RESULTS</span><button type="button" class="share-btn" data-share-card="survivor" aria-label="Share Survivor results" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12M7 8l5-5 5 5M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Share</span></button></div></div><div class="survivor-metrics"><div class="survivor-metric"><span>Original pool</span><b id="svPoolSize">—</b></div><div class="survivor-metric"><span>Week entries</span><b id="svEntered">—</b></div><div class="survivor-metric"><span>Still in</span><b id="svStillIn">—</b></div><div class="survivor-metric"><span>Pending</span><b id="svPending">—</b></div></div><div class="survivor-note" id="svSummaryNote">Waiting for published Survivor data.</div></section>
       <div class="survivor-grid"><section class="card"><div class="head"><div><span class="section-kicker">Your entries</span><h2>D.C. · DJS · Thaddeus</h2></div></div><div class="survivor-card-body" id="svTracked"></div></section><section class="card"><div class="head"><div><span class="section-kicker">Current week</span><h2>Pick Distribution</h2></div></div><div class="survivor-card-body" id="svDistribution"></div></section></div>
       <section class="card survivor-decision-card" style="margin-top:10px"><div class="head"><div><span class="section-kicker">Next week</span><h2>Decision Support · <span id="svDecisionWeek">Week —</span></h2><div class="meta" id="svDecisionNote">Waiting for current results and next-week schedule.</div></div></div><div class="survivor-decision-list" id="svDecisionEntries"></div><div class="survivor-decision-disclaimer">Market favorite labels use ESPN's available line when present. Field availability is historical burn data, not a forecast of what competitors will pick.</div></section>
       <section class="card" style="margin-top:10px"><div class="head"><div><span class="section-kicker">Attrition</span><h2>Weekly Field Progress</h2></div></div><div class="survivor-progress" id="svProgress"></div></section>
@@ -150,8 +151,9 @@
 </nav>
 
 <script src="score-feed-proxy.js?v=2"></script>
-<script type="module" src="weekly-app.js?v=weekly-v20"></script>
-<script type="module" src="survivor-app.js?v=9"></script>
+<script type="module" src="weekly-app.js?v=weekly-v21"></script>
+<script type="module" src="survivor-app.js?v=10"></script>
+<script type="module" src="share-ui.js?v=1"></script>
 <script src="pwa.js?v=1" defer></script>
 </body>
 </html>

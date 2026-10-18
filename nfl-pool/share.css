@@ -1,0 +1,26 @@
+/* Shareable cards (share-ui.js): the Share buttons and the preview dialog. The buttons stay hidden until share-ui.js runs. */
+.share-btn{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:0 13px;border:1px solid #d52d3466;border-radius:999px;background:#d52d3414;color:#ffd2d4;font-size:10px;font-weight:950;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;cursor:pointer;flex:0 0 auto}
+.share-btn:hover{background:#d52d3426}.share-btn:focus-visible,.share-action:focus-visible,.share-close:focus-visible{outline:2px solid #ef5a61;outline-offset:2px}
+.share-btn svg{width:14px;height:14px;flex:0 0 auto}
+/* The meta line keeps its place on the right with the button after it; in Survivor the button sits under the status pill. */
+.standings>.head{align-items:center}.standings>.head>.meta{margin-left:auto}
+.share-slot{display:flex;flex-direction:column;align-items:flex-end;gap:8px;min-width:0}
+.share-dialog{width:min(440px,calc(100vw - 24px));max-height:calc(100vh - 24px);max-height:calc(100dvh - 24px);padding:0;border:1px solid var(--line2);border-radius:18px;background:#0d1015;color:var(--text);box-shadow:var(--shadow);overflow:auto;overscroll-behavior:contain}
+.share-dialog::backdrop{background:#000c}
+.share-sheet{display:grid;gap:10px;padding:14px}
+.share-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.share-head h2{margin:2px 0 0;font-size:16px}
+.share-close{width:44px;height:44px;flex:0 0 auto;border:1px solid var(--line);border-radius:12px;background:#0b0e13;color:var(--text);font-size:15px;cursor:pointer}
+/* The preview is the exported PNG itself, at 4:5, as large as the phone allows with the actions still on screen. */
+.share-preview{position:relative;width:min(100%,calc((100vh - 300px)*.8));width:min(100%,calc((100dvh - 300px)*.8));min-width:200px;margin:0 auto;aspect-ratio:4/5;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#07090d}
+.share-image{display:block;width:100%;height:100%}
+.share-placeholder{position:absolute;inset:0;display:grid;place-items:center;padding:20px;color:var(--muted);font-size:12px;line-height:1.5;text-align:center}
+.share-note{margin:0;color:var(--dim);font-size:10px;line-height:1.45}
+.share-actions{display:flex;flex-wrap:wrap;gap:8px}
+.share-action{flex:1 1 28%;min-height:46px;padding:0 10px;border:1px solid var(--line2);border-radius:12px;background:#151a21;color:var(--text);font-size:12px;font-weight:850;cursor:pointer}
+.share-action.primary{flex-basis:100%;border-color:#713038;background:linear-gradient(#8f1c22,#6f1116);color:#fff}
+.share-action:disabled{opacity:.45;cursor:default}
+.share-status{min-height:16px;margin:0;color:var(--muted);font-size:11px;line-height:1.45;white-space:pre-line;overflow-wrap:anywhere;user-select:text}
+.share-status.error{color:#ffb1b5}
+.share-copy{position:fixed;top:0;left:0;width:1px;height:1px;opacity:0}
+body:has(.share-dialog[open]){overflow:hidden}
