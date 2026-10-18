@@ -1,487 +1,613 @@
-// Shareable Cards V1 regressions: the card models (share-card.js), the Canvas renderer on a recording context, the
-// snapshots weekly-app.js and survivor-app.js answer with, and the share sheet (share-sheet.js) on a small fake DOM.
+// Shareable cards. share-card.js on its own: the snapshot checks, the status a card may claim, the card model and its
+// privacy, the copied summary, the deep links, and the stadium design's layout and drawing on a recording Canvas 2D stand-in. share-ui.js on a
+// fake DOM: the Share buttons, the preview of the exact PNG, native file sharing, cancel, Download and the copy fallbacks.
+// The apps' answers to the share request are checked in weekly-app.test.mjs and survivor-app.test.mjs.
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
-import {CARD_WIDTH,CARD_HEIGHT,PUBLIC_URL,SITE_LABEL,LIVE_FRESH_MS,FINAL_FRESH_MS,pickemCard,survivorCard,pickemStatus,survivorStatus,deepLink,formatStamp,drawShareCard,fitText} from './share-card.js';
+import {buildCard,drawCard,cardLayout,pickemStatus,survivorStatus,shareLink,linkLabel,shareFileName,shareSupport,sharePayload,
+  fitText,wrapText,ageSeconds,CARD_WIDTH,CARD_HEIGHT,FRESH_SECONDS,MAX_ROWS,MIN_CONDENSE,MIN_ROW} from './share-card.js';
 
-const failures=[],nativeFetch=globalThis.fetch;
-const test=async(name,check)=>{try{await check()}catch(error){failures.push(`${name}: ${error?.stack||error}`)}};
-const flush=async(n=24)=>{for(let i=0;i<n;i++)await new Promise(r=>setTimeout(r,0))};
-const NOW=Date.parse('2026-10-18T16:05:00Z'),TZ='America/New_York';
-const at=ms=>new Date(ms).toISOString();
+const failures=[];
+const check=async(name,fn)=>{try{await fn()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+const NOW=Date.parse('2026-10-11T19:42:10Z'),TZ='America/New_York',HREF='https://r88510179-collab.github.io/nfl-pool/index.html?view=standings&week=2#top';
+const iso=ms=>new Date(ms).toISOString();
+const entry=(name,w,l,left,groupRank,field,o={})=>({name,w,l,left,groupRank,leader:groupRank===1,noPicks:false,tiebreakDelta:null,field,...o});
+const rank=(rank,tieCount,topPercent,behind)=>({rank,tieCount,label:`${tieCount>1?'T-':'#'}${rank}`,topPercent,behind});
+const pickem=(o={})=>({ready:true,contest:'pickem',season:2026,week:5,revision:2,
+  games:{total:16,final:12,void:0,live:2,remaining:4},fieldSize:87,tiebreak:{final:false,void:false},
+  entries:[entry('D.C.',10,2,4,1,rank(3,1,4,1)),entry('JC',9,3,4,2,rank(8,5,10,2)),entry('DJS',9,3,4,2,rank(8,5,10,2)),entry('Thaddeus',7,5,4,4,rank(41,9,48,4))],
+  feed:{fetchedAt:iso(NOW-8000),failed:false,incomplete:false,warnings:0,review:false},hold:false,rulingsStale:false,publishedStale:false,...o});
+const tracked=(name,status,team,reason,underReview=false)=>({name,status,team,reason,underReview});
+const survivor=(o={})=>({ready:true,contest:'survivor',season:2026,week:5,revision:7,fieldSize:120,
+  counts:{active:42,pending:8,out:78,outThisWeek:12,submitted:50,legalPicks:50,awaitingRuling:0,onHold:0},
+  tracked:[tracked('D.C.','ALIVE','KC','Alive through Week 5'),tracked('DJS','OUT','BUF','BUF lost in Week 3'),tracked('Thaddeus','PENDING','SF','Week 5 game pending')],
+  feed:{at:NOW-6000,failed:false},hold:false,flags:[],rulingsStale:false,publishedStale:false,...o});
+const build=(contest,snapshot,o={})=>buildCard(contest,snapshot,{now:NOW,href:HREF,timeZone:TZ,...o});
+const allFinal=()=>pickem({games:{total:16,final:16,void:0,live:0,remaining:0},entries:pickem().entries.map(e=>({...e,w:e.w+2,l:e.l+2,left:0}))});
 
-// ---- Synthetic snapshots shaped exactly as the apps answer (weekly-app.js / survivor-app.js shareSnapshot). The values
-// follow the 2026 Week 5 reference: DJS leads, JC and Thaddeus tie for second, D.C. trails; 281 Pick'em and 247 Survivor
-// entries, two separate fields.
-const pickem=(o={})=>({contest:'pickem',season:2026,week:5,revision:1,publishedAt:'2026-10-11T17:47:50.49+00:00',scoresAt:at(NOW-5000),scoresFailed:false,hold:null,rulingsStale:false,
-  publicationStale:null,warnings:0,underReview:0,games:{total:14,final:14,void:0,live:0,remaining:0},tiebreak:{final:true,void:false},fieldSize:281,
-  entries:[{name:'DJS',rank:1,w:8,l:6,left:0,noSubmission:false,fieldRank:'T-132',tied:false},{name:'JC',rank:2,w:8,l:6,left:0,noSubmission:false,fieldRank:'T-153',tied:true},
-    {name:'Thaddeus',rank:2,w:8,l:6,left:0,noSubmission:false,fieldRank:'T-153',tied:true},{name:'D.C.',rank:4,w:6,l:8,left:0,noSubmission:false,fieldRank:'T-257',tied:false}],...o});
-const survivor=(o={})=>({contest:'survivor',season:2026,week:5,revision:1,publishedAt:'2026-10-11T17:49:40.715+00:00',scoresAt:at(NOW-5000),scoresFailed:false,hold:null,rulingsStale:false,
-  publicationStale:null,flags:[],awaitingRuling:0,onHold:0,unresolvedPrior:0,awaitingRulingPrior:0,onHoldPrior:0,totals:{field:247,remaining:52,submissions:77,pending:0},
-  entries:[{name:'D.C.',status:'OUT',eliminatedWeek:5,reason:'DAL lost in Week 5',underReview:false,order:0},{name:'DJS',status:'ALIVE',eliminatedWeek:null,reason:'Alive through Week 5',underReview:false,order:1},
-    {name:'Thaddeus',status:'OUT',eliminatedWeek:1,reason:'LAC lost in Week 1',underReview:false,order:2}],...o});
-const opts={now:NOW,timeZone:TZ};
+// A Canvas 2D stand-in that measures text from the font size in ctx.font and records every fillText and strokeText.
+function recorder({parsesFonts=true}={}){
+  const calls=[],strokes=[];let font='10px sans-serif';
+  const ctx={
+    fillStyle:'#000',strokeStyle:'#000',lineWidth:1,textAlign:'start',textBaseline:'alphabetic',letterSpacing:'0px',globalAlpha:1,lineCap:'butt',lineJoin:'miter',shadowColor:'',shadowBlur:0,shadowOffsetY:0,
+    get font(){return font},set font(v){if(parsesFonts||/^\d+ \d+px sans-serif$/.test(v))font=v},
+    measureText(text){const size=Number(/(\d+(?:\.\d+)?)px/.exec(font)[1]),spacing=parseFloat(this.letterSpacing)||0;let w=0;for(const ch of String(text))w+=size*(ch===' '?.28:/[A-Z0-9#–—@]/.test(ch)?.7:/[a-z]/.test(ch)?.56:.5)+spacing;return{width:w}},
+    fillText(text,x,y,maxWidth){calls.push({text:String(text),x,y,maxWidth,font,align:this.textAlign,width:this.measureText(text).width})},
+    strokeText(text,x,y,maxWidth){strokes.push({text:String(text),x,y,maxWidth,font,align:this.textAlign,width:this.measureText(text).width})},
+    save(){},restore(){},translate(){},scale(){},beginPath(){},moveTo(){},lineTo(){},arcTo(){},arc(){},rect(){},closePath(){},fill(){},stroke(){},clip(){},fillRect(){},
+    createLinearGradient(){return{addColorStop(){}}},createRadialGradient(){return{addColorStop(){}}}
+  };
+  return{ctx,calls,strokes};
+}
+const drawn=card=>{const r=recorder();const layout=drawCard(r.ctx,card,{Path2D:undefined});return{...r,layout,texts:r.calls.map(c=>c.text)}};
+// Text drawn with a width limit is condensed to it, so a string occupies the smaller of its width and its limit.
+const edges=c=>{const w=Math.min(c.width,c.maxWidth),left=c.align==='right'?c.x-w:c.align==='center'?c.x-w/2:c.x;return{left,right:left+w}};
 
-await test("Pick'em card: the Week 5 reference, with JC and Thaddeus tied for second",()=>{
-  const card=pickemCard(pickem(),opts);
+// ---- Pick'em cards.
+await check("a Pick'em card is the selected week's standings: every tracked entry in standings order with its record and full-field rank",()=>{
+  const card=build('pickem',pickem());
   assert.equal(card.ok,true);
-  assert.equal(card.title.join(' ').replace('’',"'"),"PICK'EM STANDINGS",'the title reads PICK\'EM STANDINGS');
-  assert.deepEqual(card.rows.map(r=>[r.place,r.name,r.record,r.rank,r.leader]),[['1ST','DJS','8–6','T-132',true],['T-2','JC','8–6','T-153',false],['T-2','Thaddeus','8–6','T-153',false],['4','D.C.','6–8','T-257',false]]);
-  assert.deepEqual(card.total,{label:'TOTAL POOL ENTRIES:',value:'281'});
-  assert.equal(card.status.key,'final');assert.equal(card.status.label,'FINAL');assert.equal(card.status.detail,null);
-  assert.equal(card.url,'https://r88510179-collab.github.io/nfl-pool/?view=standings&season=2026&week=5');
-  assert.equal(card.urlLabel,SITE_LABEL);assert.equal(card.filename,'pool-center-pickem-2026-week-5.png');
-  assert.equal(card.meta,'SNAPSHOT OCT 18, 2026 · 12:05 PM EDT · REVISION 1');
-  assert.equal(card.text,["Pool Center · Pick'em Standings",'2026 Week 5 · FINAL','1ST  DJS  8–6  · field T-132','T-2  JC  8–6  · field T-153','T-2  Thaddeus  8–6  · field T-153','4  D.C.  6–8  · field T-257',
-    'Total pool entries: 281','Snapshot Oct 18, 2026 · 12:05 PM EDT · revision 1','https://r88510179-collab.github.io/nfl-pool/?view=standings&season=2026&week=5'].join('\n'));
-  assert.match(card.alt,/^Pick'em standings card, 2026 Week 5, FINAL\. 1ST DJS 8–6, field rank T-132; T-2 JC 8–6, field rank T-153; T-2 Thaddeus 8–6, field rank T-153; 4 D\.C\. 6–8, field rank T-257\. Total pool entries 281\.$/);
-  assert(card.text.split('\n').includes('T-2  Thaddeus  8–6  · field T-153')&&!/^3\b.*Thaddeus/m.test(card.text),'Thaddeus ties JC for second and is never placed third');
+  assert.deepEqual([card.season,card.week,card.revision,card.title],[2026,5,2,"Pick'em Standings"]);
+  assert.deepEqual(card.rows.map(r=>[r.rank,r.name,r.record,r.overall,r.overallOf,r.leader]),[
+    ['1','D.C.','10–2','#3','of 87',true],['2','JC','9–3','T-8','of 87',false],['2','DJS','9–3','T-8','of 87',false],['4','Thaddeus','7–5','T-41','of 87',false]]);
+  assert.deepEqual(card.rows.map(r=>[r.place,r.gold,r.note]),[['1ST',true,null],['T-2',false,null],['T-2',false,null],['4',false,null]]);
+  assert.deepEqual(card.total,{label:'TOTAL POOL ENTRIES:',value:'87'},'the pool size is the snapshot field size');
+  assert.deepEqual([card.status.label,card.status.tone,card.status.detail,card.status.flags],['LIVE','ok','12 of 16 games final · 2 live',[]]);
 });
-await test("Pick'em card: every value comes from the snapshot",()=>{
-  const card=pickemCard(pickem({week:4,revision:3,fieldSize:279,entries:[{name:'JC',rank:1,w:11,l:4,left:0,noSubmission:false,fieldRank:'T-49',tied:false},{name:'Thaddeus',rank:2,w:9,l:6,left:0,noSubmission:false,fieldRank:'T-138',tied:false},
-    {name:'D.C.',rank:3,w:9,l:6,left:0,noSubmission:false,fieldRank:'T-169',tied:false},{name:'DJS',rank:4,w:8,l:7,left:0,noSubmission:false,fieldRank:'T-210',tied:false}],games:{total:15,final:15,void:0,live:0,remaining:0}}),opts);
-  assert.deepEqual(card.rows.map(r=>[r.place,r.name,r.record,r.rank]),[['1ST','JC','11–4','T-49'],['2','Thaddeus','9–6','T-138'],['3','D.C.','9–6','T-169'],['4','DJS','8–7','T-210']]);
-  assert.equal(card.total.value,'279');assert.equal(card.week,4);assert.equal(card.revision,3);
-  assert.equal(card.url,deepLink('pickem',2026,4));assert.match(card.meta,/REVISION 3$/);
-  const all=JSON.stringify(card);
-  for(const sample of ['281','T-132','T-153','T-257','DJS  8–6'])assert(!all.includes(sample),`no Week 5 value (${sample}) survives into Week 4`);
+await check('ties: tied entries share the group rank and the T- label; a sole rank keeps #',()=>{
+  const card=build('pickem',pickem());
+  assert.deepEqual(card.rows.map(r=>r.rank),['1','2','2','4']);
+  assert.deepEqual(card.rows.map(r=>r.overall),['#3','T-8','T-8','T-41']);
+  const all=build('pickem',pickem({entries:pickem().entries.map(e=>({...e,w:9,l:3,groupRank:1,leader:true,field:rank(8,5,10,2)}))}));
+  assert.deepEqual(all.rows.map(r=>[r.rank,r.leader]),[['1',true],['1',true],['1',true],['1',true]],'all tied: all leaders at 1');
+  assert.deepEqual(all.rows.map(r=>[r.place,r.gold]),Array(4).fill(['T-1',false]),'nobody leads a group that is level: no gold, and no 1ST');
+  const two=build('pickem',pickem({entries:pickem().entries.map((e,i)=>({...e,w:i<2?10:e.w,l:i<2?2:e.l,groupRank:i<2?1:i===2?3:4,leader:i<2}))}));
+  assert.deepEqual(two.rows.map(r=>[r.place,r.gold]),[['T-1',true],['T-1',true],['3',false],['4',false]],'tied leaders share T-1 and the gold while someone trails');
 });
-await test("Pick'em card: gold marks leaders only while someone trails them",()=>{
-  const level=pickemCard(pickem({games:{total:13,final:0,void:0,live:1,remaining:13},tiebreak:{final:false,void:false},fieldSize:276,entries:['D.C.','JC','DJS','Thaddeus'].map(name=>({name,rank:1,w:0,l:0,left:13,noSubmission:name==='Thaddeus',fieldRank:'T-1',tied:true}))}),opts);
-  assert.deepEqual(level.rows.map(r=>[r.place,r.leader,r.note]),[['T-1',false,null],['T-1',false,null],['T-1',false,null],['T-1',false,'NO PICKS SUBMITTED']]);
-  assert.equal(level.status.key,'live');assert.equal(level.status.detail,'0 OF 13 GAMES FINAL · 1 LIVE');
-  const tiedLead=pickemCard(pickem({entries:[{name:'A',rank:1,w:9,l:5,left:0,fieldRank:'T-3',tied:true},{name:'B',rank:1,w:9,l:5,left:0,fieldRank:'T-3',tied:true},{name:'C',rank:3,w:7,l:7,left:0,fieldRank:'#90',tied:false}]}),opts);
-  assert.deepEqual(tiedLead.rows.map(r=>[r.place,r.leader]),[['T-1',true],['T-1',true],['3',false]]);
+await check('a tiebreak is noted on a row only where records are level; the summary always carries it',()=>{
+  const fin=allFinal(),entries=fin.entries.map((e,i)=>({...e,groupRank:i+1,leader:i===0,tiebreakDelta:[0,3,5,9][i]}));
+  const card=build('pickem',{...fin,tiebreak:{final:true,void:false},entries});
+  assert.deepEqual(card.rows.map(r=>[r.place,r.tiebreak,r.note]),[['1ST','Tiebreak Δ 0',null],['2','Tiebreak Δ 3','Tiebreak Δ 3'],['3','Tiebreak Δ 5','Tiebreak Δ 5'],['4','Tiebreak Δ 9',null]],
+    'the tiebreak splits JC and DJS, level at 11–5, so it is shown on their rows; D.C. and Thaddeus are alone on their records');
+  assert.match(card.summary,/^1\. D\.C\. 12–4 · #3 of 87 overall · Tiebreak Δ 0$/m);
 });
-await test("Pick'em card: no full-field data means no ranks and no pool total, never a guessed one",()=>{
-  const card=pickemCard(pickem({fieldSize:null,entries:pickem().entries.map(e=>({...e,fieldRank:null}))}),opts);
-  assert(card.rows.every(r=>r.rank===null));assert.equal(card.total,null);assert.equal(card.fieldNote,'FULL-FIELD RANKS UNAVAILABLE FOR THIS WEEK');
-  assert.match(card.text,/Full-field ranks unavailable for this week/);assert(!/Total pool entries/.test(card.text));
+await check('full-field ranks unavailable: no rank and no pool size are invented, and the card says so',()=>{
+  const card=build('pickem',pickem({fieldSize:null,entries:pickem().entries.map(e=>({...e,field:null}))}));
+  assert.equal(card.ok,true);
+  assert.deepEqual(card.rows.map(r=>[r.overall,r.overallOf,r.note]),Array(4).fill(null).map(()=>[null,null,null]));
+  assert.equal(card.total,null,'no pool size is shown');
+  assert.equal(card.fieldNote,'Full-field ranks are not published for this week.');
+  assert.match(card.summary,/Full-field ranks are not published for this week\./);
+  assert.doesNotMatch(card.summary,/ of \d+ overall|Pool size/);
+  const d=drawn(card);
+  assert(d.texts.includes('FULL-FIELD RANKS ARE NOT PUBLISHED FOR THIS WEEK.'));
+  assert.deepEqual(d.layout.texts.filter(t=>t.role==='rank'||t.role==='rank-label'||t.role==='total-value'),[],'no rank and no pool size is drawn');
+  assert(!d.texts.some(t=>/^#\d+$|TOTAL POOL ENTRIES/.test(t)),'no rank and no pool size is drawn');
 });
-await test("Pick'em status: unavailable states make no card, every other state is labeled",()=>{
-  for(const [snapshot,reason] of [[null,/have not loaded yet/],[undefined,/have not loaded yet/],[pickem({hold:'ruling data unavailable'}),/on hold \(ruling data unavailable\)/],
-    [pickem({scoresAt:null}),/still loading/],[pickem({scoresAt:null,scoresFailed:true}),/could not be loaded yet/],[pickem({entries:[]}),/No tracked entries/],[pickem({week:0}),/have not loaded yet/],[survivor(),/have not loaded yet/]]){
-    const card=pickemCard(snapshot,opts);assert.equal(card.ok,false);assert.match(card.reason,reason);
-    assert.throws(()=>drawShareCard(mockContext(),card),/Only a ready share card/);
+await check('a full-field rank that does not fit the field or its label is refused',()=>{
+  const bad=[
+    ['label digits differ',{field:{...rank(3,1,4,1),label:'#4'}}],
+    ['rank past the field',{field:rank(88,1,100,9)}],
+    ['ties past the field',{field:rank(86,3,99,9)}],
+    ['percent out of range',{field:{...rank(3,1,4,1),topPercent:0}}]
+  ];
+  for(const [label,change] of bad){
+    const card=build('pickem',pickem({entries:[{...pickem().entries[0],...change},...pickem().entries.slice(1)]}));
+    assert.equal(card.ok,false,label);assert.match(card.reason,/full-field rank of D\.C\. is invalid/,label);
   }
-  const label=o=>{const s=pickemStatus(pickem(o),NOW,TZ);return[s.label,s.detail]};
-  assert.deepEqual(label({publicationStale:'the published week list could not be checked'}),['STALE','PUBLISHED DATA STALE']);
-  assert.deepEqual(label({scoresFailed:true,warnings:2}),['STALE','SCORE FEED UNAVAILABLE'],'STALE outranks PROVISIONAL');
-  assert.deepEqual(label({warnings:1}),['PROVISIONAL','1 FEED WARNING']);
-  assert.deepEqual(label({warnings:2,underReview:1,rulingsStale:true}),['PROVISIONAL','2 FEED WARNINGS · 1 RULING UNDER REVIEW · RULINGS STALE']);
-  assert.deepEqual(label({games:{total:14,final:9,void:1,live:3,remaining:4},warnings:1}),['PROVISIONAL','1 FEED WARNING · 9 OF 14 GAMES FINAL · 3 LIVE · 1 GAME VOID BY RULING']);
-  assert.deepEqual(label({games:{total:14,final:13,void:1,live:0,remaining:0},tiebreak:{final:false,void:true}}),['FINAL','1 GAME VOID BY RULING · NO TIEBREAK THIS WEEK']);
-  // Data age: as the page header, a live week is DELAYED after 30 s; a resolved week after 5 minutes without re-verification.
-  const live={games:{total:14,final:6,void:0,live:2,remaining:8}};
-  assert.equal(pickemStatus(pickem({...live,scoresAt:at(NOW-LIVE_FRESH_MS)}),NOW,TZ).label,'LIVE');
-  assert.deepEqual([pickemStatus(pickem({...live,scoresAt:at(NOW-LIVE_FRESH_MS-1000)}),NOW,TZ)].map(s=>[s.label,s.detail])[0],['DELAYED','SCORES LAST VERIFIED 12:04 PM EDT · 6 OF 14 GAMES FINAL · 2 LIVE']);
-  assert.equal(pickemStatus(pickem({scoresAt:at(NOW-FINAL_FRESH_MS)}),NOW,TZ).label,'FINAL');
-  assert.equal(pickemStatus(pickem({scoresAt:at(NOW-FINAL_FRESH_MS-1000)}),NOW,TZ).label,'DELAYED');
-  assert.equal(pickemStatus(pickem({scoresAt:'not a time'}),NOW,TZ).detail,'SCORE AGE UNKNOWN');
+  const mixed=build('pickem',pickem({fieldSize:null}));
+  assert.equal(mixed.ok,false,'a rank without a published field');
 });
-await test('Survivor card: the Week 5 reference, with its own field and ALIVE in green',()=>{
-  const card=survivorCard(survivor(),opts);
-  assert.equal(card.ok,true);assert.deepEqual(card.title,['SURVIVOR POOL']);
-  assert.deepEqual(card.metrics.map(m=>[m.label,m.value]),[['TOTAL FIELD:','247'],['REMAINING:','52'],['SUBMISSIONS:','77'],['PENDING:','0']]);
-  assert.deepEqual(card.rows.map(r=>[r.name,r.status,r.tone]),[['DJS','ALIVE','alive'],['D.C.','OUT','out'],['Thaddeus','OUT','out']],'entries still in play lead, then the longest survivor');
-  assert(!('leader' in card.rows[0]),'no Survivor row is styled as an overall leader');
-  assert.deepEqual(card.total,{label:'TOTAL SURVIVOR ENTRIES:',value:'247'});
-  assert.equal(card.status.label,'FINAL');assert.equal(card.status.tone,'final');
-  assert.equal(card.url,'https://r88510179-collab.github.io/nfl-pool/?view=survivor&season=2026&sw=5');assert.equal(card.filename,'pool-center-survivor-2026-week-5.png');
-  assert.equal(card.text,['Pool Center · Survivor Pool','2026 Week 5 · FINAL','Total field 247 · Remaining 52 · Submissions 77 · Pending 0','DJS: ALIVE · Alive through Week 5','D.C.: OUT · DAL lost in Week 5',
-    'Thaddeus: OUT · LAC lost in Week 1','Snapshot Oct 18, 2026 · 12:05 PM EDT · revision 1','https://r88510179-collab.github.io/nfl-pool/?view=survivor&season=2026&sw=5'].join('\n'));
-  assert(!JSON.stringify(card).includes('281'),'the Pick\'em pool size never appears on the Survivor card');
-  assert(!JSON.stringify(pickemCard(pickem(),opts)).includes('247'),'the Survivor field never appears on the Pick\'em card');
+await check('records that do not cover the week, or standings out of order, are refused (partially updated state)',()=>{
+  const short=build('pickem',pickem({entries:[{...pickem().entries[0],left:3},...pickem().entries.slice(1)]}));
+  assert.equal(short.ok,false);assert.match(short.reason,/record of D\.C\. does not match this week's games/);
+  const voided=build('pickem',pickem({games:{total:16,final:11,void:1,live:2,remaining:4},entries:pickem().entries.map(e=>({...e,w:e.w-1}))}));
+  assert.equal(voided.ok,true,'a void game is no win, no loss and no game left');
+  assert.match(voided.status.detail,/11 of 16 games final · 1 void · 2 live/);
+  for(const groupRanks of [[2,2,3,4],[1,3,3,4],[1,2,2,3]]){
+    const card=build('pickem',pickem({entries:pickem().entries.map((e,i)=>({...e,groupRank:groupRanks[i],leader:groupRanks[i]===1}))}));
+    assert.equal(card.ok,false,String(groupRanks));
+  }
+  const leader=build('pickem',pickem({entries:pickem().entries.map((e,i)=>({...e,leader:i<2}))}));
+  assert.equal(leader.ok,false,'a leader that is not ranked first');
+  const counts=build('pickem',pickem({games:{total:16,final:12,void:0,live:5,remaining:4}}));
+  assert.equal(counts.ok,false,'more live games than remaining');
 });
-await test('Survivor status: provisional, live, stale and unavailable states',()=>{
-  const label=o=>{const s=survivorStatus(survivor(o),NOW,TZ);return[s.label,s.detail]};
-  assert.deepEqual(label({totals:{field:247,remaining:51,submissions:52,pending:51}}),['LIVE',null]);
-  assert.deepEqual(label({flags:['2 TEAM RESULTS UNVERIFIED'],awaitingRuling:1,onHold:2,rulingsStale:true}),['PROVISIONAL','2 TEAM RESULTS UNVERIFIED · 1 ENTRY AWAITING RULING · 2 ENTRIES ON HOLD · RULINGS STALE']);
-  assert.deepEqual(label({unresolvedPrior:3,awaitingRulingPrior:1,onHoldPrior:1}),['PROVISIONAL','3 ENTRIES AWAITING AN EARLIER RESULT · 1 ENTRY AWAITING AN EARLIER RULING · 1 ENTRY ON HOLD IN AN EARLIER WEEK']);
-  assert.deepEqual(label({publicationStale:'x',scoresFailed:true}),['STALE','PUBLISHED DATA STALE · RESULT FEED UNAVAILABLE']);
-  for(const [snapshot,reason] of [[survivor({hold:'ruling data unavailable'}),/on hold/],[survivor({scoresAt:null}),/still loading/],[survivor({totals:null}),/No tracked Survivor entries/],[pickem(),/have not loaded yet/],[null,/have not loaded yet/]])
-    assert.match(survivorCard(snapshot,opts).reason,reason);
-  const sorted=survivorCard(survivor({entries:[{name:'A',status:'OUT',eliminatedWeek:2,reason:'',order:0},{name:'B',status:'PENDING',eliminatedWeek:null,reason:'Week 5 game pending',order:1},
-    {name:'C',status:'OUT',eliminatedWeek:4,reason:'',order:2},{name:'D',status:'ALIVE',eliminatedWeek:null,reason:'',order:3},{name:'E',status:'RULING',eliminatedWeek:null,reason:'',underReview:true,order:4}]}),opts);
-  assert.deepEqual(sorted.rows.map(r=>[r.name,r.tone]),[['D','alive'],['B','pending'],['E','pending'],['C','out'],['A','out']]);
-  assert.deepEqual(sorted.rows.map(r=>r.note),[null,'Week 5 game pending','under review',null,null]);
+await check('duplicated tracked entries are refused',()=>{
+  const card=build('pickem',pickem({entries:[...pickem().entries.slice(0,3),{...pickem().entries[3],name:' d.c. '}]}));
+  assert.equal(card.ok,false);assert.match(card.reason,/not unique/);
 });
-await test('Deep links, stamps and the public address',()=>{
-  assert.equal(PUBLIC_URL,'https://r88510179-collab.github.io/nfl-pool/');assert.equal(SITE_LABEL,'r88510179-collab.github.io/nfl-pool');
-  assert.equal(deepLink('pickem',2026,6),'https://r88510179-collab.github.io/nfl-pool/?view=standings&season=2026&week=6');
-  assert.equal(deepLink('survivor',2027,1),'https://r88510179-collab.github.io/nfl-pool/?view=survivor&season=2027&sw=1');
-  assert.equal(formatStamp(Date.parse('2026-10-12T03:30:00Z'),TZ),'Oct 11, 2026 · 11:30 PM EDT');
-  for(const card of [pickemCard(pickem(),opts),survivorCard(survivor(),opts)])assert(!/nflpoolcenter/i.test(JSON.stringify(card)),'no invented domain');
+await check('a missing publication record or week is refused; not-ready, missing and foreign snapshots explain themselves',()=>{
+  for(const [o,reason] of [[{revision:0},/publication record/],[{revision:null},/publication record/],[{week:0},/season and week/],[{season:'2026'},/season and week/]])
+    assert.match(build('pickem',pickem(o)).reason,reason,JSON.stringify(o));
+  assert.deepEqual(build('pickem',{ready:false,reason:'Scores for this week are still loading.'}),{ok:false,reason:'Scores for this week are still loading.'});
+  assert.match(build('pickem',null).reason,/Reload the page/,'no app answered: a module from before share cards');
+  assert.match(build('survivor',pickem()).reason,/different contest/);
+  assert.match(build('games',pickem()).reason,/no card/);
+  assert.match(build('pickem',pickem({feed:{...pickem().feed,fetchedAt:'not a time'}})).reason,/score feed state/);
+});
+await check(`more than ${MAX_ROWS.pickem} tracked entries are refused rather than squeezed`,()=>{
+  const six=[...pickem().entries,entry('E5',6,6,4,5,rank(60,1,69,5)),entry('E6',5,7,4,6,rank(70,1,80,6))];
+  assert.equal(build('pickem',pickem({entries:six.slice(0,5)})).ok,true);
+  const card=build('pickem',pickem({entries:six}));
+  assert.equal(card.ok,false);assert.match(card.reason,/only 5 tracked entries fit/);
+});
+await check('no picks submitted and a final tiebreak are shown from the snapshot',()=>{
+  const card=build('pickem',allFinal());
+  const withNotes=build('pickem',{...allFinal(),tiebreak:{final:true,void:false},entries:allFinal().entries.map((e,i)=>({...e,tiebreakDelta:i===3?null:i+2,noPicks:i===3,field:i===3?rank(80,8,92,9):e.field}))});
+  assert.equal(card.status.label,'FINAL');
+  assert.equal(withNotes.rows[0].tiebreak,'Tiebreak Δ 2');assert.equal(withNotes.rows[3].tiebreak,null);
+  assert.equal(withNotes.rows[3].note,'No picks submitted');assert.match(withNotes.summary,/4\. Thaddeus 9–7 · T-80 of 87 overall · no picks submitted/);
 });
 
-// ---- The renderer, on a context that records every call and measures text with a stand-in font (wide or narrow).
-function mockContext({factor=1}={}){
-  const calls=[],texts=[],stack=[];let m=[1,0,0,1,0,0];
-  const state={font:'10px sans-serif',letterSpacing:'0px',fontStretch:'normal',fillStyle:'#000',strokeStyle:'#000',lineWidth:1,textAlign:'start',textBaseline:'alphabetic',shadowColor:'transparent',
-    shadowBlur:0,shadowOffsetX:0,shadowOffsetY:0,globalAlpha:1,globalCompositeOperation:'source-over',lineJoin:'miter',lineCap:'butt'};
-  const charWidth=c=>/[WM@]/.test(c)?0.95:/[A-Z0-9#]/.test(c)?0.68:/[il.,'’:;!| ]/.test(c)?0.3:/[–—…•]/.test(c)?0.7:0.56;
-  const size=()=>Number(/(\d+(?:\.\d+)?)px/.exec(state.font)?.[1]||10),spacing=()=>Number(String(state.letterSpacing).replace('px',''))||0;
-  const measure=text=>[...String(text)].reduce((w,c)=>w+charWidth(c)*size()*factor+spacing(),0);
-  const gradient=()=>({addColorStop(o,c){assert(o>=0&&o<=1,`gradient stop ${o}`);assert.equal(typeof c,'string')}});
-  const record=(kind,text,x,y)=>{
-    const ax=m[0]*x+m[2]*y+m[4],ay=m[1]*x+m[3]*y+m[5],w=measure(text)*m[0];
-    const left=state.textAlign==='center'?ax-w/2:state.textAlign==='right'||state.textAlign==='end'?ax-w:ax;
-    texts.push({kind,text:String(text),left,right:left+w,y:ay,size:size()*m[3]});calls.push([kind,String(text)]);
-  };
-  const ctx={...state,calls,texts,
-    save(){stack.push({m:m.slice(),state:Object.fromEntries(Object.keys(state).map(k=>[k,ctx[k]]))});calls.push(['save'])},
-    restore(){const s=stack.pop();assert(s,'restore without save');m=s.m;Object.assign(ctx,s.state);Object.assign(state,s.state);calls.push(['restore'])},
-    translate(x,y){m[4]+=m[0]*x+m[2]*y;m[5]+=m[1]*x+m[3]*y;calls.push(['translate',x,y])},
-    scale(x,y){assert(x>0&&y>0,`scale ${x},${y} must keep text upright and unmirrored`);m[0]*=x;m[1]*=x;m[2]*=y;m[3]*=y;calls.push(['scale',x,y])},
-    measureText(text){return{width:measure(text)}},
-    fillText(text,x,y){Object.assign(state,{font:ctx.font,letterSpacing:ctx.letterSpacing,textAlign:ctx.textAlign});record('fill',text,x,y)},
-    strokeText(text,x,y){Object.assign(state,{font:ctx.font,letterSpacing:ctx.letterSpacing,textAlign:ctx.textAlign});record('stroke',text,x,y)},
-    createLinearGradient:gradient,createRadialGradient:gradient
-  };
-  for(const name of ['fillRect','clearRect','strokeRect','beginPath','moveTo','lineTo','arc','arcTo','rect','closePath','fill','stroke','clip'])ctx[name]=(...a)=>{calls.push([name,...a.map(v=>typeof v==='number'?Math.round(v*100)/100:typeof v)])};
-  // measureText reads the font through the shared state, so keep it in step with the context's own properties.
-  return new Proxy(ctx,{set(t,k,v){t[k]=v;if(k in state)state[k]=v;return true}});
-}
-globalThis.Path2D=class{constructor(d){this.d=d}};
-function assertLayout(L,ctx,label){
-  for(const t of L.texts){
-    if(t.box)assert(t.x>=t.box[0]-0.5&&t.x+t.width<=t.box[1]+0.5,`${label}: "${t.text}" (${t.role}) is ${t.width.toFixed(1)} wide at ${t.x.toFixed(1)} but its box is ${t.box.map(v=>v.toFixed(1)).join('–')}`);
-    assert(t.x>=0&&t.x+t.width<=CARD_WIDTH&&t.top>=0&&t.bottom<=CARD_HEIGHT,`${label}: "${t.text}" leaves the card`);
-  }
-  for(const t of ctx.texts)assert(t.left>=-0.5&&t.right<=CARD_WIDTH+0.5&&t.y-t.size*0.8>=0&&t.y+t.size*0.25<=CARD_HEIGHT,`${label}: drawn "${t.text}" at ${t.left.toFixed(1)}–${t.right.toFixed(1)}, ${t.y.toFixed(1)} leaves the canvas`);
-  const rows=L.boxes.filter(b=>b.role==='row').sort((a,b)=>a.y-b.y);
-  rows.forEach((b,i)=>{assert(b.x>=0&&b.x+b.w<=CARD_WIDTH&&b.y>=0&&b.y+b.h<=CARD_HEIGHT,`${label}: row ${i+1} leaves the card`);if(i)assert(rows[i-1].y+rows[i-1].h<=b.y,`${label}: rows ${i} and ${i+1} overlap`)});
-  const status=L.texts.filter(t=>t.role==='status'||t.role==='status-pill'||t.role==='detail'),footer=L.texts.filter(t=>t.role==='total'||t.role==='total-value');
-  if(rows.length&&status.length)assert(rows[0].y>=Math.max(...status.map(t=>t.bottom))-2,`${label}: the rows start below the status line`);
-  if(rows.length&&footer.length)assert(rows.at(-1).y+rows.at(-1).h<=Math.min(...footer.map(t=>t.top))+2,`${label}: the rows end above the total`);
-  return rows;
-}
-const drawn=ctx=>ctx.texts.filter(t=>t.kind==='fill').map(t=>t.text);
-await test('Renderer: both cards draw at 1080 × 1350 with nothing clipped, in a wide and a narrow font',()=>{
-  assert.equal(CARD_WIDTH,1080);assert.equal(CARD_HEIGHT,1350);
-  for(const factor of [0.72,1,1.3]){
-    const p=mockContext({factor}),pl=drawShareCard(p,pickemCard(pickem(),opts));
-    assert.equal(assertLayout(pl,p,`pickem ×${factor}`).length,4,'four Pick\'em rows');
-    const s=mockContext({factor}),sl=drawShareCard(s,survivorCard(survivor(),opts));
-    assert.equal(assertLayout(sl,s,`survivor ×${factor}`).length,3,'three Survivor rows');
-    assert.equal(sl.boxes.filter(b=>b.role==='metric').length,4,'four Survivor metric panels');
+// ---- Status.
+await check("Pick'em status follows the header's precedence, and every other state that holds rides along",()=>{
+  const feed=o=>({feed:{...pickem().feed,...o}});
+  const cases=[
+    [{},'LIVE',[]],
+    [feed({failed:true}),'FEED UNAVAILABLE',[]],
+    [{...feed({failed:true}),hold:true,rulingsStale:true,publishedStale:true},'FEED UNAVAILABLE',['ON HOLD','PUBLISHED DATA STALE','RULINGS STALE']],
+    [{hold:true,...feed({incomplete:true,warnings:2})},'ON HOLD',['INCOMPLETE']],
+    [{...feed({incomplete:true,warnings:2,review:true})},'INCOMPLETE',['UNDER REVIEW']],
+    [{...feed({review:true}),publishedStale:true},'UNDER REVIEW',['PUBLISHED DATA STALE']],
+    [{publishedStale:true,rulingsStale:true},'PUBLISHED DATA STALE',['RULINGS STALE']],
+    [{rulingsStale:true},'RULINGS STALE',[]],
+    [feed({fetchedAt:iso(NOW-31000)}),'DELAYED',[]],
+    [{publishedStale:true,...feed({fetchedAt:iso(NOW-31000)})},'PUBLISHED DATA STALE',['DELAYED']]
+  ];
+  for(const [o,label,flags] of cases){const st=pickemStatus(pickem(o),{now:NOW,timeZone:TZ});assert.deepEqual([st.label,st.flags],[label,flags],JSON.stringify(o))}
+  assert.equal(pickemStatus(pickem(feed({failed:true})),{now:NOW,timeZone:TZ}).tone,'bad');
+  assert.equal(pickemStatus(pickem({hold:true}),{now:NOW,timeZone:TZ}).tone,'bad');
+  assert.equal(pickemStatus(pickem({rulingsStale:true}),{now:NOW,timeZone:TZ}).tone,'warn');
+});
+await check('FINAL is claimed only when every game is resolved and nothing qualifies the result',()=>{
+  const fin=allFinal();
+  assert.deepEqual(pickemStatus(fin,{now:NOW,timeZone:TZ}),{label:'FINAL',tone:'final',detail:'All 16 games final',flags:[]});
+  for(const o of [{rulingsStale:true},{publishedStale:true},{hold:true},{feed:{...fin.feed,failed:true}},{feed:{...fin.feed,review:true}},{feed:{...fin.feed,fetchedAt:iso(NOW-120000)}}])
+    assert.notEqual(pickemStatus({...fin,...o},{now:NOW,timeZone:TZ}).label,'FINAL',JSON.stringify(o));
+  const voided=pickemStatus({...fin,games:{total:16,final:15,void:1,live:0,remaining:0}},{now:NOW,timeZone:TZ});
+  assert.deepEqual([voided.label,voided.detail],['FINAL','All 16 games resolved · 1 void']);
+});
+await check(`stale scores are never LIVE: older than ${FRESH_SECONDS} s at the snapshot, or of unknown age, the card is DELAYED and says as of when`,()=>{
+  const at=age=>pickemStatus(pickem({feed:{...pickem().feed,fetchedAt:iso(NOW-age)}}),{now:NOW,timeZone:TZ});
+  assert.equal(at(FRESH_SECONDS*1000).label,'LIVE','exactly the limit is fresh');
+  assert.deepEqual([at(FRESH_SECONDS*1000+1000).label,at(FRESH_SECONDS*1000+1000).detail],['DELAYED','Scores as of 3:41 PM · 12 of 16 games final · 2 live']);
+  assert.equal(at(-120000).label,'DELAYED','a time far in the future has no known age');
+  assert.equal(ageSeconds(Number.NaN,NOW),null);assert.equal(ageSeconds(NOW+30000,NOW),0);
+  const stale=pickemStatus(pickem({rulingsStale:true,feed:{...pickem().feed,fetchedAt:iso(NOW-300000)}}),{now:NOW,timeZone:TZ});
+  assert.deepEqual([stale.label,stale.flags],['RULINGS STALE',['DELAYED']]);assert.match(stale.detail,/ · scores as of 3:37 PM$/);
+  const final=pickemStatus({...allFinal(),feed:{...allFinal().feed,fetchedAt:iso(NOW-300000)}},{now:NOW,timeZone:TZ});
+  assert.equal(final.label,'DELAYED','a complete slate that is behind is DELAYED, not FINAL');
+});
+await check('a failed feed is FEED UNAVAILABLE with the last verified time, and DELAYED never repeats it',()=>{
+  const st=pickemStatus(pickem({feed:{...pickem().feed,failed:true,fetchedAt:iso(NOW-600000)}}),{now:NOW,timeZone:TZ});
+  assert.deepEqual([st.label,st.flags,st.detail],['FEED UNAVAILABLE',[],'Score feed unavailable · last verified 3:32 PM · 12 of 16 games final · 2 live']);
+});
+await check('Survivor status: RESULT FEED UNAVAILABLE, ON HOLD, PUBLISHED DATA STALE, RULINGS STALE, DELAYED; team flags always ride along; FINAL only when every entry is decided',()=>{
+  const st=o=>survivorStatus(survivor(o),{now:NOW,timeZone:TZ});
+  assert.deepEqual([st({}).label,st({}).tone,st({}).detail],['LIVE','ok','8 entries pending']);
+  assert.deepEqual([st({feed:{at:NOW-90000,failed:true},hold:true}).label,st({feed:{at:NOW-90000,failed:true},hold:true}).flags],['RESULT FEED UNAVAILABLE',['ON HOLD']]);
+  assert.match(st({feed:{at:NOW-90000,failed:true}}).detail,/^Result feed unavailable · last verified 3:40 PM · /);
+  assert.deepEqual([st({hold:true,publishedStale:true}).label,st({hold:true,publishedStale:true}).flags],['ON HOLD',['PUBLISHED DATA STALE']]);
+  assert.deepEqual([st({publishedStale:true,rulingsStale:true}).label,st({publishedStale:true,rulingsStale:true}).flags],['PUBLISHED DATA STALE',['RULINGS STALE']]);
+  assert.equal(st({feed:{at:NOW-45000,failed:false}}).label,'DELAYED');
+  const flagged=st({flags:['1 TEAM RESULT AWAITING RULING'],counts:{...survivor().counts,active:41,awaitingRuling:1}});
+  assert.deepEqual([flagged.label,flagged.tone,flagged.flags],['LIVE','warn',['1 TEAM RESULT AWAITING RULING']]);
+  assert.equal(flagged.detail,'8 entries pending · 1 awaiting a ruling');
+  const decided={counts:{...survivor().counts,active:34,pending:0,out:86,outThisWeek:20}};
+  assert.deepEqual([st(decided).label,st(decided).tone,st(decided).detail],['FINAL','final','Week 5 results final · all 120 entries decided']);
+  for(const o of [{flags:['1 TEAM RESULT UNDER REVIEW']},{rulingsStale:true},{publishedStale:true},{feed:{at:NOW-45000,failed:false}},{counts:{...decided.counts,active:33,onHold:1}}])
+    assert.notEqual(st({...decided,...o}).label,'FINAL',JSON.stringify(o));
+});
+
+// ---- Survivor cards.
+await check('a Survivor card is the selected week: field size, still in, out, pending, submissions and the tracked states, from the snapshot',()=>{
+  const card=build('survivor',survivor());
+  assert.equal(card.ok,true);
+  assert.deepEqual([card.season,card.week,card.revision,card.title,card.fieldSize],[2026,5,7,'Survivor Pool',120]);
+  assert.deepEqual(card.metrics.map(m=>[m.label,m.value]),[['TOTAL FIELD:','120'],['REMAINING:','42'],['SUBMISSIONS:','50'],['PENDING:','8']]);
+  assert.deepEqual(card.total,{label:'TOTAL SURVIVOR ENTRIES:',value:'120'},'the Survivor field, never the Pick\'em pool');
+  assert.deepEqual(card.rows.map(r=>[r.name,r.status,r.team,r.note]),[['D.C.','ALIVE','KC','Alive through Week 5'],['Thaddeus','PENDING','SF','Week 5 game pending'],['DJS','OUT','BUF','BUF lost in Week 3']],
+    'entries still in play first, then the eliminated ones');
+  const ruled=build('survivor',survivor({counts:{active:39,pending:8,out:78,outThisWeek:12,submitted:50,legalPicks:48,awaitingRuling:1,onHold:2}}));
+  assert.deepEqual(ruled.metrics.map(m=>[m.label,m.value]),[['TOTAL FIELD:','120'],['REMAINING:','39'],['SUBMISSIONS:','50'],['PENDING:','8']]);
+  assert.equal(ruled.total.value,'120','every entry, decided or not');
+  assert.equal(ruled.status.detail,'8 entries pending · 1 awaiting a ruling · 2 on hold','entries neither in nor out are named in the status');
+  assert.match(ruled.summary,/^Still in 39 of 120 · Out 78 · Pending 8 · Awaiting ruling 1 · On hold 2 · Submitted 50$/m);
+  const order=build('survivor',survivor({tracked:[tracked('A','OUT','NE','x'),tracked('B','HOLD','NE','y'),tracked('C','ALIVE','KC','z')]}));
+  assert.deepEqual(order.rows.map(r=>r.name),['C','B','A']);
+  const decided=build('survivor',survivor({counts:{...survivor().counts,active:34,pending:0,out:86,outThisWeek:20}}));
+  assert.deepEqual(decided.metrics[3],{label:'PENDING:',value:'0',tone:'neutral'});
+});
+await check('Survivor counts that do not account for every entry are refused',()=>{
+  for(const counts of [{active:43},{pending:43},{outThisWeek:79},{legalPicks:51},{submitted:121,legalPicks:50},{onHold:1}]){
+    const card=build('survivor',survivor({counts:{...survivor().counts,...counts}}));
+    assert.equal(card.ok,false,JSON.stringify(counts));assert.match(card.reason,/field counts do not add up/);
   }
 });
-await test('Renderer: the drawn text is the card\'s, with none of the reference artwork\'s errors',()=>{
-  const p=mockContext();drawShareCard(p,pickemCard(pickem(),opts));const pt=drawn(p);
-  for(const text of ['POOL CENTER','SEASON 2026 • WEEK 5 FINAL','1ST','DJS','8–6','T-132','T-2','JC','Thaddeus','T-153','4','D.C.','6–8','T-257','FIELD RANK','TOTAL POOL ENTRIES: ','281',SITE_LABEL,'SNAPSHOT OCT 18, 2026 · 12:05 PM EDT · REVISION 1'])
-    assert(pt.includes(text),`Pick'em card draws "${text}"`);
-  assert(p.texts.some(t=>t.kind==='stroke'&&t.text==='PICK’EM')&&p.texts.some(t=>t.kind==='stroke'&&t.text==='STANDINGS'),'the title is drawn as PICK\'EM STANDINGS');
-  for(const wrong of ['3','3.','NFLPOOLCENTER.COM','NFL POOL CENTER'])assert(!pt.includes(wrong),`Pick'em card never draws "${wrong}"`);
-  const s=mockContext();drawShareCard(s,survivorCard(survivor(),opts));const st=drawn(s);
-  for(const text of ['SURVIVOR POOL','SEASON 2026 • WEEK 5','FINAL','TOTAL FIELD:','247','REMAINING:','52','SUBMISSIONS:','77','PENDING:','0','DJS','ALIVE','D.C.','OUT','Thaddeus','TOTAL SURVIVOR ENTRIES: ',SITE_LABEL])
-    assert(st.includes(text)||s.texts.some(t=>t.text===text),`Survivor card draws "${text}"`);
-  assert(!st.includes('281')&&!st.some(t=>/NFLPOOLCENTER/i.test(t)),'the Survivor card never draws the Pick\'em pool size or an invented domain');
+await check('Survivor tracked entries carry only the states the page shows; anything else is refused',()=>{
+  for(const status of ['ALIVE','LIVE','PENDING','RULING','HOLD','OUT'])assert.equal(build('survivor',survivor({tracked:[tracked('D.C.',status,'KC','x')]})).ok,true,status);
+  assert.match(build('survivor',survivor({tracked:[tracked('D.C.','WON','KC','x')]})).reason,/status of D\.C\. is invalid/);
+  assert.match(build('survivor',survivor({tracked:[tracked('D.C.','ALIVE','Kansas City','x')]})).reason,/team of D\.C\. is invalid/);
+  assert.equal(build('survivor',survivor({tracked:[tracked('D.C.','OUT',null,'No pick in Week 1')]})).rows[0].team,null);
+  assert.match(build('survivor',survivor({tracked:[...survivor().tracked,tracked('Extra','OUT','NE','x')]})).reason,/only 3 tracked entries fit/);
+  assert.match(build('survivor',survivor({tracked:[tracked('D.C.','ALIVE','KC','x'),tracked('D.C.','OUT','NE','y')]})).reason,/not unique/);
+  const review=build('survivor',survivor({tracked:[tracked('D.C.','ALIVE','KC','Alive through Week 5',true)]}));
+  assert.equal(review.rows[0].note,'UNDER REVIEW · Alive through Week 5');
 });
-await test('Renderer: long names, more rows and every status still fit',()=>{
-  const long='Bartholomew Montgomery-Fitzgerald the Third';let shortened=0;
-  for(const n of [2,3,4,5,6,8,11]){
-    const entries=Array.from({length:n},(_,i)=>({name:i===1?long:`Entry ${i+1}`,rank:i<2?1:i+1,w:20-i,l:i,left:1,noSubmission:i===n-1,fieldRank:i<2?'T-1':`#${1000+i}`,tied:i<2}));
-    const card=pickemCard(pickem({entries,fieldSize:9999,warnings:3,games:{total:16,final:9,void:1,live:3,remaining:6}}),opts);
-    assert.equal(card.rows.length,Math.min(n,8));assert.equal(card.more,Math.max(0,n-8));
-    for(const factor of [0.8,1.3]){
-      const ctx=mockContext({factor}),L=drawShareCard(ctx,card);assert.equal(assertLayout(L,ctx,`${n} rows ×${factor}`).length,card.rows.length);
-      const name=L.texts.filter(t=>t.role==='name')[1];
-      assert(name.text===long||name.truncated&&name.text.endsWith('…')&&long.startsWith(name.text.slice(0,-1)),`${n} rows ×${factor}: the long name is drawn whole or shortened with an ellipsis`);
-      if(name.truncated)shortened++;
+
+// ---- Privacy: the card is built from named public fields only.
+await check('a card, its summary and its drawing carry only public values, never a field entry or anything else a snapshot holds',()=>{
+  const leaky={fieldEntries:[{id:'field-001',pickNumbers:[1,4],tiebreak:42}],admin_note:'PRIVATE ADMIN NOTE',created_by:'auth-user-7f3a',config:{secret:true}};
+  for(const [contest,snapshot] of [['pickem',pickem({...leaky,entries:pickem().entries.map(e=>({...e,id:'dc',pickNumbers:[1,3],picks:['DEN']}))})],['survivor',survivor({...leaky,tracked:survivor().tracked.map(t=>({...t,id:'dc',picks:['PIT','SF']}))})]]){
+    const card=build(contest,snapshot),text=JSON.stringify(card)+drawn(card).texts.join('\n');
+    for(const secret of ['field-001','PRIVATE','auth-user','pickNumbers','"picks"','"id"','secret','DEN'])assert(!text.includes(secret),`${contest}: ${secret}`);
+  }
+});
+
+// ---- Links, names and the summary.
+await check('deep links keep the view and the selected week in the spelling each app boots from, at the canonical page path',()=>{
+  assert.equal(shareLink('pickem',{season:2026,week:5},HREF),'https://r88510179-collab.github.io/nfl-pool/?view=standings&season=2026&week=5');
+  assert.equal(shareLink('survivor',{season:2026,week:5},'https://r88510179-collab.github.io/nfl-pool/?view=survivor&sw=3&season=2025'),'https://r88510179-collab.github.io/nfl-pool/?view=survivor&season=2026&sw=5');
+  assert.equal(shareLink('pickem',{season:2026,week:18},'https://example.test/nfl-pool/'),'https://example.test/nfl-pool/?view=standings&season=2026&week=18');
+  const card=build('pickem',pickem()),u=new URL(card.link);
+  assert.deepEqual([u.searchParams.get('view'),u.searchParams.get('season'),u.searchParams.get('week')],['standings','2026','5'],'the snapshot week, not the page URL week (2)');
+  const sv=new URL(build('survivor',survivor()).link);
+  assert.deepEqual([sv.searchParams.get('view'),sv.searchParams.get('season'),sv.searchParams.get('sw'),sv.searchParams.has('week')],['survivor','2026','5',false]);
+  assert.equal(linkLabel(HREF),'r88510179-collab.github.io/nfl-pool');
+  assert.equal(shareFileName(card),'nfl-pool-center-pickem-2026-week-5.png');
+  assert.equal(build('survivor',survivor()).fileName,'nfl-pool-center-survivor-2026-week-5.png');
+});
+await check('the copied summary names the week, the claimed status with every qualifier, each tracked entry, the snapshot time and the link',()=>{
+  const card=build('pickem',pickem({rulingsStale:true}));
+  assert.equal(card.summary,["NFL Pool Center · 2026 Week 5 · Pick'em Standings",'RULINGS STALE — Rulings not refreshed · last verified rulings apply · 12 of 16 games final · 2 live',
+    '1. D.C. 10–2 · #3 of 87 overall','2. JC 9–3 · T-8 of 87 overall','2. DJS 9–3 · T-8 of 87 overall','4. Thaddeus 7–5 · T-41 of 87 overall','Pool size: 87 entries',
+    'Snapshot Oct 11, 2026, 3:42 PM EDT · revision 2','https://r88510179-collab.github.io/nfl-pool/?view=standings&season=2026&week=5'].join('\n'));
+  const sv=build('survivor',survivor({flags:['2 TEAM RESULTS UNVERIFIED']}));
+  assert.equal(sv.summary,['NFL Pool Center · 2026 Week 5 · Survivor Pool','LIVE · 2 TEAM RESULTS UNVERIFIED — 8 entries pending','Still in 42 of 120 · Out 78 · Pending 8 · Submitted 50',
+    'D.C.: ALIVE · KC — Alive through Week 5','Thaddeus: PENDING · SF — Week 5 game pending','DJS: OUT · BUF — BUF lost in Week 3',
+    'Snapshot Oct 11, 2026, 3:42 PM EDT · revision 7','https://r88510179-collab.github.io/nfl-pool/?view=survivor&season=2026&sw=5'].join('\n'));
+  assert.equal(card.shareText,"2026 Week 5 Pick'em Standings · RULINGS STALE\nhttps://r88510179-collab.github.io/nfl-pool/?view=standings&season=2026&week=5");
+  assert.match(card.alt,/^Pick'em Standings card, 2026 Week 5: RULINGS STALE — /);
+});
+
+// ---- Layout and drawing.
+const longNames=pickem({entries:[entry('Maximilian Featherstonehaugh-Worthington III',10,2,4,1,rank(3,1,4,1)),entry('JC',9,3,4,2,rank(8,5,10,2)),entry('DJS',9,3,4,2,rank(8,5,10,2)),entry('Thaddeus',7,5,4,4,rank(41,9,48,4))]});
+const worstPickem=pickem({publishedStale:true,rulingsStale:true,fieldSize:null,feed:{...pickem().feed,incomplete:true,warnings:2,review:true,fetchedAt:iso(NOW-95000)},
+  entries:[...pickem().entries,entry('Maximilian Featherstonehaugh-Worthington',6,6,4,5,null)].map(e=>({...e,field:null}))});
+const worstSurvivor=survivor({flags:['1 TEAM RESULT AWAITING RULING','2 TEAM RESULTS UNVERIFIED','1 TEAM RESULT UNDER REVIEW','3 TEAM RESULTS ON HOLD'],publishedStale:true,rulingsStale:true,feed:{at:NOW-70000,failed:false},
+  counts:{active:39,pending:8,out:78,outThisWeek:12,submitted:50,legalPicks:48,awaitingRuling:1,onHold:2},
+  tracked:[tracked('Bartholomew-Alexander Featherstone','RULING','KC','Week 5 KC game halted (STATUS_SUSPENDED): awaiting pool ruling'),tracked('DJS','HOLD','BUF','Week 5 BUF on hold: ruling information unavailable'),tracked('Thaddeus','ALIVE','PIT','Alive through Week 5 · Week 4 PIT advanced by commissioner ruling',true)]});
+const CARDS={pickem:pickem(),final:allFinal(),longNames,worstPickem,hold:pickem({hold:true}),unavailable:pickem({feed:{...pickem().feed,failed:true}}),hugeField:pickem({fieldSize:12345678}),
+  survivor:survivor(),worstSurvivor,hugeSurvivor:survivor({fieldSize:1234567890,counts:{...survivor().counts,out:1234567848}})};
+await check('every string drawn fits its column and stays on the card, in every state and the worst cases',()=>{
+  for(const [name,snapshot] of Object.entries(CARDS)){
+    const card=build(snapshot.contest,snapshot);assert.equal(card.ok,true,name);
+    const {calls,strokes,layout}=drawn(card);assert(calls.length>20,`${name}: drawn`);
+    for(const c of [...calls,...strokes]){
+      assert(c.text.length>0,`${name}: an empty string is never drawn`);
+      // A string a little too wide is condensed to its limit, never by more than MIN_CONDENSE; anything wider is set smaller or cut.
+      assert(Number.isFinite(c.maxWidth)&&c.width*MIN_CONDENSE<=c.maxWidth+.01,`${name}: "${c.text}" is ${c.width.toFixed(1)} wide for a ${c.maxWidth.toFixed(1)} limit`);
+      const {left,right}=edges(c);
+      assert(left>=0&&right<=CARD_WIDTH&&c.y>0&&c.y<CARD_HEIGHT,`${name}: "${c.text}" at ${left.toFixed(1)}..${right.toFixed(1)}, ${c.y} is on the card`);
     }
-  }
-  assert(shortened>0,'a name too long for its row is shortened rather than clipped');
-  for(const status of [{publicationStale:'x'},{scoresFailed:true},{warnings:9},{scoresAt:at(NOW-60000),games:{total:14,final:3,void:0,live:4,remaining:11}}]){
-    const ctx=mockContext({factor:1.3});assertLayout(drawShareCard(ctx,pickemCard(pickem(status),opts)),ctx,JSON.stringify(status));
-    const sctx=mockContext({factor:1.3});assertLayout(drawShareCard(sctx,survivorCard(survivor({...status,flags:['12 TEAM RESULTS UNVERIFIED'],totals:{field:12470,remaining:9352,submissions:11077,pending:812},
-      entries:[{name:long,status:'RULING',eliminatedWeek:null,reason:'Week 5 DAL game halted (STATUS_POSTPONED): awaiting pool ruling',underReview:true,order:0}]}),opts)),sctx,`survivor ${JSON.stringify(status)}`);
+    for(const t of layout.texts)if(t.box)assert(t.x>=t.box[0]-.01&&t.x+t.width<=t.box[1]+.01,`${name}: ${t.role} "${t.text}" stays in its column ${t.box.map(v=>v.toFixed(1)).join('..')}`);
+    const rows=layout.boxes.filter(b=>b.role==='row');
+    assert.equal(rows.length,card.rows.length,`${name}: one row per tracked entry`);
+    rows.forEach((b,i)=>{assert(b.x>=0&&b.x+b.w<=CARD_WIDTH,`${name}: row ${i} is on the card`);if(i)assert(b.y>=rows[i-1].y+rows[i-1].h,`${name}: rows ${i-1} and ${i} do not overlap`)});
   }
 });
-await test('Renderer: text fitting squeezes, then shrinks, then shortens, and never mirrors or overflows',()=>{
-  const ctx=mockContext();
-  assert.deepEqual((({text,size,scale})=>({text,size,scale}))(fitText(ctx,'DJS',{size:60,width:400})),{text:'DJS',size:60,scale:1},'text that fits is drawn as it is');
-  const squeezed=fitText(ctx,'THADDEUS',{size:60,width:300});assert(squeezed.size===60&&squeezed.scale<1&&squeezed.scale>=0.84&&squeezed.width<=300,'a little too wide: squeezed at full size');
-  const smaller=fitText(ctx,'THADDEUS',{size:60,width:200});assert(smaller.size<60&&smaller.width<=200&&!smaller.truncated,'too wide to squeeze: set smaller');
-  const shortened=fitText(ctx,'BARTHOLOMEW MONTGOMERY-FITZGERALD',{size:60,min:40,width:220});assert(shortened.truncated&&shortened.text.endsWith('…')&&shortened.size===40&&shortened.width<=220,'too wide at the smallest size: shortened');
-  for(const width of [0,-50,3]){const f=fitText(ctx,'D.C.',{size:40,width});assert(f.scale>0&&f.width>0&&f.width<=8.0001,`a box ${width} wide still yields upright text within the minimum box`)}
+await check('the card draws what it claims: brand, title, season and week, status, every tracked entry with its place, record and rank, the totals, the snapshot and the link',()=>{
+  const {texts,strokes}=drawn(build('pickem',pickem()));
+  for(const t of ['POOL CENTER','PICK’EM','STANDINGS','SEASON 2026 • WEEK 5','LIVE','12 OF 16 GAMES FINAL · 2 LIVE','1ST','D.C.','10–2','FIELD RANK','#3','T-2','JC','T-8','DJS','4','Thaddeus','7–5','T-41',
+    'TOTAL POOL ENTRIES: ','87','SNAPSHOT OCT 11, 2026, 3:42 PM EDT · REVISION 2','r88510179-collab.github.io/nfl-pool'])assert(texts.includes(t),`drawn: ${t}`);
+  assert.deepEqual(strokes.map(c=>c.text),['PICK’EM','PICK’EM','STANDINGS','STANDINGS'],'only the title is outlined');
+  const sv=drawn(build('survivor',survivor())).texts;
+  for(const t of ['POOL CENTER','SURVIVOR POOL','SEASON 2026 • WEEK 5','LIVE','8 ENTRIES PENDING','TOTAL FIELD:','120','REMAINING:','42','SUBMISSIONS:','50','PENDING:','8',
+    'D.C.','KC · ALIVE THROUGH WEEK 5','ALIVE','Thaddeus','SF · WEEK 5 GAME PENDING','PENDING','DJS','BUF LOST IN WEEK 3','OUT','TOTAL SURVIVOR ENTRIES: ','SNAPSHOT OCT 11, 2026, 3:42 PM EDT · REVISION 7','r88510179-collab.github.io/nfl-pool'])
+    assert(sv.includes(t),`drawn: ${t}`);
+  assert(!sv.some(t=>/POOL ENTRIES|PICK.EM/.test(t)),'no Pick’em figure on a Survivor card');
+  for(const t of [...texts,...sv])assert(!/NFLPOOLCENTER|\.COM/i.test(t),`no other address: ${t}`);
 });
-await test('Renderer: the same card draws the same image every time',()=>{
-  const a=mockContext(),b=mockContext();drawShareCard(a,pickemCard(pickem(),opts));drawShareCard(b,pickemCard(pickem(),opts));
-  assert.deepEqual(a.calls,b.calls);
-  const c=mockContext(),d=mockContext();drawShareCard(c,survivorCard(survivor(),opts));drawShareCard(d,survivorCard(survivor(),opts));
-  assert.deepEqual(c.calls,d.calls);
-  assert.equal(a.calls.filter(x=>x[0]==='save').length,a.calls.filter(x=>x[0]==='restore').length,'every save is restored');
+await check('a FINAL Pick’em week reads as one gold line; any other state is a status pill, and its qualifiers and detail are spelled out',()=>{
+  const fin=drawn(build('pickem',allFinal()));
+  assert.deepEqual(fin.layout.texts.filter(t=>/^status/.test(t.role)).map(t=>[t.role,t.text]),[['status','SEASON 2026 • WEEK 5 FINAL']]);
+  assert.deepEqual(fin.layout.detail,[],'nothing qualifies a clean FINAL');
+  const voided=drawn(build('pickem',{...allFinal(),games:{total:16,final:15,void:1,live:0,remaining:0},entries:allFinal().entries.map(e=>({...e,w:e.w-1}))}));
+  assert.deepEqual(voided.layout.detail,['ALL 16 GAMES RESOLVED · 1 VOID'],'a void game is always said');
+  const stale=drawn(build('pickem',pickem({rulingsStale:true,feed:{...pickem().feed,fetchedAt:iso(NOW-300000)}})));
+  assert.deepEqual(stale.layout.texts.filter(t=>t.role==='status-pill').map(t=>t.text),['RULINGS STALE']);
+  assert.match(stale.layout.detail[0],/^DELAYED · RULINGS NOT REFRESHED\b/,'the qualifiers lead the detail');
+  assert(stale.layout.detail.length===2&&stale.layout.detail[1].endsWith('SCORES AS OF 3:37 PM'),`a delayed card keeps its time: ${JSON.stringify(stale.layout.detail)}`);
+  assert(stale.layout.detailSize<26&&stale.layout.detailSize>=22,'set smaller before anything is cut');
+  assert.equal(drawn(build('pickem',pickem({rulingsStale:true}))).layout.detailSize,26,'a detail that fits keeps its size');
+  const sv=drawn(build('survivor',worstSurvivor));
+  assert.equal(sv.layout.texts.find(t=>t.role==='status-pill').text,'PUBLISHED DATA STALE');
+  assert(sv.layout.detail.length===2&&sv.layout.detail[1].endsWith('…'),'the qualifiers wrap to two lines and the rest is cut, never dropped silently');
+});
+await check('gold is the Pick’em group leader’s alone; Survivor rows are green when alive, red when out and amber otherwise',()=>{
+  const pk=drawn(build('pickem',pickem())).layout.boxes.filter(b=>b.role==='row');
+  assert.deepEqual(pk.map(b=>b.gold),[true,false,false,false]);
+  assert(pk[0].h>pk[1].h,'the leader’s plate stands out');
+  const level=drawn(build('pickem',pickem({entries:pickem().entries.map(e=>({...e,w:9,l:3,groupRank:1,leader:true}))}))).layout.boxes.filter(b=>b.role==='row');
+  assert.deepEqual(level.map(b=>b.gold),[false,false,false,false]);
+  const tones=snap=>drawn(build('survivor',snap)).layout.boxes.filter(b=>b.role==='row').map(b=>b.tone);
+  assert.deepEqual(tones(survivor()),['alive','pending','out']);
+  assert.deepEqual(tones(worstSurvivor),['alive','pending','pending'],'ALIVE, then RULING and HOLD');
+  assert.deepEqual(tones(survivor({tracked:[tracked('A','LIVE','KC','x'),tracked('B','OUT','NE','y'),tracked('C','OUT','SF','z')]})),['pending','out','out']);
+  const pills=snap=>drawn(build(snap.contest,snap)).layout.boxes.filter(b=>b.role==='row-status').map(b=>b.tone);
+  assert.deepEqual(pills(survivor()),['alive','pending','out'],'each status pill in its row’s colour');
+});
+await check('the status pill is green when LIVE, red when FINAL, amber when qualified and an outline when the data is unavailable or held',()=>{
+  const pill=snap=>drawn(build(snap.contest,snap)).layout.boxes.find(b=>b.role==='status-pill')?.tone;
+  assert.equal(pill(pickem()),'live');
+  for(const o of [{rulingsStale:true},{publishedStale:true},{feed:{...pickem().feed,review:true}},{feed:{...pickem().feed,fetchedAt:iso(NOW-60000)}}])assert.equal(pill(pickem(o)),'pending',JSON.stringify(o));
+  assert.equal(pill(pickem({feed:{...pickem().feed,failed:true}})),'bad');assert.equal(pill(pickem({hold:true})),'bad');
+  assert.equal(pill(allFinal()),undefined,'a clean FINAL Pick’em week is a gold line, not a pill');
+  assert.equal(pill(survivor({counts:{...survivor().counts,active:34,pending:0,out:86,outThisWeek:20}})),'final');
+  assert.equal(pill(survivor({flags:['1 TEAM RESULT UNVERIFIED']})),'pending','a flagged LIVE week is a warning');
+  assert.equal(pill(survivor({feed:{at:NOW-6000,failed:true}})),'bad');
+});
+await check(`tracked rows stay at least ${MIN_ROW} px tall, between the status and the totals, in the worst cases (two detail lines, a status pill on its own line, the most rows)`,()=>{
+  const typical=cardLayout(recorder().ctx,build('pickem',pickem()));
+  assert(typical.rowH>=110,`typical Pick'em rows ${typical.rowH}`);
+  // The tallest Pick'em content: the worst status over five rows, two of them tied leaders on gold plates.
+  const twoLeaders=pickem({...worstPickem,entries:worstPickem.entries.map((e,i)=>i===1?{...e,w:10,l:2,groupRank:1,leader:true}:i===2?{...e,groupRank:3}:e)});
+  for(const [name,snapshot,bottom] of [['Pick’em worst',worstPickem,1176],['Pick’em two leaders',twoLeaders,1176],['Survivor worst',worstSurvivor,1124],['Survivor typical',survivor(),1124]]){
+    const card=build(snapshot.contest,snapshot);assert.equal(card.ok,true,name);
+    const layout=cardLayout(recorder().ctx,card);
+    assert(layout.rowH>=MIN_ROW,`${name} rows ${layout.rowH}`);
+    assert(layout.rows.length===card.rows.length&&layout.end<=bottom,`${name} rows end at ${layout.end}, above the totals (${bottom})`);
+    const statusEnd=layout.detail.length?layout.detailY+(layout.detail.length-1)*layout.detailLead+10:layout.bottom;
+    assert((card.contest==='survivor'?layout.metricsY:layout.rowsY)>statusEnd,`${name}: the status ends before the panels`);
+    if(card.contest==='survivor')assert(layout.rowsY>=layout.metricsY+layout.metricsH,`${name}: the rows start below the metric panels`);
+  }
+});
+await check('a long name is condensed, then set smaller, then cut with an ellipsis before the record, never drawn over it',()=>{
+  const {calls}=drawn(build('pickem',longNames)),name=calls.find(c=>c.text.startsWith('Maximilian')),record=calls.find(c=>c.text==='10–2');
+  assert(name.text.endsWith('…'),name.text);assert(edges(name).right<=edges(record).left-20,'the name ends before the record');
+  const close=drawn(build('pickem',pickem({entries:[entry('Bartholomew',10,2,4,1,rank(3,1,4,1)),...pickem().entries.slice(1)]}))).calls.find(c=>c.text.startsWith('Bartholomew'));
+  assert.equal(close.text,'Bartholomew','a name that nearly fits is condensed and set smaller, not cut');assert(close.width>close.maxWidth,'condensed to its column');
+});
+await check('the font falls back to sans-serif where the canvas cannot parse the system font stacks',()=>{
+  const r=recorder({parsesFonts:false});drawCard(r.ctx,build('pickem',pickem()),{Path2D:undefined});
+  assert(r.calls.length>20&&r.calls.every(c=>/^\d+ \d+px sans-serif$/.test(c.font)),'every string is drawn in sans-serif, at its own weight and size');
+  const ok=recorder();drawCard(ok.ctx,build('pickem',pickem()),{Path2D:undefined});
+  assert(ok.calls.some(c=>/Bahnschrift/.test(c.font))&&ok.calls.some(c=>/"Roboto Condensed"/.test(c.font)),'the system stacks where they parse');
+});
+await check('the emblem is drawn from path data only where Path2D exists; the card never loads an image',()=>{
+  const paths=[];
+  class P{constructor(d){paths.push(d)}}
+  const r=recorder();r.ctx.drawImage=()=>{throw new Error('no image is ever drawn')};
+  drawCard(r.ctx,build('survivor',survivor()),{Path2D:P});
+  assert.equal(paths.length,7,'the shield, its inner edge, two letters and three stripes');
+  const none=recorder();none.ctx.drawImage=r.ctx.drawImage;drawCard(none.ctx,build('survivor',survivor()),{Path2D:undefined});
+  assert(none.calls.length>20,'without Path2D the card draws without the emblem');
+});
+await check('fitText and wrapText: an ellipsis where text does not fit; breaks between segments, never a line that starts with the separator',()=>{
+  const {ctx}=recorder();ctx.font='600 20px x';
+  assert.equal(fitText(ctx,'Short',500),'Short');
+  const cut=fitText(ctx,'Featherstonehaugh-Worthington',150);assert(cut.endsWith('…')&&ctx.measureText(cut).width<=150,cut);
+  assert.equal(fitText(ctx,'Anything',3),'');
+  const lines=wrapText(ctx,'Score feed unavailable · last verified 3:32 PM · 12 of 16 games final · 2 live',560,2);
+  assert.equal(lines.length,2);assert(lines.every(l=>!l.startsWith('·')&&ctx.measureText(l).width<=560),JSON.stringify(lines));
+  assert.equal(lines.join(' · '),'Score feed unavailable · last verified 3:32 PM · 12 of 16 games final · 2 live','nothing is lost when it fits');
+  assert.deepEqual(wrapText(ctx,'aaaa bbbb cccc · dddd eeee ffff gggg hhhh iiii',270,2),['aaaa bbbb cccc · dddd eeee','ffff gggg hhhh iiii'],
+    'the break stays inside a segment where breaking at its start would cut the last line');
+  assert.deepEqual(wrapText(ctx,'aaaa bbbb cccc · dddd eeee ffff gggg',270,2),['aaaa bbbb cccc','dddd eeee ffff gggg'],'and moves to the segment start where nothing is lost');
+  const one=wrapText(ctx,'alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu',200,1);
+  assert.equal(one.length,1);assert(one[0].endsWith('…'));
+  assert.deepEqual(wrapText(ctx,'',300,2),[]);
 });
 
-// ---- The apps' snapshots: weekly-app.js and survivor-app.js loaded in a fake DOM with the publication tables, the rules
-// and rulings and the score feeds served locally, as their own suites do. The share snapshot must be the state the page
-// shows: the same ranks and ties as the standings table, the same Survivor counts as the field status.
-class El{constructor(){this.text='';this.innerHTML='';this.className='';this.value='';this.hidden=false;this.disabled=false;this.style={};this.listeners={};this.children=[];this.dataset={}}
-  get textContent(){return this.text}set textContent(v){this.text=v==null?'':String(v)}
-  addEventListener(t,f){(this.listeners[t]||=[]).push(f)}replaceChildren(...n){this.children=[...n]}appendChild(n){this.children.push(n);return n}setAttribute(){}removeAttribute(){}}
-const RULING_COLUMNS={nfl_contests:['contest_id','season','contest_type','display_name','starts_at','created_at'],nfl_contest_policies:['contest_id','contest_type','revision','effective_week','halted_game_policy','public_note','created_at'],
-  nfl_incident_rulings:['ruling_id','contest_id','contest_type','week','away_team','home_team','policy_revision','chain_seq','parent_ruling_id','consequence','incident_status','event_id','evidence_source','public_note','created_at']};
-const rulingStore=(type,policy)=>({nfl_contests:[{contest_id:`pool-center-2026-${type}`,season:2026,contest_type:type,display_name:`Pool Center 2026 ${type}`,starts_at:'2026-09-01T00:00:00+00:00',created_at:'2026-10-08T12:00:00+00:00'}],
-  nfl_contest_policies:[{contest_id:`pool-center-2026-${type}`,contest_type:type,revision:1,effective_week:1,halted_game_policy:policy,public_note:'Approved policy.',created_at:'2026-10-08T12:00:00+00:00'}],nfl_incident_rulings:[]});
-const answer=body=>({ok:true,status:200,json:async()=>structuredClone(body)}),refuse=status=>({ok:false,status,json:async()=>({})});
-function table(rows,u){
-  if(typeof rows==='number')return refuse(rows);
-  const select=(u.searchParams.get('select')||'').split(','),filters=[...u.searchParams].filter(([k])=>k!=='select'&&k!=='order');
-  const keep=row=>filters.every(([k,v])=>{const [op,...rest]=v.split('.'),want=rest.join('.'),have=row[k],w=typeof have==='number'?Number(want):want;return op==='eq'?have===w:op==='lte'?have<=w:false});
-  return answer(rows.filter(keep).map(row=>Object.fromEntries(select.map(c=>[c,row[c]??null]))));
-}
-const feedEvent=(away,home,week,{as='24',hs='10',done=true}={})=>({id:`${week}-${away}-${home}`,season:{year:2026,type:2},week:{number:week},
-  status:{type:done?{state:'post',completed:true,name:'STATUS_FINAL',shortDetail:'Final'}:{state:'pre',completed:false,name:'STATUS_SCHEDULED',shortDetail:'Sun 1:00 PM'}},
-  competitions:[{competitors:[{homeAway:'away',team:{abbreviation:away},score:done?as:'0'},{homeAway:'home',team:{abbreviation:home},score:done?hs:'0'}]}]});
-async function loadApp(file,{weeksTable,published,store,scores,search,view}){
-  const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new El());return els.get(id)},listeners={};let tick=null;
-  const doc={body:{dataset:view?{view}:{}},title:'',visibilityState:'hidden',getElementById:$,querySelectorAll(){return[]},createElement(){return new El()},
-    addEventListener(t,f){(listeners[t]||=[]).push(f)},dispatchEvent(e){for(const f of listeners[e.type]||[])f(e);return true}};
-  globalThis.document=doc;globalThis.window={addEventListener(){},scrollTo(){}};globalThis.location={href:`https://example.test/nfl-pool/${search}`,search};
-  globalThis.history={state:null,pushState(){},replaceState(){}};globalThis.setInterval=fn=>{tick=fn;return 0};
-  const io={indexFailure:false,scoreFailure:false,rulingsFailure:false};
-  const token='x.'+Buffer.from(JSON.stringify({exp:Math.floor(Date.now()/1000)+3600})).toString('base64url')+'.y';
-  globalThis.fetch=async url=>{
-    const u=new URL(url);
-    if(u.pathname.endsWith('/token/anonymous'))return answer({token});
-    if(u.pathname.endsWith(`/${weeksTable}`)){const isRow=(u.searchParams.get('select')||'').includes('config');if(!isRow&&io.indexFailure)return refuse(503);return table(published,u)}
-    const t=Object.keys(RULING_COLUMNS).find(n=>u.pathname.endsWith(`/${n}`));
-    if(t)return io.rulingsFailure?refuse(503):table(store[t],u);
-    const week=Number(u.searchParams.get('week'));
-    if(io.scoreFailure)return refuse(503);
-    return answer({events:structuredClone(scores[week]||[])});
-  };
-  const source=readFileSync(new URL(`./${file}`,import.meta.url),'utf8').replace(/from '\.\/([^']+)'/g,(_,p)=>`from '${new URL(`./${p}`,import.meta.url).href}'`);
-  const warn=console.warn;console.warn=()=>{};
-  try{await import(`data:text/javascript;base64,${Buffer.from(`${source}\n//${file} ${Math.random()}`).toString('base64')}`);await flush()}finally{console.warn=warn}
-  const snapshot=contest=>{const detail={contest,snapshot:undefined};doc.dispatchEvent(new CustomEvent('poolcenter:sharesnapshot',{detail}));return detail.snapshot};
-  const refresh=async()=>{const w=console.warn;console.warn=()=>{};try{doc.visibilityState='visible';tick();await flush()}finally{console.warn=w;doc.visibilityState='hidden'}};
-  return{$,io,snapshot,refresh,doc};
-}
-// Pick'em: three games, the tracked group and three anonymous field entries. DJS goes 3–0; JC and Thaddeus go 2–1 with
-// the same tiebreak difference, so they tie for second as JC and Thaddeus did in Week 5; D.C. goes 0–3.
-const pkWeek=(week,{tiebreaks=[30,25,21,19]}={})=>({schemaVersion:1,season:2026,week,tiebreakGameIndex:2,fullFieldReady:true,fullFieldValidationVersion:3,competitionSize:7,fullFieldEntryCount:3,
-  games:[{away:'DEN',home:'KC',awayNumber:1,homeNumber:2,date:'2026-10-11'},{away:'MIA',home:'BUF',awayNumber:3,homeNumber:4,date:'2026-10-11'},{away:'NYJ',home:'NE',awayNumber:5,homeNumber:6,date:'2026-10-12'}],
-  participants:[{id:'dc',displayName:'D.C.',pickNumbers:[2,3,6],tiebreak:tiebreaks[0]},{id:'jc',displayName:'JC',pickNumbers:[1,4,6],tiebreak:tiebreaks[1]},{id:'djs',displayName:'DJS',pickNumbers:[1,4,5],tiebreak:tiebreaks[2]},{id:'thaddeus',displayName:'Thaddeus',pickNumbers:[2,4,5],tiebreak:tiebreaks[3]}],
-  fieldEntries:[{id:'f1',pickNumbers:[1,4,5],tiebreak:22},{id:'f2',pickNumbers:[1,3,5],tiebreak:20},{id:'f3',pickNumbers:[2,3,6],tiebreak:40}]});
-const pkScores=(week,done=[true,true,true])=>[feedEvent('DEN','KC',week,{as:'24',hs:'17',done:done[0]}),feedEvent('MIA','BUF',week,{as:'10',hs:'20',done:done[1]}),feedEvent('NYJ','NE',week,{as:'13',hs:'9',done:done[2]})];
-const standingRows=v=>v.$('standings').innerHTML.split('</tr>').filter(Boolean).map(row=>{const cells=[...row.matchAll(/<td[^>]*>(.*?)<\/td>/g)].map(m=>m[1]);return{rank:Number(cells[0]),name:cells[1],fieldRank:/standing-overall">([^<]+)/.exec(cells[2])?.[1]??null}});
-await test("Pick'em snapshot: the page's ranks, ties and field, and its state",async()=>{
-  const published=[{season:2026,week:4,status:'locked',revision:2,published_at:'2026-10-04T14:00:00+00:00',config:pkWeek(4,{tiebreaks:[30,28,21,35]})},{season:2026,week:5,status:'locked',revision:1,published_at:'2026-10-11T17:47:50+00:00',config:pkWeek(5)}];
-  const v=await loadApp('weekly-app.js',{weeksTable:'nfl_pool_weeks',published,store:rulingStore('pickem','void'),scores:{4:pkScores(4),5:pkScores(5)},search:'?view=standings&season=2026&week=5'});
-  const s=v.snapshot('pickem');
-  assert.equal(v.snapshot('survivor'),undefined,'Pick\'em answers only for itself');
-  assert.deepEqual([s.season,s.week,s.revision,s.fieldSize,s.hold,s.publicationStale,s.scoresFailed,s.warnings],[2026,5,1,7,null,null,false,0]);
-  assert.equal(typeof s.scoresAt,'string');assert.deepEqual(s.games,{total:3,final:3,void:0,live:0,remaining:0});assert.deepEqual(s.tiebreak,{final:true,void:false});
-  assert.deepEqual(s.entries.map(e=>[e.name,e.rank,e.tied,`${e.w}-${e.l}`,e.fieldRank]),[['DJS',1,false,'3-0','#2'],['JC',2,true,'2-1','T-4'],['Thaddeus',2,true,'2-1','T-4'],['D.C.',4,false,'0-3','#6']]);
-  assert.deepEqual(s.entries.map(e=>({rank:e.rank,name:e.name,fieldRank:e.fieldRank})),standingRows(v),'the snapshot is the standings table');
-  assert.equal(String(s.fieldSize),v.$('entryCount').textContent,'the field size is the page\'s pool size');
-  assert.deepEqual(Object.keys(s.entries[0]).sort(),['fieldRank','l','left','name','noSubmission','rank','tied','w'],'only public standing fields');
-  assert(!JSON.stringify(s).includes('f1')&&!JSON.stringify(s).includes('pickNumbers'),'no field entry and no pick reaches the snapshot');
-  assert.deepEqual(pickemCard(s,{now:Date.parse(s.scoresAt)}).rows.map(r=>r.place),['1ST','T-2','T-2','4']);
-  // A failed score refresh keeps the verified standings and marks the card STALE.
-  v.io.scoreFailure=true;await v.refresh();
-  let next=v.snapshot('pickem');assert.equal(next.scoresFailed,true);assert.deepEqual(next.entries,s.entries);assert.equal(pickemStatus(next,Date.parse(next.scoresAt)).label,'STALE');
-  v.io.scoreFailure=false;await v.refresh();assert.equal(v.snapshot('pickem').scoresFailed,false);
-  // A publication that cannot be verified is PUBLISHED DATA STALE on the page and STALE on the card.
-  v.io.indexFailure=true;await v.refresh();
-  next=v.snapshot('pickem');assert.match(next.publicationStale,/could not be checked/);assert.equal(pickemStatus(next,Date.parse(next.scoresAt)).detail,'PUBLISHED DATA STALE');
-  v.io.indexFailure=false;await v.refresh();assert.equal(v.snapshot('pickem').publicationStale,null);
-  // Another published week: the snapshot follows the week on screen.
-  v.$('weekSelect').value='2026-4';for(const f of v.$('weekSelect').listeners.change)f();await flush();
-  next=v.snapshot('pickem');assert.deepEqual([next.week,next.revision],[4,2]);
-  assert.deepEqual(next.entries.map(e=>[e.name,e.rank,e.tied,e.fieldRank]),[['DJS',1,false,'#2'],['JC',2,false,'#4'],['Thaddeus',3,false,'#5'],['D.C.',4,false,'#6']]);
-  assert.deepEqual(next.entries.map(e=>({rank:e.rank,name:e.name,fieldRank:e.fieldRank})),standingRows(v));
-});
-await test("Pick'em snapshot: loading and ON HOLD make no card",async()=>{
-  const published=[{season:2026,week:5,status:'locked',revision:1,published_at:null,config:pkWeek(5)}];
-  const live=await loadApp('weekly-app.js',{weeksTable:'nfl_pool_weeks',published,store:rulingStore('pickem','void'),scores:{5:pkScores(5,[true,false,false])},search:'?view=home'});
-  const s=live.snapshot('pickem');assert.deepEqual(s.games,{total:3,final:1,void:0,live:0,remaining:2});
-  assert.equal(pickemStatus(s,Date.parse(s.scoresAt)).label,'LIVE');assert.equal(pickemStatus(s,Date.parse(s.scoresAt)).detail,'1 OF 3 GAMES FINAL');
-  const held=await loadApp('weekly-app.js',{weeksTable:'nfl_pool_weeks',published,store:{nfl_contests:503,nfl_contest_policies:503,nfl_incident_rulings:503},scores:{5:pkScores(5)},search:'?view=home'});
-  held.io.rulingsFailure=true;await held.refresh();
-  const h=held.snapshot('pickem');assert.equal(typeof h.hold,'string');const card=pickemCard(h);assert.equal(card.ok,false);assert.match(card.reason,/on hold/);
-});
-// Survivor: Week 2 of a six-entry field. D.C. survives both weeks, DJS loses in Week 2, Thaddeus in Week 1.
-const svWeek=week=>({schemaVersion:1,season:2026,week,label:`Survivor Week ${week}`,sheetWeeks:18,competitionSize:6,currentWeekEntryCount:3,
-  trackedEntries:[{id:'dc',displayName:'D.C.',picks:['PIT','SF']},{id:'djs',displayName:'DJS',picks:['LV','ATL']},{id:'thaddeus',displayName:'Thaddeus',picks:['KC',null]}],
-  fieldEntries:[{id:'survivor-001',picks:['JAX','BAL']},{id:'survivor-002',picks:['CLE',null]},{id:'survivor-003',picks:['JAX',null]}]});
-const svScores=(done=true)=>({1:[feedEvent('PIT','CLE',1),feedEvent('LV','NE',1),feedEvent('KC','LAC',1,{as:'10',hs:'24'}),feedEvent('JAX','CAR',1)],
-  2:[feedEvent('SF','ARI',2,{done}),feedEvent('ATL','BAL',2,{as:'10',hs:'24'}),feedEvent('CLE','DAL',2)],3:[feedEvent('MIA','BUF',3,{done:false})]});
-await test('Survivor snapshot: the page\'s own field status, entries and state',async()=>{
-  const published=[{season:2026,week:2,status:'locked',revision:1,published_at:'2026-09-21T19:30:44+00:00',config:svWeek(2)}];
-  const v=await loadApp('survivor-app.js',{weeksTable:'nfl_survivor_weeks',published,store:rulingStore('survivor','advance_team_used'),scores:svScores(),search:'?view=survivor&season=2026&sw=2',view:'survivor'});
-  const s=v.snapshot('survivor');
-  assert.equal(v.snapshot('pickem'),undefined,'Survivor answers only for itself');
-  assert.deepEqual(s.totals,{field:6,remaining:2,submissions:3,pending:0});
-  assert.deepEqual([v.$('svPoolSize').textContent,v.$('svStillIn').textContent,v.$('svPending').textContent].map(Number),[s.totals.field,s.totals.remaining,s.totals.pending],'the snapshot is the field status');
-  assert.match(v.$('svSummaryNote').textContent,new RegExp(`\\b${s.totals.submissions} submitted\\b`));
-  assert.deepEqual(s.entries.map(e=>[e.name,e.status,e.eliminatedWeek,e.reason]),[['D.C.','ALIVE',null,'Alive through Week 2'],['DJS','OUT',2,'ATL lost in Week 2'],['Thaddeus','OUT',1,'KC lost in Week 1']]);
-  assert.deepEqual([s.hold,s.publicationStale,s.scoresFailed,s.flags,s.awaitingRuling,s.onHold,s.unresolvedPrior],[null,null,false,[],0,0,0]);
-  assert(!JSON.stringify(s).includes('survivor-00'),'no field entry reaches the snapshot');
-  const card=survivorCard(s,{now:Date.parse(s.scoresAt)});
-  assert.deepEqual(card.metrics.map(m=>m.value),['6','2','3','0']);assert.deepEqual(card.rows.map(r=>[r.name,r.status]),[['D.C.','ALIVE'],['DJS','OUT'],['Thaddeus','OUT']]);assert.equal(card.status.label,'FINAL');
-  v.io.scoreFailure=true;await v.refresh();
-  const failed=v.snapshot('survivor');assert.equal(failed.scoresFailed,true);assert.deepEqual(failed.totals,s.totals);assert.equal(survivorStatus(failed,Date.parse(failed.scoresAt)).label,'STALE');
-});
-await test('Survivor snapshot: a week still being played is LIVE, ON HOLD makes no card',async()=>{
-  const published=[{season:2026,week:2,status:'locked',revision:1,published_at:null,config:svWeek(2)}];
-  const v=await loadApp('survivor-app.js',{weeksTable:'nfl_survivor_weeks',published,store:rulingStore('survivor','advance_team_used'),scores:svScores(false),search:'?view=survivor',view:'survivor'});
-  const s=v.snapshot('survivor');assert.deepEqual(s.totals,{field:6,remaining:2,submissions:3,pending:1});assert.equal(s.entries[0].status,'PENDING');
-  assert.equal(survivorStatus(s,Date.parse(s.scoresAt)).label,'LIVE');
-  const held=await loadApp('survivor-app.js',{weeksTable:'nfl_survivor_weeks',published,store:{nfl_contests:[],nfl_contest_policies:[],nfl_incident_rulings:[]},scores:svScores(),search:'?view=survivor',view:'survivor'});
-  const h=held.snapshot('survivor');assert.equal(typeof h.hold,'string');assert.match(survivorCard(h).reason,/on hold/);
+// ---- Native sharing helpers.
+await check('file sharing is offered only where navigator.share and canShare({files}) both allow it',()=>{
+  const file={name:'card.png'};
+  assert.deepEqual(shareSupport({share(){},canShare:x=>Array.isArray(x.files),clipboard:{writeText(){}}},file),{share:true,files:true,clipboard:true});
+  assert.deepEqual(shareSupport({share(){},canShare:()=>false},file),{share:true,files:false,clipboard:false},'share without files (text only)');
+  assert.deepEqual(shareSupport({share(){}},file),{share:true,files:false,clipboard:false},'share without canShare (no file support)');
+  assert.deepEqual(shareSupport({share(){},canShare(){throw new TypeError('bad')}},file),{share:true,files:false,clipboard:false},'canShare throwing');
+  assert.deepEqual(shareSupport({},file),{share:false,files:false,clipboard:false},'no Web Share at all');
+  assert.deepEqual(shareSupport(undefined,file),{share:false,files:false,clipboard:false});
+  assert.deepEqual(shareSupport({share(){},canShare:()=>true},null),{share:true,files:false,clipboard:false},'no File to offer');
+  const card=build('pickem',pickem());
+  assert.deepEqual(sharePayload(card,file,{canShare:()=>true}),{files:[file],title:card.shareTitle,text:card.shareText});
+  assert.deepEqual(sharePayload(card,file,{canShare:x=>!x.text}),{files:[file]},'the file alone where text cannot ride along');
+  assert.deepEqual(sharePayload(card,file,{canShare(){throw new Error('x')}}),{files:[file]});
 });
 
-// ---- The share sheet on a small fake DOM: the buttons it mounts, the dialog, the native share, the fallbacks and copying.
-const camel=s=>s.replace(/-([a-z])/g,(_,c)=>c.toUpperCase());
-function fakeDom(){
-  const doc={activeElement:null,listeners:{},execResult:false,execCalls:0,downloads:[]};
-  const matches=(n,sel)=>sel.split(',').some(one=>{const s=one.trim();if(s.startsWith('.'))return n.className.split(/\s+/).includes(s.slice(1));const a=/^\[([\w-]+)="([^"]*)"\]$/.exec(s);if(a)return n.getAttribute(a[1])===a[2];return n.tagName===s.toUpperCase()});
-  const walk=n=>[n,...n.children.flatMap(walk)];
-  class Node{
-    constructor(tag){this.tagName=tag.toUpperCase();this.children=[];this.parentElement=null;this.attrs={};this.listeners={};this.hidden=false;this.textContent='';this.className='';this.disabled=false;this.dataset={};this.style={};
-      this.classList={add:c=>{if(!this.classList.contains(c))this.className=`${this.className} ${c}`.trim()},remove:c=>{this.className=this.className.split(/\s+/).filter(x=>x&&x!==c).join(' ')},
-        toggle:(c,on)=>{(on??!this.classList.contains(c))?this.classList.add(c):this.classList.remove(c)},contains:c=>this.className.split(/\s+/).includes(c)}}
-    get id(){return this.attrs.id??''}set id(v){this.attrs.id=String(v)}
-    setAttribute(k,v){this.attrs[k]=String(v);if(k==='hidden')this.hidden=true;if(k.startsWith('data-'))this.dataset[camel(k.slice(5))]=String(v)}
-    getAttribute(k){return k in this.attrs?this.attrs[k]:null}removeAttribute(k){delete this.attrs[k];if(k==='hidden')this.hidden=false;if(k==='src')delete this.src}
-    appendChild(c){c.parentElement=this;this.children.push(c);return c}
-    after(n){const p=this.parentElement;n.parentElement=p;p.children.splice(p.children.indexOf(this)+1,0,n)}
-    remove(){const p=this.parentElement;if(p){p.children.splice(p.children.indexOf(this),1);this.parentElement=null}}
-    addEventListener(t,f){(this.listeners[t]||=[]).push(f)}
-    dispatch(type,extra={}){const e={type,target:this,defaultPrevented:false,preventDefault(){this.defaultPrevented=true},...extra};for(const f of this.listeners[type]||[])f(e);return e}
-    click(){this.dispatch('click')}focus(){doc.activeElement=this}select(){}setSelectionRange(){}
-    closest(sel){let n=this;while(n){if(matches(n,sel))return n;n=n.parentElement}return null}
-    querySelector(sel){return walk(this).slice(1).find(n=>matches(n,sel))||null}querySelectorAll(sel){return walk(this).slice(1).filter(n=>matches(n,sel))}
-    get text(){return walk(this).map(n=>n.textContent).join('')}
-  }
-  const make=tag=>{
-    const n=new Node(tag);
-    if(tag==='dialog'){n.open=false;n.showModal=()=>{n.open=true};n.close=()=>{n.open=false}}
-    if(tag==='canvas'){n.width=300;n.height=150;n.context=mockContext();n.getContext=()=>n.context;n.toBlob=(cb,type)=>{const w=n.width,h=n.height;setTimeout(()=>cb(new Blob([JSON.stringify({w,h,calls:n.context.calls.length})],{type})),0)}}
-    if(tag==='a')n.click=()=>doc.downloads.push({href:n.href??n.getAttribute('href'),download:n.download??n.getAttribute('download'),attached:!!n.parentElement});
-    return n;
+// ---- share-ui.js on a fake DOM.
+class FakeNode{
+  constructor(tag,doc){this.tagName=tag.toUpperCase();this.doc=doc;this.children=[];this.attributes={};this.listeners={};this.hidden=false;this.disabled=false;this.className='';this.textContent='';this.dataset={};this.parent=null;this.value=''}
+  setAttribute(k,v){this.attributes[k]=String(v);if(k==='href')this.href=String(v);if(k==='download')this.download=String(v)}
+  getAttribute(k){return this.attributes[k]??null}
+  removeAttribute(k){delete this.attributes[k];if(k==='src')this.src=undefined;if(k==='open')this.open=false}
+  appendChild(c){c.parent=this;this.children.push(c);return c}
+  remove(){if(this.parent){this.parent.children=this.parent.children.filter(x=>x!==this);this.parent=null}}
+  addEventListener(t,f){(this.listeners[t]||=[]).push(f)}
+  fire(t,event={}){for(const f of this.listeners[t]||[])f({target:this,...event})}
+  focus(){this.doc.focused=this}
+}
+function fakePage({share=null,canShare=null,clipboard=null,execCommand=()=>false,toBlob='ok',context=true,provider=null,href='https://example.test/nfl-pool/?view=standings'}={}){
+  const listeners={},doc={focused:null,downloads:[],shares:[],copies:[],revoked:[],created:[],pendingBlob:null};
+  const document={
+    body:null,
+    querySelectorAll:sel=>sel==='[data-share-card]'?doc.buttons:[],
+    createElement:tag=>{
+      const node=new FakeNode(tag,doc);
+      if(tag==='dialog'){node.open=false;node.showModal=()=>{node.open=true};node.close=()=>{if(!node.open)return;node.open=false;node.fire('close')}}
+      if(tag==='canvas'){node.getContext=()=>context?recorder().ctx:null;node.toBlob=(cb,type)=>{doc.blobType=type;
+        if(toBlob==='ok')setTimeout(()=>cb(new Blob(['PNG-BYTES'],{type})));else if(toBlob==='null')setTimeout(()=>cb(null));else if(toBlob==='hold')doc.pendingBlob=()=>cb(new Blob(['LATE'],{type}));else throw new Error('toBlob exploded')}}
+      if(tag==='a')node.click=()=>doc.downloads.push({href:node.href,download:node.download});
+      if(tag==='textarea')node.select=()=>{doc.selected=node.value};
+      return node;
+    },
+    addEventListener:(t,f)=>{(listeners[t]||=[]).push(f)},
+    dispatchEvent:e=>{for(const f of listeners[e.type]||[])f(e);return true},
+    execCommand:cmd=>{doc.commands=(doc.commands||[]).concat(cmd);return execCommand(doc)}
   };
-  const body=make('body'),html=make('html');html.appendChild(body);
-  const card=(cls,child)=>{const c=make('section');c.className=cls;c.appendChild(child);body.appendChild(c);return child};
-  const home=card('card home-standings-card',make('div'));home.id='homeStandings';
-  const tbody=make('tbody');tbody.id='standings';const tableWrap=make('div');tableWrap.className='table-wrap';const t=make('table');t.appendChild(tbody);tableWrap.appendChild(t);card('card standings',tableWrap);
-  const note=card('card survivor-hero',make('div'));note.id='svSummaryNote';
-  Object.assign(doc,{body,documentElement:html,createElement:make,createElementNS:(_,tag)=>make(tag),getElementById:id=>walk(html).find(n=>n.id===id)||null,
-    addEventListener(t,f){(doc.listeners[t]||=[]).push(f)},dispatchEvent(e){for(const f of doc.listeners[e.type]||[])f(e);return true},
-    execCommand(cmd){doc.execCalls++;assert.equal(cmd,'copy');return doc.execResult},nodes:()=>walk(html)});
+  document.body=new FakeNode('body',doc);
+  doc.buttons=['pickem','survivor'].map(contest=>{const b=new FakeNode('button',doc);b.hidden=true;b.dataset.shareCard=contest;return b});
+  if(provider)document.addEventListener('poolcenter:share',event=>{event.detail.snapshot=provider(event.detail.contest)});
+  const navigator={};
+  if(share)navigator.share=data=>{doc.shares.push(data);return share(data)};
+  if(canShare)navigator.canShare=canShare;
+  if(clipboard)navigator.clipboard={writeText:async value=>{doc.copies.push(value);return clipboard(value)}};
+  globalThis.document=document;
+  Object.defineProperty(globalThis,'navigator',{value:navigator,configurable:true,writable:true});
+  globalThis.location={href};
+  const realCreate=URL.createObjectURL,realRevoke=URL.revokeObjectURL;
+  URL.createObjectURL=blob=>{const url=realCreate(blob);doc.created.push({url,blob});return url};
+  URL.revokeObjectURL=url=>{doc.revoked.push(url);realRevoke(url)};
+  doc.restore=()=>{URL.createObjectURL=realCreate;URL.revokeObjectURL=realRevoke};
   return doc;
 }
-const sheetSource=readFileSync(new URL('./share-sheet.js',import.meta.url),'utf8');
-assert(sheetSource.includes("from './share-card.js?v=1';"),'the share sheet imports share-card.js at its precached version');
-const sheetModule=sheetSource.replace("from './share-card.js?v=1';",`from '${new URL('./share-card.js?v=1',import.meta.url).href}';`);
-async function loadSheet({snapshots={},share=null,canShare=null,clipboard=true}={}){
-  const doc=fakeDom();globalThis.document=doc;
-  for(const [contest,make] of Object.entries(snapshots))doc.addEventListener('poolcenter:sharesnapshot',e=>{if(e.detail.contest===contest)e.detail.snapshot=make()});
-  const nav={shares:[],clipboard:clipboard?{writes:[],async writeText(t){if(clipboard==='reject')throw new Error('denied');this.writes.push(t)}}:undefined};
-  if(share)nav.share=d=>{nav.shares.push(d);return share(d)};if(canShare)nav.canShare=canShare;
-  Object.defineProperty(globalThis,'navigator',{value:nav,configurable:true,writable:true});
-  const mod=await import(`data:text/javascript;base64,${Buffer.from(`${sheetModule}\n//sheet ${Math.random()}`).toString('base64')}`);
-  const button=contest=>doc.nodes().find(n=>n.getAttribute('data-share-card')===contest);
-  const action=name=>doc.nodes().find(n=>n.getAttribute('data-share-action')===name);
-  const dialog=()=>doc.nodes().find(n=>n.tagName==='DIALOG');
-  return{doc,nav,mod,button,action,dialog,img:()=>dialog().querySelector('.share-preview').children[0],feedback:()=>dialog().querySelector('.share-feedback').textContent,state:()=>dialog().querySelector('.share-state').textContent};
+let uiInstance=0;
+const flush=async(n=10)=>{for(let i=0;i<n;i++)await new Promise(r=>setTimeout(r,0))};
+async function shareUi(options){
+  const doc=fakePage(options);
+  await import(`./share-ui.js?instance=${++uiInstance}`);
+  const body=globalThis.document.body,dialog=()=>body.children.find(n=>n.tagName==='DIALOG');
+  const find=(node,pred)=>{if(pred(node))return node;for(const c of node.children){const hit=find(c,pred);if(hit)return hit}return null};
+  const byText=text=>find(dialog(),n=>n.tagName==='BUTTON'&&n.textContent===text);
+  const ui={doc,dialog,byText,
+    image:()=>find(dialog(),n=>n.tagName==='IMG'),message:()=>find(dialog(),n=>n.className==='share-placeholder'),status:()=>find(dialog(),n=>/^share-status/.test(n.className)),
+    actions:()=>find(dialog(),n=>n.className==='share-actions'),title:()=>find(dialog(),n=>n.tagName==='H2'),
+    open:async(contest='pickem')=>{doc.buttons[contest==='pickem'?0:1].fire('click');await flush()},
+    click:async text=>{byText(text).fire('click');await flush()}};
+  return ui;
 }
-const pngShare=d=>Array.isArray(d?.files)&&d.files.length>0&&d.files.every(f=>f.type==='image/png');
-const realSetTimeout=globalThis.setTimeout;globalThis.setTimeout=(fn,ms,...a)=>{const t=realSetTimeout(fn,ms,...a);if(ms>=10000)t.unref?.();return t};
-const nowSnapshot=make=>()=>make({scoresAt:new Date().toISOString()});
-await test('Share sheet: the Share buttons sit at the foot of each contest\'s standings',async()=>{
-  const s=await loadSheet();
-  const buttons=s.doc.nodes().filter(n=>n.getAttribute('data-share-card'));
-  assert.deepEqual(buttons.map(b=>[b.getAttribute('data-share-card'),b.closest('.card')?.className,b.getAttribute('type'),b.getAttribute('aria-haspopup'),b.text]),
-    [['pickem','card home-standings-card','button','dialog','Share standings card'],['pickem','card standings','button','dialog','Share standings card'],['survivor','card survivor-hero','button','dialog','Share Survivor card']]);
-});
-await test('Share sheet: preview, native PNG share with the deep link, and a cancelled share that downloads nothing',async()=>{
-  let resolveShare;const s=await loadSheet({snapshots:{pickem:nowSnapshot(pickem)},canShare:pngShare,share:()=>new Promise((_,reject)=>{resolveShare=reject})});
-  s.button('pickem').click();await flush();
-  const d=s.dialog();assert.equal(d.open,true);assert.equal(d.getAttribute('aria-labelledby'),'share-sheet-title');
-  assert.equal(d.querySelector('h2').textContent,"Share Pick'em standings");assert.match(s.state(),/^FINAL · 2026 Week 5 · revision 1$/);
-  const img=s.img();assert.equal(img.hidden,false);assert.match(img.src,/^blob:/);assert.match(img.alt,/^Pick'em standings card, 2026 Week 5, FINAL\./);
-  assert.equal(s.doc.documentElement.classList.contains('share-open'),true);
-  assert.deepEqual(['share','share-link','download','copy-link','copy-text'].map(n=>s.action(n).hidden),[false,true,false,false,false]);
-  assert.equal(s.doc.activeElement,s.action('share'),'focus moves to Share image once the card is ready');
-  // The preview, the shared file and the download are the same 1080 × 1350 PNG blob.
-  const preview=await (await nativeFetch(img.src)).text();assert.deepEqual(JSON.parse(preview).w,1080);assert.deepEqual(JSON.parse(preview).h,1350);
-  s.action('share').click();
-  assert.equal(s.nav.shares.length,1,'navigator.share runs straight from the tap');
-  const shared=s.nav.shares[0];assert.equal(shared.files.length,1);assert.equal(shared.files[0].name,'pool-center-pickem-2026-week-5.png');assert.equal(shared.files[0].type,'image/png');
-  assert.equal(await shared.files[0].text(),preview,'the shared file is the previewed image');
-  assert.equal(shared.title,"Pool Center · Pick'em Standings · 2026 Week 5");assert.equal(shared.text,"Pool Center · Pick'em Standings · 2026 Week 5 · FINAL\nhttps://r88510179-collab.github.io/nfl-pool/?view=standings&season=2026&week=5");
-  assert.equal(shared.url,undefined,'the link travels in the text, beside the file');
-  assert.equal(s.action('share').disabled,true,'a second tap cannot start a second share');
-  const abort=new Error('Share canceled');abort.name='AbortError';resolveShare(abort);await flush();
-  assert.equal(s.feedback(),'Sharing cancelled.');assert.deepEqual(s.doc.downloads,[],'a cancelled share never downloads');assert.equal(s.action('share').disabled,false);
-  s.action('download').click();
-  assert.equal(s.doc.downloads.length,1);assert.equal(s.doc.downloads[0].download,'pool-center-pickem-2026-week-5.png');assert.equal(await (await nativeFetch(s.doc.downloads[0].href)).text(),preview,'the download is the previewed image');
-  s.action('copy-link').click();await flush();assert.deepEqual(s.nav.clipboard.writes,['https://r88510179-collab.github.io/nfl-pool/?view=standings&season=2026&week=5']);assert.equal(s.feedback(),'Link copied.');
-  s.action('copy-text').click();await flush();
-  const copied=s.nav.clipboard.writes[1].split('\n'),expected=pickemCard(pickem({scoresAt:new Date().toISOString()}),{now:Date.now()}).text.split('\n'),stamp=l=>l.startsWith('Snapshot ');
-  assert.deepEqual(copied.filter(l=>!stamp(l)),expected.filter(l=>!stamp(l)),'Copy text copies the card\'s text summary');assert.match(copied.find(stamp),/^Snapshot [A-Z][a-z]{2} \d{1,2}, \d{4} · \d{1,2}:\d{2} [AP]M \S+ · revision 1$/);
-  assert.equal(s.feedback(),'Text summary copied.');
-  // Escape (the dialog's cancel event) closes it and returns focus to the button that opened it.
-  const cancel=d.dispatch('cancel');assert.equal(cancel.defaultPrevented,true);assert.equal(d.open,false);assert.equal(s.doc.activeElement,s.button('pickem'));
-  assert.equal(s.doc.documentElement.classList.contains('share-open'),false);
-});
-await test('Share sheet: a share that fails for another reason explains itself and downloads nothing',async()=>{
-  for(const [name,text] of [['NotAllowedError',/wasn't allowed just now/],['DataError',/couldn't share the image/],['TypeError',/couldn't share the image/]]){
-    const s=await loadSheet({snapshots:{survivor:nowSnapshot(survivor)},canShare:pngShare,share:async()=>{const e=new Error('no');e.name=name;throw e}});
-    s.button('survivor').click();await flush();s.action('share').click();await flush();
-    assert.match(s.feedback(),text);assert.deepEqual(s.doc.downloads,[]);
-    assert.equal(s.nav.shares[0].text,'Pool Center · Survivor Pool · 2026 Week 5 · FINAL\nhttps://r88510179-collab.github.io/nfl-pool/?view=survivor&season=2026&sw=5');
-  }
-  const ok=await loadSheet({snapshots:{survivor:nowSnapshot(survivor)},canShare:pngShare,share:async()=>{}});
-  ok.button('survivor').click();await flush();ok.action('share').click();await flush();assert.equal(ok.feedback(),'Card shared.');assert.deepEqual(ok.doc.downloads,[]);
-});
-await test('Share sheet: without file sharing, Download PNG leads and the link can still be shared',async()=>{
-  const linkOnly=await loadSheet({snapshots:{survivor:nowSnapshot(survivor)},canShare:()=>false,share:async()=>{}});
-  linkOnly.button('survivor').click();await flush();
-  assert.deepEqual(['share','share-link','download','copy-link','copy-text'].map(n=>linkOnly.action(n).hidden),[true,false,false,false,false]);
-  assert.equal(linkOnly.action('download').classList.contains('primary'),true);assert.equal(linkOnly.dialog().querySelector('.share-note').hidden,false);
-  assert.equal(linkOnly.doc.activeElement,linkOnly.action('download'));
-  linkOnly.action('share-link').click();await flush();
-  assert.deepEqual(linkOnly.nav.shares[0],{title:'Pool Center · Survivor Pool · 2026 Week 5',text:'Pool Center · Survivor Pool · 2026 Week 5 · FINAL',url:'https://r88510179-collab.github.io/nfl-pool/?view=survivor&season=2026&sw=5'});
-  assert.deepEqual(linkOnly.doc.downloads,[]);
-  const none=await loadSheet({snapshots:{pickem:nowSnapshot(pickem)}});
-  none.button('pickem').click();await flush();
-  assert.deepEqual(['share','share-link','download','copy-link','copy-text'].map(n=>none.action(n).hidden),[true,true,false,false,false],'no Web Share at all: Download, Copy link and Copy text');
-});
-await test('Share sheet: copying falls back to the copy command, then to selected text',async()=>{
-  const s=await loadSheet({snapshots:{pickem:nowSnapshot(pickem)},clipboard:'reject'});
-  s.button('pickem').click();await flush();
-  s.doc.execResult=true;s.action('copy-link').click();await flush();
-  assert.equal(s.doc.execCalls,1);assert.equal(s.feedback(),'Link copied.');assert.equal(s.dialog().querySelector('.share-manual').hidden,true);
-  s.doc.execResult=false;s.action('copy-link').click();await flush();
-  const manual=s.dialog().querySelector('.share-manual');assert.equal(manual.hidden,false);assert.equal(manual.value,'https://r88510179-collab.github.io/nfl-pool/?view=standings&season=2026&week=5');
-  assert.match(s.feedback(),/press and hold it to copy/);
-});
-await test('Share sheet: unavailable data is explained and offers no image',async()=>{
-  const missing=await loadSheet();
-  missing.button('pickem').click();await flush();
-  assert.equal(missing.dialog().open,true);assert.match(missing.state(),/still updating/);
-  assert.deepEqual(['share','share-link','download','copy-link','copy-text'].map(n=>missing.action(n).hidden),[true,true,true,true,true]);
-  assert.equal(missing.img().hidden,true);
-  const held=await loadSheet({snapshots:{pickem:()=>pickem({hold:'ruling data unavailable'})},canShare:pngShare,share:async()=>{}});
-  held.button('pickem').click();await flush();
-  assert.match(held.state(),/on hold/);assert.deepEqual(['share','download','copy-text','copy-link'].map(n=>held.action(n).hidden),[true,true,true,false],'only the week\'s link');
-  held.action('copy-link').click();await flush();assert.deepEqual(held.nav.clipboard.writes,['https://r88510179-collab.github.io/nfl-pool/?view=standings&season=2026&week=5']);
-  assert.equal(held.nav.shares.length,0);
-  const close=held.dialog().querySelector('.share-close');assert.equal(close.getAttribute('aria-label'),'Close share dialog');close.click();assert.equal(held.dialog().open,false);
-});
-await test('Share sheet: a card closed while drawing never fills the next one',async()=>{
-  const s=await loadSheet({snapshots:{pickem:nowSnapshot(pickem),survivor:nowSnapshot(survivor)},canShare:pngShare,share:async()=>{}});
-  s.button('pickem').click();s.dialog().querySelector('.share-close').click();s.button('survivor').click();await flush();
-  assert.equal(s.dialog().querySelector('h2').textContent,'Share Survivor status');assert.match(s.img().alt,/^Survivor pool card/);
-  s.action('share').click();await flush();assert.equal(s.nav.shares[0].files[0].name,'pool-center-survivor-2026-week-5.png');
-});
-globalThis.setTimeout=realSetTimeout;
+// share-ui.js reads the real clock, so the page's snapshots are fresh against it, as on a page that is refreshing.
+const fresh=snapshot=>snapshot.contest==='pickem'?{...snapshot,feed:{...snapshot.feed,fetchedAt:iso(Date.now()-2000)}}:{...snapshot,feed:{...snapshot.feed,at:Date.now()-2000}};
+const pickemProvider=(snap=()=>pickem())=>contest=>fresh(contest==='pickem'?snap():survivor());
+const fileShare={share:async()=>{},canShare:x=>Array.isArray(x.files)&&x.files.every(f=>f instanceof File)};
 
-assert.equal(failures.length,0,`Shareable Cards V1 regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
-console.log('Shareable Cards V1 card model, status, renderer fit, app snapshot, native share, fallback and copy regressions passed');
+await check('the Share buttons stay hidden until share-ui.js runs, then each previews its own contest',async()=>{
+  const doc=fakePage({});assert.deepEqual(doc.buttons.map(b=>b.hidden),[true,true]);doc.restore();
+  const ui=await shareUi({...fileShare,provider:pickemProvider()});
+  try{
+    assert.deepEqual(ui.doc.buttons.map(b=>b.hidden),[false,false]);
+    await ui.open('survivor');
+    assert.equal(ui.dialog().open,true);assert.equal(ui.title().textContent,'Share Survivor results');
+    assert.match(ui.image().alt,/^Survivor Pool card, 2026 Week 5: LIVE — /);
+    assert.equal(ui.doc.blobType,'image/png');
+  }finally{ui.doc.restore()}
+});
+await check('Share graphic hands the previewed PNG to navigator.share as a file, in the tap, and downloads nothing',async()=>{
+  const ui=await shareUi({...fileShare,provider:pickemProvider()});
+  try{
+    await ui.open('pickem');
+    const preview=ui.image();assert.equal(preview.hidden,false);assert.match(preview.src,/^blob:/);
+    assert.equal(ui.byText('Share graphic').disabled,false);assert.equal(ui.byText('Share graphic').hidden,false);
+    ui.byText('Share graphic').fire('click');
+    assert.equal(ui.doc.shares.length,1,'navigator.share is called synchronously in the tap');
+    await flush();
+    const [{files,title,text}]=ui.doc.shares,[file]=files;
+    assert(file instanceof File);assert.deepEqual([file.name,file.type],['nfl-pool-center-pickem-2026-week-5.png','image/png']);
+    assert.equal(await file.text(),await ui.doc.created[0].blob.text(),'the shared file is the previewed PNG');
+    assert.equal(ui.doc.created[0].url,preview.src);
+    assert.match(title,/^NFL Pool Center · 2026 Week 5 Pick'em Standings$/);assert.match(text,/\?view=standings&season=2026&week=5$/);
+    assert.equal(ui.status().textContent,'Shared.');assert.deepEqual(ui.doc.downloads,[]);
+  }finally{ui.doc.restore()}
+});
+await check('a second tap while the share sheet is open starts no second share; the button returns when the sheet closes',async()=>{
+  let close;
+  const ui=await shareUi({share:()=>new Promise(resolve=>{close=resolve}),canShare:fileShare.canShare,provider:pickemProvider()});
+  try{
+    await ui.open();
+    ui.byText('Share graphic').fire('click');ui.byText('Share graphic').fire('click');await flush();
+    assert.equal(ui.doc.shares.length,1);assert.equal(ui.byText('Share graphic').disabled,true,'disabled while the sheet is open');
+    close();await flush();
+    assert.equal(ui.byText('Share graphic').disabled,false);assert.equal(ui.status().textContent,'Shared.');
+  }finally{ui.doc.restore()}
+});
+await check('cancelling the share sheet only says so: nothing is downloaded or sent instead',async()=>{
+  const ui=await shareUi({share:async()=>{throw new DOMException('Share canceled','AbortError')},canShare:fileShare.canShare,provider:pickemProvider()});
+  try{
+    await ui.open();await ui.click('Share graphic');
+    assert.equal(ui.status().textContent,'Share canceled. Nothing was sent.');assert.deepEqual(ui.doc.downloads,[]);assert.equal(ui.doc.shares.length,1);
+  }finally{ui.doc.restore()}
+});
+await check('a share that fails says why and points to Download and Copy link',async()=>{
+  const ui=await shareUi({share:async()=>{throw new DOMException('Permission denied','NotAllowedError')},canShare:fileShare.canShare,provider:pickemProvider()});
+  try{
+    await ui.open();await ui.click('Share graphic');
+    assert.match(ui.status().textContent,/Sharing didn’t work here \(Permission denied\)\. Use Download PNG or Copy link instead\./);assert.equal(ui.status().className,'share-status error');
+    assert.deepEqual(ui.doc.downloads,[]);
+  }finally{ui.doc.restore()}
+});
+await check('without file sharing, Share graphic is hidden and Download PNG is the main action; Download saves the previewed PNG',async()=>{
+  for(const nav of [{},{share:async()=>{}},{share:async()=>{},canShare:()=>false}]){
+    const ui=await shareUi({...nav,provider:pickemProvider()});
+    try{
+      await ui.open();
+      assert.equal(ui.byText('Share graphic').hidden,true);assert.equal(ui.byText('Download PNG').className,'share-action primary');
+      assert.match(ui.status().textContent,/can’t share images directly/);
+      await ui.click('Download PNG');
+      assert.deepEqual(ui.doc.downloads,[{href:ui.image().src,download:'nfl-pool-center-pickem-2026-week-5.png'}]);
+      assert.equal(ui.doc.shares.length,0);
+    }finally{ui.doc.restore()}
+  }
+});
+await check('Copy link and Copy summary use the clipboard, fall back to the copy command, and show the text when neither works',async()=>{
+  let ui=await shareUi({...fileShare,clipboard:()=>{},provider:pickemProvider()});
+  try{
+    await ui.open();await ui.click('Copy link');
+    assert.deepEqual(ui.doc.copies,['https://example.test/nfl-pool/?view=standings&season=2026&week=5']);assert.equal(ui.status().textContent,'Link copied.');
+    await ui.click('Copy summary');assert.match(ui.doc.copies[1],/^NFL Pool Center · 2026 Week 5 · Pick'em Standings\n/);assert.equal(ui.status().textContent,'Summary copied.');
+  }finally{ui.doc.restore()}
+  ui=await shareUi({...fileShare,clipboard:()=>{throw new Error('denied')},execCommand:doc=>doc.selected?.startsWith('https://'),provider:pickemProvider()});
+  try{await ui.open();await ui.click('Copy link');assert.equal(ui.status().textContent,'Link copied.');assert.deepEqual(ui.doc.commands,['copy'])}finally{ui.doc.restore()}
+  ui=await shareUi({...fileShare,provider:pickemProvider()});
+  try{
+    await ui.open();await ui.click('Copy summary');
+    assert.match(ui.status().textContent,/^Couldn’t copy automatically\. Press and hold to copy the summary:\nNFL Pool Center/);assert.equal(ui.status().className,'share-status error');
+  }finally{ui.doc.restore()}
+});
+await check('no card is made from a missing, not-ready or inconsistent snapshot: the reason is shown and no action is offered',async()=>{
+  for(const [provider,reason] of [[null,/Reload the page/],[()=>({ready:false,reason:'Scores for this week are still loading.'}),/still loading/],[()=>pickem({revision:0}),/publication record/]]){
+    const ui=await shareUi({...fileShare,provider});
+    try{
+      await ui.open();
+      assert.match(ui.message().textContent,reason);assert.equal(ui.actions().hidden,true);assert.equal(ui.image().hidden,true);
+      assert.equal(ui.doc.created.length,0,'no PNG is made');
+    }finally{ui.doc.restore()}
+  }
+});
+await check('a PNG that cannot be made is reported; the link and the summary can still be copied',async()=>{
+  for(const option of [{toBlob:'null'},{toBlob:'throw'},{context:false}]){
+    const ui=await shareUi({...fileShare,clipboard:()=>{},...option,provider:pickemProvider()});
+    try{
+      await ui.open();
+      assert.match(ui.message().textContent,/^The image could not be created on this device \(.+\)\. You can still copy the link or the summary\.$/,JSON.stringify(option));
+      assert.equal(ui.byText('Share graphic').hidden,true);assert.equal(ui.byText('Download PNG').hidden,true);
+      await ui.click('Copy link');assert.equal(ui.status().textContent,'Link copied.');
+    }finally{ui.doc.restore()}
+  }
+});
+await check('closing releases the PNG and returns focus to the Share button; a late export never repaints a closed preview',async()=>{
+  let ui=await shareUi({...fileShare,provider:pickemProvider()});
+  try{
+    await ui.open();const url=ui.image().src;ui.dialog().close();
+    assert.equal(ui.dialog().open,false);assert.deepEqual(ui.doc.revoked,[url]);assert.equal(ui.doc.focused,ui.doc.buttons[0]);
+  }finally{ui.doc.restore()}
+  ui=await shareUi({...fileShare,toBlob:'hold',provider:pickemProvider()});
+  try{
+    await ui.open();ui.dialog().close();ui.doc.pendingBlob();await flush();
+    assert.equal(ui.image().src,undefined);assert.equal(ui.doc.created.length,0,'no URL is made for a closed preview');
+  }finally{ui.doc.restore()}
+});
+await check('the card is one snapshot: a refresh after the preview opens does not change what is shared or copied',async()=>{
+  let snapshot=pickem();
+  const ui=await shareUi({...fileShare,clipboard:()=>{},provider:pickemProvider(()=>snapshot),href:'https://example.test/nfl-pool/?view=standings&season=2026&week=2'});
+  try{
+    await ui.open();
+    snapshot=pickem({week:6,entries:pickem().entries.map(e=>({...e,w:e.w+1,left:e.left-1})),games:{total:16,final:13,void:0,live:1,remaining:3}});
+    await ui.click('Copy summary');
+    assert.match(ui.doc.copies[0],/2026 Week 5 · Pick'em Standings[\s\S]*1\. D\.C\. 10–2/);assert.match(ui.doc.copies[0],/&week=5$/,'the snapshot week, not the page URL week');
+    await ui.open();await ui.click('Copy link');
+    assert.match(ui.doc.copies[1],/&week=6$/,'reopening Share takes a new snapshot');
+  }finally{ui.doc.restore()}
+});
+
+assert.equal(failures.length,0,`share-card regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+console.log('share-card snapshot checks, truthful status (FINAL, LIVE, DELAYED, stale, unavailable, on hold, under review), privacy, deep links, summaries, layout and text fitting, native file sharing, cancel, download and copy fallbacks and PNG failure regressions passed');

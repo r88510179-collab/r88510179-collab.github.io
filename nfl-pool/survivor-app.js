@@ -17,9 +17,10 @@ let rulingData=null,rawEventsByWeek=[];
 // switchError a chosen week that could not be loaded. running, refreshStartedAt and switching let a timer, a resume or a view
 // change join a refresh that is already running instead of starting a second one.
 let pub=null,pubStale=null,pubWeeks=[],switchError='',running=0,refreshStartedAt=0,switching=false;
-// Shareable Cards V1. scoresAt is when the results of the snapshot on screen last loaded (null until they have) and
-// scoresFailed says the latest result refresh failed, so a share card never shows unloaded or unrefreshed results as current.
-let scoresAt=null,scoresFailed=false;
+// Shareable cards (share-ui.js). shareFeed is the outcome of the latest score load of the snapshot on screen, kept with that
+// snapshot (cfg) so a week or revision installed since is never shared with the previous one's results: at is when its
+// results last loaded (null until they first do) and failed says the latest load failed (RESULT FEED UNAVAILABLE).
+let shareFeed=null;
 const PUB_INDEX_COLUMNS='season,week,revision,published_at,status',PUB_ROW_COLUMNS='season,week,status,revision,published_at,config';
 const activeScoreControllers=new Set();
 const $=id=>document.getElementById(id);
@@ -168,6 +169,8 @@ function renderDecision(summary,ruling=0,held=0,R=null){
 function statusLabel(state){
   return state.halted?'RULING':state.status==='hold'?'HOLD':state.status==='alive'?'ALIVE':state.status==='live'?'LIVE':state.status==='pending'?'PENDING':'OUT';
 }
+// The pick a tracked row shows: the one that eliminated the entry in an earlier week, otherwise this week's.
+function shownPick(entry,state){return state.eliminatedWeek&&state.eliminatedWeek<cfg.week?entry.picks[state.eliminatedWeek-1]:entry.picks[cfg.week-1]}
 // HDC-12: an applied ruling the entry's state rests on whose incident the feed now contradicts. The ruling stays applied.
 function underReview(state){return state.ruling?.underReview||state.rulings?.find(r=>r.underReview)?.underReview||null}
 function rulingNote(state){
@@ -200,7 +203,7 @@ function render(){
   $('svPoolSize').textContent=cfg.competitionSize;$('svEntered').textContent=summary.entered;$('svStillIn').textContent=summary.active;$('svPending').textContent=summary.pending;
   $('svSummaryNote').textContent=`${globalHold?'ON HOLD · Ruling data unavailable: Survivor results are on hold until the contest rules and rulings load; nothing is graded from the NFL feed alone. ':''}${summary.eliminatedBefore} eliminated before Week ${cfg.week} · ${summary.eligibleEntering} eligible entering · ${summary.submitted} submitted · ${summary.entered} legal picks · ${summary.eliminatedThisWeek} eliminated this week so far.${awaiting}${onHold}${provisional?` ${provisional}`:''}`;
   $('svTracked').innerHTML=cfg.trackedEntries.map(entry=>{
-    const state=survivorEntryState(entry,wi,resultsByWeek,R),current=state.eliminatedWeek&&state.eliminatedWeek<cfg.week?entry.picks[state.eliminatedWeek-1]:entry.picks[wi],history=entry.picks.map((pick,i)=>`<span class="survivor-history-chip"><small>W${i+1}</small>${pick?esc(pick):'—'}</span>`).join('');
+    const state=survivorEntryState(entry,wi,resultsByWeek,R),current=shownPick(entry,state),history=entry.picks.map((pick,i)=>`<span class="survivor-history-chip"><small>W${i+1}</small>${pick?esc(pick):'—'}</span>`).join('');
     const review=underReview(state);
     return`<div class="survivor-tracked-row"><div><b>${esc(entry.displayName)}</b><div class="survivor-history">${history}</div></div><div class="survivor-current">${teamChip(current)}<span class="status-pill survivor-${state.status}">${statusLabel(state)}</span>${review?'<span class="status-pill survivor-review">UNDER REVIEW</span>':''}<small>${esc(state.reason)}${esc(rulingNote(state))}${review?` · UNDER REVIEW: ${esc(review)}; the ruling stays applied`:''}</small></div></div>`;
   }).join('');
@@ -212,21 +215,6 @@ function render(){
   $('svMeta').textContent=metaText();
 }
 function metaText(){return`Week ${cfg.week} · revision ${pub.revision}${pubStale?' · PUBLISHED DATA STALE':''}`}
-// Shareable Cards V1: the Survivor view a share card shows, built on request from the state the page renders with the same
-// survivor-math evaluation and ruling overlay. Totals are this contest's own (never the Pick'em pool's) and the entries are
-// the tracked ones only, never a field entry. Null before a published week is installed.
-function shareSnapshot(){
-  if(!cfg||!pub)return null;
-  const R=rulingLookup(),globalHold=R?.status==='hold',entries=allEntries(),wi=cfg.week-1,summary=survivorSummary(entries,wi,resultsByWeek,R);
-  const tracked=cfg.trackedEntries.map((entry,order)=>{const state=survivorEntryState(entry,wi,resultsByWeek,R);return{name:entry.displayName,status:statusLabel(state),eliminatedWeek:state.eliminatedWeek??null,reason:state.reason,underReview:!!underReview(state),order}});
-  return{contest:'survivor',season:pub.season,week:pub.week,revision:pub.revision,publishedAt:pub.publishedAt,
-    scoresAt,scoresFailed,hold:globalHold?(R.reason||'ruling data unavailable'):null,rulingsStale:rulingData?.stale===true,
-    publicationStale:pubStale?pubStale.reason:null,flags:globalHold?[]:feedFlags(R),
-    awaitingRuling:survivorAwaitingRuling(entries,wi,resultsByWeek,R),onHold:survivorOnHold(entries,wi,resultsByWeek,R),
-    unresolvedPrior:survivorUnresolvedEntering(entries,wi,resultsByWeek,R),awaitingRulingPrior:survivorAwaitingRuling(entries,wi-1,resultsByWeek,R),
-    onHoldPrior:globalHold?0:survivorOnHold(entries,wi-1,resultsByWeek,R),
-    totals:{field:cfg.competitionSize,remaining:summary.active,submissions:summary.submitted,pending:summary.pending},entries:tracked};
-}
 // The chosen week that could not be loaded, and why the publication on screen is stale.
 function renderNotices(){$('survivorError').innerHTML=`${switchError?`<div class="error">${esc(switchError)}</div>`:''}${pubStale?`<div class="notice">PUBLISHED DATA STALE · ${esc(pubStale.reason)}. Survivor still shows Week ${pub.week} revision ${pub.revision}, the last publication verified on this page, until the current one loads.</div>`:''}`}
 
@@ -296,12 +284,11 @@ async function updateScores(id){
     outcomes.forEach((o,k)=>{const i=indexes[k];if(o.status==='fulfilled'){resultsByWeek[i]=o.value.results;rawEventsByWeek[i]=o.value.events}else failed.push({i,reason:o.reason})});
     failed.forEach(f=>console.warn(f.reason));
     if(failed.some(f=>f.i===current||!(resultsByWeek[f.i] instanceof Map)))throw failed.find(f=>f.i===current||!(resultsByWeek[f.i] instanceof Map)).reason;
-    scoresAt=new Date().toISOString();scoresFailed=false;
     // Rulings kept from an earlier load (stale) still apply, and the feed status always says so.
     // HDC-15: a snapshot that could not be verified as the current publication is never LIVE.
     const R=rulingLookup(),flags=R?.status==='hold'?null:[...feedFlags(R),...(rulingData?.stale?['RULINGS STALE']:[])],lead=pubStale?'PUBLISHED DATA STALE':'LIVE';
-    $('svFeed').textContent=!flags?`ON HOLD · RULING DATA UNAVAILABLE${pubStale?' · PUBLISHED DATA STALE':''}`:flags.length?`${lead} · ${flags.join(' · ')}`:`${lead} · NFL results`;$('svFeed').className=`survivor-feed ${!flags||flags.length||pubStale?'warn':'ok'}`;render();void updateDecisionSchedule();
-  }catch(e){if(id!==refreshId||cfg!==scoreCfg)return;scoresFailed=true;$('svFeed').textContent=`RESULT FEED UNAVAILABLE${pubStale?' · PUBLISHED DATA STALE':''}${rulingData?.stale?' · RULINGS STALE':''}`;$('svFeed').className='survivor-feed warn';render();console.warn(e)}
+    $('svFeed').textContent=!flags?`ON HOLD · RULING DATA UNAVAILABLE${pubStale?' · PUBLISHED DATA STALE':''}`:flags.length?`${lead} · ${flags.join(' · ')}`:`${lead} · NFL results`;$('svFeed').className=`survivor-feed ${!flags||flags.length||pubStale?'warn':'ok'}`;shareFeed={cfg:scoreCfg,at:Date.now(),failed:false};render();void updateDecisionSchedule();
+  }catch(e){if(id!==refreshId||cfg!==scoreCfg)return;shareFeed={cfg:scoreCfg,at:shareFeed?.cfg===scoreCfg?shareFeed.at:null,failed:true};$('svFeed').textContent=`RESULT FEED UNAVAILABLE${pubStale?' · PUBLISHED DATA STALE':''}${rulingData?.stale?' · RULINGS STALE':''}`;$('svFeed').className='survivor-feed warn';render();console.warn(e)}
 }
 
 // A validated snapshot replaces the one on screen whole (the choose path): everything derived from the previous one is reset
@@ -311,7 +298,7 @@ function install(row){
   if(nextWeekController){nextWeekController.abort();nextWeekController=null}
   nextWeekRequestId++;
   cfg=nextCfg;pub={season:row.season,week:row.week,revision:row.revision,publishedAt:row.publishedAt};pubStale=null;
-  resultsByWeek=[];rawEventsByWeek=[];rulingData=null;nextWeekMatchups=[];nextWeekFetchedAt=0;nextWeekError='';scoresAt=null;scoresFailed=false;
+  resultsByWeek=[];rawEventsByWeek=[];rulingData=null;nextWeekMatchups=[];nextWeekFetchedAt=0;nextWeekError='';
   $('survivorWeekSelect').value=`${row.season}-${row.week}`;$('svFeed').textContent='LOADING RESULTS';$('svFeed').className='survivor-feed';renderNotices();render();
 }
 // HDC-15. A full refresh: verify that the snapshot on screen is still the published revision of its week (a newer revision is
@@ -400,9 +387,24 @@ async function load(){
   install(row);await refresh({verify:false});
 }
 
+// Shareable cards: share-ui.js asks for the Survivor week on screen with a poolcenter:share event, answered at once with the
+// counts and tracked states render() shows, from the same survivor-math calls, and the state of the result feeds, rulings
+// and publication behind them. Public values only: aggregate counts and the tracked entries' names, states and shown picks,
+// never a field entry. Nothing is shared while a chosen week loads, or before the week on screen has loaded results.
+function shareSnapshot(){
+  if(!cfg||!pub)return{ready:false,reason:'Survivor has not loaded yet.'};
+  if(switching)return{ready:false,reason:'Another Survivor week is loading. Share again once it is on screen.'};
+  const feed=shareFeed?.cfg===cfg?shareFeed:null;
+  if(!feed||feed.at===null)return{ready:false,reason:feed?.failed?'Survivor results for this week could not be loaded, so there is nothing to share yet.':'Survivor results are still loading.'};
+  const R=rulingLookup(),entries=allEntries(),wi=cfg.week-1,summary=survivorSummary(entries,wi,resultsByWeek,R);
+  return{ready:true,contest:'survivor',season:pub.season,week:pub.week,revision:pub.revision,fieldSize:cfg.competitionSize,
+    counts:{active:summary.active,pending:summary.pending,out:summary.eliminatedBefore+summary.eliminatedThisWeek,outThisWeek:summary.eliminatedThisWeek,submitted:summary.submitted,legalPicks:summary.entered,awaitingRuling:survivorAwaitingRuling(entries,wi,resultsByWeek,R),onHold:survivorOnHold(entries,wi,resultsByWeek,R)},
+    tracked:cfg.trackedEntries.map(entry=>{const state=survivorEntryState(entry,wi,resultsByWeek,R);return{name:entry.displayName,status:statusLabel(state),team:shownPick(entry,state)||null,reason:state.reason,underReview:!!underReview(state)}}),
+    feed:{at:feed.at,failed:feed.failed},hold:R?.status==='hold',flags:R?.status==='hold'?[]:feedFlags(R),rulingsStale:rulingData?.stale===true,publishedStale:pubStale!==null};
+}
+document.addEventListener('poolcenter:share',event=>{if(event?.detail?.contest==='survivor')event.detail.snapshot=shareSnapshot()});
+
 load().catch(e=>{$('survivorError').innerHTML=`<div class="error">Survivor is not published yet: ${esc(e.message)}</div>`;console.warn(e)});
 document.addEventListener('visibilitychange',autoRefresh);
 document.addEventListener('poolcenter:viewchange',autoRefresh);
-// Shareable Cards V1: the share sheet asks for the Survivor snapshot with this event and reads it back synchronously.
-document.addEventListener('poolcenter:sharesnapshot',event=>{if(event.detail?.contest==='survivor')event.detail.snapshot=shareSnapshot()});
 setInterval(autoRefresh,20000);

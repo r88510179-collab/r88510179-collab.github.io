@@ -2174,3 +2174,108 @@ function virtualClock(){
 }
 
 console.log('weekly HDC-15 slow-network regressions passed: slow refreshes complete, hung feeds fail at their limits, no refresh is replaced within its bounded lifetime');
+
+// Shareable cards. share-ui.js asks the page for the Pick'em standings with a poolcenter:share event, and weekly-app.js answers
+// at once with what render() shows and the state behind it. The card made from that answer (share-card.js) claims the
+// header's state (a slate whose games are all final is FINAL), and a shared link boots the same week in the Standings view.
+{
+  const {buildCard,FRESH_SECONDS}=await import('./share-card.js');
+  const failures=[];
+  const regression=async(name,check)=>{try{await check()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+  const ask=(v,contest='pickem')=>{const detail={contest,snapshot:null};v.doc.dispatchEvent({type:'poolcenter:share',detail});return detail.snapshot};
+  const card=v=>buildCard('pickem',ask(v),{now:Date.now(),href:'https://example.test/nfl-pool/?view=standings'});
+  const header=v=>v.$('sync').textContent.split(' · ')[0];
+  const table=v=>[...v.$('standings').innerHTML.matchAll(/<td>(\d+)<\/td><td class="entry">([^<]+)<\/td><td class="c"><span class="standing-overall">([^<]+)<\/span>.*?<\/td><td class="c w">(\d+)<\/td><td class="c l">(\d+)<\/td><td class="c">(\d+)<\/td>/g)]
+    .map(m=>({groupRank:Number(m[1]),name:m[2],overall:m[3],w:Number(m[4]),l:Number(m[5]),left:Number(m[6])}));
+  const fieldWeek={schemaVersion:1,season:2026,week:3,tiebreakGameIndex:0,fullFieldReady:true,fullFieldValidationVersion:3,competitionSize:4,fullFieldEntryCount:2,
+    games:[{away:'DEN',home:'KC',awayNumber:1,homeNumber:2,date:'2026-09-27'},{away:'MIA',home:'BUF',awayNumber:3,homeNumber:4,date:'2026-09-27'}],
+    participants:[{id:'dc',displayName:'D.C.',pickNumbers:[1,3],tiebreak:41},{id:'djs',displayName:'DJS',pickNumbers:[2,4],tiebreak:44}],
+    fieldEntries:[{id:'field-001',pickNumbers:[0,0],tiebreak:42},{id:'field-002',pickNumbers:[1,4],tiebreak:null}]};
+  const fieldScores={events:[game(),game({away:'MIA',home:'BUF',awayScore:'10',homeScore:'20'})]};
+  const twoWeeks=()=>[{season:2026,week:3,status:'locked',revision:1,config:structuredClone(config)},{season:2026,week:4,status:'locked',revision:2,config:{...structuredClone(config),week:4}}];
+
+  await regression('the snapshot is the standings render() shows: the same rows in the same order, records, group ranks and game counts',async()=>{
+    const v=await view(),s=ask(v);
+    assert.equal(s.ready,true);
+    assert.deepEqual([s.contest,s.season,s.week,s.revision,s.fieldSize],['pickem',2026,3,1,null]);
+    assert.deepEqual(s.games,{total:1,final:1,void:0,live:0,remaining:0});
+    assert.deepEqual(table(v),s.entries.map(e=>({groupRank:e.groupRank,name:e.name,overall:'—',w:e.w,l:e.l,left:e.left})));
+    assert.deepEqual(s.entries.map(e=>[e.name,e.w,e.l,e.leader,e.field]),[['D.C.',1,0,true,null],['DJS',0,1,false,null]]);
+    assert.deepEqual([s.feed.failed,s.feed.incomplete,s.feed.review,s.hold,s.rulingsStale,s.publishedStale],[false,false,false,false,false,false]);
+    assert.equal(header(v),'LIVE');
+    assert.equal(card(v).status.label,'FINAL','the one game is final: the header says LIVE, the card FINAL');
+  });
+  await regression('full-field ranks are the ones the standings show, and no field entry, pick or id leaves the page',async()=>{
+    const v=await view({weekConfig:fieldWeek,initialScorePayload:fieldScores}),s=ask(v);
+    assert.equal(s.fieldSize,4);
+    assert.deepEqual(table(v).map(r=>r.overall),s.entries.map(e=>e.field.label));
+    assert.deepEqual(s.entries.map(e=>[e.name,e.w,e.l,e.groupRank,e.field.label,e.tiebreakDelta]),[['D.C.',1,1,1,'#2',0],['DJS',1,1,2,'#3',3]],'the final tiebreak orders the two 1–1 entries');
+    assert(!/field-00|pickNumbers|"picks"|"id"|"mnf"/.test(JSON.stringify(s)),'the snapshot carries no field entry, pick or id');
+    const c=card(v);assert.equal(c.ok,true);assert.deepEqual(c.rows.map(r=>[r.overall,r.overallOf,r.tiebreak]),[['#2','of 4','Tiebreak Δ 0'],['#3','of 4','Tiebreak Δ 3']]);
+  });
+  await regression('nothing is shared before the week on screen has scores from the feed',async()=>{
+    let release;
+    const v=await view({bootHooks:{score:()=>new Promise(resolve=>{release=resolve})}});
+    assert.deepEqual(ask(v),{ready:false,reason:'Scores for this week are still loading.'});
+    v.hooks.score=undefined;release({ok:true,status:200,json:async()=>structuredClone({events:[game()]})});await flush();
+    assert.equal(ask(v).ready,true);
+  });
+  await regression('a failed refresh keeps the last good scores, and the card says FEED UNAVAILABLE as the header does',async()=>{
+    const v=await view(),before=ask(v);
+    v.setFailure(true);await v.refresh();
+    const s=ask(v);
+    assert.match(v.$('sync').textContent,/^FEED UNAVAILABLE/);
+    assert.deepEqual([s.ready,s.feed.failed,s.feed.fetchedAt],[true,true,before.feed.fetchedAt]);
+    assert.deepEqual(s.entries,before.entries);
+    assert.equal(card(v).status.label,'FEED UNAVAILABLE');
+    v.setFailure(false);await v.refresh();
+    assert.equal(ask(v).feed.failed,false);assert.equal(card(v).status.label,'FINAL');
+  });
+  await regression('ON HOLD and PUBLISHED DATA STALE reach the card as the header shows them',async()=>{
+    // The page logs the refused rules and rulings with console.warn; keep that expected warning out of the test output.
+    const warn=console.warn;console.warn=()=>{};
+    let held;try{held=await view({store:pickemStore({nfl_contests:503})})}finally{console.warn=warn}
+    assert.equal(header(held),'ON HOLD');assert.equal(ask(held).hold,true);assert.equal(card(held).status.label,'ON HOLD');
+    assert.deepEqual(ask(held).games,{total:1,final:0,void:0,live:0,remaining:1},'nothing is graded while the rulings are on hold');
+    const v=await view();
+    v.hooks.index=()=>({ok:false,status:503,json:async()=>({})});await v.refresh();
+    assert.equal(header(v),'PUBLISHED DATA STALE');assert.equal(ask(v).publishedStale,true);
+    assert.equal(card(v).status.label,'PUBLISHED DATA STALE','a stale publication is never FINAL or LIVE');
+  });
+  await regression('while another week loads, and until it has its own scores, nothing is shared; then the card is that week',async()=>{
+    const v=await view({published:twoWeeks(),search:'?view=standings&season=2026&week=3'});
+    assert.equal(ask(v).week,3);
+    let releaseRow,releaseScore;
+    v.hooks.row=u=>new Promise(resolve=>{releaseRow=()=>resolve(publicationApi(v.pub,u))});
+    const select=v.$('weekSelect');select.value='2026-4';for(const fn of select.listeners.change||[])fn();await flush();
+    assert.deepEqual(ask(v),{ready:false,reason:'Another week is loading. Share again once it is on screen.'});
+    v.hooks.row=undefined;v.hooks.score=()=>new Promise(resolve=>{releaseScore=resolve});
+    releaseRow();await flush();
+    assert.match(v.$('weekLine').textContent,/^Week 4 · revision 2 · /);
+    assert.deepEqual(ask(v),{ready:false,reason:'Scores for this week are still loading.'},'week 4 is on screen but its scores have not arrived: week 3 scores are never shared with it');
+    v.hooks.score=undefined;releaseScore({ok:true,status:200,json:async()=>structuredClone({events:[game({week:4})]})});await flush();
+    const s=ask(v);assert.deepEqual([s.ready,s.week,s.revision],[true,4,2]);
+  });
+  await regression("a shared link boots the same published week in the Standings view, even with a later week published",async()=>{
+    const v=await view({published:twoWeeks(),search:'?view=standings&season=2026&week=3'});
+    assert.equal(v.doc.body.dataset.view,'standings');assert.match(v.$('weekLine').textContent,/^Week 3 · revision 1 · /);
+    const link=new URL(card(v).link);
+    assert.deepEqual([link.pathname,link.searchParams.get('view'),link.searchParams.get('season'),link.searchParams.get('week')],['/nfl-pool/','standings','2026','3']);
+    const opened=await view({published:twoWeeks(),search:link.search});
+    assert.equal(opened.doc.body.dataset.view,'standings');assert.match(opened.$('weekLine').textContent,/^Week 3 · revision 1 · /);
+    assert.equal(ask(opened).week,3);
+  });
+  await regression('a page that has not refreshed for longer than the freshness limit shares DELAYED, never LIVE or FINAL',async()=>{
+    const v=await view(),later=Date.now()+(FRESH_SECONDS+5)*1000;
+    const late=buildCard('pickem',ask(v),{now:later,href:'https://example.test/nfl-pool/?view=standings'});
+    assert.equal(late.status.label,'DELAYED');assert.match(late.status.detail,/^Scores as of /);
+  });
+  await regression('weekly-app.js answers only a Pick’em share request',async()=>{
+    const v=await view();
+    assert.equal(ask(v,'survivor'),null);assert.equal(ask(v,'games'),null);
+  });
+
+  assert.equal(failures.length,0,`share-card Pick'em regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+}
+
+console.log('weekly share-card regressions passed: the share snapshot is the rendered standings, never before its own scores, never across a week switch, with the header state, and shared links boot the same week');

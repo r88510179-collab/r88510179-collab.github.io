@@ -1845,3 +1845,90 @@ function virtualClock(){
 }
 
 console.log('survivor and page HDC-15 slow-network regressions passed: slow refreshes complete, hung feeds fail at their limits, stale publications never read LIVE, no refresh is replaced within its bounded lifetime');
+
+// Shareable cards. survivor-app.js answers a poolcenter:share event for Survivor at once with the counts and tracked states
+// render() shows, from the same survivor-math calls, and the state of the feeds, rulings and publication behind them. The
+// card made from it (share-card.js) claims the feed status (a week whose every entry is decided is FINAL), a shared link
+// boots the same week, and on the whole page each app answers for its own contest only.
+{
+  const {buildCard,FRESH_SECONDS}=await import('./share-card.js');
+  const failures=[];
+  const regression=async(name,check)=>{try{await check()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+  const ask=(v,contest='survivor')=>{const detail={contest,snapshot:null};v.doc.dispatchEvent({type:'poolcenter:share',detail});return detail.snapshot};
+  const card=(v,contest='survivor')=>buildCard(contest,ask(v,contest),{now:Date.now(),href:'https://example.test/nfl-pool/?view=survivor'});
+  const allFeeds=()=>({1:week(W1,1),2:week(W2,2),3:week(W3,3)});
+  // The page logs feeds and rulings it refuses with console.warn; keep those expected warnings out of the test output.
+  const quiet=async fn=>{const warn=console.warn;console.warn=()=>{};try{return await fn()}finally{console.warn=warn}};
+
+  await regression('the snapshot is the Survivor week render() shows: the hero counts and every tracked row',async()=>{
+    const v=await view(allFeeds()),s=ask(v);
+    assert.equal(s.ready,true);
+    assert.deepEqual([s.contest,s.season,s.week,s.revision,s.fieldSize],['survivor',2026,2,7,6]);
+    assert.deepEqual([String(s.fieldSize),String(s.counts.legalPicks),String(s.counts.active),String(s.counts.pending)],
+      ['svPoolSize','svEntered','svStillIn','svPending'].map(id=>String(v.$(id).textContent)),'the hero metrics (this harness keeps textContent as assigned)');
+    assert.deepEqual(s.counts,{active:2,pending:0,out:4,outThisWeek:2,submitted:3,legalPicks:3,awaitingRuling:0,onHold:0});
+    assert.deepEqual(s.tracked.map(t=>[t.name,t.status,t.team,t.reason,t.underReview]),[['D.C.','ALIVE','SF','Alive through Week 2',false],['DJS','ALIVE','SF','Alive through Week 2',false],['Thaddeus','OUT','LAC','LAC lost in Week 1',false]]);
+    for(const t of s.tracked){assert.match(v.row(t.name),new RegExp(`<span class="status-pill survivor-[a-z]+">${t.status}</span>`),t.name);assert.match(v.row(t.name),new RegExp(`<b>${t.team}</b>`),t.name)}
+    assert.deepEqual([s.feed.failed,s.hold,s.flags,s.rulingsStale,s.publishedStale],[false,false,[],false,false]);
+    assert.equal(v.$('svFeed').textContent,'LIVE · NFL results');
+    assert.equal(card(v).status.label,'FINAL','every entry is decided: the header says LIVE, the card FINAL');
+    assert(!/survivor-00|"picks"|"id"|JAX|CLE|BAL/.test(JSON.stringify(s)),'no field entry, field pick or id is shared');
+  });
+  await regression('an unverified result rides along on the card exactly as the header names it, and the week is not FINAL',async()=>{
+    const bad=week(W2,2,{SF:(a,h,n)=>game(a,h,n,{as:null,hs:''})});
+    const v=await view({1:week(W1,1),2:bad,3:week(W3,3)}),s=ask(v);
+    assert.equal(v.$('svFeed').textContent,'LIVE · 1 TEAM RESULT UNVERIFIED');
+    assert.deepEqual(s.flags,['1 TEAM RESULT UNVERIFIED']);assert.deepEqual(s.tracked.slice(0,2).map(t=>t.status),['PENDING','PENDING']);
+    const c=card(v);assert.deepEqual([c.status.label,c.status.tone,c.status.flags],['LIVE','warn',['1 TEAM RESULT UNVERIFIED']]);
+  });
+  await regression('nothing is shared until this week has loaded results; a failed later load keeps them and says RESULT FEED UNAVAILABLE',async()=>{
+    const feeds=allFeeds();feeds[2]='hang';
+    const v=await quiet(()=>view(feeds));
+    assert.match(v.$('svFeed').textContent,/^RESULT FEED UNAVAILABLE/);
+    assert.deepEqual(ask(v),{ready:false,reason:'Survivor results for this week could not be loaded, so there is nothing to share yet.'});
+    feeds[2]=week(W2,2);await v.refresh();
+    const good=ask(v);assert.equal(good.ready,true);assert.equal(good.feed.failed,false);
+    feeds[2]='hang';await quiet(()=>v.refresh());
+    const s=ask(v);
+    assert.match(v.$('svFeed').textContent,/^RESULT FEED UNAVAILABLE/);
+    assert.deepEqual([s.ready,s.feed.failed,s.feed.at],[true,true,good.feed.at],'the last verified results, from when they loaded');
+    assert.deepEqual(s.counts,good.counts);assert.equal(card(v).status.label,'RESULT FEED UNAVAILABLE');
+  });
+  await regression('a contest ON HOLD reaches the card as ON HOLD, with every held entry counted as on hold',async()=>{
+    const v=await quiet(()=>view(allFeeds(),null,patched,rulingStore({nfl_contests:503}))),s=ask(v);
+    assert.match(v.$('svFeed').textContent,/^ON HOLD · RULING DATA UNAVAILABLE/);
+    assert.equal(s.hold,true);assert.deepEqual(s.counts,{active:0,pending:0,out:0,outThisWeek:0,submitted:0,legalPicks:0,awaitingRuling:0,onHold:6});
+    assert.deepEqual(s.tracked.map(t=>t.status),['HOLD','HOLD','HOLD']);
+    assert.equal(card(v).status.label,'ON HOLD');
+  });
+  await regression('a shared Survivor link boots the same published week, even with a later week published',async()=>{
+    const first={...structuredClone(config),week:1,label:'Survivor Week 1',currentWeekEntryCount:6,
+      trackedEntries:config.trackedEntries.map(e=>({...e,picks:e.picks.slice(0,1)})),fieldEntries:config.fieldEntries.map(e=>({...e,picks:e.picks.slice(0,1)}))};
+    const rows=[{season:2026,week:1,status:'locked',revision:3,config:first},{season:2026,week:2,status:'locked',revision:7,config:structuredClone(config)}];
+    const v=await view(allFeeds(),rows,patched,rulingStore(),{search:'?view=survivor&season=2026&sw=1'});
+    assert.equal(v.$('svMeta').textContent,'Week 1 · revision 3');
+    const link=new URL(card(v).link);
+    assert.deepEqual([link.pathname,link.searchParams.get('view'),link.searchParams.get('season'),link.searchParams.get('sw')],['/nfl-pool/','survivor','2026','1']);
+    const opened=await view(allFeeds(),rows,patched,rulingStore(),{search:link.search});
+    assert.equal(opened.$('svMeta').textContent,'Week 1 · revision 3');assert.deepEqual([ask(opened).week,ask(opened).revision],[1,3]);
+  });
+  await regression('a page that has not refreshed for longer than the freshness limit shares DELAYED, never LIVE or FINAL',async()=>{
+    const v=await view(allFeeds()),later=Date.now()+(FRESH_SECONDS+5)*1000;
+    const late=buildCard('survivor',ask(v),{now:later,href:'https://example.test/nfl-pool/?view=survivor'});
+    assert.equal(late.status.label,'DELAYED');assert.match(late.status.detail,/^Results as of /);
+  });
+  await regression('survivor-app.js answers only a Survivor share request',async()=>{
+    const v=await view(allFeeds());
+    assert.equal(ask(v,'pickem'),null);assert.equal(ask(v,'games'),null);
+  });
+  await regression('page: on the whole page each app answers for its own contest, and both cards can be made',async()=>{
+    const p=await poolPage('standings');
+    const pk=ask(p,'pickem'),sv=ask(p,'survivor');
+    assert.deepEqual([pk.contest,pk.week,pk.revision,sv.contest,sv.week,sv.revision],['pickem',3,1,'survivor',2,7]);
+    assert.equal(card(p,'pickem').ok,true);assert.equal(card(p,'survivor').ok,true);
+  });
+
+  assert.equal(failures.length,0,`share-card Survivor regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+}
+
+console.log('survivor share-card regressions passed: the share snapshot is the rendered Survivor week, never before its results, with the feed, ruling and publication state, shared links boot the same week, and each app answers for its own contest');
