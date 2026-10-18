@@ -12,6 +12,11 @@ const hdc14Failures=[];
 const hdc14=async(name,check)=>{try{await check()}catch(error){hdc14Failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
 const hdc15Failures=[];
 const hdc15=async(name,check)=>{try{await check()}catch(error){hdc15Failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+const sc1Failures=[];
+const sc1=async(name,check)=>{try{await check()}catch(error){sc1Failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+// Shareable Cards V1 adds these shell assets. The HDC version-discipline blocks below compare the shell with the baseline
+// of their own phase, which predates them, so they leave these to the Shareable Cards V1 block, which checks them.
+const SC1_ASSETS=['share-card.js','share-sheet.js','share-sheet.css'];
 // HDC-12 changes weekly-app.js, survivor-app.js, survivor-math.js, weekly.css and survivor.css and adds contest-rulings.js,
 // so each is precached and loaded at its new version and none at the version it replaces.
 await hdc12('HDC-12 precache and page versions',()=>{
@@ -42,11 +47,23 @@ await hdc14('HDC-14 precache and page versions',()=>{
 // HDC-15 changes weekly-app.js and survivor-app.js (the public refresh lifecycle): each is precached and loaded at its new
 // version and none at the version it replaces. Nothing else moves.
 await hdc15('HDC-15 precache and page versions',()=>{
-  for(const asset of ['./weekly-app.js?v=weekly-v20','./survivor-app.js?v=9'])assert(source.includes(`'${asset}'`),`precache must include ${asset}`);
   for(const [asset,label] of [['./weekly-app.js?v=weekly-v18','weekly-v18 module'],['./survivor-app.js?v=8','survivor-app v8 module']])
     assert(!source.includes(`'${asset}'`),`the superseded ${label} must no longer be precached`);
-  assert(index.includes('weekly-app.js?v=weekly-v20')&&!index.includes('weekly-app.js?v=weekly-v18'),'the Pool Center page must load weekly-v20 only');
-  assert(index.includes('survivor-app.js?v=9')&&!index.includes('survivor-app.js?v=8'),'the Pool Center page must load survivor-app v9 only');
+  assert(!index.includes('weekly-app.js?v=weekly-v18'),'the Pool Center page must no longer load weekly-v18');
+  assert(!index.includes('survivor-app.js?v=8"'),'the Pool Center page must no longer load survivor-app v8');
+});
+// Shareable Cards V1 changes weekly-app.js and survivor-app.js (the share snapshot each answers with) and adds
+// share-card.js, share-sheet.js and share-sheet.css: each is precached and loaded at its version, and neither module at the
+// version it replaces.
+await sc1('Shareable Cards V1 precache and page versions',()=>{
+  for(const asset of ['./weekly-app.js?v=weekly-v21','./survivor-app.js?v=10','./share-card.js?v=1','./share-sheet.js?v=1','./share-sheet.css?v=1'])
+    assert(source.includes(`'${asset}'`),`precache must include ${asset}`);
+  for(const [asset,label] of [['./weekly-app.js?v=weekly-v20','weekly-v20 module'],['./survivor-app.js?v=9','survivor-app v9 module']])
+    assert(!source.includes(`'${asset}'`),`the superseded ${label} must no longer be precached`);
+  assert(index.includes('weekly-app.js?v=weekly-v21')&&!index.includes('weekly-app.js?v=weekly-v20'),'the Pool Center page must load weekly-v21 only');
+  assert(index.includes('survivor-app.js?v=10"')&&!index.includes('survivor-app.js?v=9"'),'the Pool Center page must load survivor-app v10 only');
+  assert(index.includes('<link rel="stylesheet" href="share-sheet.css?v=1">'),'the Pool Center page must load share-sheet.css v1');
+  assert(index.includes('<script type="module" src="share-sheet.js?v=1"></script>'),'the Pool Center page must load share-sheet.js v1 as a module');
 });
 assert(!source.includes("'./weekly-app.js?v=weekly-v15'"),'the superseded weekly-v15 module must no longer be precached');
 assert(!source.includes("'./survivor-app.js?v=5'"),'the superseded survivor-app v5 module must no longer be precached');
@@ -66,7 +83,7 @@ const httpResponse=status=>{const response={status,ok:status>=200&&status<300,cl
 const cache={addAll:async requests=>{addAllCalls.push(Array.from(requests))},put:async(request,response)=>{putCalls.push({request,response})}};
 const caches={
   open:async name=>{opened.push(name);return cache},
-  keys:async()=>['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15','pool-center-shell-v16','pool-center-shell-v17','pool-center-shell-v18','pool-center-shell-v19','pool-center-shell-v20','pool-center-shell-v21','pool-center-shell-v22','pool-center-shell-v23'],
+  keys:async()=>['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15','pool-center-shell-v16','pool-center-shell-v17','pool-center-shell-v18','pool-center-shell-v19','pool-center-shell-v20','pool-center-shell-v21','pool-center-shell-v22','pool-center-shell-v23','pool-center-shell-v24'],
   delete:async key=>{deleted.push(key);return true},
   match:async key=>{matchCalls.push(key);return cached.get(typeof key==='string'?key:key.url)}
 };
@@ -95,8 +112,8 @@ listeners.install({waitUntil:p=>{installPromise=p}});await installPromise;
 // so a new shell cache holds one deployment.
 const shell=[
   './','./index.html','./style.css?v=premium-v3','./slate.css?v=slate-v1','./weekly.css?v=premium-v3',
-  './weekly-app.js?v=weekly-v20','./public-math.js?v=3','./survivor.css?v=4','./survivor-app.js?v=9','./survivor-math.js?v=7',
-  './contest-rulings.js?v=2','./score-feed-proxy.js?v=2','./pwa.js?v=1','./manifest.webmanifest',
+  './weekly-app.js?v=weekly-v21','./public-math.js?v=3','./survivor.css?v=4','./survivor-app.js?v=10','./survivor-math.js?v=7',
+  './contest-rulings.js?v=2','./score-feed-proxy.js?v=2','./pwa.js?v=1','./share-card.js?v=1','./share-sheet.js?v=1','./share-sheet.css?v=1','./manifest.webmanifest',
   './assets/pool-center-icon.svg','./assets/pool-center-icon-192.svg','./assets/pool-center-icon-512.svg'
 ].map(path=>new URL(path,workerURL).href);
 assert.equal(addAllCalls.length,1,'install must precache the whole shell with one all-or-nothing Cache.addAll');
@@ -122,13 +139,17 @@ for(const mode of ['default','no-cache','no-store','force-cache','only-if-cached
   assert(!installRequests.some(request=>request.cache===mode),`no shell asset may be requested with cache:"${mode}"`);
 }
 assert(installRequests.every(request=>request instanceof Request),'install must give Cache.addAll Request objects, not URL strings');
-await hdc15('HDC-15 weekly-v20 and survivor-app v9 reload requests',()=>{
-  for(const asset of ['weekly-app.js?v=weekly-v20','survivor-app.js?v=9'])
+await hdc15('HDC-15 weekly-v21 and survivor-app v10 reload requests',()=>{
+  for(const asset of ['weekly-app.js?v=weekly-v21','survivor-app.js?v=10'])
+    assert.equal(installRequests[shell.indexOf(`https://example.test/nfl-pool/${asset}`)]?.url,`https://example.test/nfl-pool/${asset}`,`the reload request must keep the ${asset} query string`);
+});
+await sc1('Shareable Cards V1 reload requests keep each new asset\'s query string',()=>{
+  for(const asset of ['share-card.js?v=1','share-sheet.js?v=1','share-sheet.css?v=1'])
     assert.equal(installRequests[shell.indexOf(`https://example.test/nfl-pool/${asset}`)]?.url,`https://example.test/nfl-pool/${asset}`,`the reload request must keep the ${asset} query string`);
 });
 assert.deepEqual([fetchCalls.length,putCalls.length],[0,0],'install must fetch and store the shell only through Cache.addAll');
 assert.equal(skipWaitingCalls,1,'a completed install skips waiting once');
-await hdc15('HDC-15 install cache generation',()=>assert.deepEqual(opened,['pool-center-shell-v23'],'install must write the shell to pool-center-shell-v23'));
+await hdc15('HDC-15 install cache generation',()=>assert.deepEqual(opened,['pool-center-shell-v24'],'install must write the shell to pool-center-shell-v24'));
 {
   // HDC-07 keeps Cache.addAll all-or-nothing. When any shell response is not OK the browser rejects addAll and stores none
   // of the shell; install must reject with that same error and never skip waiting, so the previous worker keeps control
@@ -146,7 +167,7 @@ await hdc15('HDC-15 install cache generation',()=>assert.deepEqual(opened,['pool
   assert.equal(failedSkips,0,'a failed install must never skip waiting');
   assert.equal(failedCalls.length,1,'a failed Cache.addAll must not be retried or replaced by a partial precache');
   assert.equal(failedCalls[0].length,precached.length);
-  await hdc15('HDC-15 failed-install cache generation',()=>assert.deepEqual(failedOpens,['pool-center-shell-v23']));
+  await hdc15('HDC-15 failed-install cache generation',()=>assert.deepEqual(failedOpens,['pool-center-shell-v24']));
 }
 
 let activatePromise;
@@ -166,8 +187,10 @@ listeners.activate({waitUntil:p=>{activatePromise=p}});await activatePromise;
 // is deleted too. HDC-14 rolls it to v21 with weekly-app.js?v=weekly-v18, survivor-app.js?v=8 and contest-rulings.js?v=2, so
 // v20, which holds the weekly-v17, survivor-app v7 and contest-rulings v1 modules and the page that loads them, is deleted
 // too. HDC-15 rolls it to v22 with weekly-app.js?v=weekly-v20 and survivor-app.js?v=9, so v21, which holds the weekly-v18 and
-// survivor-app v8 modules and the page that loads them, is deleted too. Only v22 is kept.
-await hdc15('HDC-15 activation rollover',()=>assert.deepEqual(deleted,['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15','pool-center-shell-v16','pool-center-shell-v17','pool-center-shell-v18','pool-center-shell-v19','pool-center-shell-v20','pool-center-shell-v21','pool-center-shell-v22'],'activation must delete v12 through v21 and keep only v22'));
+// survivor-app v8 modules and the page that loads them, is deleted too. Shareable Cards V1 rolls it to v24 with
+// weekly-app.js?v=weekly-v21, survivor-app.js?v=10 and the new share-card.js, share-sheet.js and share-sheet.css, so v23,
+// which holds the weekly-v20 and survivor-app v9 modules and the page that loads them, is deleted too. Only v24 is kept.
+await hdc15('HDC-15 activation rollover',()=>assert.deepEqual(deleted,['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15','pool-center-shell-v16','pool-center-shell-v17','pool-center-shell-v18','pool-center-shell-v19','pool-center-shell-v20','pool-center-shell-v21','pool-center-shell-v22','pool-center-shell-v23'],'activation must delete v12 through v23 and keep only v24'));
 
 const adminRequest={method:'GET',mode:'navigate',url:'https://example.test/nfl-pool/admin/survivor.html'};
 let adminResponse;
@@ -856,9 +879,9 @@ for(const path of ['/nfl-pool/admin/x%2F..%2F..%2Fstyle.css?v=premium-v3','/nfl-
   // answers the first with the public stylesheet). It is direct network in every request mode, never a cached copy.
   for(const mode of allModes)await assertDirectNetwork(ncLoad(path,mode,'/nfl-pool/admin/'),`${path} (${mode})`);
 }
-// Every cache the worker opened, at install and before each runtime cache.put above, is pool-center-shell-v23.
+// Every cache the worker opened, at install and before each runtime cache.put above, is pool-center-shell-v24.
 assert.equal(opened.length,1+putCalls.length,'install and each runtime cache.put open the shell cache once');
-await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(opened)],['pool-center-shell-v23'],'the worker must write only to pool-center-shell-v23'));
+await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(opened)],['pool-center-shell-v24'],'the worker must write only to pool-center-shell-v24'));
 
 // ---- HDC-12 version discipline. Each precached asset is checked against the bytes and version it had in
 // pool-center-shell-v19 (main 8caafa6): an asset whose bytes changed is requested at a new version, an asset whose bytes did
@@ -978,7 +1001,7 @@ await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(o
     const problems=[];
     for(const {path,version} of entries){
       const before=V20[path];
-      if(!before){problems.push(`${path} is new to the shell: HDC-14 adds no shell asset`);continue}
+      if(!before){if(!SC1_ASSETS.includes(path))problems.push(`${path} is new to the shell: HDC-14 adds no shell asset`);continue}
       if(before[0]===null)continue;
       const changed=sha(path)!==before[1];
       if(changed&&version===before[0])problems.push(`${path} changed but is still precached at v=${version}`);
@@ -1033,7 +1056,7 @@ await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(o
     const problems=[];
     for(const {path,version} of entries){
       const before=V21[path];
-      if(!before){problems.push(`${path} is new to the shell: HDC-15 adds no shell asset`);continue}
+      if(!before){if(!SC1_ASSETS.includes(path))problems.push(`${path} is new to the shell: HDC-15 adds no shell asset`);continue}
       if(before[0]===null)continue;
       const changed=sha(path)!==before[1];
       if(changed&&version===before[0])problems.push(`${path} changed but is still precached at v=${version}`);
@@ -1047,24 +1070,25 @@ await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(o
   });
   await hdc15('HDC-15 shell cache rolls from pool-center-shell-v21 to v22',()=>{
     assert.notEqual(cacheName,'pool-center-shell-v21','a changed shell must not reuse pool-center-shell-v21');
-    assert.equal(cacheName,'pool-center-shell-v23');
+    assert.equal(cacheName,'pool-center-shell-v24');
   });
   await hdc15('HDC-15 mixed versions: the page changes only its two module versions, so either page runs either module set',()=>{
     const page=bytes('index.html').toString('utf8');
-    assert.equal(page.split('weekly-app.js?v=weekly-v20').length-1,1,'the page loads weekly-v20 exactly once');
-    assert.equal(page.split('survivor-app.js?v=9"').length-1,1,'the page loads survivor-app v9 exactly once');
-    const baselineSpelling=page.replace('weekly-app.js?v=weekly-v20','weekly-app.js?v=weekly-v18').replace('survivor-app.js?v=9"','survivor-app.js?v=8"')
-      .replace('tie = 1 loss','tie = 0').replace('NFL ties = 1 loss for both picks.','NFL ties = 0 points.');
+    assert.equal(page.split('weekly-app.js?v=weekly-v21').length-1,1,'the page loads weekly-v21 exactly once');
+    assert.equal(page.split('survivor-app.js?v=10"').length-1,1,'the page loads survivor-app v10 exactly once');
+    const baselineSpelling=page.replace('weekly-app.js?v=weekly-v21','weekly-app.js?v=weekly-v18').replace('survivor-app.js?v=10"','survivor-app.js?v=8"')
+      .replace('tie = 1 loss','tie = 0').replace('NFL ties = 1 loss for both picks.','NFL ties = 0 points.')
+      .replace('<link rel="stylesheet" href="share-sheet.css?v=1">\n','').replace('<script type="module" src="share-sheet.js?v=1"></script>\n','');
     assert.equal(digest(Buffer.from(baselineSpelling,'utf8')),V21['index.html'][1],'apart from the two module versions the page is byte-identical to the baseline page: no markup the new modules depend on');
   });
   await hdc15('HDC-15 the worker changes only its cache name and the two module precache entries (strategy unchanged)',()=>{
-    const baselineSpelling=source.replace("const CACHE='pool-center-shell-v23'","const CACHE='pool-center-shell-v21'")
-      .replace("'./weekly-app.js?v=weekly-v20'","'./weekly-app.js?v=weekly-v18'").replace("'./survivor-app.js?v=9'","'./survivor-app.js?v=8'")
-      .replace("'./public-math.js?v=3'","'./public-math.js?v=2'");
+    const baselineSpelling=source.replace("const CACHE='pool-center-shell-v24'","const CACHE='pool-center-shell-v21'")
+      .replace("'./weekly-app.js?v=weekly-v21'","'./weekly-app.js?v=weekly-v18'").replace("'./survivor-app.js?v=10'","'./survivor-app.js?v=8'")
+      .replace("'./public-math.js?v=3'","'./public-math.js?v=2'").replace("  './share-card.js?v=1',\n  './share-sheet.js?v=1',\n  './share-sheet.css?v=1',\n",'');
     assert.equal(digest(Buffer.from(baselineSpelling,'utf8')),V21_WORKER,'apart from the cache name and the two module versions the worker is byte-identical to the baseline worker');
   });
   await hdc15('HDC-15 the page and the worker name each app at one version, the precached one',()=>{
-    for(const [path,version] of [['weekly-app.js','weekly-v20'],['survivor-app.js','9']]){
+    for(const [path,version] of [['weekly-app.js','weekly-v21'],['survivor-app.js','10']]){
       const escaped=path.replace(/[.]/g,'\\.');
       for(const [label,text] of [['index.html',index],['service-worker.js',source]]){
         const named=new Set([...text.matchAll(new RegExp(`${escaped}\\?v=([^'"&\\s]+)`,'g'))].map(m=>m[1]));
@@ -1074,8 +1098,87 @@ await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(o
   });
 }
 
+// ---- Shareable Cards V1 version discipline. Each precached asset is checked against the bytes and version it had in
+// pool-center-shell-v23 (main 834328b, the production baseline): V1 changes the bytes of weekly-app.js and survivor-app.js
+// (the share snapshot each answers with) and adds share-card.js, share-sheet.js and share-sheet.css, so exactly those two
+// roll their version, the three new assets carry an explicit v=1 and every other asset keeps its bytes and version; the
+// shell cache rolls to v24. Mixed versions stay safe: the page differs from the baseline page only in the two module
+// versions and the two share-sheet tags (a page cached before the deploy never loads the share sheet, and the share sheet
+// beside modules from before the deploy gets no snapshot and says so instead of drawing one), and the worker differs from the
+// baseline worker only in its cache name, those two versions and the three new shell entries (the strategy is unchanged).
+{
+  const {createHash}=await import('node:crypto');
+  const bytes=path=>{try{return readFileSync(new URL(`./${path}`,import.meta.url))}catch{return null}};
+  const digest=b=>createHash('sha256').update(b).digest('hex'),sha=path=>{const b=bytes(path);return b?digest(b):null};
+  const V23={
+    'index.html':[null,'cc1cf1231a501693dc4edbf24c2877530c721143072f863ef2f81a19b655b784'],
+    'style.css':['premium-v3','83cce4ed122a251791d3f272b9cf5bed94c849dac9a0ad74d39bef784dcdf815'],
+    'slate.css':['slate-v1','58f87ea913d974f98f9bab54c1c3d74bd608f723b47fe491128d96016937abdb'],
+    'weekly.css':['premium-v3','fe917b9123af034c887fc3290e052c07ba6d1a7ed72ff0e9286a6f53ea6a1f44'],
+    'weekly-app.js':['weekly-v20','b20312d0f392c8df6321da19adb069b38149f0e4c4d29bcd910af8539dc57d0c'],
+    'public-math.js':['3','9603a2703316bde8f223ff9e58389110b8851f6f95b588cd87254fab0c12c694'],
+    'survivor.css':['4','ec104e2e22394460c9a0ee473e84d47d87eb5e72eb7cf1f67135f626978b4938'],
+    'survivor-app.js':['9','2e03383ae2b4e03ccb2c6f4ec13aadf6bbf3f0f8fc74452b6c5d313ff09dcfc1'],
+    'survivor-math.js':['7','3aebca4ad08412658e7d0fc4b9f0207d829e2b9f718579f556594e13373b634f'],
+    'contest-rulings.js':['2','5422cd96a48333f4eceaaf0d6b300b30f0a09d24b34de42a619e20e8fc401a77'],
+    'score-feed-proxy.js':['2','b13635d4706099c67272b8ae739e9a363b21342bb2a87af1581847dc936747b7'],
+    'pwa.js':['1','febf3af70464731d65d56beb3a88ee5f8587808eeebf52f97b06211d47bb34da'],
+    'manifest.webmanifest':[null,'b6508c471231b597c8296084d4749d9004fe07cb33247a2e52e57775c35d53cf'],
+    'assets/pool-center-icon.svg':[null,'9fd6f65b0c367cee1988f3a573301279f1d11768577ef52ab1a72cf26d0604a3'],
+    'assets/pool-center-icon-192.svg':[null,'7cbd4c5a5fc061fb572e4b6e284ced95310da3d8a46c538c5ba3717d2d8a86e9'],
+    'assets/pool-center-icon-512.svg':[null,'9fd6f65b0c367cee1988f3a573301279f1d11768577ef52ab1a72cf26d0604a3']
+  };
+  const V23_WORKER='99ce7a6b6938dca8172f9ad5139119a8c15f5a2c45dd172351188e623db76b06';
+  const cacheName=source.match(/const CACHE='([^']+)'/)?.[1];
+  const entries=precached.map(url=>{const u=new URL(url),path=u.pathname.replace('/nfl-pool/','')||'index.html';return{url,path,version:u.searchParams.get('v')}});
+  await sc1('Shareable Cards V1 changes exactly weekly-app.js and survivor-app.js, adds the three share assets and rolls exactly those versions (against pool-center-shell-v23)',()=>{
+    const problems=[];
+    for(const {path,version} of entries){
+      const before=V23[path];
+      if(!before){if(!SC1_ASSETS.includes(path))problems.push(`${path} is new to the shell: Shareable Cards V1 adds only ${SC1_ASSETS.join(', ')}`);else if(version!=='1')problems.push(`${path} is new to the shell and must be precached at v=1`);continue}
+      if(before[0]===null)continue;
+      const changed=sha(path)!==before[1];
+      if(changed&&version===before[0])problems.push(`${path} changed but is still precached at v=${version}`);
+      if(!changed&&version!==before[0])problems.push(`${path} is unchanged but its version moved from v=${before[0]} to v=${version}`);
+    }
+    for(const path of SC1_ASSETS)if(!entries.some(e=>e.path===path))problems.push(`${path} must be precached`);
+    for(const path of ['weekly-app.js','survivor-app.js'])if(sha(path)===V23[path][1])problems.push(`${path} must change for Shareable Cards V1`);
+    for(const path of ['public-math.js','contest-rulings.js','survivor-math.js','style.css','slate.css','weekly.css','survivor.css','score-feed-proxy.js','pwa.js','manifest.webmanifest','assets/pool-center-icon.svg','assets/pool-center-icon-192.svg','assets/pool-center-icon-512.svg'])
+      if(sha(path)!==V23[path][1])problems.push(`${path} is outside Shareable Cards V1 and must keep its bytes`);
+    assert.deepEqual(problems,[]);
+  });
+  await sc1('Shareable Cards V1 shell cache rolls from pool-center-shell-v23 to v24',()=>{
+    assert.notEqual(cacheName,'pool-center-shell-v23','a changed shell must not reuse pool-center-shell-v23');
+    assert.equal(cacheName,'pool-center-shell-v24');
+  });
+  await sc1('Shareable Cards V1 mixed versions: the page changes only its two module versions and adds the share sheet',()=>{
+    const page=bytes('index.html').toString('utf8');
+    for(const tag of ['<link rel="stylesheet" href="share-sheet.css?v=1">\n','<script type="module" src="share-sheet.js?v=1"></script>\n'])assert.equal(page.split(tag).length-1,1,`the page has ${tag.trim()} exactly once`);
+    assert(page.indexOf('share-sheet.js?v=1')>page.indexOf('survivor-app.js?v=10'),'the share sheet loads after both apps');
+    const baselineSpelling=page.replace('weekly-app.js?v=weekly-v21','weekly-app.js?v=weekly-v20').replace('survivor-app.js?v=10"','survivor-app.js?v=9"')
+      .replace('<link rel="stylesheet" href="share-sheet.css?v=1">\n','').replace('<script type="module" src="share-sheet.js?v=1"></script>\n','');
+    assert.equal(digest(Buffer.from(baselineSpelling,'utf8')),V23['index.html'][1],'apart from the two module versions and the two share-sheet tags the page is byte-identical to the baseline page');
+  });
+  await sc1('Shareable Cards V1 the worker changes only its cache name, the two module versions and the three new shell entries (strategy unchanged)',()=>{
+    const baselineSpelling=source.replace("const CACHE='pool-center-shell-v24'","const CACHE='pool-center-shell-v23'")
+      .replace("'./weekly-app.js?v=weekly-v21'","'./weekly-app.js?v=weekly-v20'").replace("'./survivor-app.js?v=10'","'./survivor-app.js?v=9'")
+      .replace("  './share-card.js?v=1',\n  './share-sheet.js?v=1',\n  './share-sheet.css?v=1',\n",'');
+    assert.equal(digest(Buffer.from(baselineSpelling,'utf8')),V23_WORKER,'apart from the cache name, the two module versions and the three share assets the worker is byte-identical to the baseline worker');
+  });
+  await sc1('Shareable Cards V1 the share sheet imports the card renderer at its precached version, and the page names each new asset at one version',()=>{
+    const sheet=bytes('share-sheet.js')?.toString('utf8')||'',imports=[...sheet.matchAll(/(?:from|import)\s*\(?\s*'(\.\/[^']+)'/g)].map(m=>m[1]);
+    assert.deepEqual(imports,['./share-card.js?v=1'],'share-sheet.js imports share-card.js at v=1 and nothing else');
+    assert.deepEqual([...(bytes('share-card.js')?.toString('utf8')||'').matchAll(/(?:from|import)\s*\(?\s*'(\.\/[^']+)'/g)],[],'share-card.js imports nothing');
+    for(const path of ['share-sheet.js','share-sheet.css']){
+      const escaped=path.replace(/[.]/g,'\\.'),named=new Set([...index.matchAll(new RegExp(`${escaped}\\?v=([^'"&\\s]+)`,'g'))].map(m=>m[1]));
+      assert.deepEqual([...named],['1'],`index.html names ${path} at ${[...named].join(', ')}; only v=1 is precached`);
+    }
+  });
+}
+
 assert.equal(hdc12Failures.length,0,`HDC-12 service-worker regressions failed (${hdc12Failures.length}):\n  ${hdc12Failures.join('\n  ')}`);
 assert.equal(hdc14Failures.length,0,`HDC-14 service-worker regressions failed (${hdc14Failures.length}):\n  ${hdc14Failures.join('\n  ')}`);
 assert.equal(hdc15Failures.length,0,`HDC-15 service-worker regressions failed (${hdc15Failures.length}):\n  ${hdc15Failures.join('\n  ')}`);
+assert.equal(sc1Failures.length,0,`Shareable Cards V1 service-worker regressions failed (${sc1Failures.length}):\n  ${sc1Failures.join('\n  ')}`);
 
-console.log('service-worker precache graph (HDC-15 versions), fresh (cache:"reload") precache requests, all-or-nothing install, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');
+console.log('service-worker precache graph (Shareable Cards V1 versions), fresh (cache:"reload") precache requests, all-or-nothing install, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');

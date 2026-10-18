@@ -1,0 +1,31 @@
+/* Shareable Cards V1: the Share buttons and the share dialog (share-sheet.js). */
+.share-row{display:flex;justify-content:flex-end;padding:0 12px 12px}
+.survivor-hero .share-row{padding:10px 0 0}
+.share-trigger{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 15px;border:1px solid #d4af3770;border-radius:11px;background:linear-gradient(180deg,#232a33,#12161c);color:#f2dc96;font-size:11px;font-weight:950;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;box-shadow:inset 0 1px #ffffff14,0 6px 16px #0006}
+.share-trigger svg{width:16px;height:16px;flex:0 0 auto}
+.share-trigger:hover{border-color:#d4af37b0;color:#fff1c2}
+.share-trigger:focus-visible,.share-action:focus-visible,.share-close:focus-visible{outline:2px solid #d4af37;outline-offset:2px}
+html.share-open{overflow:hidden}
+.share-sheet{width:min(440px,calc(100vw - 20px));max-height:calc(100vh - 20px);max-height:calc(100dvh - 20px);padding:0;border:1px solid #3a414b;border-radius:18px;background:linear-gradient(180deg,#161b22,#0d1117);color:#f4f5f7;box-shadow:0 24px 70px #000c;overflow:auto;overscroll-behavior:contain}
+.share-sheet::backdrop{background:#03050acc;backdrop-filter:blur(4px)}
+.share-panel{display:grid;gap:10px;padding:12px 14px 14px}
+.share-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.share-head h2{margin:0;font-size:16px;letter-spacing:.01em}
+.share-close{flex:0 0 auto;width:44px;height:44px;border:1px solid #3a414b;border-radius:12px;background:#0b0e13;color:#e6e9ed;font-size:24px;line-height:1;cursor:pointer}
+.share-state{margin:0;color:#8b949e;font-size:11px;font-weight:800;letter-spacing:.04em;line-height:1.45}
+.share-state.tone-final{color:#ff8a87}.share-state.tone-live{color:#7ee2a0}.share-state.tone-pending,.share-state.tone-stale,.share-state.tone-unavailable{color:#f2c45a}
+.share-preview{position:relative;margin:0;display:grid;place-items:center;aspect-ratio:1080/1350;width:min(100%,416px,44.8vh);width:min(100%,416px,44.8dvh);justify-self:center;border:1px solid #30363d;border-radius:12px;background:#0d1117;overflow:hidden}
+.share-preview img{display:block;width:100%;height:100%;object-fit:contain}
+.share-preview img[hidden]{display:none}
+.share-wait{color:#8b949e;font-size:12px;font-weight:800;text-align:center;padding:16px}
+.share-wait:empty{display:none}
+.share-preview.unavailable{aspect-ratio:auto;min-height:120px}
+.share-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.share-action{min-height:44px;padding:0 10px;border:1px solid #3a414b;border-radius:11px;background:linear-gradient(180deg,#1f252d,#12161c);color:#e6e9ed;font-size:12px;font-weight:900;letter-spacing:.03em;cursor:pointer}
+.share-action[hidden]{display:none}
+.share-action.primary{grid-column:1/-1;border-color:#d4af37;background:linear-gradient(180deg,#e9c96b,#c39a37 55%,#a67f27);color:#1b1404;font-size:13px;letter-spacing:.06em;text-transform:uppercase}
+.share-action:disabled{opacity:.55;cursor:default}
+.share-note,.share-feedback{margin:0;color:#aeb6bf;font-size:11px;line-height:1.5}
+.share-feedback:empty{display:none}
+.share-manual{width:100%;padding:8px;border:1px solid #3a414b;border-radius:9px;background:#090c10;color:#e6e9ed;font:11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}
+@media(max-width:480px){.share-row{justify-content:stretch}.share-trigger{flex:1;justify-content:center}}

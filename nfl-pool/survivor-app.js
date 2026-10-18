@@ -17,6 +17,9 @@ let rulingData=null,rawEventsByWeek=[];
 // switchError a chosen week that could not be loaded. running, refreshStartedAt and switching let a timer, a resume or a view
 // change join a refresh that is already running instead of starting a second one.
 let pub=null,pubStale=null,pubWeeks=[],switchError='',running=0,refreshStartedAt=0,switching=false;
+// Shareable Cards V1. scoresAt is when the results of the snapshot on screen last loaded (null until they have) and
+// scoresFailed says the latest result refresh failed, so a share card never shows unloaded or unrefreshed results as current.
+let scoresAt=null,scoresFailed=false;
 const PUB_INDEX_COLUMNS='season,week,revision,published_at,status',PUB_ROW_COLUMNS='season,week,status,revision,published_at,config';
 const activeScoreControllers=new Set();
 const $=id=>document.getElementById(id);
@@ -209,6 +212,21 @@ function render(){
   $('svMeta').textContent=metaText();
 }
 function metaText(){return`Week ${cfg.week} · revision ${pub.revision}${pubStale?' · PUBLISHED DATA STALE':''}`}
+// Shareable Cards V1: the Survivor view a share card shows, built on request from the state the page renders with the same
+// survivor-math evaluation and ruling overlay. Totals are this contest's own (never the Pick'em pool's) and the entries are
+// the tracked ones only, never a field entry. Null before a published week is installed.
+function shareSnapshot(){
+  if(!cfg||!pub)return null;
+  const R=rulingLookup(),globalHold=R?.status==='hold',entries=allEntries(),wi=cfg.week-1,summary=survivorSummary(entries,wi,resultsByWeek,R);
+  const tracked=cfg.trackedEntries.map((entry,order)=>{const state=survivorEntryState(entry,wi,resultsByWeek,R);return{name:entry.displayName,status:statusLabel(state),eliminatedWeek:state.eliminatedWeek??null,reason:state.reason,underReview:!!underReview(state),order}});
+  return{contest:'survivor',season:pub.season,week:pub.week,revision:pub.revision,publishedAt:pub.publishedAt,
+    scoresAt,scoresFailed,hold:globalHold?(R.reason||'ruling data unavailable'):null,rulingsStale:rulingData?.stale===true,
+    publicationStale:pubStale?pubStale.reason:null,flags:globalHold?[]:feedFlags(R),
+    awaitingRuling:survivorAwaitingRuling(entries,wi,resultsByWeek,R),onHold:survivorOnHold(entries,wi,resultsByWeek,R),
+    unresolvedPrior:survivorUnresolvedEntering(entries,wi,resultsByWeek,R),awaitingRulingPrior:survivorAwaitingRuling(entries,wi-1,resultsByWeek,R),
+    onHoldPrior:globalHold?0:survivorOnHold(entries,wi-1,resultsByWeek,R),
+    totals:{field:cfg.competitionSize,remaining:summary.active,submissions:summary.submitted,pending:summary.pending},entries:tracked};
+}
 // The chosen week that could not be loaded, and why the publication on screen is stale.
 function renderNotices(){$('survivorError').innerHTML=`${switchError?`<div class="error">${esc(switchError)}</div>`:''}${pubStale?`<div class="notice">PUBLISHED DATA STALE · ${esc(pubStale.reason)}. Survivor still shows Week ${pub.week} revision ${pub.revision}, the last publication verified on this page, until the current one loads.</div>`:''}`}
 
@@ -278,11 +296,12 @@ async function updateScores(id){
     outcomes.forEach((o,k)=>{const i=indexes[k];if(o.status==='fulfilled'){resultsByWeek[i]=o.value.results;rawEventsByWeek[i]=o.value.events}else failed.push({i,reason:o.reason})});
     failed.forEach(f=>console.warn(f.reason));
     if(failed.some(f=>f.i===current||!(resultsByWeek[f.i] instanceof Map)))throw failed.find(f=>f.i===current||!(resultsByWeek[f.i] instanceof Map)).reason;
+    scoresAt=new Date().toISOString();scoresFailed=false;
     // Rulings kept from an earlier load (stale) still apply, and the feed status always says so.
     // HDC-15: a snapshot that could not be verified as the current publication is never LIVE.
     const R=rulingLookup(),flags=R?.status==='hold'?null:[...feedFlags(R),...(rulingData?.stale?['RULINGS STALE']:[])],lead=pubStale?'PUBLISHED DATA STALE':'LIVE';
     $('svFeed').textContent=!flags?`ON HOLD · RULING DATA UNAVAILABLE${pubStale?' · PUBLISHED DATA STALE':''}`:flags.length?`${lead} · ${flags.join(' · ')}`:`${lead} · NFL results`;$('svFeed').className=`survivor-feed ${!flags||flags.length||pubStale?'warn':'ok'}`;render();void updateDecisionSchedule();
-  }catch(e){if(id!==refreshId||cfg!==scoreCfg)return;$('svFeed').textContent=`RESULT FEED UNAVAILABLE${pubStale?' · PUBLISHED DATA STALE':''}${rulingData?.stale?' · RULINGS STALE':''}`;$('svFeed').className='survivor-feed warn';render();console.warn(e)}
+  }catch(e){if(id!==refreshId||cfg!==scoreCfg)return;scoresFailed=true;$('svFeed').textContent=`RESULT FEED UNAVAILABLE${pubStale?' · PUBLISHED DATA STALE':''}${rulingData?.stale?' · RULINGS STALE':''}`;$('svFeed').className='survivor-feed warn';render();console.warn(e)}
 }
 
 // A validated snapshot replaces the one on screen whole (the choose path): everything derived from the previous one is reset
@@ -292,7 +311,7 @@ function install(row){
   if(nextWeekController){nextWeekController.abort();nextWeekController=null}
   nextWeekRequestId++;
   cfg=nextCfg;pub={season:row.season,week:row.week,revision:row.revision,publishedAt:row.publishedAt};pubStale=null;
-  resultsByWeek=[];rawEventsByWeek=[];rulingData=null;nextWeekMatchups=[];nextWeekFetchedAt=0;nextWeekError='';
+  resultsByWeek=[];rawEventsByWeek=[];rulingData=null;nextWeekMatchups=[];nextWeekFetchedAt=0;nextWeekError='';scoresAt=null;scoresFailed=false;
   $('survivorWeekSelect').value=`${row.season}-${row.week}`;$('svFeed').textContent='LOADING RESULTS';$('svFeed').className='survivor-feed';renderNotices();render();
 }
 // HDC-15. A full refresh: verify that the snapshot on screen is still the published revision of its week (a newer revision is
@@ -384,4 +403,6 @@ async function load(){
 load().catch(e=>{$('survivorError').innerHTML=`<div class="error">Survivor is not published yet: ${esc(e.message)}</div>`;console.warn(e)});
 document.addEventListener('visibilitychange',autoRefresh);
 document.addEventListener('poolcenter:viewchange',autoRefresh);
+// Shareable Cards V1: the share sheet asks for the Survivor snapshot with this event and reads it back synchronously.
+document.addEventListener('poolcenter:sharesnapshot',event=>{if(event.detail?.contest==='survivor')event.detail.snapshot=shareSnapshot()});
 setInterval(autoRefresh,20000);
