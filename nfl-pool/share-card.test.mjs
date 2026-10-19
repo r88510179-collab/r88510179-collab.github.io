@@ -4,7 +4,7 @@
 // The apps' answers to the share request are checked in weekly-app.test.mjs and survivor-app.test.mjs.
 import assert from 'node:assert/strict';
 import {buildCard,drawCard,cardLayout,pickemStatus,survivorStatus,shareLink,linkLabel,shareFileName,shareSupport,sharePayload,
-  fitText,wrapText,ageSeconds,CARD_WIDTH,CARD_HEIGHT,FRESH_SECONDS,MAX_ROWS,MIN_CONDENSE,MIN_ROW} from './share-card.js';
+  fitText,wrapText,ageSeconds,freshSeconds,CARD_WIDTH,CARD_HEIGHT,FRESH_SECONDS,MAX_ROWS,DASHBOARD_MAX_ROWS,MIN_CONDENSE,MIN_ROW} from './share-card.js';
 
 const failures=[];
 const check=async(name,fn)=>{try{await fn()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
@@ -415,6 +415,151 @@ await check('file sharing is offered only where navigator.share and canShare({fi
   assert.deepEqual(sharePayload(card,file,{canShare(){throw new Error('x')}}),{files:[file]});
 });
 
+// ---- The combined dashboard card (Home): both snapshots on one card, each checked and labelled on its own.
+const both=(pk=pickem(),sv=survivor())=>({pickem:pk,survivor:sv});
+const lines=card=>card.summary.split('\n');
+await check('a combined card is both contests on one card, each exactly as its own card: rows, metrics, status, week and revision, with one link to Home and one summary',()=>{
+  const card=build('dashboard',both()),pk=build('pickem',pickem()),sv=build('survivor',survivor());
+  assert.equal(card.ok,true);
+  assert.deepEqual([card.contest,card.title,card.season,card.week,card.survivorWeek,card.revision,card.survivorRevision,card.weeks],['dashboard','Weekly Dashboard',2026,5,5,2,7,'Week 5']);
+  assert.deepEqual([card.pickem.rows,card.pickem.status,card.pickem.total,card.pickem.fieldSize,card.pickem.week,card.pickem.revision],[pk.rows,pk.status,pk.total,87,5,2],"the Pick'em half is the Pick'em card");
+  assert.deepEqual([card.survivor.rows,card.survivor.metrics,card.survivor.status,card.survivor.counts,card.survivor.week,card.survivor.revision],[sv.rows,sv.metrics,sv.status,sv.counts,5,7],'the Survivor half is the Survivor card');
+  assert.equal(card.link,'https://r88510179-collab.github.io/nfl-pool/?view=home&season=2026&week=5&sw=5','the link opens Home with both weeks');
+  assert.equal(card.linkLabel,'r88510179-collab.github.io/nfl-pool');
+  assert.equal(card.fileName,'nfl-pool-center-dashboard-2026-week-5.png');
+  assert.equal(card.shareTitle,'NFL Pool Center · 2026 Week 5 Weekly Dashboard');
+  assert.equal(card.shareText,`2026 Weekly Dashboard · Pick'em Week 5 LIVE · Survivor Week 5 LIVE\n${card.link}`);
+  assert.deepEqual([card.status.label,card.status.tone,card.status.flags],["PICK'EM LIVE · SURVIVOR LIVE",'ok',[]]);
+  assert.equal(card.alt,"Weekly Dashboard card, 2026: Pick'em Week 5 LIVE, D.C. 10–2 first of the tracked group; Survivor Week 5 LIVE, 42 of 120 entries remaining.");
+  assert.deepEqual(lines(card),['NFL Pool Center · 2026 Weekly Dashboard',`Pick'em Week 5 · ${lines(pk)[1]}`,...lines(pk).slice(2,-2),`Survivor Week 5 · ${lines(sv)[1]}`,...lines(sv).slice(2,-2),
+    `Snapshot ${card.snapshot} · Pick'em revision 2 · Survivor revision 7`,card.link],'the summary is both summaries, each under its own week and status');
+  assert.equal(card.snapshot,'Oct 11, 2026, 3:42 PM EDT');
+});
+await check('each contest claims its own status: the card never says LIVE or FINAL for both from one contest, and the text and the drawing name each',()=>{
+  const fin=build('dashboard',both(allFinal(),survivor()));
+  assert.deepEqual([fin.pickem.status.label,fin.survivor.status.label,fin.status.label,fin.status.tone],['FINAL','LIVE',"PICK'EM FINAL · SURVIVOR LIVE",'ok']);
+  assert.match(fin.shareText,/^2026 Weekly Dashboard · Pick'em Week 5 FINAL · Survivor Week 5 LIVE\n/);
+  const down=build('dashboard',both(pickem(),survivor({feed:{at:NOW-6000,failed:true}})));
+  assert.deepEqual([down.pickem.status.label,down.survivor.status.label,down.status.tone],['LIVE','RESULT FEED UNAVAILABLE','bad'],'the card as a whole takes the more serious tone');
+  assert.match(down.status.detail,/^Pick'em: 12 of 16 games final · 2 live · Survivor: Result feed unavailable · last verified 3:42 PM · 8 entries pending$/);
+  const stale=build('dashboard',both(pickem({publishedStale:true}),survivor({flags:['1 TEAM RESULT UNVERIFIED']})));
+  assert.deepEqual([stale.pickem.status.label,stale.survivor.status.label,stale.status.tone,stale.status.flags],['PUBLISHED DATA STALE','LIVE','warn',['Survivor 1 TEAM RESULT UNVERIFIED']]);
+  const d=drawn(down);
+  assert.deepEqual(d.layout.texts.filter(t=>t.role==='status-pill').map(t=>t.text),['LIVE','RESULT FEED UNAVAILABLE'],"the Pick'em pill, then the Survivor pill");
+  assert.deepEqual(d.layout.boxes.filter(b=>b.role==='status-pill').map(b=>b.tone),['live','bad']);
+  assert.deepEqual(d.layout.texts.filter(t=>t.role==='detail').map(t=>t.text),['12 OF 16 GAMES FINAL · 2 LIVE','RESULT FEED UNAVAILABLE · LAST VERIFIED 3:42 PM · 8 ENTRIES PENDING'],'each detail line under its own bar');
+  const hold=drawn(build('dashboard',both(pickem({hold:true}),survivor({hold:true,counts:{active:0,pending:0,out:0,outThisWeek:0,submitted:0,legalPicks:0,awaitingRuling:0,onHold:120},tracked:survivor().tracked.map(t=>({...t,status:'HOLD'}))}))));
+  assert.deepEqual(hold.layout.texts.filter(t=>t.role==='status-pill').map(t=>t.text),['ON HOLD','ON HOLD']);
+});
+await check('the contests may be on different weeks: both are named in the context line, the section bars, the footer, the link, the file name and the titles; different seasons are refused',()=>{
+  const card=build('dashboard',both(pickem({week:6,revision:1}),survivor()));
+  assert.deepEqual([card.week,card.survivorWeek,card.weeks],[6,5,"Pick'em Week 6 · Survivor Week 5"]);
+  assert.equal(card.link,'https://r88510179-collab.github.io/nfl-pool/?view=home&season=2026&week=6&sw=5');
+  assert.equal(card.fileName,'nfl-pool-center-dashboard-2026-week-6-survivor-week-5.png');
+  assert.equal(card.shareTitle,"NFL Pool Center · 2026 Pick'em Week 6 · Survivor Week 5 Weekly Dashboard");
+  assert.match(card.summary,/^Pick'em Week 6 · LIVE/m);assert.match(card.summary,/^Survivor Week 5 · LIVE/m);assert.match(card.summary,/Pick'em revision 1 · Survivor revision 7$/m);
+  const texts=drawn(card).texts;
+  assert(texts.includes('SEASON 2026 · PICK’EM WEEK 6 · SURVIVOR WEEK 5'),'the context line names both weeks');
+  assert(texts.includes('PICK’EM STANDINGS · WEEK 6')&&texts.includes('SURVIVOR POOL · WEEK 5'),'each bar names its own week');
+  assert(texts.some(t=>t.endsWith('PICK’EM REVISION 1 · SURVIVOR REVISION 7')),'the footer names both revisions');
+  const other=build('dashboard',both(pickem(),survivor({season:2025})));
+  assert.equal(other.ok,false);assert.equal(other.reason,"A combined card can't be made right now: Pick'em shows the 2026 season and Survivor the 2025 season.");
+});
+await check('a combined card is refused whole when either contest cannot be shared, saying which and why, and what can still be shared alone',()=>{
+  const notReady=build('dashboard',both(pickem(),{ready:false,reason:'Survivor results are still loading.'}));
+  assert.deepEqual(notReady,{ok:false,reason:"Survivor results are still loading. The combined card needs both contests; Pick'em standings can be shared on their own meanwhile."});
+  assert.equal(build('dashboard',both({ready:false,reason:'Scores for this week are still loading.'},survivor())).reason,'Scores for this week are still loading. The combined card needs both contests; Survivor results can be shared on their own meanwhile.');
+  assert.equal(build('dashboard',both({ready:false},survivor())).reason,"Pick'em has nothing to share yet. The combined card needs both contests; Survivor results can be shared on their own meanwhile.");
+  assert.equal(build('dashboard',both(null,survivor())).reason,"Pick'em did not answer, so the combined card can't be made. Reload the page and try again.");
+  assert.equal(build('dashboard',both(pickem(),null)).reason,"Survivor did not answer, so the combined card can't be made. Reload the page and try again.");
+  assert.match(build('dashboard',both(pickem(),pickem())).reason,/different contest/);
+  assert.match(build('dashboard',both(survivor(),survivor())).reason,/different contest/);
+  assert.match(build('dashboard',null).reason,/Reload the page/);
+  assert.equal(build('dashboard',both(pickem({revision:0}),survivor())).reason,"A combined card can't be made right now: Pick'em: the publication record for this week is missing.");
+  assert.equal(build('dashboard',both(pickem(),survivor({counts:{...survivor().counts,active:41}}))).reason,"A combined card can't be made right now: Survivor: the field counts do not add up.");
+  assert.equal(build('dashboard',both(pickem({entries:[...pickem().entries,entry('E5',6,6,4,5,rank(60,1,69,5))]}),survivor())).reason,"A combined card can't be made right now: only 4 tracked Pick'em entries fit on it.");
+  assert.deepEqual(DASHBOARD_MAX_ROWS,{pickem:4,survivor:3});
+  assert.equal(build('dashboard',both(pickem({entries:pickem().entries.slice(0,2).map((e,i)=>({...e,groupRank:i+1,leader:i===0}))}),survivor({tracked:survivor().tracked.slice(0,1)}))).ok,true,'fewer rows fit');
+});
+await check('Survivor results the page refreshes once a minute (feed.interval, Home) are fresh for 90 s; without an interval the 30 s limit stands; an invalid interval is refused',()=>{
+  const at=(ms,more={})=>({at:NOW-ms,failed:false,...more});
+  assert.equal(build('survivor',survivor({feed:at(50000,{interval:60000})})).status.label,'LIVE');
+  assert.equal(build('survivor',survivor({feed:at(90000,{interval:60000})})).status.label,'LIVE','90 s is the limit');
+  assert.equal(build('survivor',survivor({feed:at(91000,{interval:60000})})).status.label,'DELAYED');
+  assert.equal(build('survivor',survivor({feed:at(50000)})).status.label,'DELAYED','no interval: the 30 s limit');
+  assert.equal(build('survivor',survivor({feed:at(31000,{interval:20000})})).status.label,'DELAYED','a 20 s interval keeps the 30 s limit');
+  assert.equal(build('survivor',survivor({feed:at(29000,{interval:20000})})).status.label,'LIVE');
+  assert.equal(build('dashboard',both(pickem(),survivor({feed:at(50000,{interval:60000})}))).survivor.status.label,'LIVE','the combined card uses the same limit');
+  assert.equal(build('dashboard',both(pickem(),survivor({feed:at(50000)}))).survivor.status.label,'DELAYED');
+  for(const interval of [0,-1,'60000',1.5,null])assert.match(build('survivor',survivor({feed:at(1000,{interval})})).reason,/result feed state/,String(interval));
+  assert.deepEqual([freshSeconds(60000),freshSeconds(20000),freshSeconds(undefined),freshSeconds(10000),freshSeconds(100000)],[90,30,30,30,150]);
+});
+await check('a combined card, its summary and its drawing carry only public values, never a field entry or anything else a snapshot holds',()=>{
+  const leaky={fieldEntries:[{id:'field-001',pickNumbers:[1,4],tiebreak:42}],admin_note:'PRIVATE ADMIN NOTE',created_by:'auth-user-7f3a',config:{secret:true}};
+  const card=build('dashboard',both(pickem({...leaky,entries:pickem().entries.map(e=>({...e,id:'dc',pickNumbers:[1,3],picks:['DEN']}))}),survivor({...leaky,tracked:survivor().tracked.map(t=>({...t,id:'dc',picks:['PIT','SF']}))})));
+  const text=JSON.stringify(card)+drawn(card).texts.join('\n');
+  for(const secret of ['field-001','PRIVATE','auth-user','pickNumbers','"picks"','"id"','secret','DEN','PIT'])assert(!text.includes(secret),secret);
+});
+await check('the combined card draws both panels inside 1080 × 1350: two bars with their own pills, the Pick’em rows between the bars, the Survivor metrics and rows below, every text in its column, nothing cut, nothing under 18 px',()=>{
+  const card=build('dashboard',both()),d=drawn(card),L=d.layout;
+  const bars=L.boxes.filter(b=>b.role==='section'),rows=L.boxes.filter(b=>b.role==='row'),metrics=L.boxes.filter(b=>b.role==='metric');
+  assert.equal(bars.length,2);assert.equal(rows.length,7);assert.equal(metrics.length,4);
+  assert.deepEqual(rows.map(r=>r.contest),['pickem','pickem','pickem','pickem','survivor','survivor','survivor']);
+  const pk=rows.slice(0,4),sv=rows.slice(4);
+  assert(bars[0].y>280&&bars[0].y+bars[0].h<pk[0].y,"the Pick'em bar is above its rows");
+  assert(pk.every(r=>r.y+r.h<bars[1].y),"the Pick'em rows end above the Survivor bar");
+  assert(metrics.every(m=>m.y>bars[1].y+bars[1].h)&&sv.every(r=>r.y>=Math.max(...metrics.map(m=>m.y+m.h))),'the Survivor metrics sit under its bar and its rows under the metrics');
+  assert(L.end<=1250&&sv.every(r=>r.y+r.h<=1250),'the rows end above the footer');
+  for(let i=1;i<rows.length;i++)assert(rows[i].y>=rows[i-1].y+rows[i-1].h,`rows ${i} and ${i+1} do not overlap`);
+  assert(pk.every(r=>r.h>=78)&&sv.every(r=>r.h>=62),`row heights ${rows.map(r=>r.h)}`);
+  assert.deepEqual(pk.map(r=>r.gold),[true,false,false,false],'the sole leader on gold');
+  for(const t of L.texts){
+    assert(t.x>=0&&t.x+t.width<=CARD_WIDTH&&t.top>=0&&t.bottom<=CARD_HEIGHT,`${t.role} "${t.text}" lies inside the card`);
+    if(t.box)assert(t.x>=t.box[0]-.01&&t.x+t.width<=t.box[1]+.01,`${t.role} "${t.text}" stays in its column ${t.box.map(v=>v.toFixed(1)).join('..')}`);
+  }
+  assert.deepEqual(L.texts.filter(t=>t.truncated).map(t=>t.text),[],'nothing is cut');
+  assert(Math.min(...L.texts.map(t=>t.size))>=18,`smallest text ${Math.min(...L.texts.map(t=>t.size))} px`);
+  assert(d.texts.includes('POOL CENTER')&&d.texts.includes('WEEKLY DASHBOARD'));
+  assert(d.texts.includes('SNAPSHOT OCT 11, 2026, 3:42 PM EDT'),'the header carries the snapshot time');
+  assert.deepEqual(L.texts.filter(t=>t.role==='section-title').map(t=>t.text),['PICK’EM STANDINGS · WEEK 5','SURVIVOR POOL · WEEK 5']);
+  assert.deepEqual(L.texts.filter(t=>t.role==='status-pill').map(t=>t.text),['LIVE','LIVE']);
+  assert.deepEqual(L.texts.filter(t=>t.role==='name').map(t=>t.text),['D.C.','JC','DJS','Thaddeus','D.C.','Thaddeus','DJS'],'the Survivor rows lead with the entry still in, then pending, then out');
+  assert.deepEqual(L.texts.filter(t=>t.role==='record').map(t=>t.text),['10–2','9–3','9–3','7–5']);
+  assert.deepEqual(L.texts.filter(t=>t.role==='rank').map(t=>t.text),['#3','T-8','T-8','T-41']);
+  assert.deepEqual(L.texts.filter(t=>t.role==='team').map(t=>t.text),['KC','SF','BUF']);
+  assert.deepEqual(L.texts.filter(t=>t.role==='row-status').map(t=>t.text),['ALIVE','PENDING','OUT']);
+  assert.deepEqual(L.boxes.filter(b=>b.role==='row-status').map(b=>b.tone),['alive','pending','out']);
+  assert.deepEqual(L.texts.filter(t=>t.role==='metric-label').map(t=>t.text),['TOTAL FIELD:','REMAINING:','SUBMISSIONS:','PENDING:']);
+  assert.deepEqual(L.texts.filter(t=>t.role==='metric-value').map(t=>t.text),['120','42','50','8']);
+  assert.deepEqual([...L.texts.filter(t=>t.role==='total').map(t=>t.text),...L.texts.filter(t=>t.role==='total-value').map(t=>t.text)],['TOTAL POOL ENTRIES: ','87']);
+  assert.equal(L.texts.find(t=>t.role==='meta').text,'SNAPSHOT OCT 11, 2026, 3:42 PM EDT · PICK’EM REVISION 2 · SURVIVOR REVISION 7');
+  assert.equal(L.texts.find(t=>t.role==='site').text,'r88510179-collab.github.io/nfl-pool');
+  assert(!d.texts.some(t=>/NFLPOOLCENTER|\.COM/i.test(t)),'no other address');
+});
+await check('long statuses, long names and a no-pick row stay inside the combined card; a field that is not published says so in place of the pool size',()=>{
+  const card=build('dashboard',both(pickem({fieldSize:null,feed:{...pickem().feed,failed:true},entries:pickem().entries.map((e,i)=>({...e,field:null,name:i===0?'A tracked entry with a very long name indeed':e.name,noPicks:i===3}))}),
+    survivor({feed:{at:NOW-6000,failed:true},tracked:[tracked('Another very long tracked entrant name','ALIVE','KC','Alive'),tracked('DJS','OUT',null,'No pick',true),tracked('Thaddeus','RULING','SF','Awaiting a ruling')]})));
+  assert.equal(card.ok,true);
+  const d=drawn(card),L=d.layout;
+  for(const t of L.texts){assert(t.x>=0&&t.x+t.width<=CARD_WIDTH,`${t.role} "${t.text}" lies inside the card`);if(t.box)assert(t.x>=t.box[0]-.01&&t.x+t.width<=t.box[1]+.01,`${t.role} "${t.text}" stays in its column`)}
+  assert.deepEqual(L.texts.filter(t=>t.role==='status-pill').map(t=>t.text),['FEED UNAVAILABLE','RESULT FEED UNAVAILABLE']);
+  assert.deepEqual(L.texts.filter(t=>t.role==='section-title').map(t=>t.text),['PICK’EM STANDINGS · WEEK 5','SURVIVOR POOL · WEEK 5'],'the bar titles keep their column beside a long pill');
+  assert(d.texts.includes('FULL-FIELD RANKS ARE NOT PUBLISHED FOR THIS WEEK.')&&!d.texts.some(t=>/TOTAL POOL ENTRIES/.test(t)));
+  assert.deepEqual(L.texts.filter(t=>t.role==='rank'),[],'no rank is drawn without a published field');
+  assert.deepEqual(L.texts.filter(t=>t.role==='team').map(t=>t.text),['KC','SF','NO PICK']);
+  assert.deepEqual(L.texts.filter(t=>t.role==='row-status').map(t=>t.text),['ALIVE','RULING','OUT']);
+  assert(L.texts.some(t=>t.role==='note'&&t.text==='NO PICKS SUBMITTED'));
+  assert.match(card.summary,/DJS: OUT — UNDER REVIEW · No pick/);
+});
+await check('the single cards are unchanged by the combined card: their layouts, statuses, links and names read exactly as before',()=>{
+  const pk=build('pickem',pickem()),sv=build('survivor',survivor());
+  assert.equal(pk.link,'https://r88510179-collab.github.io/nfl-pool/?view=standings&season=2026&week=5');assert.equal(sv.link,'https://r88510179-collab.github.io/nfl-pool/?view=survivor&season=2026&sw=5');
+  assert.deepEqual([pk.fileName,sv.fileName],['nfl-pool-center-pickem-2026-week-5.png','nfl-pool-center-survivor-2026-week-5.png']);
+  assert.equal(shareLink('dashboard',{season:2026,week:6,survivorWeek:5},HREF),'https://r88510179-collab.github.io/nfl-pool/?view=home&season=2026&week=6&sw=5');
+  for(const card of [pk,sv]){const L=drawn(card).layout;assert(L.rows.length===card.rows.length&&L.rowH>=MIN_ROW,card.contest)}
+  assert.equal(drawn(sv).layout.texts.find(t=>t.role==='meta').text,'SNAPSHOT OCT 11, 2026, 3:42 PM EDT · REVISION 7');
+});
+
 // ---- share-ui.js on a fake DOM.
 class FakeNode{
   constructor(tag,doc){this.tagName=tag.toUpperCase();this.doc=doc;this.children=[];this.attributes={};this.listeners={};this.hidden=false;this.disabled=false;this.className='';this.textContent='';this.dataset={};this.parent=null;this.value=''}
@@ -427,11 +572,12 @@ class FakeNode{
   fire(t,event={}){for(const f of this.listeners[t]||[])f({target:this,...event})}
   focus(){this.doc.focused=this}
 }
-function fakePage({share=null,canShare=null,clipboard=null,execCommand=()=>false,toBlob='ok',context=true,provider=null,href='https://example.test/nfl-pool/?view=standings'}={}){
+function fakePage({share=null,canShare=null,clipboard=null,execCommand=()=>false,toBlob='ok',context=true,provider=null,dashboard=false,href='https://example.test/nfl-pool/?view=standings'}={}){
   const listeners={},doc={focused:null,downloads:[],shares:[],copies:[],revoked:[],created:[],pendingBlob:null};
   const document={
     body:null,
-    querySelectorAll:sel=>sel==='[data-share-card]'?doc.buttons:[],
+    querySelectorAll:sel=>sel==='[data-share-card]'?[...doc.buttons,...(doc.dashboardButton?[doc.dashboardButton]:[])]:sel==='[data-share-link]'&&doc.linkButton?[doc.linkButton]:[],
+    querySelector:sel=>sel==='[data-share-link-status]'?doc.linkStatus??null:null,
     createElement:tag=>{
       const node=new FakeNode(tag,doc);
       if(tag==='dialog'){node.open=false;node.showModal=()=>{node.open=true};node.close=()=>{if(!node.open)return;node.open=false;node.fire('close')}}
@@ -447,6 +593,12 @@ function fakePage({share=null,canShare=null,clipboard=null,execCommand=()=>false
   };
   document.body=new FakeNode('body',doc);
   doc.buttons=['pickem','survivor'].map(contest=>{const b=new FakeNode('button',doc);b.hidden=true;b.dataset.shareCard=contest;return b});
+  // The Home share menu (home-dashboard.js): a combined-card button, a Copy dashboard link button and its status line.
+  if(dashboard){
+    doc.dashboardButton=new FakeNode('button',doc);doc.dashboardButton.hidden=true;doc.dashboardButton.dataset.shareCard='dashboard';
+    doc.linkButton=new FakeNode('button',doc);doc.linkButton.hidden=true;doc.linkButton.dataset.shareLink='dashboard';
+    doc.linkStatus=new FakeNode('p',doc);doc.linkStatus.className='share-status';
+  }
   if(provider)document.addEventListener('poolcenter:share',event=>{event.detail.snapshot=provider(event.detail.contest)});
   const navigator={};
   if(share)navigator.share=data=>{doc.shares.push(data);return share(data)};
@@ -472,7 +624,8 @@ async function shareUi(options){
   const ui={doc,dialog,byText,
     image:()=>find(dialog(),n=>n.tagName==='IMG'),message:()=>find(dialog(),n=>n.className==='share-placeholder'),status:()=>find(dialog(),n=>/^share-status/.test(n.className)),
     actions:()=>find(dialog(),n=>n.className==='share-actions'),title:()=>find(dialog(),n=>n.tagName==='H2'),
-    open:async(contest='pickem')=>{doc.buttons[contest==='pickem'?0:1].fire('click');await flush()},
+    open:async(contest='pickem')=>{(contest==='dashboard'?doc.dashboardButton:doc.buttons[contest==='pickem'?0:1]).fire('click');await flush()},
+    copyLink:async()=>{doc.linkButton.fire('click');await flush()},
     click:async text=>{byText(text).fire('click');await flush()}};
   return ui;
 }
@@ -609,5 +762,66 @@ await check('the card is one snapshot: a refresh after the preview opens does no
   }finally{ui.doc.restore()}
 });
 
+await check('the Home share menu: Share combined dashboard card previews both contests taken at once, shares the PNG, and its Copy link and Copy dashboard link copy the Home link with both weeks',async()=>{
+  const ui=await shareUi({...fileShare,clipboard:()=>{},dashboard:true,provider:pickemProvider()});
+  try{
+    assert.deepEqual([ui.doc.dashboardButton.hidden,ui.doc.linkButton.hidden,...ui.doc.buttons.map(b=>b.hidden)],[false,false,false,false],'every menu button is shown once share-ui.js runs');
+    await ui.open('dashboard');
+    assert.equal(ui.dialog().open,true);assert.equal(ui.title().textContent,'Share combined dashboard card');
+    assert.equal(ui.image().hidden,false);assert.match(ui.image().alt,/^Weekly Dashboard card, 2026: Pick'em Week 5 LIVE, D\.C\. 10–2 first of the tracked group; Survivor Week 5 LIVE, 42 of 120 entries remaining\.$/);
+    ui.byText('Share graphic').fire('click');await flush();
+    const [{files:[file],title,text}]=ui.doc.shares;
+    assert.deepEqual([file.name,file.type],['nfl-pool-center-dashboard-2026-week-5.png','image/png']);
+    assert.equal(title,'NFL Pool Center · 2026 Week 5 Weekly Dashboard');assert.match(text,/^2026 Weekly Dashboard · Pick'em Week 5 LIVE · Survivor Week 5 LIVE\nhttps:\/\/example\.test\/nfl-pool\/\?view=home&season=2026&week=5&sw=5$/);
+    await ui.click('Copy link');assert.deepEqual(ui.doc.copies,['https://example.test/nfl-pool/?view=home&season=2026&week=5&sw=5']);
+    await ui.click('Copy summary');assert.match(ui.doc.copies[1],/^NFL Pool Center · 2026 Weekly Dashboard\nPick'em Week 5 · LIVE — [\s\S]*\nSurvivor Week 5 · LIVE — /);
+    ui.dialog().close();
+    await ui.copyLink();
+    assert.equal(ui.doc.copies[2],'https://example.test/nfl-pool/?view=home&season=2026&week=5&sw=5');assert.deepEqual([ui.doc.linkStatus.textContent,ui.doc.linkStatus.className],['Dashboard link copied.','share-status']);
+    assert.equal(ui.dialog().open,false,'Copy dashboard link opens no preview');
+  }finally{ui.doc.restore()}
+});
+await check('a contest that is not ready refuses the combined card with its reason while the other contest’s own card still works; Copy dashboard link then carries only the verified week',async()=>{
+  const ui=await shareUi({...fileShare,clipboard:()=>{},dashboard:true,provider:contest=>contest==='pickem'?fresh(pickem()):{ready:false,reason:'Survivor results are still loading.'}});
+  try{
+    await ui.open('dashboard');
+    assert.equal(ui.message().textContent,"Survivor results are still loading. The combined card needs both contests; Pick'em standings can be shared on their own meanwhile.");
+    assert.equal(ui.actions().hidden,true);assert.equal(ui.doc.created.length,0,'no PNG is made');
+    ui.dialog().close();
+    await ui.open('pickem');assert.equal(ui.image().hidden,false);assert.equal(ui.title().textContent,"Share Pick'em standings");
+    ui.dialog().close();
+    await ui.copyLink();assert.equal(ui.doc.copies.at(-1),'https://example.test/nfl-pool/?view=home&season=2026&week=5');
+  }finally{ui.doc.restore()}
+  const none=await shareUi({...fileShare,clipboard:()=>{},dashboard:true,provider:()=>({ready:false,reason:'Scores for this week are still loading.'})});
+  try{await none.copyLink();assert.equal(none.doc.copies.at(-1),'https://example.test/nfl-pool/?view=home')}finally{none.doc.restore()}
+  const survivorOnly=await shareUi({...fileShare,clipboard:()=>{},dashboard:true,provider:contest=>contest==='survivor'?fresh(survivor()):{ready:false,reason:"Pick'em standings have not loaded yet."}});
+  try{await survivorOnly.copyLink();assert.equal(survivorOnly.doc.copies.at(-1),'https://example.test/nfl-pool/?view=home&season=2026&sw=5')}finally{survivorOnly.doc.restore()}
+});
+await check('the combined card is one snapshot: both weeks changing while the preview is open changes nothing until Share is reopened',async()=>{
+  let pk=pickem(),sv=survivor();
+  const ui=await shareUi({...fileShare,clipboard:()=>{},dashboard:true,provider:contest=>fresh(contest==='pickem'?pk:sv)});
+  try{
+    await ui.open('dashboard');
+    pk=pickem({week:6,revision:1});sv=survivor({week:6,revision:1});
+    await ui.click('Copy summary');
+    assert.match(ui.doc.copies[0],/Pick'em Week 5 · LIVE[\s\S]*Survivor Week 5 · LIVE[\s\S]*Pick'em revision 2 · Survivor revision 7/);assert.match(ui.doc.copies[0],/&week=5&sw=5$/);
+    await ui.open('dashboard');await ui.click('Copy link');assert.match(ui.doc.copies[1],/&week=6&sw=6$/,'reopening Share takes a new snapshot of both');
+  }finally{ui.doc.restore()}
+});
+await check('Copy dashboard link falls back to the copy command in the page, and shows the link when neither works',async()=>{
+  let ui=await shareUi({dashboard:true,execCommand:doc=>doc.selected?.startsWith('https://'),provider:pickemProvider()});
+  try{await ui.copyLink();assert.equal(ui.doc.linkStatus.textContent,'Dashboard link copied.');assert.deepEqual(ui.doc.commands,['copy'])}finally{ui.doc.restore()}
+  ui=await shareUi({dashboard:true,provider:pickemProvider()});
+  try{
+    await ui.copyLink();
+    assert.equal(ui.doc.linkStatus.textContent,'Couldn’t copy automatically. Press and hold to copy the link:\nhttps://example.test/nfl-pool/?view=home&season=2026&week=5&sw=5');
+    assert.equal(ui.doc.linkStatus.className,'share-status error');
+  }finally{ui.doc.restore()}
+});
+await check('a page without the Home share menu (cached before the dashboard) binds the two contest buttons exactly as before',async()=>{
+  const ui=await shareUi({...fileShare,provider:pickemProvider()});
+  try{assert.deepEqual(ui.doc.buttons.map(b=>b.hidden),[false,false]);await ui.open('survivor');assert.equal(ui.title().textContent,'Share Survivor results')}finally{ui.doc.restore()}
+});
+
 assert.equal(failures.length,0,`share-card regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
-console.log('share-card snapshot checks, truthful status (FINAL, LIVE, DELAYED, stale, unavailable, on hold, under review), privacy, deep links, summaries, layout and text fitting, native file sharing, cancel, download and copy fallbacks and PNG failure regressions passed');
+console.log('share-card snapshot checks, truthful status (FINAL, LIVE, DELAYED, stale, unavailable, on hold, under review), privacy, deep links, summaries, layout and text fitting, the combined dashboard card and the Home share menu, native file sharing, cancel, download and copy fallbacks and PNG failure regressions passed');

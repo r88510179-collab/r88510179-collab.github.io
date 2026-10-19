@@ -2279,3 +2279,86 @@ console.log('weekly HDC-15 slow-network regressions passed: slow refreshes compl
 }
 
 console.log('weekly share-card regressions passed: the share snapshot is the rendered standings, never before its own scores, never across a week switch, with the header state, and shared links boot the same week');
+
+// Home dashboard (home-dashboard.js). Every change of view is announced (poolcenter:viewchange, with the view and the one
+// before) while Pick'em itself still refreshes only when it takes the page back from Survivor (HDC-15); each refresh, a failed
+// one, a publication found stale or verified again, a chosen week installed and a boot failure announce poolcenter:update for
+// Pick'em, carrying no data; and the share snapshot also carries the group race render() computed and the game Game Watch
+// leads with, public values only, so the dashboard's summaries are the page's own numbers.
+{
+  const failures=[];
+  const regression=async(name,check)=>{try{await check()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+  const ask=v=>{const detail={contest:'pickem',snapshot:null};v.doc.dispatchEvent({type:'poolcenter:share',detail});return detail.snapshot};
+  const tally=(v,from=0)=>{const t={token:0,index:0,row:0,rulings:0,score:0};for(const c of v.calls.slice(from))t[c.kind]++;return t};
+  const NONE={token:0,index:0,row:0,rulings:0,score:0},FULL={token:0,index:1,row:0,rulings:3,score:1};
+  const twoWeeks=()=>[{season:2026,week:3,status:'locked',revision:1,config:structuredClone(config)},{season:2026,week:4,status:'locked',revision:2,config:{...structuredClone(config),week:4}}];
+  const quiet=async fn=>{const error=console.error,warn=console.warn;console.error=()=>{};console.warn=()=>{};try{return await fn()}finally{console.error=error;console.warn=warn}};
+
+  await regression('every change of view is announced with the view and the one before, never the same view again; Pick’em refreshes only when it takes the page back from Survivor',async()=>{
+    const v=await view();v.doc.visibilityState='visible';
+    const seen=[];v.doc.addEventListener('poolcenter:viewchange',e=>seen.push([e.detail.previous,e.detail.view]));
+    let from=v.calls.length;v.click('standings');v.click('standings');v.click('games');v.click('home');await flush();
+    assert.deepEqual(seen,[['home','standings'],['standings','games'],['games','home']]);
+    assert.deepEqual(tally(v,from),NONE,'no Pick’em refresh between Pick’em views');
+    seen.length=0;from=v.calls.length;v.click('survivor');await flush();
+    assert.deepEqual(seen,[['home','survivor']]);assert.deepEqual(tally(v,from),NONE,'entering Survivor is Survivor’s refresh, not Pick’em’s');
+    assert.equal(v.$('sync').textContent,"PICK'EM PAUSED · refreshes on return");
+    seen.length=0;from=v.calls.length;v.click('picks');await flush();
+    assert.deepEqual(seen,[['survivor','picks']]);assert.deepEqual(tally(v,from),FULL,'leaving Survivor: one full Pick’em refresh');
+    assert.match(v.$('sync').textContent,/^LIVE · /);
+  });
+  await regression('each refresh, a failed refresh, a publication found stale or verified again, a chosen week installed and a boot failure announce poolcenter:update for Pick’em, carrying no data',async()=>{
+    const v=await view({published:twoWeeks(),search:'?view=home&season=2026&week=3'});
+    const seen=[];v.doc.addEventListener('poolcenter:update',e=>seen.push(e.detail));
+    await v.refresh();
+    assert(seen.length>=1,'a refresh announces');assert(seen.every(d=>JSON.stringify(d)==='{"contest":"pickem"}'),`the contest only: ${JSON.stringify(seen)}`);
+    let n=seen.length;v.setFailure(true);await v.refresh();
+    assert(seen.length>n,'a failed refresh announces');assert.equal(ask(v).feed.failed,true);assert.match(v.$('sync').textContent,/^FEED UNAVAILABLE/);
+    n=seen.length;v.setFailure(false);v.hooks.index=()=>({ok:false,status:503,json:async()=>({})});await quiet(()=>v.refresh());
+    assert(seen.length>n,'a stale publication announces');assert.equal(ask(v).publishedStale,true);
+    n=seen.length;v.hooks.index=undefined;await v.refresh();
+    assert(seen.length>n,'verified again announces');assert.equal(ask(v).publishedStale,false);
+    n=seen.length;const select=v.$('weekSelect');select.value='2026-4';for(const fn of select.listeners.change||[])fn();await flush();
+    assert(seen.length>n,'a chosen week announces');assert.deepEqual([ask(v).week,ask(v).revision],[4,2]);
+    let release;
+    const failing=await view({published:[],bootHooks:{index:()=>new Promise(resolve=>{release=resolve})}});
+    const events=[];failing.doc.addEventListener('poolcenter:update',e=>events.push(e.detail.contest));
+    await quiet(async()=>{release({ok:true,status:200,json:async()=>[]});await flush()});
+    assert.deepEqual(events,['pickem'],'a boot failure announces');
+    assert.equal(failing.$('sync').textContent,'CONFIG UNAVAILABLE');
+    assert.deepEqual(ask(failing),{ready:false,reason:"Pick'em standings have not loaded yet."});
+  });
+  await regression('the share snapshot carries the group race render() shows (each tracked entry’s status and note, as the Group Scenarios rows read) and the game Game Watch leads with, public values only',async()=>{
+    const v=await view(),s=ask(v);
+    assert.deepEqual(s.race,{outcomes:1,racePaths:1,items:[{name:'D.C.',status:'WINNER',note:'Pool winner'},{name:'DJS',status:'OUT',note:'Slate complete'}]});
+    for(const x of s.race.items)assert(v.$('raceList').innerHTML.includes(`<div class="race-name">${x.name}</div><div class="race-sub">${x.note}</div></div><span class="status-pill ${x.status.toLowerCase()}">${x.status}</span>`),`${x.name} reads the same in Group Scenarios`);
+    assert.deepEqual(s.spotlight,{away:'DEN',home:'KC',status:'FINAL',live:false,final:true,awayScore:24,homeScore:17});
+    assert.match(v.$('homeGamePreview').innerHTML,/^<div class="game final">/);
+    const kickoff=game({awayScore:'0',homeScore:'0'});kickoff.status={type:{state:'pre',completed:false,shortDetail:'Sun 4:25 PM'}};
+    v.setPayload({events:[kickoff]});await v.refresh();
+    const pre=ask(v);
+    assert.deepEqual(pre.spotlight,{away:'DEN',home:'KC',status:'Sun 4:25 PM',live:false,final:false,awayScore:null,homeScore:null},'before kickoff: no scores');
+    assert.deepEqual(pre.race.items.map(x=>[x.name,x.status,x.note]),[['D.C.','ALIVE','Ceiling 1 wins'],['DJS','ALIVE','Ceiling 1 wins']]);
+    assert.deepEqual([pre.race.outcomes,pre.race.racePaths],[3,3]);
+    const live=game({awayScore:'3',homeScore:'7'});live.status={type:{state:'in',completed:false,shortDetail:'2nd 5:12'}};
+    v.setPayload({events:[live]});await v.refresh();
+    assert.deepEqual(ask(v).spotlight,{away:'DEN',home:'KC',status:'2nd 5:12',live:true,final:false,awayScore:3,homeScore:7},'a live game leads with its score');
+    assert.match(v.$('homeGamePreview').innerHTML,/^<div class="game live">/);
+    assert(!/"picks"|pickNumbers|"id"|"mnf"|field-/.test(JSON.stringify(ask(v))),'public values only');
+    let release;
+    const loading=await view({bootHooks:{score:()=>new Promise(resolve=>{release=resolve})}});
+    assert.deepEqual(ask(loading),{ready:false,reason:'Scores for this week are still loading.'},'nothing, not even the race, before the week has scores');
+    loading.hooks.score=undefined;release({ok:true,status:200,json:async()=>structuredClone({events:[game()]})});await flush();
+    assert.equal(ask(loading).race.items.length,2);
+  });
+  await regression('the snapshot a Pick’em view other than Home answers is the same snapshot: the dashboard reads nothing the page does not show',async()=>{
+    const v=await view();const home=ask(v);
+    v.click('standings');await flush();
+    const standings=ask(v);
+    assert.deepEqual(standings,{...home,feed:standings.feed},'the same rows, race and spotlight');
+  });
+
+  assert.equal(failures.length,0,`Home dashboard Pick'em regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+}
+
+console.log('weekly Home dashboard regressions passed: every view change announced, Pick’em refresh ownership unchanged, update announcements, and the race and spotlight in the snapshot');

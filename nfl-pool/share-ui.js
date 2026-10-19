@@ -2,10 +2,12 @@
 // runs, asks the app that owns its view for a snapshot with a poolcenter:share event, builds the card from it, draws it once
 // into a 1080 x 1350 PNG and previews that same PNG. Share hands the PNG to the device's share sheet where the browser can
 // share files, Download saves it, and Copy link and Copy summary copy text. The snapshot is taken once, when the preview
-// opens: the page keeps refreshing underneath it, and the card says when it was taken.
-import {buildCard,drawCard,shareSupport,sharePayload,CARD_WIDTH,CARD_HEIGHT} from './share-card.js?v=1';
+// opens: the page keeps refreshing underneath it, and the card says when it was taken. The Home dashboard's share menu
+// (home-dashboard.js) holds the same buttons for both contests, one for the combined dashboard card (both snapshots, taken
+// at the same instant) and Copy dashboard link, all handled here: there is one share controller on the page.
+import {buildCard,drawCard,shareSupport,sharePayload,CARD_WIDTH,CARD_HEIGHT} from './share-card.js?v=2';
 
-const TITLES={pickem:"Share Pick'em standings",survivor:'Share Survivor results'};
+const TITLES={pickem:"Share Pick'em standings",survivor:'Share Survivor results',dashboard:'Share combined dashboard card'};
 // A PNG export that has not finished in this time is treated as failed rather than left spinning.
 const EXPORT_TIMEOUT_MS=15000;
 let ui=null,current=null,generation=0;
@@ -15,6 +17,7 @@ function requestSnapshot(contest){
   document.dispatchEvent(new CustomEvent('poolcenter:share',{detail}));
   return detail.snapshot;
 }
+const snapshotFor=contest=>contest==='dashboard'?{pickem:requestSnapshot('pickem'),survivor:requestSnapshot('survivor')}:requestSnapshot(contest);
 function el(tag,props={},...children){
   const node=document.createElement(tag);
   for(const [key,value] of Object.entries(props)){
@@ -78,7 +81,7 @@ async function openCard(contest,opener){
   view.buttons.download.className='share-action';view.actions.hidden=false;
   if(!view.dialog.open){if(typeof view.dialog.showModal==='function')view.dialog.showModal();else view.dialog.setAttribute('open','')}
   // The one snapshot of this card: everything below is built from it, whatever the page does next.
-  const card=buildCard(contest,requestSnapshot(contest),{now:Date.now(),href:location.href});
+  const card=buildCard(contest,snapshotFor(contest),{now:Date.now(),href:location.href});
   if(!card.ok){
     view.message.textContent=card.reason;view.actions.hidden=true;
     view.note.textContent='No card was made, so nothing misleading can be shared. The page keeps updating; try Share again in a moment.';
@@ -123,11 +126,12 @@ function onDownload(){
   ui.dialog.appendChild(link);link.click();link.remove();
   setStatus(`Downloading ${c.card.fileName}.`);
 }
-async function copyText(value){
+async function copyText(value,host=ui?.dialog){
   try{if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(value);return true}}catch{}
-  // The legacy copy command on a selected text area inside the dialog (the page behind a modal dialog cannot take focus).
+  // The legacy copy command on a selected text area inside the dialog (the page behind a modal dialog cannot take focus),
+  // or in the page itself for the Home share menu.
   try{
-    const area=el('textarea',{class:'share-copy',readonly:''});area.value=value;ui.dialog.appendChild(area);area.select();
+    const area=el('textarea',{class:'share-copy',readonly:''});area.value=value;(host||document.body).appendChild(area);area.select();
     const ok=document.execCommand('copy')===true;area.remove();return ok;
   }catch{return false}
 }
@@ -138,8 +142,32 @@ async function copy(kind){
   if(ok)setStatus(`${label} copied.`);else setStatus(`Couldn’t copy automatically. Press and hold to copy the ${label.toLowerCase()}:\n${value}`,true);
 }
 
+// Copy dashboard link (the Home share menu): the link that opens Home with the weeks both contests show, exactly the combined
+// card's link; with only one contest on screen, that contest's week; with neither, Home itself. Never a week the page has not
+// verified.
+function dashboardLink(){
+  const pk=requestSnapshot('pickem'),sv=requestSnapshot('survivor'),u=new URL('./',location.href);u.search='';u.hash='';
+  u.searchParams.set('view','home');
+  const season=pk?.ready===true?pk.season:sv?.ready===true?sv.season:null;
+  if(season!==null)u.searchParams.set('season',String(season));
+  if(pk?.ready===true)u.searchParams.set('week',String(pk.week));
+  if(sv?.ready===true&&sv.season===season)u.searchParams.set('sw',String(sv.week));
+  return u.href;
+}
+async function copyDashboardLink(){
+  const value=dashboardLink(),ok=await copyText(value,document.body),status=document.querySelector?.('[data-share-link-status]');
+  if(!status)return;
+  status.textContent=ok?'Dashboard link copied.':`Couldn’t copy automatically. Press and hold to copy the link:\n${value}`;
+  status.className=ok?'share-status':'share-status error';
+}
+
 for(const button of document.querySelectorAll('[data-share-card]')){
   const contest=button.dataset.shareCard;if(!TITLES[contest])continue;
   button.addEventListener('click',()=>void openCard(contest,button));
+  button.hidden=false;
+}
+for(const button of document.querySelectorAll('[data-share-link]')){
+  if(button.dataset.shareLink!=='dashboard')continue;
+  button.addEventListener('click',()=>void copyDashboardLink());
   button.hidden=false;
 }
