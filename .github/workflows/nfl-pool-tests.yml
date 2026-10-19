@@ -20,7 +20,7 @@ defaults:
 jobs:
   regression-gate:
     # Branch protection on main requires this exact check name, so it stays
-    # "12-suite regression gate" although the gate now runs the 15 suites
+    # "12-suite regression gate" although the gate now runs the 16 suites
     # below; renaming it is a separate, controlled branch-protection change.
     name: 12-suite regression gate
     runs-on: ubuntu-latest
@@ -30,7 +30,7 @@ jobs:
       # nfl-pool/**/*.test.mjs files are exactly these paths, so adding,
       # removing or renaming a suite means updating this list and the count in
       # the same change.
-      EXPECTED_SUITE_COUNT: '15'
+      EXPECTED_SUITE_COUNT: '16'
       EXPECTED_SUITES: |
         nfl-pool/admin/incident-rulings.test.mjs
         nfl-pool/admin/parser-core.test.mjs
@@ -38,6 +38,7 @@ jobs:
         nfl-pool/admin/survivor-parser.test.mjs
         nfl-pool/admin/survivor-publish-checks.test.mjs
         nfl-pool/home-dashboard.test.mjs
+        nfl-pool/picks-mobile.test.mjs
         nfl-pool/public-math.test.mjs
         nfl-pool/pwa.test.mjs
         nfl-pool/score-feed-proxy.test.mjs
@@ -120,7 +121,7 @@ jobs:
           fi
           echo "Inventory guard passed: the discovered suites are exactly the $count approved suites."
 
-      - name: Run 15 suites
+      - name: Run 16 suites
         run: |
           set -euo pipefail
           work="$(mktemp -d)"

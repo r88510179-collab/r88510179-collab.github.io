@@ -18,6 +18,7 @@
 <link rel="stylesheet" href="survivor.css?v=4">
 <link rel="stylesheet" href="share.css?v=1">
 <link rel="stylesheet" href="home-dashboard.css?v=1">
+<link rel="stylesheet" href="picks-mobile.css?v=1">
 </head>
 <body>
 <div class="stadium-glow" aria-hidden="true"></div>
@@ -177,9 +178,10 @@
         <div class="head"><div><span class="section-kicker">Rooting guide</span><h2 id="swing-title">Swing Games</h2><div class="meta">Your four entries disagree · full-field pick ownership shown when available</div></div><div class="meta" id="swingMeta">—</div></div>
         <div class="swing-list" id="swingList"></div>
       </section>
-      <section class="card rules-card" aria-labelledby="pickem-rules-title">
-        <div class="head"><div><span class="section-kicker">Halted games</span><h2 id="pickem-rules-title">Rules &amp; rulings</h2><div class="meta">Contest policy and commissioner-confirmed rulings for this week</div></div></div>
-        <div class="rules-body" id="pickemRules"><div class="empty">Loading contest rules and rulings…</div></div>
+      <section class="card rules-card rules-collapsible is-collapsed" aria-labelledby="pickem-rules-title" data-rules-card="pickem">
+        <div class="head rules-head"><div class="rules-head-copy"><span class="section-kicker">Halted games</span><h2 id="pickem-rules-title">Rules &amp; rulings</h2><div class="meta">Contest policy and commissioner-confirmed rulings for this week</div></div><button type="button" class="rules-toggle" data-rules-toggle="pickem" aria-expanded="false" aria-controls="pickem-rules-body" aria-label="Expand Rules &amp; rulings"><span class="rules-chevron" aria-hidden="true"></span><span data-rules-toggle-label>Expand</span></button></div>
+        <div class="rules-status"><p class="rules-summary" data-rules-summary="pickem">Loading contest rules and rulings…</p><div class="rules-alerts" data-rules-alerts="pickem" role="status" aria-live="polite"></div></div>
+        <div class="rules-panel" id="pickem-rules-body" hidden><div class="rules-body" id="pickemRules"><div class="empty">Loading contest rules and rulings…</div></div></div>
       </section>
     </section>
 
@@ -190,13 +192,15 @@
       <div class="survivor-grid"><section class="card"><div class="head"><div><span class="section-kicker">Your entries</span><h2>D.C. · DJS · Thaddeus</h2></div></div><div class="survivor-card-body" id="svTracked"></div></section><section class="card"><div class="head"><div><span class="section-kicker">Current week</span><h2>Pick Distribution</h2></div></div><div class="survivor-card-body" id="svDistribution"></div></section></div>
       <section class="card survivor-decision-card" style="margin-top:10px"><div class="head"><div><span class="section-kicker">Next week</span><h2>Decision Support · <span id="svDecisionWeek">Week —</span></h2><div class="meta" id="svDecisionNote">Waiting for current results and next-week schedule.</div></div></div><div class="survivor-decision-list" id="svDecisionEntries"></div><div class="survivor-decision-disclaimer">Market favorite labels use ESPN's available line when present. Field availability is historical burn data, not a forecast of what competitors will pick.</div></section>
       <section class="card" style="margin-top:10px"><div class="head"><div><span class="section-kicker">Attrition</span><h2>Weekly Field Progress</h2></div></div><div class="survivor-progress" id="svProgress"></div></section>
-      <section class="card rules-card" style="margin-top:10px" aria-labelledby="survivor-rules-title"><div class="head"><div><span class="section-kicker">Halted games</span><h2 id="survivor-rules-title">Rules &amp; rulings</h2><div class="meta">Contest policy and commissioner-confirmed rulings through this week</div></div></div><div class="rules-body" id="svRules"><div class="empty">Loading contest rules and rulings…</div></div></section>
+      <section class="card rules-card rules-collapsible is-collapsed" style="margin-top:10px" aria-labelledby="survivor-rules-title" data-rules-card="survivor"><div class="head rules-head"><div class="rules-head-copy"><span class="section-kicker">Halted games</span><h2 id="survivor-rules-title">Rules &amp; rulings</h2><div class="meta">Contest policy and commissioner-confirmed rulings through this week</div></div><button type="button" class="rules-toggle" data-rules-toggle="survivor" aria-expanded="false" aria-controls="survivor-rules-body" aria-label="Expand Rules &amp; rulings"><span class="rules-chevron" aria-hidden="true"></span><span data-rules-toggle-label>Expand</span></button></div><div class="rules-status"><p class="rules-summary" data-rules-summary="survivor">Loading contest rules and rulings…</p><div class="rules-alerts" data-rules-alerts="survivor" role="status" aria-live="polite"></div></div><div class="rules-panel" id="survivor-rules-body" hidden><div class="rules-body" id="svRules"><div class="empty">Loading contest rules and rulings…</div></div></div></section>
     </section>
 
     <section class="view-panel" data-view-panel="picks" hidden>
       <section class="page-title"><span class="section-kicker">Weekly selections</span><h1>Picks</h1><p>Side-by-side picks for D.C., JC, DJS and Thaddeus. Matchup headers show full-field ownership when available.</p></section>
       <section class="card picks" aria-labelledby="picks-title">
         <div class="head"><h2 id="picks-title">Pick Board</h2><div class="meta">✓ correct · ✕ incorrect · tie = 1 loss · VOID = removed by commissioner ruling</div></div>
+        <div class="picks-filters" id="picksFilters" hidden></div>
+        <div class="picks-board" id="picksBoard" hidden><div class="empty">Loading picks…</div></div>
         <div class="scroll"><table><thead id="pickHead"></thead><tbody id="pickBody"></tbody></table></div>
       </section>
     </section>
@@ -214,10 +218,11 @@
 </nav>
 
 <script src="score-feed-proxy.js?v=2"></script>
-<script type="module" src="weekly-app.js?v=weekly-v22"></script>
-<script type="module" src="survivor-app.js?v=11"></script>
+<script type="module" src="weekly-app.js?v=weekly-v23"></script>
+<script type="module" src="survivor-app.js?v=12"></script>
 <script type="module" src="share-ui.js?v=2"></script>
 <script type="module" src="home-dashboard.js?v=1"></script>
+<script type="module" src="picks-mobile.js?v=1"></script>
 <script src="pwa.js?v=1" defer></script>
 </body>
 </html>
