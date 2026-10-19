@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="survivor.css?v=4">
 <link rel="stylesheet" href="share.css?v=1">
 <link rel="stylesheet" href="home-dashboard.css?v=1">
-<link rel="stylesheet" href="picks-mobile.css?v=1">
+<link rel="stylesheet" href="picks-mobile.css?v=2">
 </head>
 <body>
 <div class="stadium-glow" aria-hidden="true"></div>
@@ -196,13 +196,22 @@
     </section>
 
     <section class="view-panel" data-view-panel="picks" hidden>
-      <section class="page-title"><span class="section-kicker">Weekly selections</span><h1>Picks</h1><p>Side-by-side picks for D.C., JC, DJS and Thaddeus. Matchup headers show full-field ownership when available.</p></section>
+      <section class="page-title"><span class="section-kicker">Weekly selections</span><h1>Picks</h1><p><span class="pm-copy-table">Side-by-side picks for D.C., JC, DJS and Thaddeus. Matchup headers show full-field ownership when available.</span><span class="pm-copy-cards">Picks for D.C., JC, DJS and Thaddeus by kickoff slate. Tap a matchup for every pick, its grading and full-field ownership.</span></p></section>
       <section class="card picks" aria-labelledby="picks-title">
         <div class="head"><h2 id="picks-title">Pick Board</h2><div class="meta">✓ correct · ✕ incorrect · tie = 1 loss · VOID = removed by commissioner ruling</div></div>
         <div class="picks-filters" id="picksFilters" hidden></div>
         <div class="picks-board" id="picksBoard" hidden><div class="empty">Loading picks…</div></div>
         <div class="scroll"><table><thead id="pickHead"></thead><tbody id="pickBody"></tbody></table></div>
       </section>
+      <dialog class="pm-dialog" id="picksEntrants" aria-labelledby="picksEntrantsTitle">
+        <div class="pm-sheet">
+          <div class="pm-sheet-head"><div><span class="section-kicker">Pick Board</span><h2 id="picksEntrantsTitle">Entries to compare</h2></div><button type="button" class="share-close" data-picks-close aria-label="Close entry selection">✕</button></div>
+          <p class="pm-sheet-note">Choose any combination of the tracked entries. At least one stays selected; the choice is remembered in this browser.</p>
+          <div class="pm-sheet-list" data-picks-entrants></div>
+          <p class="pm-sheet-status" data-picks-dialog-note role="status" aria-live="polite"></p>
+          <div class="pm-sheet-actions"><button type="button" class="share-action" data-picks-entrant="*">Select all</button><button type="button" class="share-action primary" data-picks-close>Done</button></div>
+        </div>
+      </dialog>
     </section>
   </div>
 
@@ -222,7 +231,7 @@
 <script type="module" src="survivor-app.js?v=12"></script>
 <script type="module" src="share-ui.js?v=2"></script>
 <script type="module" src="home-dashboard.js?v=1"></script>
-<script type="module" src="picks-mobile.js?v=1"></script>
+<script type="module" src="picks-mobile.js?v=2"></script>
 <script src="pwa.js?v=1" defer></script>
 </body>
 </html>
