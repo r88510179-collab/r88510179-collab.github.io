@@ -26,8 +26,13 @@ let PUB=null,PUB_STALE=null,PUB_WEEKS=[],SWITCH_ERROR=null,refreshStartedAt=0,sw
 // Shareable cards (share-ui.js). SHARE_FEED is the outcome of the latest score refresh of the config on screen, kept with
 // that config (cfg) so a week or revision installed since is never shared with the previous one's scores: fetchedAt is its
 // last good feed (null until one arrives), failed says the latest refresh failed (FEED UNAVAILABLE), and incomplete,
-// warnings and review are what the header's INCOMPLETE and UNDER REVIEW were set from.
-let SHARE_FEED=null;
+// warnings and review are what the header's INCOMPLETE and UNDER REVIEW were set from. LAST_RACE is the group race
+// render() last computed for the config on screen (home-dashboard.js summarises it; it is never computed again for that).
+let SHARE_FEED=null,LAST_RACE=null;
+// Home dashboard (home-dashboard.js): a poolcenter:update event says the Pick'em state behind the share snapshot may have
+// changed (scores, a feed failure, a publication installed, verified or found stale, or boot failing), so the dashboard
+// re-reads the snapshot. It carries no data: the snapshot is the only interface, read with poolcenter:share.
+const announce=()=>{if(typeof document.dispatchEvent==='function')document.dispatchEvent(new CustomEvent('poolcenter:update',{detail:{contest:'pickem'}}))};
 const PUB_INDEX_COLUMNS='season,week,revision,published_at,status',PUB_ROW_COLUMNS='season,week,status,revision,published_at,config';
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
@@ -44,13 +49,15 @@ function setView(view,{push=false,scroll=true}={}){
   if(push){const u=new URL(location.href);u.searchParams.set('view',next);history.pushState({view:next},'',u)}
   document.querySelectorAll('.app-menu[open]').forEach(menu=>menu.removeAttribute('open'));
   if(scroll)window.scrollTo({top:0,behavior:'smooth'});
-  // HDC-15: moving between Survivor and the Pick'em views hands the page to the other app, which refreshes once at once
-  // (Survivor learns of it from this event); moving between Pick'em views changes nothing. While Survivor has the page,
-  // Pick'em does not refresh, so its header says it is paused instead of keeping a LIVE it no longer maintains.
-  if(VALID_VIEWS.has(previous)&&(previous==='survivor')!==(next==='survivor')){
-    if(next==='survivor'&&CFG)showPaused();
+  // HDC-15: moving between Survivor and the Pick'em views hands the page to the other app, which refreshes once at once;
+  // moving between Pick'em views changes nothing for Pick'em. While Survivor has the page, Pick'em does not refresh, so its
+  // header says it is paused instead of keeping a LIVE it no longer maintains. Every change of view is announced
+  // (poolcenter:viewchange): Survivor refreshes on it only when it has the page, or, bounded, when Home becomes active.
+  if(VALID_VIEWS.has(previous)&&previous!==next){
+    const crossing=(previous==='survivor')!==(next==='survivor');
+    if(crossing&&next==='survivor'&&CFG)showPaused();
     document.dispatchEvent(new CustomEvent('poolcenter:viewchange',{detail:{view:next,previous}}));
-    autoRefresh();
+    if(crossing)autoRefresh();
   }
 }
 function setupViewNavigation(){
@@ -202,7 +209,7 @@ function applyConfig(c,publication){
   S=P.filter(p=>!p.noSubmission);
   F=(CFG.fieldEntries||[]).map(mapField);
   TIEBREAK_INDEX=CFG.tiebreakGameIndex;NFL=M.map(([away,home])=>({away,home,state:'pre',completed:false,winner:null,awayScore:null,homeScore:null,detail:'Scheduled',eventId:null}));
-  RULINGS=null;LAST_EVENTS=null;FEED_ISSUES=[];deriveGames();renderStaticLabels();
+  RULINGS=null;LAST_EVENTS=null;FEED_ISSUES=[];LAST_RACE=null;deriveGames();renderStaticLabels();
 }
 function formatWeekDates(){
   const dates=(CFG.games||[]).map(g=>g.date||g.sourceDate).filter(Boolean).map(v=>new Date(`${String(v).slice(0,10)}T12:00:00Z`)).filter(d=>!Number.isNaN(d.valueOf()));
@@ -336,6 +343,7 @@ function render(){
   // HDC-12: a void game is resolved (complete, not remaining) but is not an NFL final; held games are not resolved.
   const nflFinals=G.filter(g=>g.completed&&!g.void).length,voids=G.filter(g=>g.void).length,onHold=rulingsUnavailable(),tbVoid=tiebreakVoid();
   const r=rows(),lead=r[0],f=nflFinals+voids,live=G.filter(g=>g.state==='in'&&!g.completed).length,t=tiebreak(),finalWinners=f===M.length?finalWinnerIndices(G,t):[],race=raceStatus(),field=fieldSnapshot();
+  LAST_RACE=race;
   const unprojected=tbVoid?' · no tiebreak this week (tiebreak game void)':t.final?'':' · unresolved tiebreak not projected';
   let rank=1;
   $('fieldSummary').textContent=field?`${field.size} entries · field names anonymized`:'Full-field data unavailable for this week.';
@@ -447,7 +455,7 @@ function ageSeconds(ts){const ms=Date.parse(ts);if(!Number.isFinite(ms))return n
 // HDC-15: published data that could not be verified is never LIVE: it takes LIVE's (or DELAYED's) place and rides along with
 // every more serious state, which keeps its precedence.
 function showPaused(){$('sync').textContent="PICK'EM PAUSED · refreshes on return";$('dot').style.background='var(--dim)'}
-function setSync(fetchedAt,warnings=[],{hold=false,review=false,stale=false}={}){lastFetchedAt=typeof fetchedAt==='string'?fetchedAt:null;SHARE_FEED={cfg:CFG,fetchedAt:lastFetchedAt,failed:false,incomplete:warnings.length>0,warnings:warnings.length,review};if(document.body.dataset.view==='survivor'){showPaused();return}const age=ageSeconds(lastFetchedAt),delayed=age===null||age>30,incomplete=warnings.length>0,published=PUB_STALE!==null,label=hold?'ON HOLD':incomplete?'INCOMPLETE':review?'UNDER REVIEW':published?'PUBLISHED DATA STALE':delayed?'DELAYED':'LIVE',ageText=age===null?'age unknown':`data ${age}s old`;$('sync').textContent=`${label}${published&&label!=='PUBLISHED DATA STALE'?' · PUBLISHED DATA STALE':''}${stale?' · RULINGS STALE':''} · ${ageText}${warnings.length?` · ${warnings.length} warning${warnings.length===1?'':'s'}`:''}`;$('dot').style.background=hold?'var(--red)':incomplete||delayed||review||stale||published?'var(--gold)':'var(--green)'}
+function setSync(fetchedAt,warnings=[],{hold=false,review=false,stale=false}={}){lastFetchedAt=typeof fetchedAt==='string'?fetchedAt:null;SHARE_FEED={cfg:CFG,fetchedAt:lastFetchedAt,failed:false,incomplete:warnings.length>0,warnings:warnings.length,review};if(document.body.dataset.view==='survivor'){showPaused();announce();return}const age=ageSeconds(lastFetchedAt),delayed=age===null||age>30,incomplete=warnings.length>0,published=PUB_STALE!==null,label=hold?'ON HOLD':incomplete?'INCOMPLETE':review?'UNDER REVIEW':published?'PUBLISHED DATA STALE':delayed?'DELAYED':'LIVE',ageText=age===null?'age unknown':`data ${age}s old`;$('sync').textContent=`${label}${published&&label!=='PUBLISHED DATA STALE'?' · PUBLISHED DATA STALE':''}${stale?' · RULINGS STALE':''} · ${ageText}${warnings.length?` · ${warnings.length} warning${warnings.length===1?'':'s'}`:''}`;$('dot').style.background=hold?'var(--red)':incomplete||delayed||review||stale||published?'var(--gold)':'var(--green)';announce()}
 // HDC-15: the score feed (headers and body) is time-limited and abandoned with its refresh, like the publication reads. One
 // that runs out of time fails as a timeout, which the refresh reports as FEED UNAVAILABLE; one abandoned because a newer
 // refresh or week took over fails as an abort, which update() reports nothing for. So a timeout is told apart by which
@@ -469,7 +477,7 @@ async function feed(signal){
 // view is derived again on every render. A rulings load that fails keeps rulings already verified this session, shown as
 // RULINGS STALE; with none, the contest holds and nothing is graded from the NFL feed alone. HDC-15: it runs inside a refresh
 // generation (refresh() or a week switch), which owns the abort controller and the REFRESH button.
-async function update(id,signal){try{const [scores,rulings]=await Promise.allSettled([feed(signal),CFG.season<FIRST_RULING_SEASON?Promise.resolve(null):loadRulings(signal)]);if(id!==gen)return;if(rulings.status==='rejected')console.warn(rulings.reason);RULINGS=evaluateContestRulings({contestId:contestIdFor(CFG.season,'pickem'),contestType:'pickem',season:CFG.season,...(rulings.status==='fulfilled'?{data:rulings.value}:{error:rulings.reason}),previous:RULINGS});if(scores.status==='rejected')throw scores.reason;const j=scores.value,issues=[],next=M.map(([a,h],i)=>{const s=selectEvent(j.events,a,h,NFL[i]);if(s.warning)issues.push({i,text:s.warning,missing:s.missing===true});if(!s.event)return NFL[i];const p=parseEvent(s.event,a,h,NFL[i],i===TIEBREAK_INDEX);if(p.warning)issues.push({i,text:p.warning,halted:p.halted});return p.game});if(id!==gen)return;NFL=next;LAST_EVENTS=j.events;FEED_ISSUES=issues;render();report(j.fetchedAt)}catch(e){if(e?.name==='AbortError'||id!==gen)return;SHARE_FEED={...(SHARE_FEED?.cfg===CFG?SHARE_FEED:{cfg:CFG,fetchedAt:null,incomplete:false,warnings:0,review:false}),failed:true};render();const staleText=`${PUB_STALE?' · PUBLISHED DATA STALE':''}${rulingsStale()?' · RULINGS STALE':''}`;if(document.body.dataset.view==='survivor')showPaused();else{$('sync').textContent=lastFetchedAt?`FEED UNAVAILABLE${staleText} · last good ${ageSeconds(lastFetchedAt)??'?'}s ago`:`FEED UNAVAILABLE${staleText}`;$('dot').style.background='var(--red)'}warn(['Automatic score refresh failed. Existing results are preserved; tap REFRESH to retry.'],{hold:rulingsUnavailable()?RULINGS.reason:null,stale:rulingsStale()})}}
+async function update(id,signal){try{const [scores,rulings]=await Promise.allSettled([feed(signal),CFG.season<FIRST_RULING_SEASON?Promise.resolve(null):loadRulings(signal)]);if(id!==gen)return;if(rulings.status==='rejected')console.warn(rulings.reason);RULINGS=evaluateContestRulings({contestId:contestIdFor(CFG.season,'pickem'),contestType:'pickem',season:CFG.season,...(rulings.status==='fulfilled'?{data:rulings.value}:{error:rulings.reason}),previous:RULINGS});if(scores.status==='rejected')throw scores.reason;const j=scores.value,issues=[],next=M.map(([a,h],i)=>{const s=selectEvent(j.events,a,h,NFL[i]);if(s.warning)issues.push({i,text:s.warning,missing:s.missing===true});if(!s.event)return NFL[i];const p=parseEvent(s.event,a,h,NFL[i],i===TIEBREAK_INDEX);if(p.warning)issues.push({i,text:p.warning,halted:p.halted});return p.game});if(id!==gen)return;NFL=next;LAST_EVENTS=j.events;FEED_ISSUES=issues;render();report(j.fetchedAt)}catch(e){if(e?.name==='AbortError'||id!==gen)return;SHARE_FEED={...(SHARE_FEED?.cfg===CFG?SHARE_FEED:{cfg:CFG,fetchedAt:null,incomplete:false,warnings:0,review:false}),failed:true};render();const staleText=`${PUB_STALE?' · PUBLISHED DATA STALE':''}${rulingsStale()?' · RULINGS STALE':''}`;if(document.body.dataset.view==='survivor')showPaused();else{$('sync').textContent=lastFetchedAt?`FEED UNAVAILABLE${staleText} · last good ${ageSeconds(lastFetchedAt)??'?'}s ago`:`FEED UNAVAILABLE${staleText}`;$('dot').style.background='var(--red)'}warn(['Automatic score refresh failed. Existing results are preserved; tap REFRESH to retry.'],{hold:rulingsUnavailable()?RULINGS.reason:null,stale:rulingsStale()});announce()}}
 // HDC-15. A full refresh: verify that the config on screen is still the published revision of its week (a newer revision is
 // loaded and validated before it replaces it whole), then read the scores and the rules and rulings for whatever config is
 // active. One generation covers both, so a later refresh or week switch supersedes all of it.
@@ -498,8 +506,8 @@ async function verifyPublication(id,signal){
   catch(e){if(e?.name!=='AbortError'&&id===gen)markStale(`revision ${entry.revision} is published but could not be loaded (${e.message||e})`);return}
   if(id===gen)installPublication(row);
 }
-function markStale(reason){PUB_STALE={reason};renderWeekLine()}
-function markVerified(){PUB_STALE=null;renderWeekLine()}
+function markStale(reason){PUB_STALE={reason};renderWeekLine();announce()}
+function markVerified(){PUB_STALE=null;renderWeekLine();announce()}
 // The selector lists the published weeks in the index's order; the week on screen stays selected, so a newly published week
 // appears without moving the participant or the URL.
 function showWeeks(index,selected=PUB){
@@ -508,7 +516,7 @@ function showWeeks(index,selected=PUB){
   PUB_WEEKS=index;
 }
 // A validated row replaces the config on screen whole (the initial/choose path); it renders at once as one revision.
-function installPublication(row){applyConfig(row.config,{season:row.season,week:row.week,revision:row.revision,publishedAt:row.publishedAt});warn([]);render()}
+function installPublication(row){applyConfig(row.config,{season:row.season,week:row.week,revision:row.revision,publishedAt:row.publishedAt});warn([]);render();announce()}
 // A chosen week replaces the week on screen only once its exact published row has loaded and validated. A failed load keeps
 // the week on screen, puts the selector back, says so (until the next choice), and refreshes the week on screen as usual.
 async function switchWeek(season,week){
@@ -558,7 +566,15 @@ async function loadWeeks(){
 // what render() shows (the same rows in the same order, the same records, group ranks and full-field ranks, the same game
 // counts) and the state of the feed, rulings and publication behind them. Public values only: the tracked entries' names,
 // records and ranks and the field's size, never a field entry. Nothing is shared while a chosen week loads, or before the
-// week on screen has scores from this page's own feed.
+// week on screen has scores from this page's own feed. home-dashboard.js reads the same snapshot (its Quick Overview and the
+// collapsed summaries of Live Standings, Pool Status, Group Scenarios and Game Watch), so it also carries the group race
+// render() computed (race: each tracked entry's status and note) and the game Game Watch leads with (spotlight: the first
+// game in the page's own order, live first, with the NFL scores the page shows).
+function spotlight(){
+  const first=gameOrder()[0];if(!first)return null;
+  const {g,i}=first,fact=g.void||g.hold?NFL[i]:g,show=fact.state==='in'||fact.completed;
+  return{away:g.away,home:g.home,status:state(g),live:g.state==='in'&&!g.completed,final:g.completed===true,awayScore:show?score(fact.awayScore):null,homeScore:show?score(fact.homeScore):null};
+}
 function shareSnapshot(){
   if(!CFG||!PUB)return{ready:false,reason:"Pick'em standings have not loaded yet."};
   if(switching)return{ready:false,reason:'Another week is loading. Share again once it is on screen.'};
@@ -575,11 +591,12 @@ function shareSnapshot(){
     games:{total:M.length,final:nflFinals,void:voids,live:G.filter(g=>g.state==='in'&&!g.completed).length,remaining:M.length-nflFinals-voids},
     fieldSize:field?field.size:null,tiebreak:{final:t.final,void:tiebreakVoid()},entries,
     feed:{fetchedAt:feed.fetchedAt,failed:feed.failed,incomplete:feed.incomplete,warnings:feed.warnings,review:feed.review},
-    hold:rulingsUnavailable(),rulingsStale:rulingsStale(),publishedStale:PUB_STALE!==null};
+    hold:rulingsUnavailable(),rulingsStale:rulingsStale(),publishedStale:PUB_STALE!==null,
+    race:LAST_RACE?{outcomes:LAST_RACE.outcomes,racePaths:LAST_RACE.racePaths,items:LAST_RACE.items.map(x=>({name:x.name,status:x.status,note:x.note}))}:null,spotlight:spotlight()};
 }
 document.addEventListener('poolcenter:share',event=>{if(event?.detail?.contest==='pickem')event.detail.snapshot=shareSnapshot()});
 setupViewNavigation();
 $('refresh').addEventListener('click',()=>void refresh());
 document.addEventListener('visibilitychange',autoRefresh);
-loadWeeks().catch(e=>{$('sync').textContent='CONFIG UNAVAILABLE';$('dot').style.background='var(--red)';$('error').innerHTML=`<div class="error">Unable to load weekly pool data: ${esc(e.message)}</div>`;console.error(e)});
+loadWeeks().catch(e=>{$('sync').textContent='CONFIG UNAVAILABLE';$('dot').style.background='var(--red)';$('error').innerHTML=`<div class="error">Unable to load weekly pool data: ${esc(e.message)}</div>`;console.error(e);announce()});
 setInterval(autoRefresh,20000);

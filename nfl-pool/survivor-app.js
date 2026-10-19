@@ -19,8 +19,13 @@ let rulingData=null,rawEventsByWeek=[];
 let pub=null,pubStale=null,pubWeeks=[],switchError='',running=0,refreshStartedAt=0,switching=false;
 // Shareable cards (share-ui.js). shareFeed is the outcome of the latest score load of the snapshot on screen, kept with that
 // snapshot (cfg) so a week or revision installed since is never shared with the previous one's results: at is when its
-// results last loaded (null until they first do) and failed says the latest load failed (RESULT FEED UNAVAILABLE).
-let shareFeed=null;
+// results last loaded (null until they first do) and failed says the latest load failed (RESULT FEED UNAVAILABLE). bootError
+// is why Survivor could not boot (nothing is on screen then), reported in the snapshot's reason.
+let shareFeed=null,bootError='';
+// Home dashboard (home-dashboard.js): a poolcenter:update event says the Survivor state behind the share snapshot may have
+// changed (a render, a publication verified or found stale, or boot failing), so the dashboard re-reads the snapshot. It
+// carries no data: the snapshot is the only interface, read with poolcenter:share.
+const announce=()=>{if(typeof document.dispatchEvent==='function')document.dispatchEvent(new CustomEvent('poolcenter:update',{detail:{contest:'survivor'}}))};
 const PUB_INDEX_COLUMNS='season,week,revision,published_at,status',PUB_ROW_COLUMNS='season,week,status,revision,published_at,config';
 const activeScoreControllers=new Set();
 const $=id=>document.getElementById(id);
@@ -213,6 +218,7 @@ function render(){
   const rules=$('svRules');
   if(rules)rules.innerHTML=rulesHtml(rulingData?rulesModel(rulingData,{week:cfg.week,slotState:x=>R?.forPick(x.week,x.away||x.home)||null}):null);
   $('svMeta').textContent=metaText();
+  announce();
 }
 function metaText(){return`Week ${cfg.week} · revision ${pub.revision}${pubStale?' · PUBLISHED DATA STALE':''}`}
 // The chosen week that could not be loaded, and why the publication on screen is stale.
@@ -243,6 +249,11 @@ async function updateDecisionSchedule(force=false){
 
 // Each score request must settle before the next 20 s refresh, so a hung week can never hold up the others.
 const SCORE_FEED_TIMEOUT_MS=15000;
+// Survivor refreshes every REFRESH_MS while its view has the page. On Home (the dashboard shows its summary) it refreshes
+// at most once per HOME_REFRESH_MS: Pick'em keeps its 20 s cycle there (HDC-15 single owner), and Survivor adds one bounded
+// full refresh a minute (the index, the current week's feed with any unsettled week, the rules and rulings; a settled
+// earlier week is never fetched again), joined, never doubled, by a resume or a view change that finds one running.
+const REFRESH_MS=20000,HOME_REFRESH_MS=3*REFRESH_MS;
 // HDC-15: every request a refresh waits for runs within that limit (withinTime). A refresh waits for at most three of them
 // one after another: the publication index, the snapshot of a changed revision, then the score feeds with the rules and
 // rulings side by side. However slow the network, a refresh therefore settles within the sum of those three limits (45 s);
@@ -331,8 +342,8 @@ async function verifyPublication(id){
 // A feed status still claiming LIVE from before the publication was found stale says PUBLISHED DATA STALE in its place at
 // once, worded as updateScores words it, instead of waiting for the score load in progress. LIVE comes back only with a
 // completed score load of a verified publication.
-function markStale(reason){pubStale={reason};$('svMeta').textContent=metaText();renderNotices();const feed=$('svFeed');if(feed.textContent.startsWith('LIVE · ')){feed.textContent=`PUBLISHED DATA STALE${feed.textContent.slice('LIVE'.length)}`;feed.className='survivor-feed warn'}}
-function markVerified(){pubStale=null;$('svMeta').textContent=metaText();renderNotices()}
+function markStale(reason){pubStale={reason};$('svMeta').textContent=metaText();renderNotices();const feed=$('svFeed');if(feed.textContent.startsWith('LIVE · ')){feed.textContent=`PUBLISHED DATA STALE${feed.textContent.slice('LIVE'.length)}`;feed.className='survivor-feed warn'}announce()}
+function markVerified(){pubStale=null;$('svMeta').textContent=metaText();renderNotices();announce()}
 // The selector lists the published weeks in the index's order; the week on screen stays selected, so a newly published week
 // appears without moving the participant or the URL.
 function showWeeks(index,selected=pub){
@@ -367,8 +378,14 @@ async function switchWeek(season,week){
 }
 // Timer refreshes, resume and view activation refresh Survivor only while it is the active view of a visible page, decided
 // before any request is made, and join a refresh that is already running (unless it has outlived STALL_MS, the longest a
-// refresh can take) instead of starting a second.
-function autoRefresh(){if(cfg&&document.visibilityState==='visible'&&document.body.dataset.view==='survivor'&&!switching&&(!running||Date.now()-refreshStartedAt>=STALL_MS))void refresh()}
+// refresh can take) instead of starting a second. With Home active on a visible page they refresh Survivor only once the
+// last refresh started HOME_REFRESH_MS ago (bounded: the Home dashboard summary), and never while another Pick'em view has
+// the page.
+function autoRefresh(){
+  if(!cfg||document.visibilityState!=='visible'||switching||(running&&Date.now()-refreshStartedAt<STALL_MS))return;
+  const view=document.body.dataset.view;
+  if(view==='survivor'||(view==='home'&&Date.now()-refreshStartedAt>=HOME_REFRESH_MS))void refresh();
+}
 
 // HDC-15: boot reads the publication index, chooses the requested (or latest) week, and installs that week's snapshot once it
 // has validated; the score feeds and the rules and rulings follow. The selector is filled from the index first, so another
@@ -391,8 +408,11 @@ async function load(){
 // counts and tracked states render() shows, from the same survivor-math calls, and the state of the result feeds, rulings
 // and publication behind them. Public values only: aggregate counts and the tracked entries' names, states and shown picks,
 // never a field entry. Nothing is shared while a chosen week loads, or before the week on screen has loaded results.
+// home-dashboard.js reads the same snapshot for its Survivor summary. feed.interval is how often this page refreshes these
+// results in its current view (REFRESH_MS on Survivor, HOME_REFRESH_MS elsewhere), so a card knows how old results may be
+// while the page is keeping up.
 function shareSnapshot(){
-  if(!cfg||!pub)return{ready:false,reason:'Survivor has not loaded yet.'};
+  if(!cfg||!pub)return{ready:false,reason:bootError||'Survivor has not loaded yet.'};
   if(switching)return{ready:false,reason:'Another Survivor week is loading. Share again once it is on screen.'};
   const feed=shareFeed?.cfg===cfg?shareFeed:null;
   if(!feed||feed.at===null)return{ready:false,reason:feed?.failed?'Survivor results for this week could not be loaded, so there is nothing to share yet.':'Survivor results are still loading.'};
@@ -400,11 +420,11 @@ function shareSnapshot(){
   return{ready:true,contest:'survivor',season:pub.season,week:pub.week,revision:pub.revision,fieldSize:cfg.competitionSize,
     counts:{active:summary.active,pending:summary.pending,out:summary.eliminatedBefore+summary.eliminatedThisWeek,outThisWeek:summary.eliminatedThisWeek,submitted:summary.submitted,legalPicks:summary.entered,awaitingRuling:survivorAwaitingRuling(entries,wi,resultsByWeek,R),onHold:survivorOnHold(entries,wi,resultsByWeek,R)},
     tracked:cfg.trackedEntries.map(entry=>{const state=survivorEntryState(entry,wi,resultsByWeek,R);return{name:entry.displayName,status:statusLabel(state),team:shownPick(entry,state)||null,reason:state.reason,underReview:!!underReview(state)}}),
-    feed:{at:feed.at,failed:feed.failed},hold:R?.status==='hold',flags:R?.status==='hold'?[]:feedFlags(R),rulingsStale:rulingData?.stale===true,publishedStale:pubStale!==null};
+    feed:{at:feed.at,failed:feed.failed,interval:document.body.dataset.view==='survivor'?REFRESH_MS:HOME_REFRESH_MS},hold:R?.status==='hold',flags:R?.status==='hold'?[]:feedFlags(R),rulingsStale:rulingData?.stale===true,publishedStale:pubStale!==null};
 }
 document.addEventListener('poolcenter:share',event=>{if(event?.detail?.contest==='survivor')event.detail.snapshot=shareSnapshot()});
 
-load().catch(e=>{$('survivorError').innerHTML=`<div class="error">Survivor is not published yet: ${esc(e.message)}</div>`;console.warn(e)});
+load().catch(e=>{bootError=`Survivor is not published yet: ${e.message}`;$('survivorError').innerHTML=`<div class="error">${esc(bootError)}</div>`;console.warn(e);announce()});
 document.addEventListener('visibilitychange',autoRefresh);
 document.addEventListener('poolcenter:viewchange',autoRefresh);
-setInterval(autoRefresh,20000);
+setInterval(autoRefresh,REFRESH_MS);

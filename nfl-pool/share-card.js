@@ -4,7 +4,9 @@
 // 1080 x 1350 PNG layout drawn on any Canvas 2D context. No DOM, no network and no scoring: every record, rank and count comes
 // from the snapshot, so a card says only what the page says, and a snapshot that does not hold together is refused. The
 // drawing is the stadium broadcast design (night stadium, floodlights, metallic titles, a gold plate for the Pick'em group
-// leader, dark steel rows), made from shapes, gradients and system fonts only.
+// leader, dark steel rows), made from shapes, gradients and system fonts only. The Home dashboard's combined card (contest
+// 'dashboard', home-dashboard.js) is both snapshots on one card: each is checked exactly as its own card checks it, each
+// keeps its own status, and the card refuses unless both hold together.
 
 export const CARD_WIDTH=1080,CARD_HEIGHT=1350;
 // Scores or results older than this when the snapshot is taken are DELAYED, never LIVE or FINAL. weekly-app.js calls its feed
@@ -14,6 +16,9 @@ export const FRESH_SECONDS=30;
 // The tracked rows a card has room for at a readable size (cardLayout keeps every row at least MIN_ROW px tall up to these):
 // Pick'em tracks four entries and Survivor exactly three (survivor-app.js validates three).
 export const MAX_ROWS={pickem:5,survivor:3};
+// The combined card gives each contest half the height, so it has room for the four tracked Pick'em entries and three
+// Survivor entries at a readable size, never more.
+export const DASHBOARD_MAX_ROWS={pickem:4,survivor:3};
 export const SURVIVOR_STATUSES=['ALIVE','LIVE','PENDING','RULING','HOLD','OUT'];
 
 const isInt=(v,min=0)=>Number.isSafeInteger(v)&&v>=min;
@@ -65,7 +70,7 @@ function survivorProblem(s){
   if(!c||!COUNT_KEYS.every(k=>isInt(c[k])))return 'the field counts are missing';
   // Every entry is exactly one of: still in (alive or pending), out, awaiting a ruling, on hold.
   if(c.active+c.out+c.awaitingRuling+c.onHold!==s.fieldSize||c.pending>c.active||c.outThisWeek>c.out||c.legalPicks>c.submitted||c.submitted>s.fieldSize)return 'the field counts do not add up';
-  if(!f||!Number.isFinite(f.at)||!isBool(f.failed))return 'the result feed state is missing';
+  if(!f||!Number.isFinite(f.at)||!isBool(f.failed)||(f.interval!==undefined&&!isInt(f.interval,1)))return 'the result feed state is missing';
   if(!Array.isArray(s.flags)||s.flags.some(x=>!isText(x,60)))return 'the result flags are invalid';
   if(!Array.isArray(rows)||!rows.length)return 'there are no tracked entries';
   if(rows.length>MAX_ROWS.survivor)return `only ${MAX_ROWS.survivor} tracked entries fit on a card`;
@@ -87,6 +92,9 @@ export function clockTime(ms,timeZone){return new Intl.DateTimeFormat('en-US',{h
 export function snapshotLabel(ms,timeZone){return new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short',timeZone}).format(ms)}
 // The age of a reading, as weekly-app.js ageSeconds() takes it: unknown when the time is invalid or more than a minute ahead.
 export function ageSeconds(ms,now){if(!Number.isFinite(ms))return null;const delta=now-ms;return delta<-60000?null:Math.max(0,Math.floor(delta/1000))}
+// Results the page refreshes less often than every 20 s (Survivor on Home refreshes once a minute: feed.interval in its
+// snapshot) are fresh for one and a half of that interval, the same margin FRESH_SECONDS gives a 20 s cycle.
+export function freshSeconds(interval){return Math.max(FRESH_SECONDS,isInt(interval,1)?Math.ceil(interval*1.5/1000):0)}
 const BAD=new Set(['FEED UNAVAILABLE','RESULT FEED UNAVAILABLE','ON HOLD']);
 // The first state that holds is claimed and every other one rides along as a qualifier, except DELAYED under a feed that
 // failed (it says no more than that), and a card that is behind always says as of when. With no state at all, the clean
@@ -114,7 +122,7 @@ export function pickemStatus(s,{now=Date.now(),timeZone}={}){
   return settle(states,remaining?{label:'LIVE',tone:'ok',detail:progress}:{label:'FINAL',tone:'final',detail:progress},{asOf:`scores as of ${asOf}`});
 }
 export function survivorStatus(s,{now=Date.now(),timeZone}={}){
-  const c=s.counts,age=ageSeconds(s.feed.at,now),asOf=clockTime(s.feed.at,timeZone),open=c.pending||c.awaitingRuling||c.onHold;
+  const c=s.counts,age=ageSeconds(s.feed.at,now),asOf=clockTime(s.feed.at,timeZone),open=c.pending||c.awaitingRuling||c.onHold,fresh=freshSeconds(s.feed.interval);
   const progress=open?[c.pending&&`${plural(c.pending,'entry','entries')} pending`,c.awaitingRuling&&`${c.awaitingRuling} awaiting a ruling`,c.onHold&&`${c.onHold} on hold`].filter(Boolean).join(' · ')
     :`All ${plural(s.fieldSize,'entry','entries')} decided`;
   const states=[
@@ -122,7 +130,7 @@ export function survivorStatus(s,{now=Date.now(),timeZone}={}){
     s.hold&&{label:'ON HOLD',detail:'Ruling data unavailable · no result is graded until the rulings load'},
     s.publishedStale&&{label:'PUBLISHED DATA STALE',detail:`Newest publication not verified · revision ${s.revision} shown · ${progress}`},
     s.rulingsStale&&{label:'RULINGS STALE',detail:`Rulings not refreshed · last verified rulings apply · ${progress}`},
-    (age===null||age>FRESH_SECONDS)&&{label:'DELAYED',detail:`Results as of ${asOf} · ${progress}`}
+    (age===null||age>fresh)&&{label:'DELAYED',detail:`Results as of ${asOf} · ${progress}`}
   ].filter(Boolean);
   // The team flags the header shows (unverified, awaiting a ruling, on hold, under review) always ride along, and a week
   // with any of them is never FINAL.
@@ -130,18 +138,22 @@ export function survivorStatus(s,{now=Date.now(),timeZone}={}){
 }
 
 // ---- Links and names. A link opens the same published week in the same view, in the spelling each app boots from: Pick'em
-// reads view, season and week; Survivor reads view=survivor, season and sw.
-export function shareLink(contest,{season,week},href){
+// reads view, season and week; Survivor reads view=survivor, season and sw. The dashboard link opens Home with both weeks
+// (each app reads its own parameter, so each boots the week its half of the card shows).
+export function shareLink(contest,{season,week,survivorWeek},href){
   const u=new URL('./',href);u.search='';u.hash='';
-  const params=contest==='pickem'?[['view','standings'],['season',season],['week',week]]:[['view','survivor'],['season',season],['sw',week]];
+  const params=contest==='pickem'?[['view','standings'],['season',season],['week',week]]
+    :contest==='survivor'?[['view','survivor'],['season',season],['sw',week]]
+    :[['view','home'],['season',season],['week',week],['sw',survivorWeek]];
   for(const [k,v] of params)u.searchParams.set(k,String(v));
   return u.href;
 }
 export function linkLabel(href){const u=new URL('./',href);return`${u.host}${u.pathname}`.replace(/\/+$/,'')}
-export function shareFileName(card){return`nfl-pool-center-${card.contest}-${card.season}-week-${card.week}.png`}
+export function shareFileName(card){return`nfl-pool-center-${card.contest}-${card.season}-week-${card.week}${card.contest==='dashboard'&&card.survivorWeek!==card.week?`-survivor-week-${card.survivorWeek}`:''}.png`}
 
 // ---- The card.
 export function buildCard(contest,snapshot,{now=Date.now(),href,timeZone}={}){
+  if(contest==='dashboard')return dashboardCard(snapshot,{now,href,timeZone});
   if(contest!=='pickem'&&contest!=='survivor')return refuse('There is no card for this view.');
   if(!snapshot||typeof snapshot!=='object')return refuse('Sharing needs the latest Pool Center. Reload the page and try again.');
   if(snapshot.ready!==true)return refuse(isText(snapshot.reason,200)?snapshot.reason:'There is nothing to share yet.');
@@ -186,18 +198,51 @@ function survivorCard(s,options){
       .map(({t})=>({name:t.name.trim(),team:t.team,status:t.status,review:t.underReview,note:t.underReview?`UNDER REVIEW · ${t.reason}`:t.reason})),
     total:{label:'TOTAL SURVIVOR ENTRIES:',value:String(s.fieldSize)}};
 }
+const statusLine=st=>`${[st.label,...st.flags].join(' · ')} — ${st.detail}`;
+const pickemLines=c=>[...c.rows.map(r=>`${r.rank}. ${r.name} ${r.record}${r.overall?` · ${r.overall} ${r.overallOf} overall`:''}${r.tiebreak?` · ${r.tiebreak}`:''}${r.noPicks?' · no picks submitted':''}`),c.fieldNote||`Pool size: ${c.fieldSize} entries`];
+const survivorLines=c=>{const n=c.counts;return[[`Still in ${n.active} of ${c.fieldSize}`,`Out ${n.out}`,`Pending ${n.pending}`,n.awaitingRuling&&`Awaiting ruling ${n.awaitingRuling}`,n.onHold&&`On hold ${n.onHold}`,`Submitted ${n.submitted}`].filter(Boolean).join(' · '),
+  ...c.rows.map(r=>`${r.name}: ${r.status}${r.team?` · ${r.team}`:''}${r.note?` — ${r.note}`:''}`)]};
 function summaryText(card){
-  const st=card.status,lines=[`NFL Pool Center · ${card.season} Week ${card.week} · ${card.title}`,`${[st.label,...st.flags].join(' · ')} — ${st.detail}`];
-  if(card.contest==='pickem'){
-    for(const r of card.rows)lines.push(`${r.rank}. ${r.name} ${r.record}${r.overall?` · ${r.overall} ${r.overallOf} overall`:''}${r.tiebreak?` · ${r.tiebreak}`:''}${r.noPicks?' · no picks submitted':''}`);
-    lines.push(card.fieldNote||`Pool size: ${card.fieldSize} entries`);
-  }else{
-    const c=card.counts;
-    lines.push([`Still in ${c.active} of ${card.fieldSize}`,`Out ${c.out}`,`Pending ${c.pending}`,c.awaitingRuling&&`Awaiting ruling ${c.awaitingRuling}`,c.onHold&&`On hold ${c.onHold}`,`Submitted ${c.submitted}`].filter(Boolean).join(' · '));
-    for(const r of card.rows)lines.push(`${r.name}: ${r.status}${r.team?` · ${r.team}`:''}${r.note?` — ${r.note}`:''}`);
-  }
+  const lines=[`NFL Pool Center · ${card.season} Week ${card.week} · ${card.title}`,statusLine(card.status),...(card.contest==='pickem'?pickemLines(card):survivorLines(card))];
   lines.push(`Snapshot ${card.snapshot} · revision ${card.revision}`,card.link);
   return lines.join('\n');
+}
+
+// ---- The combined card (Share combined dashboard card on Home). Both snapshots are checked exactly as their own cards
+// check them and each keeps its own status, so the card never claims LIVE or FINAL for both from one contest. The weeks
+// may differ (each contest publishes on its own) and are named everywhere; the seasons must agree. Either contest not
+// ready, or not holding together, refuses the whole card and says which, so half a dashboard is never shared as the whole.
+// The card as a whole takes the more serious of the two tones; a card with one contest still live is live, not final.
+const CONTEST_NAME={pickem:"Pick'em",survivor:'Survivor'},TONE_RANK={final:0,ok:1,warn:2,bad:3};
+function dashboardCard(both,{now,href,timeZone}){
+  if(!both||typeof both!=='object')return refuse('Sharing needs the latest Pool Center. Reload the page and try again.');
+  for(const contest of ['pickem','survivor']){
+    const s=both[contest],name=CONTEST_NAME[contest],alone=contest==='pickem'?'Survivor results can':"Pick'em standings can";
+    if(!s||typeof s!=='object')return refuse(`${name} did not answer, so the combined card can't be made. Reload the page and try again.`);
+    if(s.ready!==true)return refuse(`${isText(s.reason,200)?s.reason:`${name} has nothing to share yet.`} The combined card needs both contests; ${alone} be shared on their own meanwhile.`);
+    if(s.contest!==contest)return refuse('The page answered for a different contest. Reload the page and try again.');
+    const problem=contest==='pickem'?pickemProblem(s):survivorProblem(s);
+    if(problem)return refuse(`A combined card can't be made right now: ${name}: ${problem}.`);
+  }
+  const pk=both.pickem,sv=both.survivor;
+  if(pk.season!==sv.season)return refuse(`A combined card can't be made right now: Pick'em shows the ${pk.season} season and Survivor the ${sv.season} season.`);
+  if(pk.entries.length>DASHBOARD_MAX_ROWS.pickem)return refuse(`A combined card can't be made right now: only ${DASHBOARD_MAX_ROWS.pickem} tracked Pick'em entries fit on it.`);
+  const pickem={...pickemCard(pk,{now,timeZone}),week:pk.week,revision:pk.revision},survivor={...survivorCard(sv,{now,timeZone}),week:sv.week,revision:sv.revision};
+  const tone=TONE_RANK[pickem.status.tone]>=TONE_RANK[survivor.status.tone]?pickem.status.tone:survivor.status.tone;
+  const weeks=pk.week===sv.week?`Week ${pk.week}`:`Pick'em Week ${pk.week} · Survivor Week ${sv.week}`;
+  const card={ok:true,contest:'dashboard',season:pk.season,week:pk.week,survivorWeek:sv.week,revision:pk.revision,survivorRevision:sv.revision,capturedAt:now,weeks,
+    snapshot:snapshotLabel(now,timeZone),link:shareLink('dashboard',{season:pk.season,week:pk.week,survivorWeek:sv.week},href),linkLabel:linkLabel(href),
+    title:'Weekly Dashboard',pickem,survivor,
+    status:{label:`PICK'EM ${pickem.status.label} · SURVIVOR ${survivor.status.label}`,tone,detail:`Pick'em: ${pickem.status.detail} · Survivor: ${survivor.status.detail}`,
+      flags:[...pickem.status.flags.map(f=>`Pick'em ${f}`),...survivor.status.flags.map(f=>`Survivor ${f}`)]}};
+  card.fileName=shareFileName(card);
+  card.summary=[`NFL Pool Center · ${card.season} Weekly Dashboard`,`Pick'em Week ${pk.week} · ${statusLine(pickem.status)}`,...pickemLines(pickem),
+    `Survivor Week ${sv.week} · ${statusLine(survivor.status)}`,...survivorLines(survivor),
+    `Snapshot ${card.snapshot} · Pick'em revision ${pk.revision} · Survivor revision ${sv.revision}`,card.link].join('\n');
+  card.shareTitle=`NFL Pool Center · ${card.season} ${weeks} Weekly Dashboard`;
+  card.shareText=`${card.season} Weekly Dashboard · Pick'em Week ${pk.week} ${pickem.status.label} · Survivor Week ${sv.week} ${survivor.status.label}\n${card.link}`;
+  card.alt=`Weekly Dashboard card, ${card.season}: Pick'em Week ${pk.week} ${pickem.status.label}, ${pickem.rows[0].name} ${pickem.rows[0].record} first of the tracked group; Survivor Week ${sv.week} ${survivor.status.label}, ${sv.counts.active} of ${sv.fieldSize} entries remaining.`;
+  return card;
 }
 
 // ---- Native sharing. Files are offered to the share sheet only where the browser says it can share them; anything else
@@ -305,7 +350,7 @@ function paintStadium(ctx,contest){
   ctx.fillStyle=linear(ctx,0,0,0,H,[[0,'#04070c'],[0.3,'#0a1322'],[0.58,PALETTE.background],[1,'#030508']]);ctx.fillRect(0,0,W,H);
   ctx.save();ctx.globalCompositeOperation='lighter';
   ctx.fillStyle=radial(ctx,W/2,560,0,640,[[0,'rgba(38,74,132,0.30)'],[0.6,'rgba(24,46,86,0.12)'],[1,'rgba(0,0,0,0)']]);ctx.fillRect(0,0,W,H);
-  const banks=contest==='pickem'?[{x:58,y:448,c:[150,196,255]},{x:1022,y:448,c:[255,214,140]}]:[{x:40,y:312,c:[150,196,255]},{x:1040,y:312,c:[150,196,255]}];
+  const banks=contest!=='survivor'?[{x:58,y:448,c:[150,196,255]},{x:1022,y:448,c:[255,214,140]}]:[{x:40,y:312,c:[150,196,255]},{x:1040,y:312,c:[150,196,255]}];
   for(const b of banks){
     const rgb=a=>`rgba(${b.c[0]},${b.c[1]},${b.c[2]},${a})`,dir=b.x<W/2?1:-1;
     ctx.fillStyle=radial(ctx,b.x,b.y,0,560,[[0,rgb(0.5)],[0.3,rgb(0.17)],[1,rgb(0)]]);ctx.fillRect(0,0,W,H);
@@ -322,7 +367,7 @@ function paintStadium(ctx,contest){
   ctx.fillStyle=linear(ctx,0,640,0,780,[[0,'rgba(47,111,214,0)'],[0.5,'rgba(47,111,214,0.26)'],[1,'rgba(47,111,214,0)']]);ctx.fillRect(0,640,W,140);
   ctx.restore();
   // The stands: tiers of seats and scattered lights, kept faint so the rows stay the focus.
-  const rand=seeded(contest==='pickem'?20261:20262);
+  const rand=seeded({pickem:20261,survivor:20262,dashboard:20263}[contest]);
   ctx.save();ctx.fillStyle=linear(ctx,0,700,0,1010,[[0,'rgba(8,14,24,0)'],[0.35,'rgba(10,18,30,0.75)'],[1,'rgba(6,10,16,0.9)']]);ctx.fillRect(0,700,W,310);
   ctx.strokeStyle='rgba(120,150,190,0.06)';ctx.lineWidth=2;for(let y=760;y<1000;y+=34){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y+((y/34)%2?6:-6));ctx.stroke()}
   for(let i=0;i<150;i++){const x=rand()*W,y=730+rand()*260,r=0.8+rand()*2.2;ctx.fillStyle=`rgba(${rand()<0.3?'255,220,150':'170,200,255'},${(0.05+rand()*0.22).toFixed(3)})`;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill()}
@@ -373,12 +418,14 @@ function paintEmblem(ctx,x,y,size,P){
   ctx.lineCap='round';for(const d of EMBLEM.stripes){const p=new P(d);ctx.strokeStyle='#8f171d';ctx.lineWidth=10;ctx.stroke(p);ctx.strokeStyle='rgba(239,108,114,0.85)';ctx.lineWidth=2;ctx.stroke(p)}
   ctx.restore();
 }
-// The emblem and the POOL CENTER wordmark, centred: on a gold-edged plate for Pick'em, between gold rules for Survivor.
+// The emblem and the POOL CENTER wordmark, centred: on a gold-edged plate for Pick'em (smaller, for the combined card),
+// between gold rules for Survivor.
+const BRAND={pickem:{icon:74,size:48,plate:true},survivor:{icon:70,size:52,plate:false},dashboard:{icon:56,size:40,plate:true}};
 function paintBrand(ctx,L,contest,cy,P){
-  const pickem=contest==='pickem',icon=pickem?74:70,gap=20,f=fitLine(ctx,'POOL CENTER',{size:pickem?48:52,width:520,weight:900,family:DISPLAY,tracking:0.07});
+  const {icon,size,plate}=BRAND[contest],gap=20,f=fitLine(ctx,'POOL CENTER',{size,width:520,weight:900,family:DISPLAY,tracking:0.07});
   const total=icon+gap+f.width,x=Math.round(W/2-total/2);
   ctx.save();
-  if(pickem){
+  if(plate){
     const px=x-30,pw=total+60,py=cy-icon/2-14,ph=icon+28;
     ctx.shadowColor='rgba(0,0,0,0.6)';ctx.shadowBlur=24;ctx.shadowOffsetY=8;chamfer(ctx,px,py,pw,ph,18);
     ctx.fillStyle=linear(ctx,0,py,0,py+ph,[[0,'#1b2a44'],[0.5,'#101a2c'],[1,'#0a111e']]);ctx.fill();ctx.shadowColor='transparent';
@@ -463,6 +510,7 @@ function rowBoxes(rows,top,bottom,{base,gap,lead=1,inset}){
   return rows.map(r=>{const rh=Math.floor(r.gold?h*lead:h),box={...inset(r),y:Math.floor(y),h:rh};y+=rh+g;return box});
 }
 export function cardLayout(ctx,card){
+  if(card.contest==='dashboard')return dashboardLayout(ctx,card);
   const pickem=card.contest==='pickem',st=card.status,gold=pickem&&st.label==='FINAL'&&!st.flags.length,s=STATUS[card.contest];
   const head=`SEASON ${card.season} • WEEK ${card.week}`,p={gold,head,cy:s.cy};
   if(!gold){
@@ -506,16 +554,16 @@ function paintStatus(ctx,L,card,p){
   p.detail.forEach((line,i)=>{const width=Math.min(ctx.measureText(line).width,940);drawText(ctx,L,{text:line,size:p.detailSize,width,weight:800,family:TEXT,tracking:0.06},W/2,p.detailY+i*p.detailLead,{align:'center',fill:warn?shade(PALETTE.pending,0.25):'#b4bdc8',shadow:{color:'rgba(0,0,0,0.8)',blur:8,y:2},role:'detail',box:[70,1010]})});
 }
 // The label in chrome and the count in gold, condensed together and set smaller only if condensing is not enough.
-function paintTotal(ctx,L,total,cy){
-  const tracking=0.02,label=`${total.label} `,max=920;let size=52,lw,vw;
-  for(;;size-=2){lw=measure(ctx,label,size,900,DISPLAY,tracking);vw=measure(ctx,total.value,size,900,DISPLAY,tracking);if((lw+vw)*MIN_CONDENSE<=max||size<=30)break}
+function paintTotal(ctx,L,total,cy,{size:start=52,max=920,floor=30}={}){
+  const tracking=0.02,label=`${total.label} `;let size=start,lw,vw;
+  for(;;size-=2){lw=measure(ctx,label,size,900,DISPLAY,tracking);vw=measure(ctx,total.value,size,900,DISPLAY,tracking);if((lw+vw)*MIN_CONDENSE<=max||size<=floor)break}
   const k=Math.min(1,max/(lw+vw)),f1={text:label,size,width:lw*k,weight:900,family:DISPLAY,tracking},f2={text:total.value,size,width:vw*k,weight:900,family:DISPLAY,tracking},x=W/2-(f1.width+f2.width)/2;
   const shadow={color:'rgba(0,0,0,0.85)',blur:14,y:5},box=[W/2-max/2,W/2+max/2];
   drawText(ctx,L,f1,x,cy+size*0.35,{fill:verticalFill(SILVER_TEXT),shadow,role:'total',box});
   drawText(ctx,L,f2,x+f1.width,cy+size*0.35,{fill:verticalFill(GOLD_TEXT),shadow,role:'total-value',box});
 }
-function paintFooter(ctx,L,card,{metaY,siteY,siteSize}){
-  const meta=fitLine(ctx,`SNAPSHOT ${card.snapshot.toUpperCase()} · REVISION ${card.revision}`,{size:22,min:16,width:920,weight:700,tracking:0.1});
+function paintFooter(ctx,L,card,{metaY,siteY,siteSize,metaText=`SNAPSHOT ${card.snapshot.toUpperCase()} · REVISION ${card.revision}`}){
+  const meta=fitLine(ctx,metaText,{size:22,min:16,width:920,weight:700,tracking:0.1});
   drawText(ctx,L,meta,W/2,metaY+meta.size*0.35,{align:'center',fill:'#9aa4b0',role:'meta',box:[80,1000]});
   const site=fitLine(ctx,card.linkLabel,{size:siteSize,min:18,width:860,weight:800,tracking:0.05});
   drawText(ctx,L,site,W/2,siteY+site.size*0.35,{align:'center',fill:'#d4dae1',shadow:{color:'rgba(0,0,0,0.8)',blur:8,y:2},role:'site',box:[110,970]});
@@ -528,14 +576,21 @@ function paintPickem(ctx,L,card,p,P){
   paintStatus(ctx,L,card,p);
   const ranked=card.rows.some(r=>r.overall),recordRight=ranked?742:900;
   L.boxes.push(...p.rows.map((b,i)=>({role:'row',gold:card.rows[i].gold,...b})));
-  card.rows.forEach((row,i)=>{
-    const b=p.rows[i],h=b.h,gold=row.gold,dark={color:'rgba(0,0,0,0.6)',blur:6,y:2};
+  card.rows.forEach((row,i)=>paintPickemRow(ctx,L,row,p.rows[i],{ranked,recordRight}));
+  if(card.total)paintTotal(ctx,L,card.total,1222);
+  else{const f=fitLine(ctx,card.fieldNote.toUpperCase(),{size:28,min:20,width:920,weight:800,tracking:0.05});drawText(ctx,L,f,W/2,1222+f.size*0.35,{align:'center',fill:'#aeb7c2',role:'total',box:[80,1000]})}
+  paintFooter(ctx,L,card,{metaY:1270,siteY:1314,siteSize:28});
+}
+// A Pick'em row on its plate (gold with the 1ST ribbon for the leader): place, name and record, the full-field rank where the
+// field is published, and a note under the name where the record alone does not say it. Every size follows the row height.
+function paintPickemRow(ctx,L,row,b,{ranked,recordRight}){
+    const h=b.h,gold=row.gold,dark={color:'rgba(0,0,0,0.6)',blur:6,y:2};
     paintPlate(ctx,b,gold);
     let nameX;
     if(gold){
       const rw=Math.round(h*0.78);paintRibbon(ctx,L,row.place,b.x+38,b.y-12,rw,Math.round(h*0.9));nameX=b.x+38+rw+30;
       if(ranked){
-        const right=b.x+b.w-52,lf=fitLine(ctx,'FIELD RANK',{size:Math.round(h*0.16),width:200,weight:800,tracking:0.12});
+        const right=b.x+b.w-52,lf=fitLine(ctx,'FIELD RANK',{size:Math.max(18,Math.round(h*0.16)),width:200,weight:800,tracking:0.12});
         drawText(ctx,L,lf,right,b.y+h*0.36,{align:'right',fill:'#4a380c',role:'rank-label',box:[right-200,right]});
         const vf=fitLine(ctx,row.overall??'—',{size:Math.round(h*0.4),width:200,weight:900,family:DISPLAY,tracking:0.01});
         drawText(ctx,L,vf,right,b.y+h*0.78,{align:'right',fill:'#1c1404',role:'rank',box:[right-200,right]});
@@ -555,23 +610,19 @@ function paintPickem(ctx,L,card,p,P){
     const nameY=row.note?b.y+h*0.5+nf.size*0.12:b.y+h*0.5+nf.size*0.36;
     drawText(ctx,L,nf,nameX,nameY,{fill:gold?'#16110a':'#ffffff',shadow:gold?{color:'rgba(255,240,190,0.45)',blur:2,y:1}:{color:'rgba(0,0,0,0.7)',blur:6,y:3},role:'name',box:[nameX,nameX+nameMax]});
     if(row.note){const of=fitLine(ctx,row.note.toUpperCase(),{size:Math.max(18,Math.round(h*0.16)),min:16,width:nameMax,weight:800,tracking:0.08});drawText(ctx,L,of,nameX,nameY+of.size*1.5,{fill:gold?'#4a380c':row.noPicks?'#f2c45a':PALETTE.muted,role:'note',box:[nameX,nameX+nameMax]})}
-  });
-  if(card.total)paintTotal(ctx,L,card.total,1222);
-  else{const f=fitLine(ctx,card.fieldNote.toUpperCase(),{size:28,min:20,width:920,weight:800,tracking:0.05});drawText(ctx,L,f,W/2,1222+f.size*0.35,{align:'center',fill:'#aeb7c2',role:'total',box:[80,1000]})}
-  paintFooter(ctx,L,card,{metaY:1270,siteY:1314,siteSize:28});
 }
-function paintMetric(ctx,L,m,x,y,w,h){
+function paintMetric(ctx,L,m,x,y,w,h,{labelSize=25,labelY=46,valueSize=76,valueY=h-24}={}){
   ctx.save();ctx.shadowColor='rgba(0,0,0,0.6)';ctx.shadowBlur=22;ctx.shadowOffsetY=8;
   for(const side of [x-7,x+w-3]){roundRect(ctx,side,y+h*0.24,10,h*0.52,4);ctx.fillStyle=linear(ctx,0,y,0,y+h,[[0,'#e9edf1'],[0.5,'#8b949e'],[1,'#4a525b']]);ctx.fill()}
   roundRect(ctx,x,y,w,h,20);ctx.fillStyle=linear(ctx,0,y,0,y+h,[[0,'#2a3039'],[0.5,PALETTE.container],[0.52,'#161b22'],[1,'#0f1318']]);ctx.fill();ctx.shadowColor='transparent';
   ctx.strokeStyle=m.accent?linear(ctx,0,y,0,y+h,[[0,'#f6e3a1'],[0.5,PALETTE.gold],[1,'#7a5a17']]):linear(ctx,0,y,0,y+h,[[0,'#dfe4e9'],[0.5,'#7d8590'],[1,'#4a525b']]);ctx.lineWidth=m.accent?3.5:3;ctx.stroke();
   ctx.fillStyle=linear(ctx,x,0,x+w,0,[[0,'rgba(255,255,255,0)'],[0.5,'rgba(220,232,255,0.6)'],[1,'rgba(255,255,255,0)']]);ctx.fillRect(x+20,y-1,w-40,2);
   ctx.restore();
-  const lf=fitLine(ctx,m.label,{size:25,min:18,width:w-28,weight:800,tracking:0.03});
-  drawText(ctx,L,lf,x+w/2,y+46,{align:'center',fill:'#e8d7a8',role:'metric-label',box:[x+14,x+w-14]});
-  const vf=fitLine(ctx,m.value,{size:76,min:40,width:w-30,weight:900,family:DISPLAY,tracking:0.01});
+  const lf=fitLine(ctx,m.label,{size:labelSize,min:Math.min(18,labelSize),width:w-28,weight:800,tracking:0.03});
+  drawText(ctx,L,lf,x+w/2,y+labelY,{align:'center',fill:'#e8d7a8',role:'metric-label',box:[x+14,x+w-14]});
+  const vf=fitLine(ctx,m.value,{size:valueSize,min:Math.min(40,valueSize),width:w-30,weight:900,family:DISPLAY,tracking:0.01});
   const fill=m.tone==='neutral'?verticalFill(SILVER_TEXT):m.tone==='pending'?shade(PALETTE.pending,0.1):verticalFill(GOLD_TEXT);
-  drawText(ctx,L,vf,x+w/2,y+h-24,{align:'center',fill,shadow:{color:'rgba(0,0,0,0.7)',blur:10,y:4},role:'metric-value',box:[x+15,x+w-15]});
+  drawText(ctx,L,vf,x+w/2,y+valueY,{align:'center',fill,shadow:{color:'rgba(0,0,0,0.7)',blur:10,y:4},role:'metric-value',box:[x+15,x+w-15]});
 }
 const ROW_TONE={ALIVE:'alive',OUT:'out'};
 function paintSurvivorRow(ctx,L,row,{x,y,w,h}){
@@ -613,6 +664,89 @@ function paintSurvivor(ctx,L,card,p,P){
   ctx.restore();
   paintFooter(ctx,L,card,{metaY:1214,siteY:1306,siteSize:30});
 }
+// ---- The combined card. Fixed bands, so nothing of one contest can push the other off the card: the brand, the title, the
+// season with both weeks and the snapshot time; the Pick'em panel (its bar with its own status pill, one detail line, the
+// tracked rows on their plates, the pool size); the Survivor panel (its bar and pill, one detail line, the four metric panels,
+// the tracked rows with their pick and status); the footer with both revisions and the address.
+const DASH={brand:64,title:182,context:228,snapshot:264,pickem:{bar:292,barH:60,detail:386,rows:[408,768],total:794},
+  survivor:{bar:822,barH:60,detail:916,metrics:[938,90],rows:[1044,1246]},divider:1258,meta:1286,site:1320};
+function panelPlan(ctx,part){
+  const st=part.status,label=fitLine(ctx,st.label,{size:26,width:440,weight:900,family:DISPLAY,tracking:0.03}),detail=statusDetail(part).toUpperCase();
+  return{pill:{w:Math.min(470,Math.max(150,Math.round(label.width)+56)),h:46,size:26},detail:detail?fitLine(ctx,detail,{size:22,min:17,width:960,weight:800,tracking:0.06,condense:MIN_CONDENSE}):null};
+}
+function dashboardLayout(ctx,card){
+  const p={...DASH,head:`SEASON ${card.season} · PICK’EM WEEK ${card.week} · SURVIVOR WEEK ${card.survivorWeek}`};
+  p.pickem={...DASH.pickem,...panelPlan(ctx,card.pickem)};
+  p.pickem.rows=rowBoxes(card.pickem.rows,DASH.pickem.rows[0],DASH.pickem.rows[1],{base:82,gap:10,inset:r=>r.gold?{x:56,w:968}:{x:96,w:888}});
+  p.survivor={...DASH.survivor,...panelPlan(ctx,card.survivor)};
+  p.survivor.rows=rowBoxes(card.survivor.rows,DASH.survivor.rows[0],DASH.survivor.rows[1],{base:62,gap:8,inset:()=>({x:56,w:968})});
+  p.rows=[...p.pickem.rows,...p.survivor.rows];p.rowH=Math.min(...p.rows.map(b=>b.h));
+  p.end=p.survivor.rows.length?p.survivor.rows.at(-1).y+p.survivor.rows.at(-1).h:DASH.survivor.rows[0];
+  return p;
+}
+// A contest's bar: dark steel with the contest's accent at its left edge, the chrome title (naming the contest's own week)
+// and the contest's own status pill, so each LIVE, FINAL or warning stands for one contest only.
+function paintSectionBar(ctx,L,{title,status,accent},y,h,pill){
+  const x=56,w=968;
+  ctx.save();ctx.shadowColor='rgba(0,0,0,0.55)';ctx.shadowBlur=18;ctx.shadowOffsetY=6;chamfer(ctx,x,y,w,h,12);
+  ctx.fillStyle=linear(ctx,0,y,0,y+h,[[0,'#283039'],[0.5,'#161b22'],[1,'#0d1116']]);ctx.fill();ctx.shadowColor='transparent';
+  ctx.strokeStyle=linear(ctx,0,y,0,y+h,[[0,'#dfe4e9'],[0.5,'#7d8590'],[1,'#4a525b']]);ctx.lineWidth=2.5;ctx.stroke();
+  ctx.fillStyle=accent;roundRect(ctx,x+10,y+10,7,h-20,3);ctx.fill();
+  ctx.restore();L.boxes.push({role:'section',x,y,w,h});
+  const cx=x+w-24-pill.w/2,titleRight=cx-pill.w/2-24;
+  paintPill(ctx,L,status.label,STATUS_TONE[status.tone],cx,y+h/2,{...pill,role:'status-pill'});
+  const tf=fitLine(ctx,title,{size:34,min:22,width:titleRight-(x+32),weight:900,family:DISPLAY,tracking:0.04,condense:MIN_CONDENSE});
+  drawText(ctx,L,tf,x+32,y+h/2+tf.size*0.36,{fill:verticalFill(SILVER_TEXT),shadow:{color:'rgba(0,0,0,0.7)',blur:8,y:3},role:'section-title',box:[x+32,titleRight]});
+}
+function paintDetailLine(ctx,L,part,f,y){
+  if(!f)return;
+  const warn=part.status.tone==='warn'||part.status.tone==='bad';
+  drawText(ctx,L,f,W/2,y,{align:'center',fill:warn?shade(PALETTE.pending,0.25):'#b4bdc8',shadow:{color:'rgba(0,0,0,0.8)',blur:8,y:2},role:'detail',box:[60,1020]});
+}
+// A Survivor row at the combined card's height: the name, the pick it shows (NO PICK where there is none; amber while the
+// ruling behind it is under review, which the summary names) and the status pill; the reason stays in the summary text.
+function paintSurvivorCompactRow(ctx,L,row,{x,y,w,h}){
+  const tone=ROW_TONE[row.status]||'pending',alive=tone==='alive',pillW=236,split=x+w-pillW-24;
+  ctx.save();ctx.shadowColor=alive?'rgba(46,160,67,0.35)':'rgba(0,0,0,0.55)';ctx.shadowBlur=alive?22:16;ctx.shadowOffsetY=alive?0:6;
+  roundRect(ctx,x,y,w,h,14);ctx.fillStyle=linear(ctx,0,y,0,y+h,[[0,'#2d343d'],[0.5,'#1b2028'],[1,'#0d1116']]);ctx.fill();ctx.shadowColor='transparent';
+  if(alive){ctx.save();ctx.clip();ctx.fillStyle=linear(ctx,x,0,split,0,[[0,'rgba(46,160,67,0.28)'],[1,'rgba(46,160,67,0)']]);ctx.fillRect(x,y,split-x,h);ctx.restore()}
+  ctx.strokeStyle=alive?PALETTE.alive:'#6f7883';ctx.lineWidth=alive?3:2;ctx.stroke();
+  if(alive){ctx.fillStyle=PALETTE.alive;roundRect(ctx,x+8,y+10,6,h-20,3);ctx.fill()}
+  ctx.restore();
+  const dark={color:'rgba(0,0,0,0.7)',blur:6,y:2},teamRight=split-20,nameMax=teamRight-170-(x+36);
+  const nf=fitLine(ctx,row.name,{size:Math.round(h*0.5),min:Math.round(h*0.3),width:nameMax,weight:900,family:DISPLAY,tracking:0.005});
+  drawText(ctx,L,nf,x+36,y+h/2+nf.size*0.36,{fill:verticalFill(SILVER_TEXT),shadow:dark,role:'name',box:[x+36,x+36+nameMax]});
+  const tf=fitLine(ctx,row.team||'NO PICK',{size:Math.round(h*0.42),width:150,weight:900,family:DISPLAY,tracking:0.03});
+  drawText(ctx,L,tf,teamRight,y+h/2+tf.size*0.36,{align:'right',fill:row.review?shade(PALETTE.pending,0.15):row.team?'#e8edf3':PALETTE.muted,shadow:dark,role:'team',box:[teamRight-150,teamRight]});
+  paintPill(ctx,L,row.status,tone,split+12+pillW/2,y+h/2,{w:pillW,h:Math.round(h*0.66),size:Math.round(h*0.36),role:'row-status'});
+}
+function paintDashboard(ctx,L,card,p,P){
+  paintStadium(ctx,'dashboard');paintDots(ctx,290,0.04);
+  paintBrand(ctx,L,'dashboard',p.brand,P);
+  paintTitle(ctx,L,card.title.toUpperCase(),p.title,{size:100,width:960});
+  const shadow={color:'rgba(0,0,0,0.85)',blur:12,y:4};
+  const hf=fitLine(ctx,p.head,{size:30,min:20,width:960,weight:800,family:DISPLAY,tracking:0.05});
+  drawText(ctx,L,hf,W/2,p.context+hf.size*0.35,{align:'center',fill:verticalFill(GOLD_TEXT),shadow,role:'status',box:[60,1020]});
+  const sf=fitLine(ctx,`SNAPSHOT ${card.snapshot.toUpperCase()}`,{size:22,min:16,width:900,weight:700,tracking:0.1});
+  drawText(ctx,L,sf,W/2,p.snapshot+sf.size*0.35,{align:'center',fill:'#9aa4b0',role:'snapshot',box:[90,990]});
+  // Pick'em: its bar and status, the tracked rows exactly as the Pick'em card draws them, the pool size.
+  const pk=card.pickem,pp=p.pickem,ranked=pk.rows.some(r=>r.overall),recordRight=ranked?742:900;
+  paintSectionBar(ctx,L,{title:`PICK’EM STANDINGS · WEEK ${pk.week}`,status:pk.status,accent:PALETTE.gold},pp.bar,pp.barH,pp.pill);
+  paintDetailLine(ctx,L,pk,pp.detail,DASH.pickem.detail);
+  L.boxes.push(...pp.rows.map((b,i)=>({role:'row',contest:'pickem',gold:pk.rows[i].gold,...b})));
+  pk.rows.forEach((row,i)=>paintPickemRow(ctx,L,row,pp.rows[i],{ranked,recordRight}));
+  if(pk.total)paintTotal(ctx,L,pk.total,pp.total,{size:32,max:900,floor:22});
+  else{const f=fitLine(ctx,pk.fieldNote.toUpperCase(),{size:24,min:18,width:900,weight:800,tracking:0.05});drawText(ctx,L,f,W/2,pp.total+f.size*0.35,{align:'center',fill:'#aeb7c2',role:'total',box:[90,990]})}
+  // Survivor: its bar and status, the field's four counts, the tracked rows.
+  const sv=card.survivor,sp=p.survivor,gap=18,mw=(W-2*56-3*gap)/4;
+  paintSectionBar(ctx,L,{title:`SURVIVOR POOL · WEEK ${sv.week}`,status:sv.status,accent:'#388bfd'},sp.bar,sp.barH,sp.pill);
+  paintDetailLine(ctx,L,sv,sp.detail,DASH.survivor.detail);
+  sv.metrics.forEach((m,i)=>{const x=56+i*(mw+gap),[y,h]=sp.metrics;L.boxes.push({role:'metric',x,y,w:mw,h});paintMetric(ctx,L,m,x,y,mw,h,{labelSize:20,labelY:28,valueSize:50,valueY:h-14})});
+  L.boxes.push(...sp.rows.map((b,i)=>({role:'row',contest:'survivor',tone:ROW_TONE[sv.rows[i].status]||'pending',...b})));
+  sv.rows.forEach((row,i)=>paintSurvivorCompactRow(ctx,L,row,sp.rows[i]));
+  ctx.save();ctx.fillStyle=linear(ctx,0,0,W,0,[[0,'rgba(139,148,158,0)'],[0.5,'rgba(220,226,232,0.7)'],[1,'rgba(139,148,158,0)']]);ctx.fillRect(0,p.divider,W,2);ctx.restore();
+  paintFooter(ctx,L,card,{metaY:p.meta,siteY:p.site,siteSize:26,metaText:`SNAPSHOT ${card.snapshot.toUpperCase()} · PICK’EM REVISION ${card.revision} · SURVIVOR REVISION ${card.survivorRevision}`});
+}
 // Draws the whole card at 1080 × 1350 on ctx and returns its layout: the planned positions, every text drawn with the column
 // it was given, and every row and metric panel. A context that cannot parse the font stacks draws in sans-serif.
 export function drawCard(ctx,card,{Path2D:P=globalThis.Path2D}={}){
@@ -620,7 +754,7 @@ export function drawCard(ctx,card,{Path2D:P=globalThis.Path2D}={}){
   DISPLAY=parses(DISPLAY_FONTS)?DISPLAY_FONTS:'sans-serif';TEXT=parses(TEXT_FONTS)?TEXT_FONTS:'sans-serif';
   ctx.save();
   const p=cardLayout(ctx,card),L={...p,texts:[],boxes:[]};
-  if(card.contest==='pickem')paintPickem(ctx,L,card,p,P);else paintSurvivor(ctx,L,card,p,P);
+  if(card.contest==='pickem')paintPickem(ctx,L,card,p,P);else if(card.contest==='dashboard')paintDashboard(ctx,L,card,p,P);else paintSurvivor(ctx,L,card,p,P);
   ctx.restore();
   return L;
 }

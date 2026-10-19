@@ -28,6 +28,79 @@ const SHARE_CARDS={
 const withoutShareCards=page=>SHARE_CARDS.page.reduce((text,addition)=>text.replace(addition,''),page);
 const sc1Failures=[];
 const sc1=async(name,check)=>{try{await check()}catch(error){sc1Failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+// The Home dashboard (after share cards) adds exactly these two shell assets, this head link and this module script, replaces
+// the page's Home panel (the baseline panel below) with the dashboard, moves weekly-app.js, survivor-app.js, share-card.js and
+// share-ui.js to the versions named here, and changes the worker only by its cache name and precache entries. Every earlier
+// check sees the page, the worker and the modules as they were before it (withoutHomeDashboard) and still holds for every
+// other byte; the Home dashboard block at the end checks the change itself.
+const HOME_DASHBOARD={
+  assets:new Set(['home-dashboard.js','home-dashboard.css']),
+  versions:[['weekly-app.js','weekly-v21','weekly-v22'],['survivor-app.js','10','11'],['share-card.js','1','2'],['share-ui.js','1','2']],
+  cache:['pool-center-shell-v24','pool-center-shell-v25'],
+  page:['<link rel="stylesheet" href="home-dashboard.css?v=1">\n','<script type="module" src="home-dashboard.js?v=1"></script>\n'],
+  worker:"  './home-dashboard.js?v=1',\n  './home-dashboard.css?v=1',\n",
+  panel:{start:'    <section class="view-panel" data-view-panel="home">',end:'    <section class="view-panel" data-view-panel="standings"',baseline:`    <section class="view-panel" data-view-panel="home">
+      <section class="card hero hero-stadium" aria-label="Pool leader and game summary">
+        <img class="hero-nfl-shield" src="https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png" alt="" aria-hidden="true">
+        <div class="hero-main">
+          <div class="kicker" id="leaderKicker">Current leader</div>
+          <div class="leader"><div class="leader-name" id="leaderName">—</div><div class="record" id="leaderRecord">0–0</div></div>
+          <div class="note" id="leaderNote">Standings update automatically as games go final.</div>
+        </div>
+        <div class="metrics">
+          <div class="metric"><span>Final</span><b id="finals">0/—</b></div>
+          <div class="metric"><span>Live</span><b id="liveCount">0</b></div>
+          <div class="metric"><span>Remaining</span><b id="left">—</b></div>
+          <div class="metric"><span>TB Total</span><b id="mnf">—</b></div>
+        </div>
+      </section>
+
+      <div class="home-grid">
+        <section class="card home-standings-card">
+          <div class="head"><div><span class="section-kicker">Leaderboard</span><h2>Live Standings</h2></div><button class="text-action" type="button" data-view-target="standings">View all</button></div>
+          <div class="home-standings" id="homeStandings"></div>
+        </section>
+
+        <aside class="card pulse" aria-labelledby="pulse-title">
+          <div class="head compact"><div><span class="section-kicker">Week pulse</span><h2 id="pulse-title">Pool Status</h2></div><div class="meta" id="pulseWeek">Week —</div></div>
+          <div class="pulse-grid">
+            <div class="pulse-box"><span>Pool Size</span><b id="entryCount">—</b></div>
+            <div class="pulse-box"><span>Games</span><b id="gameCount">—</b></div>
+            <div class="pulse-box"><span>Field Best</span><b id="bestWins">0</b></div>
+            <div class="pulse-box"><span>Swing Left</span><b id="swingLeft">—</b></div>
+          </div>
+          <div class="progressline"><span>Slate progress</span><span id="progressText">0%</span></div>
+          <div class="progress"><i id="progressBar"></i></div>
+          <div class="tb" id="tbNote">Tiebreak guesses load with the selected week.</div>
+        </aside>
+      </div>
+
+      <div class="home-grid race-grid">
+        <section class="card race" aria-labelledby="race-title">
+          <div class="head"><div><span class="section-kicker">Your four entries</span><h2 id="race-title">Group Scenarios</h2><div class="meta">Exact remaining-outcome math inside your group · field position tracked separately</div></div><div class="meta" id="scenarioCount">—</div></div>
+          <div class="race-list" id="raceList"></div>
+        </section>
+        <section class="card home-games-card">
+          <div class="head"><div><span class="section-kicker">Now & next</span><h2>Game Watch</h2></div><button class="text-action" type="button" data-view-target="games">All games</button></div>
+          <div class="home-game-preview" id="homeGamePreview"></div>
+        </section>
+      </div>
+    </section>
+
+`}
+};
+const withoutHomeDashboard=text=>{
+  let out=text;
+  for(const [asset,before,after] of HOME_DASHBOARD.versions)out=out.split(`${asset}?v=${after}`).join(`${asset}?v=${before}`);
+  out=out.replace(`const CACHE='${HOME_DASHBOARD.cache[1]}'`,`const CACHE='${HOME_DASHBOARD.cache[0]}'`).replace(HOME_DASHBOARD.worker,'');
+  for(const addition of HOME_DASHBOARD.page)out=out.replace(addition,'');
+  const start=out.indexOf(HOME_DASHBOARD.panel.start),end=out.indexOf(HOME_DASHBOARD.panel.end);
+  if(start>=0&&end>start)out=out.slice(0,start)+HOME_DASHBOARD.panel.baseline+out.slice(end);
+  return out;
+};
+const indexBefore=withoutHomeDashboard(index),sourceBefore=withoutHomeDashboard(source);
+const hdFailures=[];
+const hd=async(name,check)=>{try{await check()}catch(error){hdFailures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
 // HDC-12 changes weekly-app.js, survivor-app.js, survivor-math.js, weekly.css and survivor.css and adds contest-rulings.js,
 // so each is precached and loaded at its new version and none at the version it replaces.
 await hdc12('HDC-12 precache and page versions',()=>{
@@ -58,11 +131,11 @@ await hdc14('HDC-14 precache and page versions',()=>{
 // HDC-15 changes weekly-app.js and survivor-app.js (the public refresh lifecycle): each is precached and loaded at its new
 // version and none at the version it replaces. Nothing else moves.
 await hdc15('HDC-15 precache and page versions',()=>{
-  for(const asset of ['./weekly-app.js?v=weekly-v21','./survivor-app.js?v=10'])assert(source.includes(`'${asset}'`),`precache must include ${asset}`);
+  for(const asset of ['./weekly-app.js?v=weekly-v22','./survivor-app.js?v=11'])assert(source.includes(`'${asset}'`),`precache must include ${asset}`);
   for(const [asset,label] of [['./weekly-app.js?v=weekly-v18','weekly-v18 module'],['./survivor-app.js?v=8','survivor-app v8 module']])
     assert(!source.includes(`'${asset}'`),`the superseded ${label} must no longer be precached`);
-  assert(index.includes('weekly-app.js?v=weekly-v21')&&!index.includes('weekly-app.js?v=weekly-v18'),'the Pool Center page must load weekly-v21 only');
-  assert(index.includes('survivor-app.js?v=10')&&!index.includes('survivor-app.js?v=8'),'the Pool Center page must load survivor-app v10 only');
+  assert(index.includes('weekly-app.js?v=weekly-v22')&&!index.includes('weekly-app.js?v=weekly-v18'),'the Pool Center page must load weekly-v22 only');
+  assert(index.includes('survivor-app.js?v=11')&&!index.includes('survivor-app.js?v=8'),'the Pool Center page must load survivor-app v11 only');
 });
 assert(!source.includes("'./weekly-app.js?v=weekly-v15'"),'the superseded weekly-v15 module must no longer be precached');
 assert(!source.includes("'./survivor-app.js?v=5'"),'the superseded survivor-app v5 module must no longer be precached');
@@ -82,7 +155,7 @@ const httpResponse=status=>{const response={status,ok:status>=200&&status<300,cl
 const cache={addAll:async requests=>{addAllCalls.push(Array.from(requests))},put:async(request,response)=>{putCalls.push({request,response})}};
 const caches={
   open:async name=>{opened.push(name);return cache},
-  keys:async()=>['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15','pool-center-shell-v16','pool-center-shell-v17','pool-center-shell-v18','pool-center-shell-v19','pool-center-shell-v20','pool-center-shell-v21','pool-center-shell-v22','pool-center-shell-v23','pool-center-shell-v24'],
+  keys:async()=>['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15','pool-center-shell-v16','pool-center-shell-v17','pool-center-shell-v18','pool-center-shell-v19','pool-center-shell-v20','pool-center-shell-v21','pool-center-shell-v22','pool-center-shell-v23','pool-center-shell-v24','pool-center-shell-v25'],
   delete:async key=>{deleted.push(key);return true},
   match:async key=>{matchCalls.push(key);return cached.get(typeof key==='string'?key:key.url)}
 };
@@ -111,8 +184,9 @@ listeners.install({waitUntil:p=>{installPromise=p}});await installPromise;
 // so a new shell cache holds one deployment.
 const shell=[
   './','./index.html','./style.css?v=premium-v3','./slate.css?v=slate-v1','./weekly.css?v=premium-v3',
-  './weekly-app.js?v=weekly-v21','./public-math.js?v=3','./survivor.css?v=4','./survivor-app.js?v=10','./survivor-math.js?v=7',
-  './contest-rulings.js?v=2','./score-feed-proxy.js?v=2','./pwa.js?v=1','./share-card.js?v=1','./share-ui.js?v=1','./share.css?v=1','./manifest.webmanifest',
+  './weekly-app.js?v=weekly-v22','./public-math.js?v=3','./survivor.css?v=4','./survivor-app.js?v=11','./survivor-math.js?v=7',
+  './contest-rulings.js?v=2','./score-feed-proxy.js?v=2','./pwa.js?v=1','./share-card.js?v=2','./share-ui.js?v=2','./share.css?v=1',
+  './home-dashboard.js?v=1','./home-dashboard.css?v=1','./manifest.webmanifest',
   './assets/pool-center-icon.svg','./assets/pool-center-icon-192.svg','./assets/pool-center-icon-512.svg'
 ].map(path=>new URL(path,workerURL).href);
 assert.equal(addAllCalls.length,1,'install must precache the whole shell with one all-or-nothing Cache.addAll');
@@ -138,13 +212,13 @@ for(const mode of ['default','no-cache','no-store','force-cache','only-if-cached
   assert(!installRequests.some(request=>request.cache===mode),`no shell asset may be requested with cache:"${mode}"`);
 }
 assert(installRequests.every(request=>request instanceof Request),'install must give Cache.addAll Request objects, not URL strings');
-await hdc15('HDC-15 weekly-v21 and survivor-app v10 reload requests',()=>{
-  for(const asset of ['weekly-app.js?v=weekly-v21','survivor-app.js?v=10','share-card.js?v=1','share-ui.js?v=1','share.css?v=1'])
+await hdc15('HDC-15 weekly-v22 and survivor-app v11 reload requests',()=>{
+  for(const asset of ['weekly-app.js?v=weekly-v22','survivor-app.js?v=11','share-card.js?v=2','share-ui.js?v=2','share.css?v=1','home-dashboard.js?v=1','home-dashboard.css?v=1'])
     assert.equal(installRequests[shell.indexOf(`https://example.test/nfl-pool/${asset}`)]?.url,`https://example.test/nfl-pool/${asset}`,`the reload request must keep the ${asset} query string`);
 });
 assert.deepEqual([fetchCalls.length,putCalls.length],[0,0],'install must fetch and store the shell only through Cache.addAll');
 assert.equal(skipWaitingCalls,1,'a completed install skips waiting once');
-await hdc15('HDC-15 install cache generation',()=>assert.deepEqual(opened,['pool-center-shell-v24'],'install must write the shell to pool-center-shell-v24'));
+await hdc15('HDC-15 install cache generation',()=>assert.deepEqual(opened,['pool-center-shell-v25'],'install must write the shell to pool-center-shell-v25'));
 {
   // HDC-07 keeps Cache.addAll all-or-nothing. When any shell response is not OK the browser rejects addAll and stores none
   // of the shell; install must reject with that same error and never skip waiting, so the previous worker keeps control
@@ -162,7 +236,7 @@ await hdc15('HDC-15 install cache generation',()=>assert.deepEqual(opened,['pool
   assert.equal(failedSkips,0,'a failed install must never skip waiting');
   assert.equal(failedCalls.length,1,'a failed Cache.addAll must not be retried or replaced by a partial precache');
   assert.equal(failedCalls[0].length,precached.length);
-  await hdc15('HDC-15 failed-install cache generation',()=>assert.deepEqual(failedOpens,['pool-center-shell-v24']));
+  await hdc15('HDC-15 failed-install cache generation',()=>assert.deepEqual(failedOpens,['pool-center-shell-v25']));
 }
 
 let activatePromise;
@@ -185,8 +259,10 @@ listeners.activate({waitUntil:p=>{activatePromise=p}});await activatePromise;
 // survivor-app v8 modules and the page that loads them, is deleted too. The NFL-tie scoring change rolls it to v23 with
 // weekly-app.js?v=weekly-v20 and public-math.js?v=3. Shareable cards roll it to v24 with weekly-app.js?v=weekly-v21,
 // survivor-app.js?v=10 and the new share-card.js, share-ui.js and share.css, so v23, which holds the weekly-v20 and
-// survivor-app v9 modules and the page that loads them, is deleted too. Only v24 is kept.
-await hdc15('HDC-15 activation rollover',()=>assert.deepEqual(deleted,['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15','pool-center-shell-v16','pool-center-shell-v17','pool-center-shell-v18','pool-center-shell-v19','pool-center-shell-v20','pool-center-shell-v21','pool-center-shell-v22','pool-center-shell-v23'],'activation must delete v12 through v23 and keep only v24'));
+// survivor-app v9 modules and the page that loads them, is deleted too. The Home dashboard rolls it to v25 with
+// weekly-app.js?v=weekly-v22, survivor-app.js?v=11, share-card.js?v=2, share-ui.js?v=2 and the new home-dashboard.js and
+// home-dashboard.css, so v24, which holds the modules they replace and the page that loads them, is deleted too. Only v25 is kept.
+await hdc15('HDC-15 activation rollover',()=>assert.deepEqual(deleted,['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15','pool-center-shell-v16','pool-center-shell-v17','pool-center-shell-v18','pool-center-shell-v19','pool-center-shell-v20','pool-center-shell-v21','pool-center-shell-v22','pool-center-shell-v23','pool-center-shell-v24'],'activation must delete v12 through v24 and keep only v25'));
 
 const adminRequest={method:'GET',mode:'navigate',url:'https://example.test/nfl-pool/admin/survivor.html'};
 let adminResponse;
@@ -877,7 +953,7 @@ for(const path of ['/nfl-pool/admin/x%2F..%2F..%2Fstyle.css?v=premium-v3','/nfl-
 }
 // Every cache the worker opened, at install and before each runtime cache.put above, is pool-center-shell-v24.
 assert.equal(opened.length,1+putCalls.length,'install and each runtime cache.put open the shell cache once');
-await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(opened)],['pool-center-shell-v24'],'the worker must write only to pool-center-shell-v24'));
+await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(opened)],['pool-center-shell-v25'],'the worker must write only to pool-center-shell-v25'));
 
 // ---- HDC-12 version discipline. Each precached asset is checked against the bytes and version it had in
 // pool-center-shell-v19 (main 8caafa6): an asset whose bytes changed is requested at a new version, an asset whose bytes did
@@ -997,7 +1073,7 @@ await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(o
     const problems=[];
     for(const {path,version} of entries){
       const before=V20[path];
-      if(!before){if(!SHARE_CARDS.assets.has(path))problems.push(`${path} is new to the shell: HDC-14 adds no shell asset`);continue}
+      if(!before){if(!SHARE_CARDS.assets.has(path)&&!HOME_DASHBOARD.assets.has(path))problems.push(`${path} is new to the shell: HDC-14 adds no shell asset`);continue}
       if(before[0]===null)continue;
       const changed=sha(path)!==before[1];
       if(changed&&version===before[0])problems.push(`${path} changed but is still precached at v=${version}`);
@@ -1052,7 +1128,7 @@ await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(o
     const problems=[];
     for(const {path,version} of entries){
       const before=V21[path];
-      if(!before){if(!SHARE_CARDS.assets.has(path))problems.push(`${path} is new to the shell: HDC-15 adds no shell asset`);continue}
+      if(!before){if(!SHARE_CARDS.assets.has(path)&&!HOME_DASHBOARD.assets.has(path))problems.push(`${path} is new to the shell: HDC-15 adds no shell asset`);continue}
       if(before[0]===null)continue;
       const changed=sha(path)!==before[1];
       if(changed&&version===before[0])problems.push(`${path} changed but is still precached at v=${version}`);
@@ -1066,10 +1142,10 @@ await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(o
   });
   await hdc15('HDC-15 shell cache rolls from pool-center-shell-v21 to v22',()=>{
     assert.notEqual(cacheName,'pool-center-shell-v21','a changed shell must not reuse pool-center-shell-v21');
-    assert.equal(cacheName,'pool-center-shell-v24');
+    assert.equal(cacheName,'pool-center-shell-v25');
   });
   await hdc15('HDC-15 mixed versions: the page changes only its two module versions, so either page runs either module set',()=>{
-    const page=bytes('index.html').toString('utf8');
+    const page=withoutHomeDashboard(bytes('index.html').toString('utf8'));
     assert.equal(page.split('weekly-app.js?v=weekly-v21').length-1,1,'the page loads weekly-v21 exactly once');
     assert.equal(page.split('survivor-app.js?v=10"').length-1,1,'the page loads survivor-app v10 exactly once');
     const baselineSpelling=withoutShareCards(page).replace('weekly-app.js?v=weekly-v21','weekly-app.js?v=weekly-v18').replace('survivor-app.js?v=10"','survivor-app.js?v=8"')
@@ -1077,13 +1153,13 @@ await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(o
     assert.equal(digest(Buffer.from(baselineSpelling,'utf8')),V21['index.html'][1],'apart from the two module versions the page is byte-identical to the baseline page: no markup the new modules depend on');
   });
   await hdc15('HDC-15 the worker changes only its cache name and the two module precache entries (strategy unchanged)',()=>{
-    const baselineSpelling=source.replace("const CACHE='pool-center-shell-v24'","const CACHE='pool-center-shell-v21'").replace(SHARE_CARDS.worker,'')
+    const baselineSpelling=sourceBefore.replace("const CACHE='pool-center-shell-v24'","const CACHE='pool-center-shell-v21'").replace(SHARE_CARDS.worker,'')
       .replace("'./weekly-app.js?v=weekly-v21'","'./weekly-app.js?v=weekly-v18'").replace("'./survivor-app.js?v=10'","'./survivor-app.js?v=8'")
       .replace("'./public-math.js?v=3'","'./public-math.js?v=2'");
     assert.equal(digest(Buffer.from(baselineSpelling,'utf8')),V21_WORKER,'apart from the cache name and the two module versions the worker is byte-identical to the baseline worker');
   });
   await hdc15('HDC-15 the page and the worker name each app at one version, the precached one',()=>{
-    for(const [path,version] of [['weekly-app.js','weekly-v21'],['survivor-app.js','10']]){
+    for(const [path,version] of [['weekly-app.js','weekly-v22'],['survivor-app.js','11']]){
       const escaped=path.replace(/[.]/g,'\\.');
       for(const [label,text] of [['index.html',index],['service-worker.js',source]]){
         const named=new Set([...text.matchAll(new RegExp(`${escaped}\\?v=([^'"&\\s]+)`,'g'))].map(m=>m[1]));
@@ -1122,8 +1198,10 @@ await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(o
     'assets/pool-center-icon-512.svg':[null,'9fd6f65b0c367cee1988f3a573301279f1d11768577ef52ab1a72cf26d0604a3']
   };
   const V23_WORKER='99ce7a6b6938dca8172f9ad5139119a8c15f5a2c45dd172351188e623db76b06';
-  const cacheName=source.match(/const CACHE='([^']+)'/)?.[1];
-  const entries=precached.map(url=>{const u=new URL(url),path=u.pathname.replace('/nfl-pool/','')||'index.html';return{url,path,version:u.searchParams.get('v')}});
+  // The shell as share cards left it: without the Home dashboard's two assets, at the versions before it.
+  const cacheName=sourceBefore.match(/const CACHE='([^']+)'/)?.[1];
+  const entries=precached.filter(url=>![...HOME_DASHBOARD.assets].some(asset=>url.endsWith(`/${asset}?v=1`))).map(url=>withoutHomeDashboard(url))
+    .map(url=>{const u=new URL(url),path=u.pathname.replace('/nfl-pool/','')||'index.html';return{url,path,version:u.searchParams.get('v')}});
   await sc1('share cards change exactly index.html, weekly-app.js and survivor-app.js and add exactly the three share assets (against pool-center-shell-v23)',()=>{
     const problems=[];
     for(const {path,version} of entries){
@@ -1142,13 +1220,13 @@ await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(o
   });
   await sc1('share cards roll the shell cache from pool-center-shell-v23 to v24',()=>assert.equal(cacheName,'pool-center-shell-v24'));
   await sc1('share cards: the page differs from the baseline page only in the two module versions and the share additions',()=>{
-    const page=bytes('index.html').toString('utf8');
+    const page=indexBefore;
     for(const addition of SHARE_CARDS.page)assert.equal(page.split(addition).length-1,1,`the page carries ${addition.slice(0,60)}… exactly once`);
     const baselineSpelling=withoutShareCards(page).replace('weekly-app.js?v=weekly-v21','weekly-app.js?v=weekly-v20').replace('survivor-app.js?v=10"','survivor-app.js?v=9"');
     assert.equal(digest(Buffer.from(baselineSpelling,'utf8')),V23['index.html'][1],'apart from the two module versions and the share additions the page is byte-identical to the baseline page');
   });
   await sc1('share cards: the worker differs from the baseline worker only in its cache name, the two module versions and the three share entries (strategy unchanged)',()=>{
-    const baselineSpelling=source.replace("const CACHE='pool-center-shell-v24'","const CACHE='pool-center-shell-v23'").replace(SHARE_CARDS.worker,'')
+    const baselineSpelling=sourceBefore.replace("const CACHE='pool-center-shell-v24'","const CACHE='pool-center-shell-v23'").replace(SHARE_CARDS.worker,'')
       .replace("'./weekly-app.js?v=weekly-v21'","'./weekly-app.js?v=weekly-v20'").replace("'./survivor-app.js?v=10'","'./survivor-app.js?v=9'");
     assert.equal(digest(Buffer.from(baselineSpelling,'utf8')),V23_WORKER,'apart from those entries the worker is byte-identical to the baseline worker');
   });
@@ -1157,7 +1235,7 @@ await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(o
     assert(!index.includes('weekly-app.js?v=weekly-v20')&&!index.includes('survivor-app.js?v=9"'),'the page must no longer load weekly-v20 or survivor-app v9');
   });
   await sc1('share cards: share-ui.js imports only share-card.js at its precached version; share-card.js and the apps import nothing new',()=>{
-    const imports=file=>[...bytes(file).toString('utf8').matchAll(/(?:from|import)\s*\(?\s*'([^']+)'/g)].map(m=>m[1]);
+    const imports=file=>[...withoutHomeDashboard(bytes(file).toString('utf8')).matchAll(/(?:from|import)\s*\(?\s*'([^']+)'/g)].map(m=>m[1]);
     assert.deepEqual(imports('share-ui.js'),['./share-card.js?v=1']);
     assert.deepEqual(imports('share-card.js'),[]);
     assert.deepEqual(imports('weekly-app.js'),['./public-math.js?v=3','./contest-rulings.js?v=2']);
@@ -1180,10 +1258,130 @@ await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(o
       return'';
     };
     for(const [contest,panel] of [['pickem','standings'],['survivor','survivor']]){
-      assert.equal(index.split(`data-share-card="${contest}"`).length-1,1,`index.html has exactly one ${contest} Share button`);
+      assert.equal(indexBefore.split(`data-share-card="${contest}"`).length-1,1,`index.html has exactly one ${contest} Share button`);
       assert(panelOf(panel).includes(`data-share-card="${contest}"`),`the ${contest} Share button is inside the ${panel} panel`);
       assert(new RegExp(`<button type="button" class="share-btn" data-share-card="${contest}" aria-label="[^"]+" hidden>`).test(index),`the ${contest} Share button starts hidden and has an accessible name`);
     }
+  });
+}
+
+// ---- Home dashboard version discipline. Each precached asset is checked against the bytes and version it had in
+// pool-center-shell-v24 (main acebd80, the production baseline). The feature changes the bytes of index.html, weekly-app.js,
+// survivor-app.js, share-card.js and share-ui.js, so exactly those four modules roll their version; it adds exactly
+// home-dashboard.js and home-dashboard.css, each at v=1; every other asset keeps its bytes and version, and the shell cache
+// rolls to v25. Mixed versions stay safe: a page cached before the deploy never loads home-dashboard.js, and the new app
+// modules depend on nothing in the dashboard markup (they only announce poolcenter:update, which nothing else listens for).
+{
+  const {createHash}=await import('node:crypto');
+  const bytes=path=>{try{return readFileSync(new URL(`./${path}`,import.meta.url))}catch{return null}};
+  const digest=b=>createHash('sha256').update(b).digest('hex'),sha=path=>{const b=bytes(path);return b?digest(b):null};
+  const V24={
+    'index.html':[null,'1ac61a494570fb04ce9fc64b635b2098c7599478ab74da58dfc6e65a512058ec'],
+    'style.css':['premium-v3','83cce4ed122a251791d3f272b9cf5bed94c849dac9a0ad74d39bef784dcdf815'],
+    'slate.css':['slate-v1','58f87ea913d974f98f9bab54c1c3d74bd608f723b47fe491128d96016937abdb'],
+    'weekly.css':['premium-v3','fe917b9123af034c887fc3290e052c07ba6d1a7ed72ff0e9286a6f53ea6a1f44'],
+    'weekly-app.js':['weekly-v21','7f596078b1d62b4e924a01fad58a17e60c37265bf60b09f44ce9146f648a400c'],
+    'public-math.js':['3','9603a2703316bde8f223ff9e58389110b8851f6f95b588cd87254fab0c12c694'],
+    'survivor.css':['4','ec104e2e22394460c9a0ee473e84d47d87eb5e72eb7cf1f67135f626978b4938'],
+    'survivor-app.js':['10','1fe84299841e4e2cc32ee6b8c09ded1d48d7bc4820d189901063a6202ff71aa1'],
+    'survivor-math.js':['7','3aebca4ad08412658e7d0fc4b9f0207d829e2b9f718579f556594e13373b634f'],
+    'contest-rulings.js':['2','5422cd96a48333f4eceaaf0d6b300b30f0a09d24b34de42a619e20e8fc401a77'],
+    'score-feed-proxy.js':['2','b13635d4706099c67272b8ae739e9a363b21342bb2a87af1581847dc936747b7'],
+    'pwa.js':['1','febf3af70464731d65d56beb3a88ee5f8587808eeebf52f97b06211d47bb34da'],
+    'share-card.js':['1','66f011f0fd1d78f93f8f99fc7a7d5cbb312870adeea98cc89363897a6ef1074e'],
+    'share-ui.js':['1','90e85c14fffe86600d5df1b01c6a80738021799bb5e303e8d53a7ce41e54721d'],
+    'share.css':['1','32beaa9657dcae9ac5ff899261ee64f6188011f8e82e3de8de606721964f5dd4'],
+    'manifest.webmanifest':[null,'b6508c471231b597c8296084d4749d9004fe07cb33247a2e52e57775c35d53cf'],
+    'assets/pool-center-icon.svg':[null,'9fd6f65b0c367cee1988f3a573301279f1d11768577ef52ab1a72cf26d0604a3'],
+    'assets/pool-center-icon-192.svg':[null,'7cbd4c5a5fc061fb572e4b6e284ced95310da3d8a46c538c5ba3717d2d8a86e9'],
+    'assets/pool-center-icon-512.svg':[null,'9fd6f65b0c367cee1988f3a573301279f1d11768577ef52ab1a72cf26d0604a3']
+  };
+  const V24_WORKER='fbcee402edea2084992259cb9db681f145053a36d6da11ea038a354875d8288a';
+  const CHANGED=new Set(['index.html','weekly-app.js','survivor-app.js','share-card.js','share-ui.js']);
+  const cacheName=source.match(/const CACHE='([^']+)'/)?.[1];
+  const entries=precached.map(url=>{const u=new URL(url),path=u.pathname.replace('/nfl-pool/','')||'index.html';return{url,path,version:u.searchParams.get('v')}});
+  await hd('the Home dashboard changes exactly the page and the four modules, rolls exactly their versions and adds exactly its two assets at v=1 (against pool-center-shell-v24)',()=>{
+    const problems=[];
+    for(const {path,version} of entries){
+      const before=V24[path];
+      if(!before){if(!HOME_DASHBOARD.assets.has(path))problems.push(`${path} is new to the shell but is not a Home dashboard asset`);else if(version!=='1')problems.push(`${path} is new and must be precached at v=1, not v=${version}`);continue}
+      if(before[0]===null)continue;
+      const changed=sha(path)!==before[1];
+      if(changed&&version===before[0])problems.push(`${path} changed but is still precached at v=${version}`);
+      if(!changed&&version!==before[0])problems.push(`${path} is unchanged but its version moved from v=${before[0]} to v=${version}`);
+      if(changed&&!CHANGED.has(path))problems.push(`${path} is outside the Home dashboard and must keep its bytes`);
+    }
+    for(const path of HOME_DASHBOARD.assets)if(!entries.some(e=>e.path===path))problems.push(`${path} must be precached`);
+    for(const path of CHANGED)if(sha(path)===V24[path][1])problems.push(`${path} must change for the Home dashboard`);
+    for(const [asset,,after] of HOME_DASHBOARD.versions)if(entries.find(e=>e.path===asset)?.version!==after)problems.push(`${asset} must be precached at v=${after}`);
+    for(const path of Object.keys(V24))if(!CHANGED.has(path)&&sha(path)!==V24[path][1])problems.push(`${path} is outside the Home dashboard and must keep its bytes`);
+    assert.deepEqual(problems,[]);
+  });
+  await hd('the Home dashboard rolls the shell cache from pool-center-shell-v24 to v25',()=>assert.equal(cacheName,HOME_DASHBOARD.cache[1]));
+  await hd('the page differs from the baseline page only in the dashboard link and script, the Home panel and the four module versions',()=>{
+    const page=bytes('index.html').toString('utf8');
+    for(const addition of HOME_DASHBOARD.page)assert.equal(page.split(addition).length-1,1,`the page carries ${addition.slice(0,60)}… exactly once`);
+    assert.equal(digest(Buffer.from(withoutHomeDashboard(page),'utf8')),V24['index.html'][1],'with the dashboard taken out, the page is byte-identical to the baseline page');
+    assert.notEqual(digest(Buffer.from(page,'utf8')),V24['index.html'][1]);
+  });
+  await hd('the worker differs from the baseline worker only in its cache name, the two dashboard entries and the four module versions (strategy unchanged)',()=>{
+    assert.equal(digest(Buffer.from(sourceBefore,'utf8')),V24_WORKER,'with the dashboard taken out, the worker is byte-identical to the baseline worker');
+  });
+  await hd('the page and the worker name each changed or new asset at one version, the precached one; superseded versions are neither precached nor loaded',()=>{
+    for(const [path,version] of [['weekly-app.js','weekly-v22'],['survivor-app.js','11'],['share-ui.js','2'],['home-dashboard.js','1'],['home-dashboard.css','1']]){
+      const escaped=path.replace(/[.]/g,'\\.');
+      for(const [label,text] of [['index.html',index],['service-worker.js',source]]){
+        const named=new Set([...text.matchAll(new RegExp(`${escaped}\\?v=([^'"&\\s]+)`,'g'))].map(m=>m[1]));
+        assert.deepEqual([...named],[version],`${label} names ${path} at ${[...named].join(', ')}; only v=${version} is precached`);
+      }
+    }
+    assert.deepEqual([...source.matchAll(/share-card\.js\?v=([^'"&\s]+)/g)].map(m=>m[1]),['2'],'the worker precaches share-card.js at v=2 only');
+    for(const asset of ['weekly-app.js?v=weekly-v21','survivor-app.js?v=10\'','share-card.js?v=1\'','share-ui.js?v=1\''])assert(!source.includes(`'./${asset}`),`the worker must no longer precache ${asset}`);
+    assert(!index.includes('weekly-app.js?v=weekly-v21')&&!index.includes('survivor-app.js?v=10"')&&!index.includes('share-ui.js?v=1"'),'the page must no longer load the superseded module versions');
+  });
+  await hd('home-dashboard.js imports only share-card.js at its precached version; share-ui.js imports it at v=2; share-card.js and the apps import nothing new',()=>{
+    const imports=file=>[...bytes(file).toString('utf8').matchAll(/(?:from|import)\s*\(?\s*'([^']+)'/g)].map(m=>m[1]);
+    assert.deepEqual(imports('home-dashboard.js'),['./share-card.js?v=2']);
+    assert.deepEqual(imports('share-ui.js'),['./share-card.js?v=2']);
+    assert.deepEqual(imports('share-card.js'),[]);
+    assert.deepEqual(imports('weekly-app.js'),['./public-math.js?v=3','./contest-rulings.js?v=2']);
+    assert.deepEqual(imports('survivor-app.js'),['./survivor-math.js?v=7','./contest-rulings.js?v=2']);
+  });
+  await hd('the dashboard module and stylesheet reach no network, load no remote resource and start no timer; the apps depend on no dashboard markup',()=>{
+    for(const file of ['home-dashboard.js','home-dashboard.css']){
+      const text=bytes(file).toString('utf8');
+      assert(!/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|EventSource|import\s*\(/.test(text),`${file} must not make requests`);
+      assert(!/https?:\/\//.test(text),`${file} must not name a remote resource`);
+      assert(!/setInterval|setTimeout/.test(text),`${file} must start no timer`);
+    }
+    for(const addition of HOME_DASHBOARD.page)assert(!/(?:src|href)="(?:https?:)?\/\//.test(addition),'the dashboard markup loads nothing remote');
+    for(const app of ['weekly-app.js','survivor-app.js'])assert(!/getElementById\(['"`]dash|\$\(['"`]dash|data-dash/.test(bytes(app).toString('utf8')),`${app} must not look for dashboard markup`);
+  });
+  await hd('index.html: the Home panel holds the six dashboard sections in default order, each with its toggle, summary and body, the elements weekly-app.js renders into, the share menu and the customization dialog',()=>{
+    const start=index.indexOf(HOME_DASHBOARD.panel.start),end=index.indexOf(HOME_DASHBOARD.panel.end),panel=index.slice(start,end);
+    assert(start>=0&&end>start);
+    const sections=[...panel.matchAll(/data-dash-section="([^"]+)"/g)].map(m=>m[1]);
+    assert.deepEqual(sections,['overview','standings','survivor','pulse','scenarios','games']);
+    for(const id of sections){
+      assert.equal(panel.split(`data-dash-toggle="${id}"`).length-1,1,`one toggle for ${id}`);
+      assert(new RegExp(`<button type="button" class="dash-toggle" data-dash-toggle="${id}" aria-expanded="(true|false)" aria-controls="dash-${id}-body">`).test(panel),`${id}: the toggle is a button with its expanded state and the body it controls`);
+      assert.equal(panel.split(`id="dash-${id}-body"`).length-1,1,`one body for ${id}`);
+      assert.equal(panel.split(`data-dash-summary="${id}"`).length-1,1,`one summary for ${id}`);
+    }
+    for(const id of ['pulse','scenarios','games'])assert(new RegExp(`data-dash-toggle="${id}" aria-expanded="false"`).test(panel)&&new RegExp(`id="dash-${id}-body" hidden`).test(panel),`${id} starts collapsed`);
+    for(const id of ['overview','standings','survivor'])assert(new RegExp(`data-dash-toggle="${id}" aria-expanded="true"`).test(panel)&&!new RegExp(`id="dash-${id}-body" hidden`).test(panel),`${id} starts expanded`);
+    for(const id of ['leaderKicker','leaderName','leaderRecord','leaderNote','finals','liveCount','left','mnf','homeStandings','pulseWeek','entryCount','gameCount','bestWins','swingLeft','progressText','progressBar','tbNote','scenarioCount','raceList','homeGamePreview','dashSections','dashContests','dashSurvivor','dashPanel','dashPanelList','dashPanelStorage'])
+      assert.equal(index.split(`id="${id}"`).length-1,1,`index.html has exactly one #${id}`);
+    for(const id of ['leaderName','homeStandings','pulseWeek','scenarioCount','raceList','homeGamePreview','dashContests','dashSurvivor'])assert(panel.includes(`id="${id}"`),`#${id} is inside the Home panel`);
+    for(const button of ['data-share-card="dashboard"','data-share-card="pickem"','data-share-card="survivor"','data-share-link="dashboard"'])
+      assert(new RegExp(`<button type="button" ${button} hidden>`).test(panel),`the share menu's ${button} button starts hidden`);
+    assert(panel.includes('data-share-link-status'),'the share menu has a status line');
+    assert(/<button type="button" class="dash-tool" data-dash-customize aria-haspopup="dialog" hidden>/.test(panel),'the Customize button starts hidden (the module shows it)');
+    assert(/<dialog class="dash-panel" id="dashPanel" aria-labelledby="dashPanelTitle">/.test(panel),'the customization dialog is a dialog with a label');
+    assert.equal(panel.split('data-dash-close').length-1,2,'the dialog can be closed from its header and its Done button');
+    assert.equal(panel.split('name="dashDensity"').length-1,2,'two density choices');
+    assert(panel.includes('data-dash-reset'),'Restore default layout');
+    for(const target of ['standings','survivor','games'])assert(panel.includes(`data-view-target="${target}"`),`a link to the full ${target} view`);
   });
 }
 
@@ -1191,5 +1389,6 @@ assert.equal(hdc12Failures.length,0,`HDC-12 service-worker regressions failed ($
 assert.equal(hdc14Failures.length,0,`HDC-14 service-worker regressions failed (${hdc14Failures.length}):\n  ${hdc14Failures.join('\n  ')}`);
 assert.equal(hdc15Failures.length,0,`HDC-15 service-worker regressions failed (${hdc15Failures.length}):\n  ${hdc15Failures.join('\n  ')}`);
 assert.equal(sc1Failures.length,0,`Share-card service-worker regressions failed (${sc1Failures.length}):\n  ${sc1Failures.join('\n  ')}`);
+assert.equal(hdFailures.length,0,`Home dashboard service-worker regressions failed (${hdFailures.length}):\n  ${hdFailures.join('\n  ')}`);
 
-console.log('service-worker precache graph (share-card versions), fresh (cache:"reload") precache requests, all-or-nothing install, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');
+console.log('service-worker precache graph (share-card and Home dashboard versions), fresh (cache:"reload") precache requests, all-or-nothing install, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');

@@ -990,8 +990,10 @@ console.log('survivor HDC-12 contest-ruling load and HDC-14 absent-game, privacy
     v.doc.visibilityState='visible';from=v.calls.length;v.tick();await flush();
     assert(tally(v,from).token>=1&&tally(v,from).index===1,'control: the same tick while visible renews the token and refreshes');
   });
-  await regression('a Pick’em view active: visible Survivor timer ticks make no request',async()=>{
-    const v=await open();v.doc.visibilityState='visible';v.doc.body.dataset.view='home';
+  // Home is not such a view since the Home dashboard: there Survivor refreshes once a minute at most (its own regressions
+  // follow the page ones below), so these two regressions use Standings, as every other Pick’em view behaves.
+  await regression('a Pick’em view other than Home active: visible Survivor timer ticks make no request',async()=>{
+    const v=await open();v.doc.visibilityState='visible';v.doc.body.dataset.view='standings';
     const from=v.calls.length;v.tick();v.tick();await flush();
     assert.deepEqual(kinds(v,from),[]);
   });
@@ -1727,18 +1729,20 @@ function virtualClock(){
     });
   });
 
-  await regression('a Survivor refresh left behind by a frozen page never lets Survivor refresh while a Pick’em view has the page, however long it has run',async()=>{
+  // Home is not such a view since the Home dashboard (Survivor refreshes there once a minute at most; its own regressions
+  // are in the Home dashboard block at the end of this file), so this regression uses Standings.
+  await regression('a Survivor refresh left behind by a frozen page never lets Survivor refresh while a Pick’em view other than Home has the page, however long it has run',async()=>{
     let T=Infinity;
     await onSlow({lag:(kind,r)=>r.sent>=T&&kind!=='schedule'?12*S:0},async p=>{
       await p.clock.advance(p.toNextTick()-1);T=p.clock.now()+1;
       const sent=p.life.length;
       await p.clock.advance(1+5*S);
-      p.v.doc.body.dataset.view='home';p.v.doc.dispatchEvent({type:'poolcenter:viewchange',detail:{view:'home'}});
+      p.v.doc.body.dataset.view='standings';p.v.doc.dispatchEvent({type:'poolcenter:viewchange',detail:{view:'standings'}});
       p.v.setVisibility('hidden');
       p.clock.jump(300*S);
       p.v.setVisibility('visible');
       await p.clock.advance(2*PERIOD);
-      assert.deepEqual(p.life.slice(sent).filter(r=>r.kind==='index').map(r=>(r.sent-T)/S),[0],'a Pick’em view has the page: Survivor starts no refresh, on resume or on a tick');
+      assert.deepEqual(p.life.slice(sent).filter(r=>r.kind==='index').map(r=>(r.sent-T)/S),[0],'a Pick’em view other than Home has the page: Survivor starts no refresh, on resume or on a tick');
     });
   });
 
@@ -1932,3 +1936,116 @@ console.log('survivor and page HDC-15 slow-network regressions passed: slow refr
 }
 
 console.log('survivor share-card regressions passed: the share snapshot is the rendered Survivor week, never before its results, with the feed, ruling and publication state, shared links boot the same week, and each app answers for its own contest');
+
+// Home dashboard (home-dashboard.js). With Home active on a visible page, Survivor refreshes once a minute at most: a timer
+// tick, a resume or a view change runs one full refresh only once the last one started HOME_REFRESH_MS (60 s) ago, and joins,
+// never doubles, one still running; Pick'em keeps its own 20 s cycle on Home (HDC-15 single owner), and with any other
+// Pick'em view active Survivor never refreshes. Each render, a publication found stale or verified again, and a boot failure
+// announce poolcenter:update (carrying no data), and the share snapshot says how often these results are refreshed in the
+// current view (feed.interval). The clock is the virtual one above, so a minute passes without waiting.
+{
+  const failures=[];
+  const regression=async(name,check)=>{try{await check()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+  const S=1000,HOME=60*S,PUBLISHED_AT='2026-09-21T19:30:44.641+00:00';
+  const svRow=(cfg,revision)=>({season:cfg.season,week:cfg.week,status:'locked',revision,published_at:PUBLISHED_AT,locked_at:PUBLISHED_AT,config:structuredClone(cfg)});
+  const feeds=()=>({1:week(W1,1),2:week(W2,2),3:week(W3,3)});
+  const tally=(v,from=0)=>{const t={token:0,index:0,row:0,rulings:0,score:0};for(const c of v.calls.slice(from))t[c.kind]++;return t};
+  const FULL={token:0,index:1,row:0,rulings:3,score:1},NONE={token:0,index:0,row:0,rulings:0,score:0};
+  const ask=v=>{const detail={contest:'survivor',snapshot:null};v.doc.dispatchEvent({type:'poolcenter:share',detail});return detail.snapshot};
+  const quiet=async fn=>{const warn=console.warn;console.warn=()=>{};try{return await fn()}finally{console.warn=warn}};
+  // A Survivor view booted on the virtual clock with Home active and the page visible (boot refreshed it once, as always).
+  const onHome=async(check,{view:activeView='home'}={})=>{
+    const clock=virtualClock();
+    try{
+      const v=await view(feeds(),[svRow(config,7)],patched,rulingStore(),{search:'?view=home'});
+      v.doc.visibilityState='visible';v.doc.body.dataset.view=activeView;
+      await check(v,clock);
+    }finally{clock.restore()}
+  };
+  const viewTo=(v,next,previous)=>{v.doc.body.dataset.view=next;v.doc.dispatchEvent({type:'poolcenter:viewchange',detail:{view:next,previous}})};
+
+  await regression('Home active: visible timer ticks make no request until the last Survivor refresh started a minute ago, then one tick runs exactly one full refresh (the index, the rules and rulings, the current week’s feed, never a snapshot) and the gate closes again',()=>onHome(async(v,clock)=>{
+    let from=v.calls.length;v.tick();v.tick();await flush();
+    assert.deepEqual(tally(v,from),NONE,'right after boot');
+    await clock.advance(HOME-S);from=v.calls.length;v.tick();await flush();
+    assert.deepEqual(tally(v,from),NONE,'59 s after the boot refresh started');
+    await clock.advance(S);from=v.calls.length;v.tick();v.tick();await flush();
+    assert.deepEqual(tally(v,from),FULL,'60 s after: one full refresh, the second tick joins it');
+    assert.equal(v.$('svFeed').textContent,'LIVE · NFL results');
+    from=v.calls.length;v.tick();await flush();
+    assert.deepEqual(tally(v,from),NONE,'the next tick is inside the next minute');
+    await clock.advance(HOME);from=v.calls.length;v.tick();await flush();
+    assert.deepEqual(tally(v,from),FULL,'a minute later again');
+  }));
+  await regression('Home active: becoming visible or Home becoming the active view runs the one bounded refresh only when it is due, and never a second one at the same moment',()=>onHome(async(v,clock)=>{
+    let from=v.calls.length;await v.resume();
+    assert.deepEqual(tally(v,from),NONE,'a resume right after boot');
+    v.setVisibility('hidden');clock.jump(HOME);from=v.calls.length;v.setVisibility('visible');v.tick();await flush();
+    assert.deepEqual(tally(v,from),FULL,'a resume a minute later: one full refresh, the tick at the same moment joins it');
+    viewTo(v,'standings','home');from=v.calls.length;await v.resume();v.tick();await flush();
+    assert.deepEqual(tally(v,from),NONE,'Standings active: nothing, however long');
+    clock.jump(10*HOME);from=v.calls.length;v.tick();await v.resume();
+    assert.deepEqual(tally(v,from),NONE,'still nothing with Standings active after ten minutes');
+    from=v.calls.length;viewTo(v,'home','standings');await flush();
+    assert.deepEqual(tally(v,from),{...FULL,score:2},'Home active again with results eleven minutes old: one refresh at once (its week-ahead schedule, cached five minutes, is read again with it, as on the Survivor view)');
+    from=v.calls.length;viewTo(v,'games','home');viewTo(v,'home','games');await flush();
+    assert.deepEqual(tally(v,from),NONE,'leaving and coming back inside the minute: nothing');
+  }));
+  await regression('Home active: a hidden page makes no Survivor request from a tick, however old the results',()=>onHome(async(v,clock)=>{
+    v.setVisibility('hidden');clock.jump(10*HOME);
+    const from=v.calls.length;v.tick();v.tick();await flush();
+    assert.deepEqual(tally(v,from),NONE);
+  }));
+  await regression('Home active: a republished revision found by the bounded refresh is installed whole, and a stale publication is reported, exactly as on the Survivor view',()=>onHome(async(v,clock)=>{
+    v.rows[0]=svRow((()=>{const c=structuredClone(config);c.trackedEntries[0].picks=['PIT','ARI'];return c})(),8);
+    await clock.advance(HOME);let from=v.calls.length;v.tick();await flush();
+    assert.deepEqual(tally(v,from),{token:0,index:1,row:1,rulings:3,score:3},'the index, the snapshot of revision 8, then a fresh load of both weeks’ score feeds and the week-ahead schedule');
+    assert.deepEqual(v.seen.slice(-3).sort(),[1,2,3]);
+    assert.equal(v.$('svMeta').textContent,'Week 2 · revision 8');assert.match(v.row('D.C.'),/ARI lost in Week 2/);
+    v.hooks.index=()=>({ok:false,status:503,json:async()=>({})});
+    await clock.advance(HOME);from=v.calls.length;await quiet(async()=>{v.tick();await flush()});
+    assert.equal(v.$('svMeta').textContent,'Week 2 · revision 8 · PUBLISHED DATA STALE');
+    assert.match(ask(v).publishedStale.toString(),/true/);
+  }));
+  await regression('page: with Home active a visible timer tick is Pick’em’s full refresh alone until Survivor’s last refresh is a minute old; that tick then runs both, once, and the next ticks are Pick’em’s alone again',async()=>{
+    const clock=virtualClock();
+    try{
+      const p=await poolPage('home');
+      const FULLP={index:1,row:0,rulings:3,score:1},NONEP={index:0,row:0,rulings:0,score:0};
+      let from=p.calls.length;p.tickAll();await flush();
+      assert.deepEqual(p.tally(from),{pickem:FULLP,survivor:NONEP,token:0},'right after boot');
+      await clock.advance(HOME);from=p.calls.length;p.tickAll();await flush();
+      assert.deepEqual(p.tally(from),{pickem:FULLP,survivor:FULLP,token:0},'a minute later: both, each once');
+      from=p.calls.length;p.tickAll();await flush();p.tickAll();await flush();
+      assert.deepEqual(p.tally(from),{pickem:{index:2,row:0,rulings:6,score:2},survivor:NONEP,token:0},'the next two ticks: Pick’em alone');
+      assert.equal(p.$('svFeed').textContent,'LIVE · NFL results');assert.match(p.$('sync').textContent,/^LIVE/);
+      p.click('standings');await flush();
+      await clock.advance(HOME);from=p.calls.length;p.tickAll();await flush();
+      assert.deepEqual(p.tally(from),{pickem:FULLP,survivor:NONEP,token:0},'Standings active: Pick’em alone, however old the Survivor results');
+    }finally{clock.restore()}
+  });
+  await regression('every render, a publication found stale and one verified again announce poolcenter:update for Survivor, carrying no data; a boot failure is the snapshot’s reason',async()=>{
+    const v=await view(feeds(),[svRow(config,7)],patched);
+    const seen=[];v.doc.addEventListener('poolcenter:update',e=>seen.push(e.detail));
+    await v.refresh();
+    assert(seen.length>=1,'a refresh announces');assert(seen.every(d=>JSON.stringify(d)==='{"contest":"survivor"}'),`only the contest: ${JSON.stringify(seen)}`);
+    let n=seen.length;v.hooks.index=()=>({ok:false,status:503,json:async()=>({})});await quiet(()=>v.refresh());
+    assert(seen.length>n,'a stale publication announces');assert.match(v.$('svMeta').textContent,/PUBLISHED DATA STALE/);assert.equal(ask(v).publishedStale,true);
+    n=seen.length;v.hooks.index=undefined;await v.refresh();
+    assert(seen.length>n,'verified again announces');assert.equal(ask(v).publishedStale,false);
+    const failed=await quiet(()=>view(feeds(),[],patched));
+    assert.match(failed.$('survivorError').innerHTML,/^<div class="error">Survivor is not published yet: No published Survivor weeks found<\/div>$/);
+    assert.deepEqual(ask(failed),{ready:false,reason:'Survivor is not published yet: No published Survivor weeks found'});
+  });
+  await regression('the share snapshot says how often these results are refreshed: every 20 s on the Survivor view, once a minute elsewhere',async()=>{
+    const v=await view(feeds(),[svRow(config,7)],patched);
+    assert.equal(ask(v).feed.interval,20000);
+    v.doc.body.dataset.view='home';assert.equal(ask(v).feed.interval,60000);
+    v.doc.body.dataset.view='standings';assert.equal(ask(v).feed.interval,60000);
+    assert.deepEqual(v.intervals,[20000],'still exactly one 20 s timer');
+  });
+
+  assert.equal(failures.length,0,`Home dashboard Survivor regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+}
+
+console.log('survivor Home dashboard regressions passed: one bounded Survivor refresh a minute with Home active, none with another Pick’em view active, no doubled refresh on resume or view change, update announcements, and the snapshot’s refresh interval');
