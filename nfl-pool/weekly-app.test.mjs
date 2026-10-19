@@ -2362,3 +2362,132 @@ console.log('weekly share-card regressions passed: the share snapshot is the ren
 }
 
 console.log('weekly Home dashboard regressions passed: every view change announced, Pick’em refresh ownership unchanged, update announcements, and the race and spotlight in the snapshot');
+
+// ---- V1.3 mobile UX (picks-mobile.js) regressions: the Picks snapshot and the Rules & rulings model the page answers with
+// (poolcenter:picks and poolcenter:rules). Every grade, status, score and share in the snapshot is the comparison table's own.
+{
+  const failures=[];
+  const regression=async(name,check)=>{try{await check()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+  const picks=v=>{const detail={contest:'pickem',snapshot:null};v.doc.dispatchEvent({type:'poolcenter:picks',detail});return detail.snapshot};
+  const rulesOf=v=>{const detail={contest:'pickem',snapshot:null};v.doc.dispatchEvent({type:'poolcenter:rules',detail});return detail.snapshot};
+  const cells=v=>[...v.$('pickBody').innerHTML.matchAll(/<td class="c ([a-z]+)">/g)].map(m=>m[1]);
+  const CELL={correct:'ok',incorrect:'bad',tie:'bad',pending:'pending',void:'void',hold:'hold'};
+  const cfg=(o={})=>({schemaVersion:1,season:2026,week:3,tiebreakGameIndex:3,
+    games:[{away:'DEN',home:'KC',awayNumber:1,homeNumber:2,date:'2026-09-24'},{away:'MIA',home:'BUF',awayNumber:3,homeNumber:4,date:'2026-09-27'},{away:'NYJ',home:'NE',awayNumber:5,homeNumber:6,date:'2026-09-27'},{away:'WAS',home:'PHI',awayNumber:7,homeNumber:8,date:'2026-09-27'}],
+    participants:[{id:'dc',displayName:'D.C.',pickNumbers:[1,4,5,8],tiebreak:41},{id:'jc',displayName:'JC',pickNumbers:[2,3,6,7],tiebreak:45},{id:'djs',displayName:'DJS',pickNumbers:[1,3,5,7],tiebreak:44},{id:'thaddeus',displayName:'Thaddeus',pickNumbers:[null,null,null,null],tiebreak:null}],...o});
+  const at=(event,date)=>({...event,date});
+  const live=(o,detail)=>({...game(o),status:{type:{state:'in',completed:false,shortDetail:detail}}});
+  const scheduled=(o,detail)=>({...game({...o,awayScore:'0',homeScore:'0'}),status:{type:{state:'pre',completed:false,shortDetail:detail}}});
+  const canceled=(away,home,id)=>({id,season:{year:2026,type:2},week:{number:3},status:{type:{state:'post',completed:false,name:'STATUS_CANCELED',shortDetail:'Canceled'}},competitions:[{status:{type:{state:'post',completed:false,name:'STATUS_CANCELED'}},competitors:[{homeAway:'away',team:{abbreviation:away},score:'0'},{homeAway:'home',team:{abbreviation:home},score:'0'}]}]});
+  const slate=()=>[at(game({away:'DEN',home:'KC',awayScore:'24',homeScore:'17'}),'2026-09-25T00:15Z'),at(game({away:'MIA',home:'BUF',awayScore:'20',homeScore:'20'}),'2026-09-27T17:00Z'),at(live({away:'NYJ',home:'NE',awayScore:'10',homeScore:'7'},'3rd 7:41'),'2026-09-27T17:00Z'),at(scheduled({away:'WAS',home:'PHI'},'Sun 4:25 PM'),'2026-09-27T20:25Z')];
+  const canceledSlate=()=>{const s=slate();s[1]=at(canceled('MIA','BUF','401437947'),'2026-09-27T17:00Z');return s};
+  const voidRow=(o={})=>({ruling_id:1,contest_id:PK_CONTEST,contest_type:'pickem',week:3,away_team:'MIA',home_team:'BUF',policy_revision:1,chain_seq:1,parent_ruling_id:null,consequence:'void',incident_status:'STATUS_CANCELED',event_id:'401437947',evidence_source:'espn-scoreboard',public_note:'League canceled the game; voided for this contest.',created_at:'2026-10-08T12:00:00+00:00',...PRIVATE,...o});
+  await regression('the Picks snapshot is exactly what the table shows: every game in published order with its teams, kickoff, date, status, verified scores and every tracked entry’s pick graded as the table grades it; a no-submission entry is NO PICK; a tie is one loss; public values only',async()=>{
+    const v=await view({weekConfig:cfg(),initialScorePayload:{events:slate()},search:'?view=picks'});
+    const s=picks(v);
+    assert.equal(s.ready,true);assert.deepEqual([s.contest,s.season,s.week,s.revision,s.fieldSize,s.tiebreakIndex],['pickem',2026,3,1,null,3]);
+    assert.deepEqual(s.entrants,[{name:'D.C.',noSubmission:false},{name:'JC',noSubmission:false},{name:'DJS',noSubmission:false},{name:'Thaddeus',noSubmission:true}]);
+    assert.deepEqual(s.games.map(g=>[g.index,g.away.code,g.home.code,g.kickoff,g.date,g.kind,g.status,g.detail,g.awayScore,g.homeScore,g.winner,g.tiebreak]),[
+      [0,'DEN','KC','2026-09-25T00:15Z','2026-09-24','final','FINAL','Final',24,17,'DEN',false],
+      [1,'MIA','BUF','2026-09-27T17:00Z','2026-09-27','tie','FINAL TIE','Final',20,20,null,false],
+      [2,'NYJ','NE','2026-09-27T17:00Z','2026-09-27','live','3rd 7:41','3rd 7:41',10,7,null,false],
+      [3,'WAS','PHI','2026-09-27T20:25Z','2026-09-27','upcoming','Sun 4:25 PM','Sun 4:25 PM',null,null,null,true]]);
+    assert.deepEqual(s.games[0].away,{code:'DEN',color:'#FB4F14',logo:'https://a.espncdn.com/i/teamlogos/nfl/500/den.png'});
+    assert.deepEqual(s.games[0].picks,[{name:'D.C.',team:'DEN',result:'correct'},{name:'JC',team:'KC',result:'incorrect'},{name:'DJS',team:'DEN',result:'correct'},{name:'Thaddeus',team:null,result:'incorrect'}]);
+    assert.deepEqual(s.games[1].picks.map(p=>p.result),['tie','tie','tie','tie'],'an NFL tie is one loss for every pick, NO PICK included');
+    assert.deepEqual(s.games[2].picks.map(p=>p.result),['pending','pending','pending','pending']);
+    assert.deepEqual(s.games.map(g=>[g.void,g.hold,g.underReview,g.issue,g.ownership,g.note]),Array(4).fill([false,null,null,null,null,null]));
+    // The table's cells, row by row, are the snapshot's grades: nothing is graded twice.
+    assert.deepEqual(cells(v),s.entrants.flatMap((_,pi)=>s.games.map(g=>CELL[g.picks[pi].result])));
+    assert.deepEqual(cells(v),['ok','bad','pending','pending','bad','bad','pending','pending','ok','bad','pending','pending','bad','bad','pending','pending']);
+    assert(!/pickNumbers|"id":|field-|"mnf"/.test(JSON.stringify(s)),'public values only');
+    const other={contest:'survivor',snapshot:null};v.doc.dispatchEvent({type:'poolcenter:picks',detail:other});assert.equal(other.snapshot,null,'Survivor is not answered here');
+  });
+  await regression('a kickoff is the verified event’s own timestamp, kept when a later feed omits or garbles it and moved with a rescheduled game; a feed warning on a game rides on its card; nothing is graded from the kickoff',async()=>{
+    const v=await view({weekConfig:cfg(),initialScorePayload:{events:slate()},search:'?view=picks'});
+    const kickoffs=['2026-09-25T00:15Z','2026-09-27T17:00Z','2026-09-27T17:00Z','2026-09-27T20:25Z'];
+    v.setPayload({events:slate().map(e=>{const {date,...rest}=e;return rest})});await v.refresh();
+    assert.deepEqual(picks(v).games.map(g=>g.kickoff),kickoffs,'kept without a date');
+    v.setPayload({events:slate().map(e=>({...e,date:'not a time'}))});await v.refresh();
+    assert.deepEqual(picks(v).games.map(g=>g.kickoff),kickoffs,'an unreadable time is ignored');
+    const moved=slate();moved[3]=at(scheduled({away:'WAS',home:'PHI'},'Mon 7:00 PM'),'2026-09-28T23:00Z');
+    v.setPayload({events:moved});await v.refresh();
+    assert.equal(picks(v).games[3].kickoff,'2026-09-28T23:00Z','a rescheduled game moves with the feed');
+    const contradictory=slate();contradictory[2]={...game({away:'NYJ',home:'NE',awayScore:'27',homeScore:'24'}),date:'2026-09-27T17:00Z',status:{type:{state:'in',completed:true,shortDetail:'Final'}}};
+    v.setPayload({events:contradictory});await v.refresh();
+    const s=picks(v);
+    assert.deepEqual([s.games[2].kind,s.games[2].awayScore,s.games[2].homeScore],['live',10,7],'the contradictory final is not graded: the last verified live fact stands');
+    assert.equal(s.games[2].issue,'NYJ-NE: final with contradictory status ignored');
+    assert.match(v.warning(),/NYJ-NE: final with contradictory status ignored/,'the same warning the page reports');
+    assert.deepEqual(s.games.map(g=>g.issue!==null),[false,false,true,false]);
+  });
+  await regression('VOID, HOLD and UNDER REVIEW are the table’s own ruling states: a void game scores nothing and carries no feed warning, a held game is not graded and says why, a void the feed now contradicts stays applied and is under review',async()=>{
+    const v=await view({weekConfig:cfg(),initialScorePayload:{events:canceledSlate()},store:pickemStore({nfl_incident_rulings:[voidRow()]}),search:'?view=picks'});
+    let g=picks(v).games[1];
+    assert.deepEqual([g.kind,g.status,g.note,g.void,g.hold,g.underReview,g.issue,g.awayScore,g.homeScore],['void','VOID · Commissioner ruling','Commissioner ruling',true,null,null,null,null,null]);
+    assert.deepEqual(g.picks.map(p=>p.result),['void','void','void','void']);
+    assert.deepEqual(cells(v).filter((_,i)=>i%4===1),['void','void','void','void'],'the table shows VOID in the same column');
+    v.setPayload({events:slate().map((e,i)=>i===1?{...game({away:'MIA',home:'BUF',id:'401437947',awayScore:'20',homeScore:'17'}),date:'2026-09-27T17:00Z'}:e)});await v.refresh();
+    g=picks(v).games[1];
+    assert.deepEqual([g.kind,g.status,g.note,g.awayScore,g.homeScore,g.winner],['void','VOID · Commissioner ruling · UNDER REVIEW','Commissioner ruling · UNDER REVIEW',20,17,null],'still void, never graded; the NFL scores are shown as the Games grid shows them');
+    assert.match(g.underReview,/the feed now reports a completed final/);
+    assert.deepEqual(g.picks.map(p=>p.result),['void','void','void','void']);
+    const held=await view({weekConfig:cfg(),initialScorePayload:{events:canceledSlate()},store:pickemStore({nfl_incident_rulings:[voidRow(),voidRow({ruling_id:2,chain_seq:2,parent_ruling_id:42})]}),search:'?view=picks'});
+    g=picks(held).games[1];
+    assert.deepEqual([g.kind,g.status,g.note,g.void],['hold','HOLD · Ruling information unusable','Ruling information unusable',false]);
+    assert.match(g.hold,/chain position 2 names a predecessor that does not exist/);
+    assert.match(g.issue,/^MIA-BUF: game halted \(STATUS_CANCELED\), not graded/,'the halted-game warning stays while no ruling applies');
+    assert.deepEqual(g.picks.map(p=>p.result),['hold','hold','hold','hold']);
+    assert.deepEqual(cells(held).filter((_,i)=>i%4===1),['hold','hold','hold','hold']);
+  });
+  await regression('full-field ownership is the table header’s own share of valid field picks, present only when the field is published, and no field entry reaches the snapshot',async()=>{
+    const field=cfg({fullFieldReady:true,competitionSize:7,fieldEntries:[{id:'f1',pickNumbers:[1,4,5,8],tiebreak:40},{id:'f2',pickNumbers:[2,4,6,8],tiebreak:50},{id:'f3',pickNumbers:[1,3,5,7],tiebreak:30}]});
+    const v=await view({weekConfig:field,initialScorePayload:{events:slate()},search:'?view=picks'});
+    const s=picks(v);
+    assert.equal(s.fieldSize,7);
+    assert.deepEqual(s.games[0].ownership,{away:{pct:67,count:4,total:6},home:{pct:33,count:2,total:6}},'DEN: 4 of the 6 valid picks (Thaddeus has none)');
+    assert.deepEqual(s.games[1].ownership,{away:{pct:50,count:3,total:6},home:{pct:50,count:3,total:6}},'MIA: JC, DJS and one field entry; BUF: D.C. and two field entries');
+    assert.match(v.$('pickHead').innerHTML,/DEN<\/span><span class="matchup-slash">\/<\/span><span class="matchup-team">[^<]*<span class="badge tiny"[\s\S]*?KC<\/span><div class="matchup-ownership"><span>67%<\/span><span>33%<\/span><\/div>/,'the same numbers the table header shows');
+    assert(!/"f1"|"f2"|"f3"|pickNumbers/.test(JSON.stringify(s)),'no field entry reaches the snapshot');
+  });
+  await regression('nothing is answered before a week is on screen or while a chosen week loads; a switched week answers its own games and names',async()=>{
+    const week4=cfg({week:4,tiebreakGameIndex:0,games:[{away:'GB',home:'MIN',awayNumber:1,homeNumber:2,date:'2026-10-04'}],participants:cfg().participants.map(p=>({...p,pickNumbers:p.pickNumbers[0]===null?[null]:[p.pickNumbers[0]===1?1:2]}))});
+    const published=[{season:2026,week:3,status:'locked',revision:1,config:cfg()},{season:2026,week:4,status:'locked',revision:1,config:week4}];
+    let release;
+    const loading=await view({published,search:'?view=picks&season=2026&week=3',bootHooks:{row:()=>new Promise(resolve=>{release=resolve})}});
+    assert.deepEqual(picks(loading),{ready:false,reason:"Pick'em picks have not loaded yet."});
+    assert.deepEqual(rulesOf(loading),{ready:false,reason:'Loading contest rules and rulings…'});
+    loading.hooks.row=undefined;release({ok:true,status:200,json:async()=>[published[0]]});await flush();
+    assert.equal(picks(loading).ready,true);
+    const v=await view({published,initialScorePayload:{events:slate()},search:'?view=picks&season=2026&week=3'});
+    assert.equal(picks(v).week,3);
+    v.hooks.row=()=>new Promise(()=>{});
+    const select=v.$('weekSelect');select.value='2026-4';for(const fn of select.listeners.change||[])fn();await flush();
+    assert.deepEqual(picks(v),{ready:false,reason:'Another week is loading. The picks follow once it is on screen.'});
+    assert.deepEqual(rulesOf(v),{ready:false,reason:'Another week is loading. The rules and rulings follow once it is on screen.'});
+    v.hooks.row=undefined;v.setPayload({events:[at(game({week:4,away:'GB',home:'MIN',awayScore:'3',homeScore:'30'}),'2026-10-04T17:00Z')]});
+    select.value='2026-4';for(const fn of select.listeners.change||[])fn();await flush();
+    const s=picks(v);
+    assert.deepEqual([s.ready,s.week,s.games.length,s.games[0].away.code,s.games[0].kickoff,s.games[0].kind,s.games[0].winner],[true,4,1,'GB','2026-10-04T17:00Z','final','MIN']);
+    assert.deepEqual(s.games[0].picks.map(p=>[p.name,p.team,p.result]),[['D.C.','GB','incorrect'],['JC','MIN','correct'],['DJS','GB','incorrect'],['Thaddeus',null,'incorrect']]);
+  });
+  await regression('the Rules & rulings model the card is rendered from is answered to poolcenter:rules: ready with the contest’s policy and this week’s rulings, stale when a refresh fails, ON HOLD when the store cannot be read, inactive before 2026',async()=>{
+    const v=await view({weekConfig:cfg(),initialScorePayload:{events:canceledSlate()},store:pickemStore({nfl_incident_rulings:[voidRow()]}),search:'?view=games'});
+    let r=rulesOf(v);
+    assert.deepEqual([r.ready,r.contest,r.week,r.model.state,r.model.contestType,r.model.contestName,r.model.policy.name,r.model.policy.revision,r.model.stale],[true,'pickem',3,'ready',"Pick'em contest","Pool Center 2026 Pick'em",'Void',1,null]);
+    assert.deepEqual(r.model.incidents.map(x=>[x.week,x.matchup,x.status]),[[3,'MIA @ BUF','APPLIED']]);
+    assert(v.$('pickemRules').innerHTML.includes('Pool Center 2026 Pick&#39;em')&&v.$('pickemRules').innerHTML.includes('>APPLIED<'),'the card is rendered from the same model');
+    v.store.nfl_incident_rulings=503;await v.refresh();
+    r=rulesOf(v);
+    assert.equal(r.model.state,'ready');assert.match(r.model.stale,/could not be refreshed/);assert.deepEqual(r.model.incidents.map(x=>x.status),['APPLIED'],'the rulings last verified still apply, marked stale');
+    const held=await view({weekConfig:cfg(),initialScorePayload:{events:slate()},store:pickemStore({nfl_incident_rulings:503}),search:'?view=games'});
+    assert.deepEqual([rulesOf(held).model.state,rulesOf(held).model.heading],['hold','ON HOLD · Ruling data unavailable']);
+    const old=await view({weekConfig:cfg({season:2025}),initialScorePayload:{events:slate().map(e=>({...e,season:{year:2025,type:2}}))},published:[{season:2025,week:3,status:'locked',revision:1,config:cfg({season:2025})}],search:'?view=games'});
+    assert.equal(rulesOf(old).model.state,'inactive');
+    const other={contest:'survivor',snapshot:null};v.doc.dispatchEvent({type:'poolcenter:rules',detail:other});assert.equal(other.snapshot,null,'Survivor is not answered here');
+  });
+
+  assert.equal(failures.length,0,`V1.3 mobile UX Pick'em regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+}
+
+console.log('weekly V1.3 mobile UX regressions passed: the Picks snapshot is the table’s own grading, kickoffs ride with verified events, VOID/HOLD/UNDER REVIEW and ownership agree with the page, nothing is answered while a week loads, and the rules model is the card’s own');

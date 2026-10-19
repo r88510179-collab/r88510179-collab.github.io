@@ -29,6 +29,11 @@ let PUB=null,PUB_STALE=null,PUB_WEEKS=[],SWITCH_ERROR=null,refreshStartedAt=0,sw
 // warnings and review are what the header's INCOMPLETE and UNDER REVIEW were set from. LAST_RACE is the group race
 // render() last computed for the config on screen (home-dashboard.js summarises it; it is never computed again for that).
 let SHARE_FEED=null,LAST_RACE=null;
+// V1.3 mobile UX (picks-mobile.js): LAST_RULES is the Rules & rulings model render() last built for the config on screen (the
+// collapsible card's summary and alerts are read from it with poolcenter:rules), and the Picks snapshot (poolcenter:picks) is
+// built on request from the same M, P, G, NFL, SLOTS and field data render() draws. Both are presentation reads: nothing is
+// graded, ranked or fetched for them.
+let LAST_RULES=null;
 // Home dashboard (home-dashboard.js): a poolcenter:update event says the Pick'em state behind the share snapshot may have
 // changed (scores, a feed failure, a publication installed, verified or found stale, or boot failing), so the dashboard
 // re-reads the snapshot. It carries no data: the snapshot is the only interface, read with poolcenter:share.
@@ -208,8 +213,8 @@ function applyConfig(c,publication){
   // Only tracked entries that submitted picks take part in the group race while games remain.
   S=P.filter(p=>!p.noSubmission);
   F=(CFG.fieldEntries||[]).map(mapField);
-  TIEBREAK_INDEX=CFG.tiebreakGameIndex;NFL=M.map(([away,home])=>({away,home,state:'pre',completed:false,winner:null,awayScore:null,homeScore:null,detail:'Scheduled',eventId:null}));
-  RULINGS=null;LAST_EVENTS=null;FEED_ISSUES=[];LAST_RACE=null;deriveGames();renderStaticLabels();
+  TIEBREAK_INDEX=CFG.tiebreakGameIndex;NFL=M.map(([away,home])=>({away,home,state:'pre',completed:false,winner:null,awayScore:null,homeScore:null,detail:'Scheduled',eventId:null,kickoff:null}));
+  RULINGS=null;LAST_EVENTS=null;FEED_ISSUES=[];LAST_RACE=null;LAST_RULES=null;deriveGames();renderStaticLabels();
 }
 function formatWeekDates(){
   const dates=(CFG.games||[]).map(g=>g.date||g.sourceDate).filter(Boolean).map(v=>new Date(`${String(v).slice(0,10)}T12:00:00Z`)).filter(d=>!Number.isNaN(d.valueOf()));
@@ -396,8 +401,9 @@ function render(){
   const pc=Math.round(f/M.length*100);$('progressText').textContent=`${pc}%`;$('progressBar').style.width=`${pc}%`;
   $('tbNote').textContent=tbVoid?'Tiebreak game voided by commissioner ruling: no tiebreak this week. Standings use the scored record only, and tied leaders are co-winners.':t.final?`Tiebreak final total: ${t.total}. Tiebreak differences are active.`:`Tiebreak guesses: ${P.map(p=>`${p.name} ${tiebreakGuess(p)}`).join(' · ')}.`;
   $('footerRule').textContent=footerText();
+  LAST_RULES=RULINGS?rulesModel(RULINGS,{week:CFG.week,slotState:cardSlot}):null;
   const rulesBox=$('pickemRules');
-  if(rulesBox)rulesBox.innerHTML=rulesHtml(RULINGS?rulesModel(RULINGS,{week:CFG.week,slotState:cardSlot}):null);
+  if(rulesBox)rulesBox.innerHTML=rulesHtml(LAST_RULES);
   renderRace(race);renderSwings(race);
 }
 function warn(list,{hold=null,notes=[],stale=false}={}){const e=$('error');e.replaceChildren();const add=(cls,text)=>{const b=document.createElement('div');b.className=cls;b.textContent=text;e.appendChild(b)};if(list.length)add('error',`Some feed data was ignored to protect standings: ${list.join(' · ')}`);if(hold)add('error rules-hold-banner',`ON HOLD · Ruling data unavailable (${hold}). Standings are on hold until the contest rules and rulings load; no game is graded from the NFL feed alone.`);if(stale)add('notice rules-stale-banner','RULINGS STALE · The contest rules and rulings could not be refreshed just now. The rulings last verified on this page still apply until they load again.');if(notes.length)add('notice rules-review-banner',`UNDER REVIEW · ${notes.join(' · ')}`);if(PUB_STALE)add('notice publication-stale-banner',`PUBLISHED DATA STALE · ${PUB_STALE.reason}. The standings still use Week ${PUB.week} revision ${PUB.revision}, the last publication verified on this page, until the current one loads.`);if(SWITCH_ERROR)add('error week-switch-banner',`Unable to switch Pick'em week: ${SWITCH_ERROR.season} Week ${SWITCH_ERROR.week} could not be loaded (${SWITCH_ERROR.message}). Week ${PUB.week} stays on screen.`)}
@@ -408,9 +414,10 @@ function warn(list,{hold=null,notes=[],stale=false}={}){const e=$('error');e.rep
 // applied, unreviewed VOID whose evidence is the commissioner's attestation of that absence; a missing game under any other
 // ruling (or none) still warns.
 const absenceResolves=slot=>slot?.effect.kind==='void'&&!slot.effect.underReview&&isAbsenceEvidence(slot.effect.incident?.evidence);
+const reportableIssue=x=>!(x.halted&&SLOTS[x.i]?.effect.kind==='void')&&!(x.missing&&absenceResolves(SLOTS[x.i]));
 function report(fetchedAt){
   const warnings=[],notes=[];
-  for(const x of FEED_ISSUES)if(!(x.halted&&SLOTS[x.i]?.effect.kind==='void')&&!(x.missing&&absenceResolves(SLOTS[x.i])))warnings.push(x.text);
+  for(const x of FEED_ISSUES)if(reportableIssue(x))warnings.push(x.text);
   SLOTS.forEach(({effect},i)=>{const [a,h]=M[i];if(effect.kind==='hold'&&effect.scope!=='contest')warnings.push(`${a}-${h}: ruling on hold (${effect.reason}), not graded`);if(effect.kind==='void'&&effect.underReview)notes.push(`${a}-${h}: VOID by commissioner ruling stays applied; ${effect.underReview}`)});
   const hold=rulingsUnavailable()?RULINGS.reason:null,stale=rulingsStale();
   warn(warnings,{hold,notes,stale});setSync(fetchedAt,warnings,{hold:!!hold,review:notes.length>0,stale});
@@ -442,7 +449,10 @@ function finalEvidenceIssue(e,away,home,as,hs){
 // the status, so the sync label reads INCOMPLETE while the week awaits a pool ruling or official resolution. Absent or
 // non-string names never halt a game, and a completed event is judged only as a final (finalEvidenceIssue).
 function haltedStatus(e){for(const name of [e.status?.type?.name,e.competitions[0].status?.type?.name])if(typeof name==='string'&&HALTED_STATUS.test(name))return name;return null}
-function parseEvent(e,a,h,old,tiebreakGame=false){const pair=exactCompetitorPair(e);if(!pair)return{game:old,warning:`${a}-${h}: malformed competitor data ignored`};const {away,home}=pair,st=e.status?.type?.state||'pre',done=e.status?.type?.completed===true,as=score(away.score),hs=score(home.score);if((st==='in'||done)&&(as===null||hs===null))return{game:old,warning:`${a}-${h}: invalid score ignored`};const issue=done?finalEvidenceIssue(e,away,home,as,hs):null;if(issue)return{game:old,warning:`${a}-${h}: final with contradictory ${issue} ignored`};const tied=done&&as===hs,halted=done?null:haltedStatus(e);return{halted:!!halted,game:{away:a,home:h,state:st,completed:done,winner:done&&!tied?(as>hs?a:h):null,awayScore:as,homeScore:hs,detail:String(e.status?.type?.shortDetail||e.status?.type?.detail||(done?(tied?'Final · Tie':'Final'):'Scheduled')),eventId:e.id?String(e.id):old.eventId},warning:halted?`${a}-${h}: ${tiebreakGame?'tiebreak game':'game'} halted (${halted}), not graded; awaiting a pool ruling or official resolution`:null}}
+// V1.3: the verified event's own kickoff timestamp (the feed's date, in UTC) rides along with the NFL fact so the Picks view
+// can group games by kickoff; it grades nothing, and without one the kickoff last verified for the game is kept.
+const kickoffOf=(e,old)=>typeof e?.date==='string'&&Number.isFinite(Date.parse(e.date))?e.date:(old?.kickoff??null);
+function parseEvent(e,a,h,old,tiebreakGame=false){const pair=exactCompetitorPair(e);if(!pair)return{game:old,warning:`${a}-${h}: malformed competitor data ignored`};const {away,home}=pair,st=e.status?.type?.state||'pre',done=e.status?.type?.completed===true,as=score(away.score),hs=score(home.score);if((st==='in'||done)&&(as===null||hs===null))return{game:old,warning:`${a}-${h}: invalid score ignored`};const issue=done?finalEvidenceIssue(e,away,home,as,hs):null;if(issue)return{game:old,warning:`${a}-${h}: final with contradictory ${issue} ignored`};const tied=done&&as===hs,halted=done?null:haltedStatus(e);return{halted:!!halted,game:{away:a,home:h,state:st,completed:done,winner:done&&!tied?(as>hs?a:h):null,awayScore:as,homeScore:hs,detail:String(e.status?.type?.shortDetail||e.status?.type?.detail||(done?(tied?'Final · Tie':'Final'):'Scheduled')),eventId:e.id?String(e.id):old.eventId,kickoff:kickoffOf(e,old)},warning:halted?`${a}-${h}: ${tiebreakGame?'tiebreak game':'game'} halted (${halted}), not graded; awaiting a pool ruling or official resolution`:null}}
 function eventContextWarning(e,a,h){
   const season=e?.season?.year,seasonType=e?.season?.type,week=e?.week?.number;
   if(season!=null&&Number(season)!==CFG.season)return `${a}-${h}: feed season ${season} does not match ${CFG.season}`;
@@ -595,6 +605,42 @@ function shareSnapshot(){
     race:LAST_RACE?{outcomes:LAST_RACE.outcomes,racePaths:LAST_RACE.racePaths,items:LAST_RACE.items.map(x=>({name:x.name,status:x.status,note:x.note}))}:null,spotlight:spotlight()};
 }
 document.addEventListener('poolcenter:share',event=>{if(event?.detail?.contest==='pickem')event.detail.snapshot=shareSnapshot()});
+// V1.3 mobile UX: picks-mobile.js asks for the Picks board with a poolcenter:picks event, answered at once with exactly what the
+// comparison table shows for the config on screen: each published game in published order with the team facts the page draws
+// (code, colour, logo), its kickoff (the verified event's own timestamp) and published date, its status as the Games grid states
+// it (kind: void or hold by commissioner ruling, a verified final or tie, live, or upcoming), the verified scores it shows, the
+// feed warning the page reports for it, the full-field ownership of each side when the field is published, and every tracked
+// entry's pick with the grade the table gives it (correct, incorrect, tie: one loss for both picks, pending, void, hold).
+// Nothing is graded here: every grade is the table's own rule on the same scoring view G. Tracked names only; never a field
+// entry. Nothing is answered while a chosen week loads. The collapsible Rules & rulings card asks for the model render() last
+// built with a poolcenter:rules event.
+function teamFacts(code){const team=norm(String(code||'').toUpperCase());return{code:team,color:TEAM_COLORS[team]||'#33465f',logo:teamLogoUrl(team)}}
+function pickGrade(pick,g){if(g.void)return'void';if(g.hold)return'hold';if(!g.completed)return'pending';if(!g.winner)return'tie';return pick===g.winner?'correct':'incorrect'}
+function picksSnapshot(){
+  if(!CFG||!PUB)return{ready:false,reason:"Pick'em picks have not loaded yet."};
+  if(switching)return{ready:false,reason:'Another week is loading. The picks follow once it is on screen.'};
+  const field=fieldAvailable(),issues=new Map(FEED_ISSUES.filter(reportableIssue).map(x=>[x.i,x.text]));
+  return{ready:true,contest:'pickem',season:PUB.season,week:PUB.week,revision:PUB.revision,fieldSize:field?P.length+F.length:null,tiebreakIndex:TIEBREAK_INDEX,
+    entrants:P.map(p=>({name:p.name,noSubmission:p.noSubmission===true})),
+    games:M.map(([away,home],i)=>{
+      const g=G[i],fact=NFL[i],show=fact.state==='in'||fact.completed,kind=g.void?'void':g.hold?'hold':g.completed?(g.winner?'final':'tie'):g.state==='in'?'live':'upcoming';
+      const note=g.void?`Commissioner ruling${g.underReview?' · UNDER REVIEW':''}`:g.hold?(SLOTS[i].effect.scope==='contest'?'Ruling data unavailable':'Ruling information unusable'):null;
+      const awayShare=fieldShare(i,away),homeShare=fieldShare(i,home),share=x=>({pct:x.pct,count:x.count,total:x.total});
+      return{index:i,away:teamFacts(away),home:teamFacts(home),kickoff:fact.kickoff||null,date:CFG.games[i].date||CFG.games[i].sourceDate||null,
+        kind,status:g.void||g.hold?`${g.void?'VOID':'HOLD'} · ${note}`:state(g),note,detail:fact.detail||null,
+        awayScore:show?score(fact.awayScore):null,homeScore:show?score(fact.homeScore):null,winner:g.winner||null,
+        void:g.void===true,hold:g.hold?String(g.hold):null,underReview:g.underReview||null,tiebreak:i===TIEBREAK_INDEX,issue:issues.get(i)||null,
+        ownership:awayShare&&homeShare?{away:share(awayShare),home:share(homeShare)}:null,
+        picks:P.map(p=>({name:p.name,team:p.picks[i]||null,result:pickGrade(p.picks[i],g)}))};
+    })};
+}
+function rulesSnapshot(){
+  if(!CFG||!PUB)return{ready:false,reason:'Loading contest rules and rulings…'};
+  if(switching)return{ready:false,reason:'Another week is loading. The rules and rulings follow once it is on screen.'};
+  return{ready:true,contest:'pickem',week:PUB.week,model:LAST_RULES};
+}
+document.addEventListener('poolcenter:picks',event=>{if(event?.detail?.contest==='pickem')event.detail.snapshot=picksSnapshot()});
+document.addEventListener('poolcenter:rules',event=>{if(event?.detail?.contest==='pickem')event.detail.snapshot=rulesSnapshot()});
 setupViewNavigation();
 $('refresh').addEventListener('click',()=>void refresh());
 document.addEventListener('visibilitychange',autoRefresh);

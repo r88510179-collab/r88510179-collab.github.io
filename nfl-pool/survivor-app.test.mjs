@@ -2049,3 +2049,28 @@ console.log('survivor share-card regressions passed: the share snapshot is the r
 }
 
 console.log('survivor Home dashboard regressions passed: one bounded Survivor refresh a minute with Home active, none with another Pick’em view active, no doubled refresh on resume or view change, update announcements, and the snapshot’s refresh interval');
+
+// ---- V1.3 mobile UX (picks-mobile.js) regressions: the Rules & rulings model the Survivor view answers with (poolcenter:rules).
+{
+  const failures=[];
+  const regression=async(name,check)=>{try{await check()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+  const rulesOf=v=>{const detail={contest:'survivor',snapshot:null};v.doc.dispatchEvent({type:'poolcenter:rules',detail});return detail.snapshot};
+  const quiet=async fn=>{const warn=console.warn;console.warn=()=>{};try{return await fn()}finally{console.warn=warn}};
+  const feeds=()=>({1:week(W1,1),2:week(W2,2),3:week(W3,3)});
+  await regression('the Rules & rulings model the card is rendered from is answered to poolcenter:rules, for Survivor only: ready with the contest’s policy, ON HOLD when the store cannot be read, not ready before a week is on screen',async()=>{
+    const v=await view(feeds());
+    const r=rulesOf(v);
+    assert.deepEqual([r.ready,r.contest,r.week,r.model.state,r.model.contestType,r.model.contestName,r.model.policy.name,r.model.policy.revision,r.model.incidents,r.model.stale],[true,'survivor',2,'ready','Survivor contest','Pool Center 2026 Survivor','Advance, team used',1,[],null]);
+    assert(v.$('svRules').innerHTML.includes('Pool Center 2026 Survivor')&&v.$('svRules').innerHTML.includes('Advance, team used'),'the card is rendered from the same model');
+    const other={contest:'pickem',snapshot:null};v.doc.dispatchEvent({type:'poolcenter:rules',detail:other});assert.equal(other.snapshot,null,'Pick’em is not answered here');
+    const held=await view(feeds(),null,patched,rulingStore({nfl_incident_rulings:503}));
+    assert.deepEqual([rulesOf(held).ready,rulesOf(held).model.state,rulesOf(held).model.heading],[true,'hold','ON HOLD · Ruling data unavailable']);
+    assert.match(held.$('svRules').innerHTML,/ON HOLD · Ruling data unavailable/);
+    const failed=await quiet(()=>view(feeds(),[],patched));
+    assert.deepEqual(rulesOf(failed),{ready:false,reason:'Survivor is not published yet: No published Survivor weeks found'});
+  });
+
+  assert.equal(failures.length,0,`V1.3 mobile UX Survivor regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+}
+
+console.log('survivor V1.3 mobile UX regressions passed: the Rules & rulings model answered to poolcenter:rules is the card’s own');

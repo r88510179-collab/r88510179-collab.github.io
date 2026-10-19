@@ -22,6 +22,9 @@ let pub=null,pubStale=null,pubWeeks=[],switchError='',running=0,refreshStartedAt
 // results last loaded (null until they first do) and failed says the latest load failed (RESULT FEED UNAVAILABLE). bootError
 // is why Survivor could not boot (nothing is on screen then), reported in the snapshot's reason.
 let shareFeed=null,bootError='';
+// V1.3 mobile UX (picks-mobile.js): lastRules is the Rules & rulings model render() last built for the snapshot on screen; the
+// collapsible card's summary and alerts are read from it with poolcenter:rules. A presentation read: nothing is computed for it.
+let lastRules=null;
 // Home dashboard (home-dashboard.js): a poolcenter:update event says the Survivor state behind the share snapshot may have
 // changed (a render, a publication verified or found stale, or boot failing), so the dashboard re-reads the snapshot. It
 // carries no data: the snapshot is the only interface, read with poolcenter:share.
@@ -216,7 +219,8 @@ function render(){
   $('svProgress').innerHTML=progress.map(x=>{const r=survivorAwaitingRuling(entries,x.week-1,resultsByWeek,R),h=survivorOnHold(entries,x.week-1,resultsByWeek,R);return`<div class="survivor-week-step"><span>Week ${x.week}</span><b>${x.remaining}</b><small>${x.eligibleEntering} eligible · ${x.submitted} submitted · ${x.entered} legal · ${x.eliminated} out${r?` · ${r} awaiting ruling`:''}${h?` · ${h} on hold`:''}</small></div>`}).join('');
   renderDecision(summary,ruling,held,R);
   const rules=$('svRules');
-  if(rules)rules.innerHTML=rulesHtml(rulingData?rulesModel(rulingData,{week:cfg.week,slotState:x=>R?.forPick(x.week,x.away||x.home)||null}):null);
+  lastRules=rulingData?rulesModel(rulingData,{week:cfg.week,slotState:x=>R?.forPick(x.week,x.away||x.home)||null}):null;
+  if(rules)rules.innerHTML=rulesHtml(lastRules);
   $('svMeta').textContent=metaText();
   announce();
 }
@@ -309,7 +313,7 @@ function install(row){
   if(nextWeekController){nextWeekController.abort();nextWeekController=null}
   nextWeekRequestId++;
   cfg=nextCfg;pub={season:row.season,week:row.week,revision:row.revision,publishedAt:row.publishedAt};pubStale=null;
-  resultsByWeek=[];rawEventsByWeek=[];rulingData=null;nextWeekMatchups=[];nextWeekFetchedAt=0;nextWeekError='';
+  resultsByWeek=[];rawEventsByWeek=[];rulingData=null;lastRules=null;nextWeekMatchups=[];nextWeekFetchedAt=0;nextWeekError='';
   $('survivorWeekSelect').value=`${row.season}-${row.week}`;$('svFeed').textContent='LOADING RESULTS';$('svFeed').className='survivor-feed';renderNotices();render();
 }
 // HDC-15. A full refresh: verify that the snapshot on screen is still the published revision of its week (a newer revision is
@@ -423,6 +427,14 @@ function shareSnapshot(){
     feed:{at:feed.at,failed:feed.failed,interval:document.body.dataset.view==='survivor'?REFRESH_MS:HOME_REFRESH_MS},hold:R?.status==='hold',flags:R?.status==='hold'?[]:feedFlags(R),rulingsStale:rulingData?.stale===true,publishedStale:pubStale!==null};
 }
 document.addEventListener('poolcenter:share',event=>{if(event?.detail?.contest==='survivor')event.detail.snapshot=shareSnapshot()});
+// V1.3 mobile UX: the collapsible Rules & rulings card (picks-mobile.js) asks for the model render() last built with a
+// poolcenter:rules event. Nothing is answered while a chosen week loads.
+function rulesSnapshot(){
+  if(!cfg||!pub)return{ready:false,reason:bootError||'Loading contest rules and rulings…'};
+  if(switching)return{ready:false,reason:'Another Survivor week is loading. The rules and rulings follow once it is on screen.'};
+  return{ready:true,contest:'survivor',week:pub.week,model:lastRules};
+}
+document.addEventListener('poolcenter:rules',event=>{if(event?.detail?.contest==='survivor')event.detail.snapshot=rulesSnapshot()});
 
 load().catch(e=>{bootError=`Survivor is not published yet: ${e.message}`;$('survivorError').innerHTML=`<div class="error">${esc(bootError)}</div>`;console.warn(e);announce()});
 document.addEventListener('visibilitychange',autoRefresh);
