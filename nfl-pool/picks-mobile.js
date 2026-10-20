@@ -1,6 +1,7 @@
 // Pool Center V1.4 premium compact Picks UX (after the V1.3 mobile UX): the Picks view's matchup list for narrow screens
-// (one compact card per matchup, collapsed until tapped, grouped by kickoff slate in Eastern time, filtered by slate, by game
-// status and by the entries compared) and the collapsible Rules & rulings cards on the Games and Survivor views. Presentation
+// (one compact card per matchup, collapsed until tapped, grouped by kickoff slate in Eastern time, each slate a collapsible
+// group whose heading is its control, filtered by slate, by game status and by the entries compared) and the collapsible
+// Rules & rulings cards on the Games and Survivor views. Presentation
 // only, in the Home dashboard's shape: weekly-app.js and survivor-app.js keep rendering the comparison table and the rules
 // into the same elements and refreshing exactly as before (HDC-15). This module reads no feed, no published row and no
 // rendered text, computes no result (every pick's grade, every game's status, every ownership share and every ruling state is
@@ -9,7 +10,8 @@
 // (poolcenter:rules) that app answers with. Nothing here changes scoring, standings, sharing or publications.
 
 // The entrant selection lives under one versioned key (the V1.3 key and shape, unchanged); anything stored there that does
-// not validate is every entrant. The slate and the status filter are page state: kept through every refresh, reset by a reload.
+// not validate is every entrant. The slate, the status filter and the open slates are page state: kept through every refresh,
+// reset by a reload.
 export const STORAGE_KEY='poolcenter.picks.v1';
 export const PREFERENCES_VERSION=1;
 // The card name labels live under their own key, so the selection key keeps its V1.3 shape: 'compact' shortens long names on
@@ -110,6 +112,53 @@ export function statusCounts(games){
   const c={all:0,final:0,live:0,upcoming:0,exceptions:0};
   for(const g of games||[]){c.all++;if(EXCEPTIONAL.has(g?.kind))c.exceptions++;else if(g?.kind==='final'||g?.kind==='tie')c.final++;else if(g?.kind==='live')c.live++;else c.upcoming++}
   return c;
+}
+
+// ---- Slate expansion (the V1.4 collapsible slate groups). On the board each kickoff slate is a disclosure whose heading is
+// the one control. All Slates keeps its own layout for the week on screen: a slate starts open only while it lists a live
+// game, so the games in progress are in view and every other slate is one tap away behind a compact summary. A tap on a
+// heading, Expand all and Collapse all are manual choices, kept through every refresh, filter and slate change of the same
+// week: a slate the user closed never reopens by itself (live or not), a slate the user opened never closes by itself, and
+// a slate nobody touched opens once it goes live and stays open afterwards, so nothing is ever closed under the reader. A
+// slate chosen in the selector starts open each time it is chosen and can then be closed by hand, which is kept through
+// refreshes and filters while it stays chosen; All Slates comes back as it was left. A new week starts afresh and a slate
+// that leaves the schedule is forgotten. Nothing here changes which games a slate lists, their order, their status or their
+// grading.
+export function slateHasLive(group){return(group?.games||[]).some(x=>kindOf(x?.game)==='live')}
+export function defaultSlateOpen(group,slate=ALL_SLATES){return slate!==ALL_SLATES||slateHasLive(group)}
+const slateStateOf=(states,key)=>states instanceof Map?states.get(key):states&&typeof states==='object'?states[key]:undefined;
+// Whether a slate is open on the board: its state (a boolean, or {open}) when it has one, else its default.
+export function slateOpen(group,slate=ALL_SLATES,states=null){
+  const s=slateStateOf(states,group?.key),open=s&&typeof s==='object'?s.open:s;
+  return typeof open==='boolean'?open:defaultSlateOpen(group,slate);
+}
+// The All Slates states after a render, as a new Map of key to {open, manual}: the previous states (those of slates no longer
+// among the keys dropped, anything malformed dropped), each listed slate without one at its All Slates default, and an
+// untouched slate that is now live opened. Nothing else moves.
+export function nextSlateStates(previous,groups,{keys=null}={}){
+  const keep=Array.isArray(keys)?new Set(keys):null,next=new Map();
+  for(const [key,s] of previous instanceof Map?previous:[])if(typeof key==='string'&&(!keep||keep.has(key))&&s&&typeof s==='object')next.set(key,{open:s.open===true,manual:s.manual===true});
+  for(const group of groups||[]){
+    if(typeof group?.key!=='string')continue;
+    const live=slateHasLive(group),s=next.get(group.key);
+    if(!s)next.set(group.key,{open:live,manual:false});
+    else if(!s.manual&&live&&!s.open)s.open=true;
+  }
+  return next;
+}
+// A manual choice for one slate or, for Expand all and Collapse all, for every slate of the schedule; the previous Map is untouched.
+export function setSlateOpen(states,keys,open){
+  const next=new Map();
+  for(const [key,s] of states instanceof Map?states:[])next.set(key,s&&typeof s==='object'?{...s}:s);
+  for(const key of Array.isArray(keys)?keys:[keys])if(typeof key==='string')next.set(key,{open:open===true,manual:true});
+  return next;
+}
+// The compact summary of a slate, counting the games it lists: each once by the status its card shows (LIVE, FINAL, FINAL
+// TIE, UPCOMING, VOID, HOLD), then the games under review and the unverified results, and whether the tiebreak game is among
+// them, so a collapsed slate still shows what needs a look.
+export function slateSummary(group){
+  const games=(group?.games||[]).map(x=>x?.game),kinds=games.map(kindOf),count=kind=>kinds.filter(k=>k===kind).length;
+  return{all:games.length,live:count('live'),final:count('final'),tie:count('tie'),upcoming:count('upcoming'),void:count('void'),hold:count('hold'),review:games.filter(g=>!!g?.underReview).length,issue:games.filter(g=>!!g?.issue).length,tiebreak:games.some(g=>g?.tiebreak===true)};
 }
 
 // ---- Entrant selection: any 1 to all of the tracked entries, in the published order, never empty.
@@ -263,16 +312,34 @@ export function cardHtml(game,selected,{time=null,expanded=false,labels=null}={}
   const kind=kindOf(game),away=game.away||{},home=game.home||{},i=esc(game.index),on=expanded===true;
   return`<article class="pm-card pm-kind-${kind}${on?' is-expanded':''}" data-game="${i}" aria-label="${esc(`${away.code} at ${home.code}, ${KIND_LABEL[kind]}`)}"><button type="button" class="pm-summary" data-picks-expand="${i}" aria-expanded="${on}" aria-controls="pm-details-${i}">${summaryHtml(game,selected,{time,labels})}</button><div class="pm-details" id="pm-details-${i}"${on?'':' hidden'}>${detailsHtml(game,selected)}</div></article>`;
 }
+// One kickoff slate: a heading whose one control is the disclosure button, named by the slate, its date and game count and,
+// while collapsed, the compact summary pills, with aria-expanded and the id of the body it controls; then the body with the
+// slate's cards. The id is the slate key with every character outside letters, digits, - and _ replaced.
+const slateId=key=>`pm-slate-${String(key).replace(/[^A-Za-z0-9_-]/g,'-')}`;
+const PILLS=[['live','LIVE'],['final','FINAL'],['tie','FINAL TIE'],['upcoming','UPCOMING'],['void','VOID'],['hold','HOLD'],['review','UNDER REVIEW'],['issue','NOT VERIFIED']];
+export function slateSummaryHtml(group){
+  const s=slateSummary(group),pill=(tone,text)=>`<span class="pm-slate-pill pm-slate-pill-${tone}">${text}</span>`;
+  return[...PILLS.map(([field,label])=>s[field]?pill(field,`${s[field]} ${field==='tie'&&s[field]!==1?'FINAL TIES':label}`):''),s.tiebreak?pill('tiebreak','TIEBREAK'):''].join('');
+}
+export function slateHtml(group,selected,{open=true,expanded=null,labels=null}={}){
+  const id=slateId(group.key),on=open===true,count=group.games.length,meta=[group.date,`${count} game${count===1?'':'s'}`].filter(Boolean).join(' · ');
+  return`<section class="pm-group${on?'':' is-collapsed'}" data-slate="${esc(group.key)}" aria-label="${esc(group.label)}"><h3 class="pm-group-title"><button type="button" class="pm-slate-toggle" data-picks-slate-toggle="${esc(group.key)}" aria-expanded="${on}" aria-controls="${esc(id)}"><span class="pm-slate-chevron" aria-hidden="true"></span><span class="pm-slate-copy"><span class="pm-slate-name">${esc(group.label)}</span><small class="pm-slate-meta">${esc(meta)}</small></span><span class="pm-slate-summary">${slateSummaryHtml(group)}</span></button></h3><div class="pm-slate-body" id="${esc(id)}"${on?'':' hidden'}>${group.games.map(({game,time})=>cardHtml(game,selected,{time,expanded:expanded!==null&&game.index===expanded,labels})).join('')}</div></section>`;
+}
+// Expand all and Collapse all, above the slates of All Slates.
+export function slatesBarHtml(){
+  return'<div class="pm-slates-bar" role="group" aria-label="Slates"><button type="button" class="pm-slates-action" data-picks-slates="expand">Expand all</button><button type="button" class="pm-slates-action" data-picks-slates="collapse">Collapse all</button></div>';
+}
 // The board: the slate, the status and Disagreements only (two or more compared entries) apply together; the labels mode
-// decides how the chips name the entries.
-export function boardHtml(snapshot,{entrants=null,status='all',slate=ALL_SLATES,expanded=null,disagree=false,labels='full'}={},{timeZone=TIME_ZONE}={}){
+// decides how the chips name the entries; each slate is open or collapsed by its state (slates: a Map or an object of key to
+// {open} or to a boolean) or, without one, by its default, and All Slates carries Expand all and Collapse all.
+export function boardHtml(snapshot,{entrants=null,status='all',slate=ALL_SLATES,expanded=null,disagree=false,labels='full',slates=null}={},{timeZone=TIME_ZONE}={}){
   if(!snapshot||snapshot.ready!==true)return`<div class="empty">${esc(snapshot?.reason||'Picks are not available yet.')}</div>`;
   const names=(snapshot.entrants||[]).map(e=>e.name),selected=normalizeSelection({version:PREFERENCES_VERSION,entrants:entrants||names},names);
   const map=labels==='compact'?labelMap(names,'compact'):null,only=disagree===true&&selected.length>=2;
   const options=slateOptions(snapshot.games,{timeZone}),key=resolveSlate(slate,options),label=options.find(o=>o.key===key)?.label||'';
   const listed=filterGames(filterSlate(snapshot.games,key,{timeZone}),status),shown=filterDisagreements(listed,selected,only);
   if(!shown.length)return`<div class="empty">${esc(only&&listed.length?emptyDisagreements(names,selected,status,key===ALL_SLATES?'':label):key===ALL_SLATES?(EMPTY[status]||EMPTY.all):`No ${STATUS_FILTERS.includes(status)&&status!=='all'?`${STATUS_LABELS[status].toLowerCase()} `:''}games in ${label}.`)}</div>`;
-  return groupGames(shown,{timeZone}).map(group=>`<section class="pm-group" data-slate="${esc(group.key)}" aria-label="${esc(group.label)}"><h3 class="pm-group-title"><span>${esc(group.label)}</span><small>${esc([group.date,`${group.games.length} game${group.games.length===1?'':'s'}`].filter(Boolean).join(' · '))}</small></h3>${group.games.map(({game,time})=>cardHtml(game,selected,{time,expanded:expanded!==null&&game.index===expanded,labels:map})).join('')}</section>`).join('');
+  return(key===ALL_SLATES?slatesBarHtml():'')+groupGames(shown,{timeZone}).map(group=>slateHtml(group,selected,{open:slateOpen(group,key,slates),expanded,labels:map})).join('');
 }
 export function slateOptionsHtml(options,slate){
   const key=resolveSlate(slate,options);
@@ -357,10 +424,10 @@ export function boot(){
     if(e.summary)e.summary.textContent=summary;
     if(e.alerts)e.alerts.innerHTML=alertsHtml(alerts);
   };
-  // The Picks board. The entrant selection is remembered in this browser; the slate, the status filter and the one expanded
-  // matchup are page state, kept through every refresh of the same week. A new week collapses every card and drops a slate
-  // that is not on its schedule.
-  const state={snapshot:null,names:[],entrants:[],selection:[],status:'all',slate:ALL_SLATES,slateLabel:'',expanded:null,week:null,notice:'',dialogNote:'',saved:true,built:null,options:[],optionsHtml:'',disagree:false,labels:readLabels(),savedLabels:true};
+  // The Picks board. The entrant selection is remembered in this browser; the slate, the status filter, the one expanded
+  // matchup and the open slates are page state, kept through every refresh of the same week. A new week collapses every card,
+  // returns every slate to its default and drops a slate that is not on its schedule.
+  const state={snapshot:null,names:[],entrants:[],selection:[],status:'all',slate:ALL_SLATES,slateLabel:'',expanded:null,week:null,notice:'',dialogNote:'',saved:true,built:null,options:[],optionsHtml:'',disagree:false,labels:readLabels(),savedLabels:true,slates:new Map(),chosenOpen:null,groups:[]};
   const persist=()=>{state.saved=writeSelection(state.selection)};
   const storageNote=()=>[state.saved?'':'Selection not saved in this browser',state.savedLabels?'':'Label setting not saved in this browser'].filter(Boolean).join(' · ');
   const ready=()=>state.snapshot?.ready===true;
@@ -381,17 +448,36 @@ export function boot(){
       toggle.closest?.('.pm-card')?.classList.toggle('is-expanded',on);
     }
   }
-  // A refresh of the same matchups keeps every card element: only the summary and the detail markup that changed is
-  // rewritten, so the expanded card, a focused control and the scroll position stay where they were. A different set of
-  // matchups (another week, a filter) rebuilds the board; focus then returns to the toggle of the same matchup, if shown.
+  // The slates of the week on screen (All Slates aside). In All Slates a slate is open by its state (state.slates), else by its
+  // default; the chosen slate of the selector is open unless it was closed by hand since it was chosen (state.chosenOpen).
+  const slateKeys=()=>state.options.map(o=>o.key).filter(k=>k!==ALL_SLATES);
+  const slateIsOpen=key=>{
+    if(state.slate!==ALL_SLATES)return state.chosenOpen!==false;
+    const s=state.slates.get(key);if(s)return s.open===true;
+    const group=state.groups.find(g=>g.key===key);return group?slateHasLive(group):true;
+  };
+  const boardSlates=()=>state.slate===ALL_SLATES?state.slates:state.chosenOpen===null?null:new Map([[state.slate,{open:state.chosenOpen,manual:true}]]);
+  function applySlates(){
+    if(!board)return;
+    for(const section of board.querySelectorAll('.pm-group')){
+      const key=section.dataset.slate,open=slateIsOpen(key),toggle=section.querySelector('[data-picks-slate-toggle]'),body=document.getElementById(toggle?.getAttribute('aria-controls')||'');
+      if(toggle)toggle.setAttribute('aria-expanded',String(open));
+      if(body)body.hidden=!open;
+      section.classList.toggle('is-collapsed',!open);
+    }
+  }
+  // A refresh of the same matchups keeps every card and slate element: only the summary and the detail markup that changed is
+  // rewritten (a slate heading's copy and summary pills likewise), so the expanded card, the open slates, a focused control and
+  // the scroll position stay where they were. A different set of matchups (another week, a filter) rebuilds the board; focus
+  // then returns to the control of the same matchup, slate or action, if shown.
   function patchBoard(html){
     const fresh=document.createElement('div');fresh.innerHTML=html;
     const key=root=>[...root.querySelectorAll('.pm-group')].map(g=>g.dataset.slate);
     const cardsOf=root=>[...root.querySelectorAll('[data-game]')];
     const current=cardsOf(board),next=cardsOf(fresh);
-    if(current.length&&current.length===next.length&&sameList(current.map(c=>c.dataset.game),next.map(c=>c.dataset.game))&&sameList(key(board),key(fresh))){
-      const titles=[...board.querySelectorAll('.pm-group-title')],freshTitles=[...fresh.querySelectorAll('.pm-group-title')];
-      titles.forEach((t,i)=>{if(freshTitles[i]&&t.innerHTML!==freshTitles[i].innerHTML)t.innerHTML=freshTitles[i].innerHTML});
+    if(current.length&&current.length===next.length&&sameList(current.map(c=>c.dataset.game),next.map(c=>c.dataset.game))&&sameList(key(board),key(fresh))&&!!board.querySelector('.pm-slates-bar')===!!fresh.querySelector('.pm-slates-bar')){
+      const groups=[...board.querySelectorAll('.pm-group')],freshGroups=[...fresh.querySelectorAll('.pm-group')];
+      groups.forEach((g,i)=>{const fg=freshGroups[i];if(!fg)return;for(const part of ['.pm-slate-copy','.pm-slate-summary']){const a=g.querySelector(part),b=fg.querySelector(part);if(a&&b&&a.innerHTML!==b.innerHTML)a.innerHTML=b.innerHTML}});
       current.forEach((card,i)=>{
         const fc=next[i];
         for(const name of ['class','aria-label'])if(card.getAttribute(name)!==fc.getAttribute(name))card.setAttribute(name,fc.getAttribute(name));
@@ -399,9 +485,26 @@ export function boot(){
       });
       return;
     }
-    const active=document.activeElement,focused=active&&typeof active.closest==='function'&&active.closest('#picksBoard')?(active.dataset?.picksExpand??null):null;
+    const active=document.activeElement,d=active&&typeof active.closest==='function'&&active.closest('#picksBoard')?(active.dataset||{}):{};
+    const focused=d.picksExpand!=null?`[data-picks-expand="${d.picksExpand}"]`:d.picksSlateToggle!=null?`[data-picks-slate-toggle="${d.picksSlateToggle}"]`:d.picksSlates!=null?`[data-picks-slates="${d.picksSlates}"]`:null;
     board.innerHTML=html;
-    if(focused!=null){const again=board.querySelector(`[data-picks-expand="${focused}"]`);if(again)again.focus?.()}
+    if(focused){const again=board.querySelector(focused);if(again)again.focus?.()}
+  }
+  // A tap on a slate heading opens or closes that slate alone; Expand all and Collapse all (All Slates only) set every slate of
+  // the week. Each is a manual choice: nothing is re-rendered, so the control keeps focus; an opened slate is brought into
+  // view like an opened card.
+  function toggleSlate(key,control){
+    const open=!slateIsOpen(key);
+    if(state.slate===ALL_SLATES)state.slates=setSlateOpen(state.slates,key,open);else state.chosenOpen=open;
+    applySlates();
+    if(open)reveal(control?.closest?.('.pm-group'));
+  }
+  function setEverySlate(open){if(state.slate!==ALL_SLATES)return;state.slates=setSlateOpen(state.slates,slateKeys(),open);applySlates()}
+  // A slate chosen in the selector starts open, whatever was chosen for it before; All Slates keeps its own states meanwhile.
+  function chooseSlate(slate){
+    state.slate=resolveSlate(slate,state.options);state.slateLabel=state.options.find(o=>o.key===state.slate)?.label||'';
+    state.chosenOpen=null;
+    renderPicks();
   }
   // An opened card is brought into view above the fixed bottom navigation, never pushed past the top of the screen.
   function reveal(card){
@@ -468,14 +571,18 @@ export function boot(){
     if(ready()){
       // The slate is checked against the week on screen only: while another week loads nothing is answered and nothing moves.
       const week=`${state.snapshot.season}-${state.snapshot.week}`;
-      if(week!==state.week){if(state.week!==null)state.expanded=null;state.week=week}
+      if(week!==state.week){if(state.week!==null){state.expanded=null;state.slates=new Map();state.chosenOpen=null}state.week=week}
       state.options=slateOptions(games());
-      if(state.slate!==ALL_SLATES&&resolveSlate(state.slate,state.options)===ALL_SLATES){state.notice=`${state.slateLabel||'The chosen slate'} is not on this week's schedule · showing All Slates`;state.slate=ALL_SLATES;state.slateLabel=''}
+      if(state.slate!==ALL_SLATES&&resolveSlate(state.slate,state.options)===ALL_SLATES){state.notice=`${state.slateLabel||'The chosen slate'} is not on this week's schedule · showing All Slates`;state.slate=ALL_SLATES;state.slateLabel='';state.chosenOpen=null}
       const shown=shownGames();
       if(state.expanded!==null&&!shown.some(g=>g.index===state.expanded))state.expanded=null;
+      // The slates listed and, in All Slates, their states: a new slate at its default, one that went live opened, the rest as
+      // they were.
+      state.groups=groupGames(shown);
+      if(state.slate===ALL_SLATES)state.slates=nextSlateStates(state.slates,state.groups,{keys:slateKeys()});
     }
-    patchBoard(boardHtml(state.snapshot,{entrants:state.selection,status:state.status,slate:state.slate,expanded:state.expanded,disagree:only(),labels:labelsMode()}));
-    applyExpanded();
+    patchBoard(boardHtml(state.snapshot,{entrants:state.selection,status:state.status,slate:state.slate,expanded:state.expanded,disagree:only(),labels:labelsMode(),slates:boardSlates()}));
+    applyExpanded();applySlates();
     syncFilters();syncDialog();
   }
   const setSelection=(next,{refusedName=null}={})=>{
@@ -502,6 +609,9 @@ export function boot(){
     const panel=board.closest?.('[data-view-panel]');if(panel)panel.classList.add('is-mobile-ready');
     board.hidden=false;if(filters)filters.hidden=false;
     board.addEventListener('click',event=>{
+      const heading=event.target?.closest?.('[data-picks-slate-toggle]'),action=event.target?.closest?.('[data-picks-slates]');
+      if(heading){toggleSlate(heading.dataset.picksSlateToggle,heading);return}
+      if(action){setEverySlate(action.dataset.picksSlates==='expand');return}
       const toggle=event.target?.closest?.('[data-picks-expand]');if(!toggle)return;
       const i=Number(toggle.dataset.picksExpand);
       state.expanded=state.expanded===i?null:i;
@@ -516,8 +626,7 @@ export function boot(){
     });
     filters?.addEventListener('change',event=>{
       const select=event.target?.closest?.('[data-picks-slate]');if(!select)return;
-      state.slate=resolveSlate(select.value,state.options);state.slateLabel=state.options.find(o=>o.key===state.slate)?.label||'';
-      renderPicks();
+      chooseSlate(select.value);
     });
     dialog?.addEventListener('change',event=>{
       const box=event.target?.closest?.('[data-picks-entrant]');if(!box||box.dataset.picksEntrant==='*')return;
@@ -536,9 +645,9 @@ export function boot(){
   document.addEventListener('poolcenter:update',event=>{const contest=event?.detail?.contest;if(contest==='pickem'){renderPicks();renderRules('pickem')}else if(contest==='survivor')renderRules('survivor')});
   for(const contest of rules.keys())renderRules(contest);
   renderPicks();
-  return{get state(){return{...state,selection:state.selection.slice(),names:state.names.slice(),options:state.options.slice()}},rules,renderPicks,renderRules,openDialog,closeDialog,
+  return{get state(){return{...state,selection:state.selection.slice(),names:state.names.slice(),options:state.options.slice(),slates:new Map([...state.slates].map(([k,s])=>[k,{...s}])),groups:state.groups.slice()}},rules,renderPicks,renderRules,openDialog,closeDialog,
     setStatus(status){if(STATUS_FILTERS.includes(status)){state.status=status;renderPicks()}},
-    setSlate(slate){state.slate=resolveSlate(slate,state.options);state.slateLabel=state.options.find(o=>o.key===state.slate)?.label||'';renderPicks()},
+    setSlate(slate){chooseSlate(slate)},
     setExpanded(index){state.expanded=Number.isInteger(index)?index:null;applyExpanded()},
     setSelection(names){setSelection(normalizeSelection({version:PREFERENCES_VERSION,entrants:names},state.names))},
     setDisagree(on){state.disagree=on===true;renderPicks()},
