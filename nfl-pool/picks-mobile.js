@@ -1,7 +1,7 @@
 // Pool Center V1.4 premium compact Picks UX (after the V1.3 mobile UX): the Picks view's matchup list for narrow screens
 // (one compact card per matchup, collapsed until tapped, grouped by kickoff slate in Eastern time, each slate a collapsible
-// group whose heading is its control, filtered by slate, by game status and by the entries compared) and the collapsible
-// Rules & rulings cards on the Games and Survivor views. Presentation
+// group whose heading is its control, filtered by any combination of slates, by game status and by the entries compared) and
+// the collapsible Rules & rulings cards on the Games and Survivor views. Presentation
 // only, in the Home dashboard's shape: weekly-app.js and survivor-app.js keep rendering the comparison table and the rules
 // into the same elements and refreshing exactly as before (HDC-15). This module reads no feed, no published row and no
 // rendered text, computes no result (every pick's grade, every game's status, every ownership share and every ruling state is
@@ -10,8 +10,8 @@
 // (poolcenter:rules) that app answers with. Nothing here changes scoring, standings, sharing or publications.
 
 // The entrant selection lives under one versioned key (the V1.3 key and shape, unchanged); anything stored there that does
-// not validate is every entrant. The slate, the status filter and the open slates are page state: kept through every refresh,
-// reset by a reload.
+// not validate is every entrant. The slates shown are remembered under their own key (SLATES_KEY, below). The status filter and
+// the open slates are page state: kept through every refresh, reset by a reload.
 export const STORAGE_KEY='poolcenter.picks.v1';
 export const PREFERENCES_VERSION=1;
 // The card name labels live under their own key, so the selection key keeps its V1.3 shape: 'compact' shortens long names on
@@ -29,8 +29,17 @@ export const STATUS_LABELS=Object.freeze({all:'All',final:'Final',live:'Live',up
 // A game's kind is the app's own status: VOID and HOLD are commissioner-ruling states (never NFL finals, never hidden by a
 // status filter); tie is a verified NFL tie (a final: one loss for both picks); final, live and upcoming are the NFL fact.
 export const KINDS=Object.freeze(['void','hold','final','tie','live','upcoming']);
-// The slate selector's default: every slate of the week.
+// The slate choice's default: every slate of every week.
 export const ALL_SLATES='all';
+// The slates shown live under their own versioned key, so the selection and labels keys keep their shapes. A slate is named by
+// its Eastern weekday and slot (sunday-early, thursday-night, saturday-late; sunday-tbd for a dated game without a verified
+// kickoff, tbd for an undated one), never by a date, so Sunday Early is the same slate in every week. {version:1,all:true,
+// slates:[]} is All Slates: every slate of every week, a slate new to a later week included. {version:1,all:false,slates:[...]}
+// is a chosen set: those slates in any week that has them, kept whole whatever one week offers, and All Slates for a week that
+// offers none of them. Anything stored that does not validate is All Slates.
+export const SLATES_KEY='poolcenter.picks.slates.v1';
+export const SLATES_VERSION=1;
+export const SLATE_NAME=/^(?:(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)-(?:morning|early|late|night|tbd)|tbd)$/;
 const EXCEPTIONAL=new Set(['void','hold']);
 const KIND_LABEL={void:'VOID',hold:'HOLD',final:'FINAL',tie:'FINAL TIE',live:'LIVE',upcoming:'UPCOMING'};
 const EMPTY={all:'No games are published for this week.',final:'No games are final yet.',live:'No games are live right now.',upcoming:'No games are still to come.'};
@@ -69,36 +78,109 @@ export function slotLabel(weekday,slot){
   if(slot==='morning')return`${weekday} Morning`;
   return`${weekday} · Kickoff TBD`;
 }
+// A slate's stable name, from its Eastern weekday (or its published date's) and its slot: sunday-early, thursday-night,
+// sunday-tbd; tbd without a date. A name read back from storage is labelled as the board labels the slate.
+export function slateKeyOf(weekday,slot){return weekday?`${String(weekday).toLowerCase()}-${slot}`:'tbd'}
+export function slateKeyLabel(key){
+  if(key==='tbd')return'Kickoff TBD';
+  if(typeof key!=='string'||!SLATE_NAME.test(key))return'';
+  const [day,slot]=key.split('-');
+  return slotLabel(day[0].toUpperCase()+day.slice(1),slot);
+}
 // Chronological groups of games: by Eastern date, then slot, then kickoff, then published order; the date-only and the
-// unscheduled groups last on their date and at the very end. Each listed game carries its kickoff text (null without one).
+// unscheduled groups last on their date and at the very end. Each group carries its slate's stable name beside its key on the
+// board (the date and slot, so a week holding one slate on two dates shows two groups); each listed game carries its kickoff
+// text (null without one).
 export function groupGames(games,{timeZone=TIME_ZONE}={}){
   const groups=new Map();
   (games||[]).forEach((game,order)=>{
     const k=kickoffParts(game?.kickoff,{timeZone}),d=k?null:dateParts(game?.date);
-    let key,label,date,sortKey;
-    if(k){const slot=slotOf(k.hour);key=`${k.dayKey}|${SLOTS.indexOf(slot)}`;label=slotLabel(k.weekday,slot);date=k.date;sortKey=key}
-    else if(d){key=`${d.dayKey}|${SLOTS.indexOf('tbd')}`;label=slotLabel(d.weekday,'tbd');date=d.date;sortKey=key}
-    else{key='tbd';label='Kickoff TBD';date='';sortKey='9999-99-99|9'}
-    if(!groups.has(key))groups.set(key,{key,label,date,sortKey,items:[]});
+    let key,slate,label,date,sortKey;
+    if(k){const slot=slotOf(k.hour);key=`${k.dayKey}|${SLOTS.indexOf(slot)}`;slate=slateKeyOf(k.weekday,slot);label=slotLabel(k.weekday,slot);date=k.date;sortKey=key}
+    else if(d){key=`${d.dayKey}|${SLOTS.indexOf('tbd')}`;slate=slateKeyOf(d.weekday,'tbd');label=slotLabel(d.weekday,'tbd');date=d.date;sortKey=key}
+    else{key='tbd';slate='tbd';label='Kickoff TBD';date='';sortKey='9999-99-99|9'}
+    if(!groups.has(key))groups.set(key,{key,slate,label,date,sortKey,items:[]});
     groups.get(key).items.push({game,order,ms:k?k.ms:Infinity,time:k?k.time:null});
   });
-  return[...groups.values()].sort((a,b)=>a.sortKey.localeCompare(b.sortKey)).map(({key,label,date,items})=>({key,label,date,
+  return[...groups.values()].sort((a,b)=>a.sortKey.localeCompare(b.sortKey)).map(({key,slate,label,date,items})=>({key,slate,label,date,
     games:items.sort((a,b)=>(a.ms-b.ms)||(a.order-b.order)).map(({game,time})=>({game,time}))}));
 }
-// ---- Slates: the selector's options are exactly the kickoff groups present in the given games (All Slates first, each
-// with its game count), so a slate that is not on a week's schedule is never offered and one chosen earlier falls back to
-// All Slates. Filtering by a slate keeps the published order; the board regroups what it shows.
+// ---- Slates. The slate choice's options are exactly the slates present in the given games, by their stable names, in
+// schedule order: All Slates first, then each slate with its date (both dates for a slate a week holds on two) and its game
+// count. A slate that is not on a week's schedule is never offered and none is invented: the slates are the kickoff groups.
 export function slateOptions(games,{timeZone=TIME_ZONE}={}){
-  return[{key:ALL_SLATES,label:'All Slates',date:'',count:(games||[]).length},...groupGames(games,{timeZone}).map(g=>({key:g.key,label:g.label,date:g.date,count:g.games.length}))];
+  const by=new Map();
+  for(const g of groupGames(games,{timeZone})){
+    const o=by.get(g.slate);
+    if(!o)by.set(g.slate,{key:g.slate,label:g.label,dates:g.date?[g.date]:[],count:g.games.length});
+    else{o.count+=g.games.length;if(g.date&&!o.dates.includes(g.date))o.dates.push(g.date)}
+  }
+  return[{key:ALL_SLATES,label:'All Slates',date:'',count:(games||[]).length},...[...by.values()].map(({key,label,dates,count})=>({key,label,date:dates.join(' · '),count}))];
 }
-export function resolveSlate(slate,options){return typeof slate==='string'&&(options||[]).some(o=>o.key===slate)?slate:ALL_SLATES}
-export function filterSlate(games,slate,{timeZone=TIME_ZONE}={}){
+const offeredSlates=options=>(options||[]).map(o=>o?.key).filter(k=>typeof k==='string'&&k!==ALL_SLATES);
+// The slates shown for a choice in a week: ALL_SLATES (or anything that is not a list) is All Slates, every slate the week
+// offers; a list shows those of its slates the week offers, in schedule order, and keeps the rest aside (missing), never
+// dropped. A list none of whose slates a week with games offers shows All Slates for that week (fallback), until a week
+// offers one of them again.
+export function slatesShown(chosen,options){
+  const offered=offeredSlates(options);
+  if(!Array.isArray(chosen))return{all:true,keys:offered,fallback:false,missing:[]};
+  const wanted=[...new Set(chosen.filter(k=>typeof k==='string'&&k!==ALL_SLATES))],keys=offered.filter(k=>wanted.includes(k)),missing=wanted.filter(k=>!offered.includes(k));
+  return keys.length?{all:false,keys,fallback:false,missing}:{all:true,keys:offered,fallback:wanted.length>0&&offered.length>0,missing};
+}
+// The games of the given slates (a list of stable names; anything that is not a list keeps every game), in published order;
+// the board regroups what it shows, in schedule order.
+export function filterSlates(games,keys,{timeZone=TIME_ZONE}={}){
   const all=(games||[]).slice();
-  if(!slate||slate===ALL_SLATES)return all;
-  const group=groupGames(all,{timeZone}).find(g=>g.key===slate);
-  if(!group)return[];
-  const keep=new Set(group.games.map(x=>x.game));
+  if(!Array.isArray(keys))return all;
+  const want=new Set(keys),keep=new Set(groupGames(all,{timeZone}).filter(g=>want.has(g.slate)).flatMap(g=>g.games.map(x=>x.game)));
   return all.filter(g=>keep.has(g));
+}
+// The next choice after a tap in the slate panel. "*" is All Slates. A slate the week offers is added to or removed from the
+// slates shown, and the last one shown stays (the choice comes back as it was); chosen slates the week does not offer stay
+// chosen, out of sight. In a week that shows All Slates because it offers none of the chosen slates, a tap starts from what is
+// shown: every slate of the week. A list is never All Slates, even when it holds every slate of the week: only "*" is.
+export function toggleSlates(chosen,options,key){
+  if(key==='*')return ALL_SLATES;
+  const offered=offeredSlates(options),shown=slatesShown(chosen,options),current=Array.isArray(chosen)?chosen.slice():ALL_SLATES;
+  if(typeof key!=='string'||!offered.includes(key))return current;
+  const on=new Set(shown.keys);
+  if(on.has(key)){if(on.size===1)return current;on.delete(key)}else on.add(key);
+  return[...offered.filter(k=>on.has(k)),...shown.missing];
+}
+// The slate choice in storage: read as ALL_SLATES or a list of stable names (each valid name once, in the stored order) and
+// written in the stored shape, under its own key only. Absent, refusing or malformed storage means All Slates; a failed write
+// is reported, never thrown.
+export function normalizeSlates(raw){
+  if(!raw||typeof raw!=='object'||Array.isArray(raw)||raw.version!==SLATES_VERSION||raw.all!==false||!Array.isArray(raw.slates))return ALL_SLATES;
+  const keys=[...new Set(raw.slates.filter(k=>typeof k==='string'&&SLATE_NAME.test(k)))];
+  return keys.length?keys:ALL_SLATES;
+}
+export function readSlates(storage){
+  try{const raw=(storage??globalThis.localStorage)?.getItem(SLATES_KEY);return normalizeSlates(raw==null?null:JSON.parse(raw))}catch{return ALL_SLATES}
+}
+export function writeSlates(chosen,storage){
+  try{
+    const s=storage??globalThis.localStorage;if(!s)return false;
+    const keys=Array.isArray(chosen)?normalizeSlates({version:SLATES_VERSION,all:false,slates:chosen}):ALL_SLATES;
+    s.setItem(SLATES_KEY,JSON.stringify(keys===ALL_SLATES?{version:SLATES_VERSION,all:true,slates:[]}:{version:SLATES_VERSION,all:false,slates:keys}));return true;
+  }catch{return false}
+}
+// What the one compact Slates control says: All Slates, the one slate shown, or how many are shown.
+export function slatesLabel(shown,options){
+  if(!shown||shown.all!==false||!shown.keys?.length)return'All Slates';
+  if(shown.keys.length===1)return(options||[]).find(o=>o?.key===shown.keys[0])?.label||slateKeyLabel(shown.keys[0]);
+  return`${shown.keys.length} Slates Selected`;
+}
+// The names of the slates shown, in schedule order; none for All Slates.
+export function shownSlateNames(shown,options){
+  return!shown||shown.all!==false?[]:(shown.keys||[]).map(k=>(options||[]).find(o=>o?.key===k)?.label||slateKeyLabel(k));
+}
+// While a week offers none of the chosen slates: which they are, and that All Slates is shown meanwhile.
+export function slatesFallbackNote(shown){
+  const names=(shown?.fallback===true?shown.missing||[]:[]).map(slateKeyLabel).filter(Boolean);
+  if(!names.length)return'';
+  return`${names.length<3?names.join(' and '):`${names.slice(0,-1).join(', ')} and ${names[names.length-1]}`} ${names.length===1?'is':'are'} not on this week's schedule · showing All Slates`;
 }
 
 // ---- Status filter. VOID and HOLD games stay in every filter, so a ruling state never disappears behind a category.
@@ -115,26 +197,26 @@ export function statusCounts(games){
 }
 
 // ---- Slate expansion (the V1.4 collapsible slate groups). On the board each kickoff slate is a disclosure whose heading is
-// the one control. All Slates keeps its own layout for the week on screen: a slate starts open only while it lists a live
-// game, so the games in progress are in view and every other slate is one tap away behind a compact summary. A tap on a
-// heading, Expand all and Collapse all are manual choices, kept through every refresh, filter and slate change of the same
-// week: a slate the user closed never reopens by itself (live or not), a slate the user opened never closes by itself, and
-// a slate nobody touched opens once it goes live and stays open afterwards, so nothing is ever closed under the reader. A
-// slate chosen in the selector starts open each time it is chosen and can then be closed by hand, which is kept through
-// refreshes and filters while it stays chosen; All Slates comes back as it was left. A new week starts afresh and a slate
-// that leaves the schedule is forgotten. Nothing here changes which games a slate lists, their order, their status or their
-// grading.
+// the one control. A slate starts open while it lists a live game, so the games in progress are in view and every other
+// slate is one tap away behind a compact summary; a slate chosen on its own is open too, without being remembered as opened.
+// A tap on a heading, Expand all and Collapse all are manual choices, kept for the week on screen through every refresh, filter,
+// entry change and change of the slates chosen: a slate the user closed never reopens by itself (live, or chosen on its own),
+// a slate the user opened never closes by itself, and a slate nobody touched opens once it goes live and stays open
+// afterwards, so nothing is ever closed under the reader. A new week starts afresh and a slate that leaves the schedule is
+// forgotten. Nothing here changes which games a slate lists, their order, their status or their grading.
 export function slateHasLive(group){return(group?.games||[]).some(x=>kindOf(x?.game)==='live')}
-export function defaultSlateOpen(group,slate=ALL_SLATES){return slate!==ALL_SLATES||slateHasLive(group)}
+export function defaultSlateOpen(group,alone=false){return alone===true||slateHasLive(group)}
 const slateStateOf=(states,key)=>states instanceof Map?states.get(key):states&&typeof states==='object'?states[key]:undefined;
-// Whether a slate is open on the board: its state (a boolean, or {open}) when it has one, else its default.
-export function slateOpen(group,slate=ALL_SLATES,states=null){
+// Whether a slate is open on the board: a manual state ({open, manual:true}) or a bare boolean as given; an automatic state
+// ({open} without manual) open, or opened while the slate is the one chosen (alone); without a state, its default.
+export function slateOpen(group,alone=false,states=null){
   const s=slateStateOf(states,group?.key),open=s&&typeof s==='object'?s.open:s;
-  return typeof open==='boolean'?open:defaultSlateOpen(group,slate);
+  if(typeof open!=='boolean')return defaultSlateOpen(group,alone);
+  return open||(alone===true&&typeof s==='object'&&s.manual!==true);
 }
-// The All Slates states after a render, as a new Map of key to {open, manual}: the previous states (those of slates no longer
-// among the keys dropped, anything malformed dropped), each listed slate without one at its All Slates default, and an
-// untouched slate that is now live opened. Nothing else moves.
+// The states after a render, as a new Map of key to {open, manual}: the previous states (those of slates no longer among the
+// keys dropped, anything malformed dropped), each listed slate without one at its default while several may be listed (open
+// while live), and an untouched slate that is now live opened. Nothing else moves.
 export function nextSlateStates(previous,groups,{keys=null}={}){
   const keep=Array.isArray(keys)?new Set(keys):null,next=new Map();
   for(const [key,s] of previous instanceof Map?previous:[])if(typeof key==='string'&&(!keep||keep.has(key))&&s&&typeof s==='object')next.set(key,{open:s.open===true,manual:s.manual===true});
@@ -244,7 +326,7 @@ export function filterDisagreements(games,selected,on){
   const all=games||[];
   return on===true?all.filter(g=>EXCEPTIONAL.has(g?.kind)||disagreement(g,selected)):all.slice();
 }
-// The empty state of Disagreements only: who was compared, and the status and the slate that narrowed it.
+// The empty state of Disagreements only: who was compared, and the status and the slates (named as a phrase) that narrowed it.
 export function emptyDisagreements(names,selected,status='all',slateLabel=''){
   const all=names||[],chosen=selected||all;
   const who=chosen.length===2?`between ${chosen[0]} and ${chosen[1]}`:chosen.length===all.length?`among all ${all.length} entries`:`among ${chosen.slice(0,-1).join(', ')} and ${chosen[chosen.length-1]}`;
@@ -325,37 +407,47 @@ export function slateHtml(group,selected,{open=true,expanded=null,labels=null}={
   const id=slateId(group.key),on=open===true,count=group.games.length,meta=[group.date,`${count} game${count===1?'':'s'}`].filter(Boolean).join(' · ');
   return`<section class="pm-group${on?'':' is-collapsed'}" data-slate="${esc(group.key)}" aria-label="${esc(group.label)}"><h3 class="pm-group-title"><button type="button" class="pm-slate-toggle" data-picks-slate-toggle="${esc(group.key)}" aria-expanded="${on}" aria-controls="${esc(id)}"><span class="pm-slate-chevron" aria-hidden="true"></span><span class="pm-slate-copy"><span class="pm-slate-name">${esc(group.label)}</span><small class="pm-slate-meta">${esc(meta)}</small></span><span class="pm-slate-summary">${slateSummaryHtml(group)}</span></button></h3><div class="pm-slate-body" id="${esc(id)}"${on?'':' hidden'}>${group.games.map(({game,time})=>cardHtml(game,selected,{time,expanded:expanded!==null&&game.index===expanded,labels})).join('')}</div></section>`;
 }
-// Expand all and Collapse all, above the slates of All Slates.
+// Expand all and Collapse all, above the slates of All Slates or of two or more chosen slates.
 export function slatesBarHtml(){
   return'<div class="pm-slates-bar" role="group" aria-label="Slates"><button type="button" class="pm-slates-action" data-picks-slates="expand">Expand all</button><button type="button" class="pm-slates-action" data-picks-slates="collapse">Collapse all</button></div>';
 }
-// The board: the slate, the status and Disagreements only (two or more compared entries) apply together; the labels mode
-// decides how the chips name the entries; each slate is open or collapsed by its state (slates: a Map or an object of key to
-// {open} or to a boolean) or, without one, by its default, and All Slates carries Expand all and Collapse all.
-export function boardHtml(snapshot,{entrants=null,status='all',slate=ALL_SLATES,expanded=null,disagree=false,labels='full',slates=null}={},{timeZone=TIME_ZONE}={}){
+// The slates shown, named in a sentence: Sunday Night; Sunday Early or Sunday Late; Thursday Night, Sunday Night or Monday Night.
+const eitherOf=names=>names.length<3?names.join(' or '):`${names.slice(0,-1).join(', ')} or ${names[names.length-1]}`;
+// The board: the slates chosen (ALL_SLATES or a list of stable names, as slatesShown reads them for the week), the status and
+// Disagreements only (two or more compared entries) apply together, and the chosen slates are listed in schedule order
+// whatever order they were chosen in; the labels mode decides how the chips name the entries; each slate is open or collapsed
+// by its state (slates: a Map or an object of key to {open, manual} or to a boolean) or, without one, by its default (a slate
+// chosen on its own is open), and All Slates or two or more chosen slates carry Expand all and Collapse all.
+export function boardHtml(snapshot,{entrants=null,status='all',chosen=ALL_SLATES,expanded=null,disagree=false,labels='full',slates=null}={},{timeZone=TIME_ZONE}={}){
   if(!snapshot||snapshot.ready!==true)return`<div class="empty">${esc(snapshot?.reason||'Picks are not available yet.')}</div>`;
   const names=(snapshot.entrants||[]).map(e=>e.name),selected=normalizeSelection({version:PREFERENCES_VERSION,entrants:entrants||names},names);
   const map=labels==='compact'?labelMap(names,'compact'):null,only=disagree===true&&selected.length>=2;
-  const options=slateOptions(snapshot.games,{timeZone}),key=resolveSlate(slate,options),label=options.find(o=>o.key===key)?.label||'';
-  const listed=filterGames(filterSlate(snapshot.games,key,{timeZone}),status),shown=filterDisagreements(listed,selected,only);
-  if(!shown.length)return`<div class="empty">${esc(only&&listed.length?emptyDisagreements(names,selected,status,key===ALL_SLATES?'':label):key===ALL_SLATES?(EMPTY[status]||EMPTY.all):`No ${STATUS_FILTERS.includes(status)&&status!=='all'?`${STATUS_LABELS[status].toLowerCase()} `:''}games in ${label}.`)}</div>`;
-  return(key===ALL_SLATES?slatesBarHtml():'')+groupGames(shown,{timeZone}).map(group=>slateHtml(group,selected,{open:slateOpen(group,key,slates),expanded,labels:map})).join('');
+  const options=slateOptions(snapshot.games,{timeZone}),view=slatesShown(chosen,options),phrase=eitherOf(shownSlateNames(view,options));
+  const listed=filterGames(filterSlates(snapshot.games,view.all?ALL_SLATES:view.keys,{timeZone}),status),shown=filterDisagreements(listed,selected,only);
+  if(!shown.length)return`<div class="empty">${esc(only&&listed.length?emptyDisagreements(names,selected,status,phrase):view.all?(EMPTY[status]||EMPTY.all):`No ${STATUS_FILTERS.includes(status)&&status!=='all'?`${STATUS_LABELS[status].toLowerCase()} `:''}games in ${phrase}.`)}</div>`;
+  const alone=!view.all&&view.keys.length===1;
+  return(alone?'':slatesBarHtml())+groupGames(shown,{timeZone}).map(group=>slateHtml(group,selected,{open:slateOpen(group,alone,slates),expanded,labels:map})).join('');
 }
-export function slateOptionsHtml(options,slate){
-  const key=resolveSlate(slate,options);
-  return(options||[]).map(o=>`<option value="${esc(o.key)}"${o.key===key?' selected':''}>${esc(`${o.label} (${o.count})`)}</option>`).join('');
-}
-// The filter bar: the one compact control for the entries compared (it opens the selection panel), the slate selector,
-// the status segments with their counts, the Disagreements only switch (off until tapped, disabled with fewer than two
+// The filter bar: the one compact control for the entries compared and the one for the slates shown (each opens its selection
+// panel), the status segments with their counts, the Disagreements only switch (off until tapped, disabled with fewer than two
 // entries compared) and one live note that says what is shown.
-export function filterBarHtml(names,{selected=null,status='all',counts=null,slates=null,slate=ALL_SLATES,disagree=false}={}){
+export function filterBarHtml(names,{selected=null,status='all',counts=null,slates=null,chosen=ALL_SLATES,disagree=false}={}){
   const all=names||[],c=counts||{all:0,final:0,live:0,upcoming:0,exceptions:0},options=slates||[{key:ALL_SLATES,label:'All Slates',date:'',count:c.all}];
-  const chosen=normalizeSelection({version:PREFERENCES_VERSION,entrants:selected||all},all);
+  const picked=normalizeSelection({version:PREFERENCES_VERSION,entrants:selected||all},all);
   const compare=`<button type="button" class="pm-compare" data-picks-compare aria-haspopup="dialog" aria-expanded="false" aria-controls="picksEntrants"><span class="pm-compare-copy"><span class="pm-compare-kicker">Comparing</span><b data-picks-compare-label>${esc(compareLabel(all,selected))}</b></span><span class="pm-caret" aria-hidden="true"></span></button>`;
-  const select=`<label class="pm-sr" for="picksSlate">Slate</label><select id="picksSlate" class="pm-select" data-picks-slate>${slateOptionsHtml(options,slate)}</select>`;
+  const choose=`<button type="button" class="pm-compare" data-picks-slates-open aria-haspopup="dialog" aria-expanded="false" aria-controls="picksSlates"><span class="pm-compare-copy"><span class="pm-compare-kicker">Slates</span><b data-picks-slates-label>${esc(slatesLabel(slatesShown(chosen,options),options))}</b></span><span class="pm-caret" aria-hidden="true"></span></button>`;
   const segments=STATUS_FILTERS.map(s=>`<button type="button" class="pm-segment" data-picks-status="${s}" aria-pressed="${s===status}">${STATUS_LABELS[s]}<b data-picks-count="${s}">${c[s]}</b></button>`).join('');
-  const toggle=`<div class="pm-options"><button type="button" class="pm-toggle" data-picks-disagree aria-pressed="${disagree===true&&chosen.length>=2}"${chosen.length<2?' disabled':''}><span class="pm-toggle-track" aria-hidden="true"></span><span class="pm-toggle-copy">Disagreements only</span></button></div>`;
-  return`<div class="pm-filters"><div class="pm-row">${compare}${select}</div><div class="pm-segments" role="group" aria-label="Game status">${segments}</div>${toggle}<p class="pm-note" data-picks-note aria-live="polite"></p></div>`;
+  const toggle=`<div class="pm-options"><button type="button" class="pm-toggle" data-picks-disagree aria-pressed="${disagree===true&&picked.length>=2}"${picked.length<2?' disabled':''}><span class="pm-toggle-track" aria-hidden="true"></span><span class="pm-toggle-copy">Disagreements only</span></button></div>`;
+  return`<div class="pm-filters"><div class="pm-row">${compare}${choose}</div><div class="pm-segments" role="group" aria-label="Game status">${segments}</div>${toggle}<p class="pm-note" data-picks-note aria-live="polite"></p></div>`;
+}
+// The slate panel's rows: one labelled checkbox per slate the week offers, in schedule order, with its date and game count,
+// checked while the slate is shown (every one under All Slates).
+export function slatePanelHtml(options,shown=null){
+  const on=new Set((shown||slatesShown(ALL_SLATES,options)).keys||[]);
+  return(options||[]).filter(o=>o&&o.key!==ALL_SLATES).map(o=>{
+    const meta=[o.date,`${o.count} game${o.count===1?'':'s'}`].filter(Boolean).join(' · ');
+    return`<label class="pm-entry"><input type="checkbox" data-picks-slate-choice="${esc(o.key)}"${on.has(o.key)?' checked':''}><span class="pm-entry-copy"><span class="pm-entry-name">${esc(o.label)}</span><span class="pm-entry-meta">${esc(meta)}</span></span></label>`;
+  }).join('');
 }
 // The selection panel's rows: one labelled checkbox per tracked entry, with the entry's verified submission state.
 export function entrantPanelHtml(entrants,selected){
@@ -424,15 +516,20 @@ export function boot(){
     if(e.summary)e.summary.textContent=summary;
     if(e.alerts)e.alerts.innerHTML=alertsHtml(alerts);
   };
-  // The Picks board. The entrant selection is remembered in this browser; the slate, the status filter, the one expanded
-  // matchup and the open slates are page state, kept through every refresh of the same week. A new week collapses every card,
-  // returns every slate to its default and drops a slate that is not on its schedule.
-  const state={snapshot:null,names:[],entrants:[],selection:[],status:'all',slate:ALL_SLATES,slateLabel:'',expanded:null,week:null,notice:'',dialogNote:'',saved:true,built:null,options:[],optionsHtml:'',disagree:false,labels:readLabels(),savedLabels:true,slates:new Map(),chosenOpen:null,groups:[]};
+  // The Picks board. The entrant selection and the slates chosen are remembered in this browser; the status filter, the one
+  // expanded matchup and the open slates are page state, kept through every refresh of the same week. A new week collapses
+  // every card and returns every slate to its default; the slates chosen follow into it (All Slates, with a note, for a week
+  // that offers none of them).
+  const slatesDialog=document.getElementById('picksSlates');
+  const state={snapshot:null,names:[],entrants:[],selection:[],status:'all',chosen:readSlates(),slateView:slatesShown(ALL_SLATES,[]),expanded:null,week:null,notice:'',dialogNote:'',slatesNote:'',saved:true,savedSlates:true,built:null,options:[],disagree:false,labels:readLabels(),savedLabels:true,slates:new Map(),groups:[],weekGroups:[]};
   const persist=()=>{state.saved=writeSelection(state.selection)};
-  const storageNote=()=>[state.saved?'':'Selection not saved in this browser',state.savedLabels?'':'Label setting not saved in this browser'].filter(Boolean).join(' · ');
+  const storageNote=()=>[state.saved?'':'Selection not saved in this browser',state.savedLabels?'':'Label setting not saved in this browser',state.savedSlates?'':'Slate choice not saved in this browser'].filter(Boolean).join(' · ');
   const ready=()=>state.snapshot?.ready===true;
   const games=()=>ready()?state.snapshot.games:[];
-  const slateGames=()=>filterSlate(games(),state.slate);
+  // The slates shown (state.slateView, read from the choice for the week on screen): every slate under All Slates, else the
+  // chosen slates the week offers. One slate shown is alone: open by default, without Expand all and Collapse all.
+  const alone=()=>state.slateView.all!==true&&state.slateView.keys.length===1;
+  const slateGames=()=>filterSlates(games(),state.slateView.all?ALL_SLATES:state.slateView.keys);
   // The labels mode on screen: the remembered choice, else the default for this screen. Disagreements only applies with two
   // or more entries compared; the games the counts describe and the games listed both honour it.
   const labelsMode=()=>LABEL_MODES.includes(state.labels)?state.labels:defaultLabels();
@@ -448,15 +545,9 @@ export function boot(){
       toggle.closest?.('.pm-card')?.classList.toggle('is-expanded',on);
     }
   }
-  // The slates of the week on screen (All Slates aside). In All Slates a slate is open by its state (state.slates), else by its
-  // default; the chosen slate of the selector is open unless it was closed by hand since it was chosen (state.chosenOpen).
-  const slateKeys=()=>state.options.map(o=>o.key).filter(k=>k!==ALL_SLATES);
-  const slateIsOpen=key=>{
-    if(state.slate!==ALL_SLATES)return state.chosenOpen!==false;
-    const s=state.slates.get(key);if(s)return s.open===true;
-    const group=state.groups.find(g=>g.key===key);return group?slateHasLive(group):true;
-  };
-  const boardSlates=()=>state.slate===ALL_SLATES?state.slates:state.chosenOpen===null?null:new Map([[state.slate,{open:state.chosenOpen,manual:true}]]);
+  // A slate on the board is open by its state (state.slates: one state per slate of the week, whatever slates are chosen) or,
+  // without one, by its default; a slate shown alone is open unless it was closed by hand.
+  const slateIsOpen=key=>slateOpen(state.groups.find(g=>g.key===key)||{key,games:[]},alone(),state.slates);
   function applySlates(){
     if(!board)return;
     for(const section of board.querySelectorAll('.pm-group')){
@@ -490,21 +581,19 @@ export function boot(){
     board.innerHTML=html;
     if(focused){const again=board.querySelector(focused);if(again)again.focus?.()}
   }
-  // A tap on a slate heading opens or closes that slate alone; Expand all and Collapse all (All Slates only) set every slate of
-  // the week. Each is a manual choice: nothing is re-rendered, so the control keeps focus; an opened slate is brought into
-  // view like an opened card.
+  // A tap on a slate heading opens or closes that slate alone; Expand all and Collapse all (two or more slates shown) set every
+  // slate shown in the week, those a filter hides included. Each is a manual choice, kept whatever slates are chosen later:
+  // nothing is re-rendered, so the control keeps focus; an opened slate is brought into view like an opened card.
   function toggleSlate(key,control){
     const open=!slateIsOpen(key);
-    if(state.slate===ALL_SLATES)state.slates=setSlateOpen(state.slates,key,open);else state.chosenOpen=open;
+    state.slates=setSlateOpen(state.slates,key,open);
     applySlates();
     if(open)reveal(control?.closest?.('.pm-group'));
   }
-  function setEverySlate(open){if(state.slate!==ALL_SLATES)return;state.slates=setSlateOpen(state.slates,slateKeys(),open);applySlates()}
-  // A slate chosen in the selector starts open, whatever was chosen for it before; All Slates keeps its own states meanwhile.
-  function chooseSlate(slate){
-    state.slate=resolveSlate(slate,state.options);state.slateLabel=state.options.find(o=>o.key===state.slate)?.label||'';
-    state.chosenOpen=null;
-    renderPicks();
+  function setEverySlate(open){
+    if(alone())return;
+    state.slates=setSlateOpen(state.slates,state.weekGroups.filter(g=>state.slateView.keys.includes(g.slate)).map(g=>g.key),open);
+    applySlates();
   }
   // An opened card is brought into view above the fixed bottom navigation, never pushed past the top of the screen.
   function reveal(card){
@@ -538,22 +627,42 @@ export function boot(){
     const note=dialog.querySelector('[data-picks-dialog-note]');if(note)note.textContent=[state.dialogNote||'',storageNote()].filter(Boolean).join(' · ');
     state.dialogNote='';
   }
+  // The slate panel lists the slates of the week on screen, never one it does not offer (a chosen slate the week lacks stays
+  // chosen, out of sight). The same slates keep their row elements (a focused checkbox keeps focus): each checkbox follows the
+  // slates shown, each row's date and game count follow the schedule. Select all has nothing to do under All Slates.
+  function syncSlatesDialog(){
+    if(!slatesDialog)return;
+    const list=slatesDialog.querySelector('[data-picks-slate-list]');
+    if(list){
+      const html=slatePanelHtml(state.options,state.slateView),key=state.options.map(o=>o.key).join('\u0000');
+      if(list.dataset.built!==key){list.innerHTML=html;list.dataset.built=key}
+      else{
+        const fresh=document.createElement('div');fresh.innerHTML=html;
+        const rows=[...list.querySelectorAll('.pm-entry')],next=[...fresh.querySelectorAll('.pm-entry')];
+        rows.forEach((row,i)=>{const fr=next[i];if(!fr)return;const a=row.querySelector('.pm-entry-copy'),b=fr.querySelector('.pm-entry-copy');if(a&&b&&a.innerHTML!==b.innerHTML)a.innerHTML=b.innerHTML});
+        for(const box of list.querySelectorAll('[data-picks-slate-choice]'))box.checked=state.slateView.keys.includes(box.dataset.picksSlateChoice);
+      }
+    }
+    const all=slatesDialog.querySelector('[data-picks-slate-choice="*"]');if(all)all.disabled=state.chosen===ALL_SLATES;
+    const note=slatesDialog.querySelector('[data-picks-slates-note]');if(note)note.textContent=[state.slatesNote,slatesFallbackNote(state.slateView),storageNote()].filter(Boolean).join(' · ');
+    state.slatesNote='';
+  }
   function syncFilters(){
     if(!filters)return;
     const names=state.names,counts=statusCounts(countGames()),shown=shownGames().length;
     const key=names.join('\u0000');
     // No controls without a snapshot: the board shows the app's reason instead.
     if(!names.length){if(state.built!==key){filters.innerHTML='';state.built=key}return}
-    if(state.built!==key){filters.innerHTML=filterBarHtml(names,{selected:state.selection,status:state.status,counts,slates:state.options,slate:state.slate});state.built=key;state.optionsHtml=slateOptionsHtml(state.options,state.slate)}
+    if(state.built!==key){filters.innerHTML=filterBarHtml(names,{selected:state.selection,status:state.status,counts,slates:state.options,chosen:state.chosen});state.built=key}
     const label=filters.querySelector('[data-picks-compare-label]');if(label)label.textContent=compareLabel(names,state.selection);
-    const select=filters.querySelector('[data-picks-slate]');
-    if(select){const html=slateOptionsHtml(state.options,state.slate);if(html!==state.optionsHtml){select.innerHTML=html;state.optionsHtml=html}if(select.value!==state.slate)select.value=state.slate}
+    const slates=filters.querySelector('[data-picks-slates-label]');if(slates)slates.textContent=slatesLabel(state.slateView,state.options);
     for(const seg of filters.querySelectorAll('[data-picks-status]'))seg.setAttribute('aria-pressed',String(seg.dataset.picksStatus===state.status));
     for(const count of filters.querySelectorAll('[data-picks-count]'))count.textContent=String(counts[count.dataset.picksCount]??0);
     const toggle=filters.querySelector('[data-picks-disagree]');
     if(toggle){toggle.setAttribute('aria-pressed',String(only()));toggle.disabled=state.selection.length<2}
+    // The note: anything said once, the fallback to All Slates while it lasts, storage trouble, then what is shown.
     const note=filters.querySelector('[data-picks-note]');
-    if(note)note.textContent=filterNote(names,state.selection,state.status,counts,shown,[state.notice,storageNote()].filter(Boolean).join(' · '),state.slate===ALL_SLATES?'':state.slateLabel,only());
+    if(note)note.textContent=filterNote(names,state.selection,state.status,counts,shown,[state.notice,slatesFallbackNote(state.slateView),storageNote()].filter(Boolean).join(' · '),shownSlateNames(state.slateView,state.options).join(' + '),only());
     state.notice='';
   }
   function renderPicks(){
@@ -569,41 +678,53 @@ export function boot(){
       state.notice=[state.notice,said].filter(Boolean).join(' · ');state.dialogNote=[state.dialogNote,said].filter(Boolean).join(' · ');
     }
     if(ready()){
-      // The slate is checked against the week on screen only: while another week loads nothing is answered and nothing moves.
+      // The slates are read against the week on screen only: while another week loads nothing is answered and nothing moves.
       const week=`${state.snapshot.season}-${state.snapshot.week}`;
-      if(week!==state.week){if(state.week!==null){state.expanded=null;state.slates=new Map();state.chosenOpen=null}state.week=week}
-      state.options=slateOptions(games());
-      if(state.slate!==ALL_SLATES&&resolveSlate(state.slate,state.options)===ALL_SLATES){state.notice=`${state.slateLabel||'The chosen slate'} is not on this week's schedule · showing All Slates`;state.slate=ALL_SLATES;state.slateLabel='';state.chosenOpen=null}
+      if(week!==state.week){if(state.week!==null){state.expanded=null;state.slates=new Map()}state.week=week}
+      state.options=slateOptions(games());state.weekGroups=groupGames(games());state.slateView=slatesShown(state.chosen,state.options);
       const shown=shownGames();
       if(state.expanded!==null&&!shown.some(g=>g.index===state.expanded))state.expanded=null;
-      // The slates listed and, in All Slates, their states: a new slate at its default, one that went live opened, the rest as
-      // they were.
+      // The slates listed and their states: a new slate at its default, one that went live opened, the rest as they were; the
+      // states of the week's other slates are kept for when they are shown again.
       state.groups=groupGames(shown);
-      if(state.slate===ALL_SLATES)state.slates=nextSlateStates(state.slates,state.groups,{keys:slateKeys()});
+      state.slates=nextSlateStates(state.slates,state.groups,{keys:state.weekGroups.map(g=>g.key)});
     }
-    patchBoard(boardHtml(state.snapshot,{entrants:state.selection,status:state.status,slate:state.slate,expanded:state.expanded,disagree:only(),labels:labelsMode(),slates:boardSlates()}));
+    patchBoard(boardHtml(state.snapshot,{entrants:state.selection,status:state.status,chosen:state.chosen,expanded:state.expanded,disagree:only(),labels:labelsMode(),slates:state.slates}));
     applyExpanded();applySlates();
-    syncFilters();syncDialog();
+    syncFilters();syncDialog();syncSlatesDialog();
   }
   const setSelection=(next,{refusedName=null}={})=>{
     if(sameList(next,state.selection)){if(refusedName)state.dialogNote=state.notice='At least one entry stays selected'}
     else{state.selection=next;persist()}
     renderPicks();
   };
+  // A change of the slates chosen is remembered at once, under its own key, and shown; the last slate shown stays, and the
+  // panel and the note say so.
+  const sameChoice=(a,b)=>a===b||Array.isArray(a)&&Array.isArray(b)&&sameList(a,b);
+  const setSlates=(next,{refused=false}={})=>{
+    if(sameChoice(next,state.chosen)){if(refused)state.slatesNote=state.notice='At least one slate stays selected'}
+    else{state.chosen=next;state.savedSlates=writeSlates(next)}
+    renderPicks();
+  };
   const setLabels=mode=>{if(!LABEL_MODES.includes(mode))return;state.labels=mode;state.savedLabels=writeLabels(mode);renderPicks()};
-  function openDialog(opener){
-    if(!dialog)return;
-    syncDialog();
-    if(!dialog.open){if(typeof dialog.showModal==='function')dialog.showModal();else dialog.setAttribute('open','')}
+  // The two selection panels are modal dialogs: focus moves to the first checkbox and returns to the control on close.
+  function openSheet(sheet,opener,sync,first){
+    if(!sheet)return;
+    sync();
+    if(!sheet.open){if(typeof sheet.showModal==='function')sheet.showModal();else sheet.setAttribute('open','')}
     opener?.setAttribute('aria-expanded','true');
-    dialog.querySelector('[data-picks-entrant]')?.focus?.();
-    dialog.addEventListener('close',()=>{opener?.setAttribute('aria-expanded','false');opener?.focus?.()},{once:true});
+    sheet.querySelector(first)?.focus?.();
+    sheet.addEventListener('close',()=>{opener?.setAttribute('aria-expanded','false');opener?.focus?.()},{once:true});
   }
-  function closeDialog(){
-    if(!dialog)return;
-    if(typeof dialog.close==='function'&&dialog.open)dialog.close();
-    else{dialog.removeAttribute('open');dialog.dispatchEvent(new CustomEvent('close'))}
+  function closeSheet(sheet){
+    if(!sheet)return;
+    if(typeof sheet.close==='function'&&sheet.open)sheet.close();
+    else{sheet.removeAttribute('open');sheet.dispatchEvent(new CustomEvent('close'))}
   }
+  function openDialog(opener){openSheet(dialog,opener,syncDialog,'[data-picks-entrant]')}
+  function closeDialog(){closeSheet(dialog)}
+  function openSlates(opener){openSheet(slatesDialog,opener,syncSlatesDialog,'[data-picks-slate-choice]')}
+  function closeSlates(){closeSheet(slatesDialog)}
   if(board){
     const host=board.closest?.('.picks');if(host)host.classList.add('is-mobile-ready');
     const panel=board.closest?.('[data-view-panel]');if(panel)panel.classList.add('is-mobile-ready');
@@ -619,14 +740,22 @@ export function boot(){
       if(state.expanded!==null)reveal(toggle.closest?.('.pm-card'));
     });
     filters?.addEventListener('click',event=>{
-      const compare=event.target?.closest?.('[data-picks-compare]'),segment=event.target?.closest?.('[data-picks-status]'),toggle=event.target?.closest?.('[data-picks-disagree]');
+      const compare=event.target?.closest?.('[data-picks-compare]'),choose=event.target?.closest?.('[data-picks-slates-open]'),segment=event.target?.closest?.('[data-picks-status]'),toggle=event.target?.closest?.('[data-picks-disagree]');
       if(compare)openDialog(compare);
+      else if(choose)openSlates(choose);
       else if(segment&&STATUS_FILTERS.includes(segment.dataset.picksStatus)){state.status=segment.dataset.picksStatus;renderPicks()}
       else if(toggle&&!toggle.disabled){state.disagree=!state.disagree;renderPicks()}
     });
-    filters?.addEventListener('change',event=>{
-      const select=event.target?.closest?.('[data-picks-slate]');if(!select)return;
-      chooseSlate(select.value);
+    slatesDialog?.addEventListener('change',event=>{
+      const box=event.target?.closest?.('[data-picks-slate-choice]');if(!box||box.dataset.picksSlateChoice==='*')return;
+      const next=toggleSlates(state.chosen,state.options,box.dataset.picksSlateChoice);
+      if(sameChoice(next,state.chosen)&&!box.checked)box.checked=true;
+      setSlates(next,{refused:true});
+    });
+    slatesDialog?.addEventListener('click',event=>{
+      if(event.target===slatesDialog){closeSlates();return}
+      if(event.target?.closest?.('[data-picks-slates-close]'))closeSlates();
+      else if(event.target?.closest?.('[data-picks-slate-choice="*"]'))setSlates(ALL_SLATES);
     });
     dialog?.addEventListener('change',event=>{
       const box=event.target?.closest?.('[data-picks-entrant]');if(!box||box.dataset.picksEntrant==='*')return;
@@ -645,9 +774,9 @@ export function boot(){
   document.addEventListener('poolcenter:update',event=>{const contest=event?.detail?.contest;if(contest==='pickem'){renderPicks();renderRules('pickem')}else if(contest==='survivor')renderRules('survivor')});
   for(const contest of rules.keys())renderRules(contest);
   renderPicks();
-  return{get state(){return{...state,selection:state.selection.slice(),names:state.names.slice(),options:state.options.slice(),slates:new Map([...state.slates].map(([k,s])=>[k,{...s}])),groups:state.groups.slice()}},rules,renderPicks,renderRules,openDialog,closeDialog,
+  return{get state(){return{...state,chosen:Array.isArray(state.chosen)?state.chosen.slice():state.chosen,slateView:{...state.slateView,keys:state.slateView.keys.slice(),missing:state.slateView.missing.slice()},selection:state.selection.slice(),names:state.names.slice(),options:state.options.slice(),slates:new Map([...state.slates].map(([k,s])=>[k,{...s}])),groups:state.groups.slice(),weekGroups:state.weekGroups.slice()}},rules,renderPicks,renderRules,openDialog,closeDialog,openSlates,closeSlates,
     setStatus(status){if(STATUS_FILTERS.includes(status)){state.status=status;renderPicks()}},
-    setSlate(slate){chooseSlate(slate)},
+    setSlates(chosen){setSlates(Array.isArray(chosen)?normalizeSlates({version:SLATES_VERSION,all:false,slates:chosen}):ALL_SLATES)},
     setExpanded(index){state.expanded=Number.isInteger(index)?index:null;applyExpanded()},
     setSelection(names){setSelection(normalizeSelection({version:PREFERENCES_VERSION,entrants:names},state.names))},
     setDisagree(on){state.disagree=on===true;renderPicks()},

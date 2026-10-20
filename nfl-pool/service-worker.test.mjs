@@ -192,11 +192,33 @@ const withoutPicksAccordion=text=>{
   for(const [asset,before,after] of PICKS_ACCORDION.versions)out=out.split(`${asset}?v=${after}`).join(`${asset}?v=${before}`);
   return out.replace(`const CACHE='${PICKS_ACCORDION.cache[1]}'`,`const CACHE='${PICKS_ACCORDION.cache[0]}'`);
 };
-// The page and the worker as the V1.4 final polish left them (pool-center-shell-v28), for the polish's own byte checks, as
-// the V1.4 compact UX left them (pool-center-shell-v27), for the compact UX's, as the V1.3 mobile UX left them
-// (pool-center-shell-v26), for the mobile UX's, and as the Home dashboard left them (pool-center-shell-v25), for the
-// dashboard's.
-const indexBeforeAccordion=withoutPicksAccordion(index),sourceBeforeAccordion=withoutPicksAccordion(source);
+// The V1.4 multi-select slates (after the collapsible slate groups) add no shell asset: they change the bytes of
+// picks-mobile.js and picks-mobile.css (each rolled to v=5) and of the page (the slate selection panel after the entry selection
+// panel, the region below), and change the worker only by its cache name and the two mobile entries' versions. Every earlier
+// check sees the page, the worker and the modules as they were before it (withoutPicksSlates) and still holds for every other
+// byte; the multi-select slates block at the end checks the change itself.
+const PICKS_SLATES={
+  assets:new Set(),
+  versions:[['picks-mobile.js','4','5'],['picks-mobile.css','4','5']],
+  cache:['pool-center-shell-v29','pool-center-shell-v30'],
+  regions:[{start:'      <dialog class="pm-dialog" id="picksSlates"',end:'    </section>\n  </div>\n\n  <footer',baseline:''}]
+};
+const withoutPicksSlates=text=>{
+  let out=text;
+  for(const [asset,before,after] of PICKS_SLATES.versions)out=out.split(`${asset}?v=${after}`).join(`${asset}?v=${before}`);
+  out=out.replace(`const CACHE='${PICKS_SLATES.cache[1]}'`,`const CACHE='${PICKS_SLATES.cache[0]}'`);
+  for(const {start,end,baseline} of PICKS_SLATES.regions){
+    const s=out.indexOf(start),e=s>=0?out.indexOf(end,s):-1;
+    if(s>=0&&e>s)out=out.slice(0,s)+baseline+out.slice(e);
+  }
+  return out;
+};
+// The page and the worker as the V1.4 collapsible slate groups left them (pool-center-shell-v29), for the slate groups' own
+// byte checks, as the V1.4 final polish left them (pool-center-shell-v28), for the polish's, as the V1.4 compact UX left them
+// (pool-center-shell-v27), for the compact UX's, as the V1.3 mobile UX left them (pool-center-shell-v26), for the mobile UX's,
+// and as the Home dashboard left them (pool-center-shell-v25), for the dashboard's.
+const indexBeforeSlates=withoutPicksSlates(index),sourceBeforeSlates=withoutPicksSlates(source);
+const indexBeforeAccordion=withoutPicksAccordion(indexBeforeSlates),sourceBeforeAccordion=withoutPicksAccordion(sourceBeforeSlates);
 const indexBeforePolish=withoutPicksPolish(indexBeforeAccordion),sourceBeforePolish=withoutPicksPolish(sourceBeforeAccordion);
 const indexBeforeCompact=withoutPicksCompact(indexBeforePolish),sourceBeforeCompact=withoutPicksCompact(sourceBeforePolish);
 const indexBeforePicks=withoutPicksMobile(indexBeforeCompact),sourceBeforePicks=withoutPicksMobile(sourceBeforeCompact);
@@ -257,7 +279,7 @@ const httpResponse=status=>{const response={status,ok:status>=200&&status<300,cl
 const cache={addAll:async requests=>{addAllCalls.push(Array.from(requests))},put:async(request,response)=>{putCalls.push({request,response})}};
 const caches={
   open:async name=>{opened.push(name);return cache},
-  keys:async()=>['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15','pool-center-shell-v16','pool-center-shell-v17','pool-center-shell-v18','pool-center-shell-v19','pool-center-shell-v20','pool-center-shell-v21','pool-center-shell-v22','pool-center-shell-v23','pool-center-shell-v24','pool-center-shell-v25','pool-center-shell-v26','pool-center-shell-v27','pool-center-shell-v28','pool-center-shell-v29'],
+  keys:async()=>['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15','pool-center-shell-v16','pool-center-shell-v17','pool-center-shell-v18','pool-center-shell-v19','pool-center-shell-v20','pool-center-shell-v21','pool-center-shell-v22','pool-center-shell-v23','pool-center-shell-v24','pool-center-shell-v25','pool-center-shell-v26','pool-center-shell-v27','pool-center-shell-v28','pool-center-shell-v29','pool-center-shell-v30'],
   delete:async key=>{deleted.push(key);return true},
   match:async key=>{matchCalls.push(key);return cached.get(typeof key==='string'?key:key.url)}
 };
@@ -288,7 +310,7 @@ const shell=[
   './','./index.html','./style.css?v=premium-v3','./slate.css?v=slate-v1','./weekly.css?v=premium-v3',
   './weekly-app.js?v=weekly-v23','./public-math.js?v=3','./survivor.css?v=4','./survivor-app.js?v=12','./survivor-math.js?v=7',
   './contest-rulings.js?v=2','./score-feed-proxy.js?v=2','./pwa.js?v=1','./share-card.js?v=2','./share-ui.js?v=2','./share.css?v=1',
-  './home-dashboard.js?v=1','./home-dashboard.css?v=1','./picks-mobile.js?v=4','./picks-mobile.css?v=4','./manifest.webmanifest',
+  './home-dashboard.js?v=1','./home-dashboard.css?v=1','./picks-mobile.js?v=5','./picks-mobile.css?v=5','./manifest.webmanifest',
   './assets/pool-center-icon.svg','./assets/pool-center-icon-192.svg','./assets/pool-center-icon-512.svg'
 ].map(path=>new URL(path,workerURL).href);
 assert.equal(addAllCalls.length,1,'install must precache the whole shell with one all-or-nothing Cache.addAll');
@@ -315,12 +337,12 @@ for(const mode of ['default','no-cache','no-store','force-cache','only-if-cached
 }
 assert(installRequests.every(request=>request instanceof Request),'install must give Cache.addAll Request objects, not URL strings');
 await hdc15('HDC-15 weekly-v22 and survivor-app v11 reload requests',()=>{
-  for(const asset of ['weekly-app.js?v=weekly-v23','survivor-app.js?v=12','share-card.js?v=2','share-ui.js?v=2','share.css?v=1','home-dashboard.js?v=1','home-dashboard.css?v=1','picks-mobile.js?v=4','picks-mobile.css?v=4'])
+  for(const asset of ['weekly-app.js?v=weekly-v23','survivor-app.js?v=12','share-card.js?v=2','share-ui.js?v=2','share.css?v=1','home-dashboard.js?v=1','home-dashboard.css?v=1','picks-mobile.js?v=5','picks-mobile.css?v=5'])
     assert.equal(installRequests[shell.indexOf(`https://example.test/nfl-pool/${asset}`)]?.url,`https://example.test/nfl-pool/${asset}`,`the reload request must keep the ${asset} query string`);
 });
 assert.deepEqual([fetchCalls.length,putCalls.length],[0,0],'install must fetch and store the shell only through Cache.addAll');
 assert.equal(skipWaitingCalls,1,'a completed install skips waiting once');
-await hdc15('HDC-15 install cache generation',()=>assert.deepEqual(opened,['pool-center-shell-v29'],'install must write the shell to pool-center-shell-v29'));
+await hdc15('HDC-15 install cache generation',()=>assert.deepEqual(opened,['pool-center-shell-v30'],'install must write the shell to pool-center-shell-v30'));
 {
   // HDC-07 keeps Cache.addAll all-or-nothing. When any shell response is not OK the browser rejects addAll and stores none
   // of the shell; install must reject with that same error and never skip waiting, so the previous worker keeps control
@@ -338,7 +360,7 @@ await hdc15('HDC-15 install cache generation',()=>assert.deepEqual(opened,['pool
   assert.equal(failedSkips,0,'a failed install must never skip waiting');
   assert.equal(failedCalls.length,1,'a failed Cache.addAll must not be retried or replaced by a partial precache');
   assert.equal(failedCalls[0].length,precached.length);
-  await hdc15('HDC-15 failed-install cache generation',()=>assert.deepEqual(failedOpens,['pool-center-shell-v29']));
+  await hdc15('HDC-15 failed-install cache generation',()=>assert.deepEqual(failedOpens,['pool-center-shell-v30']));
 }
 
 let activatePromise;
@@ -370,8 +392,9 @@ listeners.activate({waitUntil:p=>{activatePromise=p}});await activatePromise;
 // loads them, is deleted too. The V1.4 final polish rolls it to v28 with picks-mobile.js?v=3 and picks-mobile.css?v=3, so v27,
 // which holds v=2 of both and the page that loads them, is deleted too. The V1.4 collapsible slate groups roll it to v29 with
 // picks-mobile.js?v=4 and picks-mobile.css?v=4, so v28, which holds v=3 of both and the page that loads them, is deleted too.
-// Only v29 is kept.
-await hdc15('HDC-15 activation rollover',()=>assert.deepEqual(deleted,['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15','pool-center-shell-v16','pool-center-shell-v17','pool-center-shell-v18','pool-center-shell-v19','pool-center-shell-v20','pool-center-shell-v21','pool-center-shell-v22','pool-center-shell-v23','pool-center-shell-v24','pool-center-shell-v25','pool-center-shell-v26','pool-center-shell-v27','pool-center-shell-v28'],'activation must delete v12 through v28 and keep only v29'));
+// The V1.4 multi-select slates roll it to v30 with picks-mobile.js?v=5 and picks-mobile.css?v=5, so v29, which holds v=4 of both
+// and the page that loads them, is deleted too. Only v30 is kept.
+await hdc15('HDC-15 activation rollover',()=>assert.deepEqual(deleted,['pool-center-shell-v12','pool-center-shell-v13','pool-center-shell-v14','pool-center-shell-v15','pool-center-shell-v16','pool-center-shell-v17','pool-center-shell-v18','pool-center-shell-v19','pool-center-shell-v20','pool-center-shell-v21','pool-center-shell-v22','pool-center-shell-v23','pool-center-shell-v24','pool-center-shell-v25','pool-center-shell-v26','pool-center-shell-v27','pool-center-shell-v28','pool-center-shell-v29'],'activation must delete v12 through v29 and keep only v30'));
 
 const adminRequest={method:'GET',mode:'navigate',url:'https://example.test/nfl-pool/admin/survivor.html'};
 let adminResponse;
@@ -1062,7 +1085,7 @@ for(const path of ['/nfl-pool/admin/x%2F..%2F..%2Fstyle.css?v=premium-v3','/nfl-
 }
 // Every cache the worker opened, at install and before each runtime cache.put above, is pool-center-shell-v24.
 assert.equal(opened.length,1+putCalls.length,'install and each runtime cache.put open the shell cache once');
-await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(opened)],['pool-center-shell-v29'],'the worker must write only to pool-center-shell-v29'));
+await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(opened)],['pool-center-shell-v30'],'the worker must write only to pool-center-shell-v30'));
 
 // ---- HDC-12 version discipline. Each precached asset is checked against the bytes and version it had in
 // pool-center-shell-v19 (main 8caafa6): an asset whose bytes changed is requested at a new version, an asset whose bytes did
@@ -1251,10 +1274,10 @@ await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(o
   });
   await hdc15('HDC-15 shell cache rolls from pool-center-shell-v21 to v22',()=>{
     assert.notEqual(cacheName,'pool-center-shell-v21','a changed shell must not reuse pool-center-shell-v21');
-    assert.equal(cacheName,'pool-center-shell-v29');
+    assert.equal(cacheName,'pool-center-shell-v30');
   });
   await hdc15('HDC-15 mixed versions: the page changes only its two module versions, so either page runs either module set',()=>{
-    const page=withoutHomeDashboard(withoutPicksMobile(withoutPicksCompact(withoutPicksPolish(withoutPicksAccordion(bytes('index.html').toString('utf8'))))));
+    const page=withoutHomeDashboard(withoutPicksMobile(withoutPicksCompact(withoutPicksPolish(withoutPicksAccordion(withoutPicksSlates(bytes('index.html').toString('utf8')))))));
     assert.equal(page.split('weekly-app.js?v=weekly-v21').length-1,1,'the page loads weekly-v21 exactly once');
     assert.equal(page.split('survivor-app.js?v=10"').length-1,1,'the page loads survivor-app v10 exactly once');
     const baselineSpelling=withoutShareCards(page).replace('weekly-app.js?v=weekly-v21','weekly-app.js?v=weekly-v18').replace('survivor-app.js?v=10"','survivor-app.js?v=8"')
@@ -1309,7 +1332,7 @@ await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(o
   const V23_WORKER='99ce7a6b6938dca8172f9ad5139119a8c15f5a2c45dd172351188e623db76b06';
   // The shell as share cards left it: without the Home dashboard's two assets, at the versions before it.
   const cacheName=sourceBefore.match(/const CACHE='([^']+)'/)?.[1];
-  const entries=precached.map(withoutPicksAccordion).map(withoutPicksPolish).map(withoutPicksCompact).filter(url=>![...HOME_DASHBOARD.assets,...PICKS_MOBILE.assets].some(asset=>url.endsWith(`/${asset}?v=1`))).map(url=>withoutHomeDashboard(withoutPicksMobile(url)))
+  const entries=precached.map(withoutPicksSlates).map(withoutPicksAccordion).map(withoutPicksPolish).map(withoutPicksCompact).filter(url=>![...HOME_DASHBOARD.assets,...PICKS_MOBILE.assets].some(asset=>url.endsWith(`/${asset}?v=1`))).map(url=>withoutHomeDashboard(withoutPicksMobile(url)))
     .map(url=>{const u=new URL(url),path=u.pathname.replace('/nfl-pool/','')||'index.html';return{url,path,version:u.searchParams.get('v')}});
   await sc1('share cards change exactly index.html, weekly-app.js and survivor-app.js and add exactly the three share assets (against pool-center-shell-v23)',()=>{
     const problems=[];
@@ -1409,7 +1432,7 @@ await hdc15('HDC-15 runtime cache generation',()=>assert.deepEqual([...new Set(o
   const CHANGED=new Set(['index.html','weekly-app.js','survivor-app.js','share-card.js','share-ui.js']);
   // The shell as the Home dashboard left it: without the mobile UX's two assets, at the versions before it.
   const cacheName=sourceBeforePicks.match(/const CACHE='([^']+)'/)?.[1];
-  const entries=precached.map(withoutPicksAccordion).map(withoutPicksPolish).map(withoutPicksCompact).filter(url=>![...PICKS_MOBILE.assets].some(asset=>url.endsWith(`/${asset}?v=1`))).map(url=>withoutPicksMobile(url)).map(url=>{const u=new URL(url),path=u.pathname.replace('/nfl-pool/','')||'index.html';return{url,path,version:u.searchParams.get('v')}});
+  const entries=precached.map(withoutPicksSlates).map(withoutPicksAccordion).map(withoutPicksPolish).map(withoutPicksCompact).filter(url=>![...PICKS_MOBILE.assets].some(asset=>url.endsWith(`/${asset}?v=1`))).map(url=>withoutPicksMobile(url)).map(url=>{const u=new URL(url),path=u.pathname.replace('/nfl-pool/','')||'index.html';return{url,path,version:u.searchParams.get('v')}});
   await hd('the Home dashboard changes exactly the page and the four modules, rolls exactly their versions and adds exactly its two assets at v=1 (against pool-center-shell-v24)',()=>{
     const problems=[];
     for(const {path,version} of entries){
@@ -1536,7 +1559,7 @@ const pm=async(name,check)=>{try{await check()}catch(error){pmFailures.push(`${n
   // The shell as the V1.3 mobile UX left it: the two mobile assets at v=1, the cache at v26.
   const index=indexBeforeCompact,source=sourceBeforeCompact;
   const cacheName=source.match(/const CACHE='([^']+)'/)?.[1];
-  const entries=precached.map(withoutPicksAccordion).map(withoutPicksPolish).map(withoutPicksCompact).map(url=>{const u=new URL(url),path=u.pathname.replace('/nfl-pool/','')||'index.html';return{url,path,version:u.searchParams.get('v')}});
+  const entries=precached.map(withoutPicksSlates).map(withoutPicksAccordion).map(withoutPicksPolish).map(withoutPicksCompact).map(url=>{const u=new URL(url),path=u.pathname.replace('/nfl-pool/','')||'index.html';return{url,path,version:u.searchParams.get('v')}});
   await pm('the mobile UX changes exactly the page and the two app modules, rolls exactly their versions and adds exactly its two assets at v=1 (against pool-center-shell-v25)',()=>{
     const problems=[];
     for(const {path,version} of entries){
@@ -1665,7 +1688,7 @@ const pc=async(name,check)=>{try{await check()}catch(error){pcFailures.push(`${n
   // The shell as the compact UX left it: the two mobile assets at v=2, the cache at v27.
   const index=indexBeforePolish,source=sourceBeforePolish;
   const cacheName=source.match(/const CACHE='([^']+)'/)?.[1];
-  const entries=precached.map(withoutPicksAccordion).map(withoutPicksPolish).map(url=>{const u=new URL(url),path=u.pathname.replace('/nfl-pool/','')||'index.html';return{url,path,version:u.searchParams.get('v')}});
+  const entries=precached.map(withoutPicksSlates).map(withoutPicksAccordion).map(withoutPicksPolish).map(url=>{const u=new URL(url),path=u.pathname.replace('/nfl-pool/','')||'index.html';return{url,path,version:u.searchParams.get('v')}});
   await pc('the compact UX changes exactly the page, the mobile module and the mobile stylesheet, rolls exactly the two mobile versions to v=2 and adds no shell asset (against pool-center-shell-v26)',()=>{
     const problems=[];
     for(const {path,version} of entries){
@@ -1785,7 +1808,7 @@ const pp=async(name,check)=>{try{await check()}catch(error){ppFailures.push(`${n
   // The shell as the polish left it: the two mobile assets at v=3, the cache at v28.
   const index=indexBeforeAccordion,source=sourceBeforeAccordion;
   const cacheName=source.match(/const CACHE='([^']+)'/)?.[1];
-  const entries=precached.map(withoutPicksAccordion).map(url=>{const u=new URL(url),path=u.pathname.replace('/nfl-pool/','')||'index.html';return{url,path,version:u.searchParams.get('v')}});
+  const entries=precached.map(withoutPicksSlates).map(withoutPicksAccordion).map(url=>{const u=new URL(url),path=u.pathname.replace('/nfl-pool/','')||'index.html';return{url,path,version:u.searchParams.get('v')}});
   await pp('the polish changes exactly the page, the mobile module and the mobile stylesheet, rolls exactly the two mobile versions to v=3 and adds no shell asset (against pool-center-shell-v27)',()=>{
     const problems=[];
     for(const {path,version} of entries){
@@ -1891,8 +1914,10 @@ const pa=async(name,check)=>{try{await check()}catch(error){paFailures.push(`${n
   };
   const V28_WORKER='070d27ebddd5bbb248efdeba5c2524463f4b38db4a51d9f3da4074eeb0e794bd';
   const CHANGED=new Set(['index.html','picks-mobile.js','picks-mobile.css']);
+  // The shell as the slate groups left it: the two mobile assets at v=4, the cache at v29.
+  const index=indexBeforeSlates,source=sourceBeforeSlates;
   const cacheName=source.match(/const CACHE='([^']+)'/)?.[1];
-  const entries=precached.map(url=>{const u=new URL(url),path=u.pathname.replace('/nfl-pool/','')||'index.html';return{url,path,version:u.searchParams.get('v')}});
+  const entries=precached.map(withoutPicksSlates).map(url=>{const u=new URL(url),path=u.pathname.replace('/nfl-pool/','')||'index.html';return{url,path,version:u.searchParams.get('v')}});
   await pa('the slate groups change exactly the page, the mobile module and the mobile stylesheet, roll exactly the two mobile versions to v=4 and add no shell asset (against pool-center-shell-v28)',()=>{
     const problems=[];
     for(const {path,version} of entries){
@@ -1953,6 +1978,120 @@ const pa=async(name,check)=>{try{await check()}catch(error){paFailures.push(`${n
   });
 }
 
+// ---- V1.4 multi-select slates version discipline. Each precached asset is checked against the bytes and version it had in
+// pool-center-shell-v29 (main 4cd23e0, the production baseline). The feature changes the bytes of index.html (the slate
+// selection panel), picks-mobile.js and picks-mobile.css, so exactly the two mobile assets roll their version (to v=5); it adds
+// no shell asset and touches no app module; every other asset keeps its bytes and version, and the shell cache rolls to v30.
+// Mixed versions stay safe: the page names the module and the stylesheet at one version, a page cached before the deploy loads
+// v=4 of both with the markup v=4 needs (only v=5 reads the slate panel), and the apps answer the same picks and rules requests
+// as before.
+const psFailures=[];
+const ps=async(name,check)=>{try{await check()}catch(error){psFailures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+{
+  const {createHash}=await import('node:crypto');
+  const bytes=path=>{try{return readFileSync(new URL(`./${path}`,import.meta.url))}catch{return null}};
+  const digest=b=>createHash('sha256').update(b).digest('hex'),sha=path=>{const b=bytes(path);return b?digest(b):null};
+  const V29={
+    'index.html':[null,'6f407c4585cf994456c257ec411b39ba839b0f77bf73e981c13a295587032322'],
+    'style.css':['premium-v3','83cce4ed122a251791d3f272b9cf5bed94c849dac9a0ad74d39bef784dcdf815'],
+    'slate.css':['slate-v1','58f87ea913d974f98f9bab54c1c3d74bd608f723b47fe491128d96016937abdb'],
+    'weekly.css':['premium-v3','fe917b9123af034c887fc3290e052c07ba6d1a7ed72ff0e9286a6f53ea6a1f44'],
+    'weekly-app.js':['weekly-v23','7efcceefa199c211581262b977a70c86d5a7b6a586f714fb72dd79015c3eb782'],
+    'public-math.js':['3','9603a2703316bde8f223ff9e58389110b8851f6f95b588cd87254fab0c12c694'],
+    'survivor.css':['4','ec104e2e22394460c9a0ee473e84d47d87eb5e72eb7cf1f67135f626978b4938'],
+    'survivor-app.js':['12','be0a2f03ecf92fc419b0d5ec77f63ef372d5e7598d74d5f666dc06a379f38d06'],
+    'survivor-math.js':['7','3aebca4ad08412658e7d0fc4b9f0207d829e2b9f718579f556594e13373b634f'],
+    'contest-rulings.js':['2','5422cd96a48333f4eceaaf0d6b300b30f0a09d24b34de42a619e20e8fc401a77'],
+    'score-feed-proxy.js':['2','b13635d4706099c67272b8ae739e9a363b21342bb2a87af1581847dc936747b7'],
+    'pwa.js':['1','febf3af70464731d65d56beb3a88ee5f8587808eeebf52f97b06211d47bb34da'],
+    'share-card.js':['2','e5653e8837ed9ab0df03d64d56c5390817913c89ba6e1ea531f1f87f5fb4ae83'],
+    'share-ui.js':['2','be272771bf91024b6604f395843e6d9889bc5989d54b67db8e4388728d4fdf12'],
+    'share.css':['1','32beaa9657dcae9ac5ff899261ee64f6188011f8e82e3de8de606721964f5dd4'],
+    'home-dashboard.js':['1','cab9d67b73b4eb3e97d0f2faf6a6282c26f1cf6a05bb21ca830768ff5669a6f0'],
+    'home-dashboard.css':['1','f11331d27e0db68f71d488bcab35b5dcd0353ce780874155d395da2e76c8722c'],
+    'picks-mobile.js':['4','9f01e491b11dde3d648eb80bc192aa3e6c85655df9aae0186b565fa5af19f7a0'],
+    'picks-mobile.css':['4','840e21a3955ab580efed8a3a9e0f28a65003f01f407a89ccb3a0a586296eb4f1'],
+    'manifest.webmanifest':[null,'b6508c471231b597c8296084d4749d9004fe07cb33247a2e52e57775c35d53cf'],
+    'assets/pool-center-icon.svg':[null,'9fd6f65b0c367cee1988f3a573301279f1d11768577ef52ab1a72cf26d0604a3'],
+    'assets/pool-center-icon-192.svg':[null,'7cbd4c5a5fc061fb572e4b6e284ced95310da3d8a46c538c5ba3717d2d8a86e9'],
+    'assets/pool-center-icon-512.svg':[null,'9fd6f65b0c367cee1988f3a573301279f1d11768577ef52ab1a72cf26d0604a3']
+  };
+  const V29_WORKER='a2c98c486b49f91be07b5504e8c97f69a54b416f657990707c83629dbf62753c';
+  const CHANGED=new Set(['index.html','picks-mobile.js','picks-mobile.css']);
+  const cacheName=source.match(/const CACHE='([^']+)'/)?.[1];
+  const entries=precached.map(url=>{const u=new URL(url),path=u.pathname.replace('/nfl-pool/','')||'index.html';return{url,path,version:u.searchParams.get('v')}});
+  await ps('the multi-select slates change exactly the page, the mobile module and the mobile stylesheet, roll exactly the two mobile versions to v=5 and add no shell asset (against pool-center-shell-v29)',()=>{
+    const problems=[];
+    for(const {path,version} of entries){
+      const before=V29[path];
+      if(!before){problems.push(`${path} is new to the shell: the multi-select slates add no shell asset`);continue}
+      if(before[0]===null)continue;
+      const changed=sha(path)!==before[1];
+      if(changed&&version===before[0])problems.push(`${path} changed but is still precached at v=${version}`);
+      if(!changed&&version!==before[0])problems.push(`${path} is unchanged but its version moved from v=${before[0]} to v=${version}`);
+      if(changed&&!CHANGED.has(path))problems.push(`${path} is outside the multi-select slates and must keep its bytes`);
+    }
+    for(const path of Object.keys(V29))if(!entries.some(e=>e.path===path))problems.push(`${path} must stay precached`);
+    for(const path of CHANGED)if(sha(path)===V29[path][1])problems.push(`${path} must change for the multi-select slates`);
+    for(const [asset,,after] of PICKS_SLATES.versions)if(entries.find(e=>e.path===asset)?.version!==after)problems.push(`${asset} must be precached at v=${after}`);
+    for(const path of Object.keys(V29))if(!CHANGED.has(path)&&sha(path)!==V29[path][1])problems.push(`${path} is outside the multi-select slates and must keep its bytes`);
+    assert.deepEqual(problems,[]);
+  });
+  await ps('the multi-select slates roll the shell cache from pool-center-shell-v29 to v30',()=>assert.equal(cacheName,PICKS_SLATES.cache[1]));
+  await ps('the page differs from the slate groups page only in the slate selection panel and the two mobile versions',()=>{
+    for(const {start} of PICKS_SLATES.regions)assert.equal(index.split(start).length-1,1,`the page carries ${start.trim().slice(0,60)}… exactly once`);
+    assert.equal(digest(Buffer.from(withoutPicksSlates(index),'utf8')),V29['index.html'][1],'with the multi-select slates taken out, the page is byte-identical to the slate groups page');
+    assert.notEqual(digest(Buffer.from(index,'utf8')),V29['index.html'][1]);
+  });
+  await ps('the worker differs from the slate groups worker only in its cache name and the two mobile versions (strategy unchanged)',()=>{
+    assert.equal(digest(Buffer.from(withoutPicksSlates(source),'utf8')),V29_WORKER,'with the multi-select slates taken out, the worker is byte-identical to the slate groups worker');
+  });
+  await ps('the page and the worker name the module and the stylesheet at one version, v=5, the precached one; v=4 is neither precached nor loaded',()=>{
+    for(const [path,version] of [['picks-mobile.js','5'],['picks-mobile.css','5']]){
+      const escaped=path.replace(/[.]/g,'\\.');
+      for(const [label,text] of [['index.html',index],['service-worker.js',source]]){
+        const named=new Set([...text.matchAll(new RegExp(`${escaped}\\?v=([^'"&\\s]+)`,'g'))].map(m=>m[1]));
+        assert.deepEqual([...named],[version],`${label} names ${path} at ${[...named].join(', ')}; only v=${version} is precached`);
+      }
+    }
+    for(const asset of ['picks-mobile.js?v=4','picks-mobile.css?v=4'])assert(!source.includes(`'./${asset}'`),`the worker must no longer precache ${asset}`);
+    assert(!index.includes('picks-mobile.js?v=4"')&&!index.includes('picks-mobile.css?v=4"'),'the page must no longer load the superseded mobile versions');
+  });
+  await ps('picks-mobile.js still imports nothing, reaches no network, loads no remote resource and starts no timer, and remembers the slates under their own versioned key; the apps keep their baseline bytes and look for no mobile markup',()=>{
+    const module=bytes('picks-mobile.js').toString('utf8');
+    assert.deepEqual([...module.matchAll(/(?:from|import)\s*\(?\s*'([^']+)'/g)].map(m=>m[1]),[]);
+    for(const file of ['picks-mobile.js','picks-mobile.css']){
+      const text=bytes(file).toString('utf8');
+      assert(!/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|EventSource|import\s*\(/.test(text),`${file} must not make requests`);
+      assert(!/https?:\/\//.test(text),`${file} must not name a remote resource`);
+      assert(!/setInterval|setTimeout/.test(text),`${file} must start no timer`);
+    }
+    assert(module.includes("export const SLATES_KEY='poolcenter.picks.slates.v1';")&&module.includes("export const STORAGE_KEY='poolcenter.picks.v1';")&&module.includes("export const LABELS_KEY='poolcenter.picks.labels.v1';"),'three keys, the earlier two unchanged');
+    for(const app of ['weekly-app.js','survivor-app.js']){
+      assert.equal(sha(app),V29[app][1],`${app} keeps its bytes`);
+      assert(!/getElementById\(['"`](?:picks|pm-)|\$\(['"`]picks|data-picks|data-rules|rules-toggle|picksBoard|picksFilters|picksEntrants|picksLabels|picksSlates|pm-slate/.test(bytes(app).toString('utf8')),`${app} must not look for mobile markup`);
+    }
+  });
+  await ps('index.html: the slate selection dialog follows the entry selection dialog, a labelled modal panel built like it (a close control and Done, Select all, the list the module fills, a live status line) and loads nothing remote; the slate selector is gone and no slate control is permanently on the page',()=>{
+    const open=index.indexOf('<dialog class="pm-dialog" id="picksSlates"'),dialog=index.slice(open,index.indexOf('</dialog>',open));
+    assert(open>index.indexOf('<dialog class="pm-dialog" id="picksEntrants"'),'after the entry selection dialog');
+    assert(dialog.startsWith('<dialog class="pm-dialog" id="picksSlates" aria-labelledby="picksSlatesTitle">')&&dialog.includes('<h2 id="picksSlatesTitle">Slates to show</h2>'),'a labelled dialog');
+    assert.equal(dialog.split('data-picks-slates-close').length-1,2,'a close control in the head and Done');
+    assert(dialog.includes('<div class="pm-sheet-list" data-picks-slate-list></div>')&&dialog.includes('<button type="button" class="share-action" data-picks-slate-choice="*">Select all</button>'));
+    assert(dialog.includes('<p class="pm-sheet-status" data-picks-slates-note role="status" aria-live="polite"></p>'),'a live status line');
+    assert(!/(?:src|href)="(?:https?:)?\/\//.test(dialog),'the dialog loads nothing remote');
+    assert(!/data-picks-slate-choice|data-picks-slates-open|data-picks-slate-list/.test(index.slice(0,index.indexOf('<dialog class="pm-dialog" id="picksEntrants"'))),'no slate control outside the panel');
+    for(const id of ['picksSlates','picksSlatesTitle','picksEntrants','picksEntrantsTitle','picksBoard','picksFilters'])assert.equal(index.split(`id="${id}"`).length-1,1,`index.html has exactly one #${id}`);
+  });
+  await ps('picks-mobile.js renders one Slates control that opens the slate panel in place of the slate selector, and the stylesheet keeps it a 44px target that never widens its row',()=>{
+    const module=bytes('picks-mobile.js').toString('utf8'),css=bytes('picks-mobile.css').toString('utf8');
+    assert(module.includes('data-picks-slates-open aria-haspopup="dialog" aria-expanded="false" aria-controls="picksSlates"'),'one control naming the panel it opens');
+    assert(!/<select|data-picks-slate>|pm-select/.test(module)&&!/\.pm-select/.test(css),'no slate selector');
+    assert.match(css,/\.pm-compare\{[^}]*min-height:44px/);assert.match(css,/\.pm-compare\{[^}]*flex:1 1 150px;min-width:0;/);
+    assert(css.includes('.pm-compare b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}'),'a long summary is cut, never widening the row');
+  });
+}
+
 assert.equal(hdc12Failures.length,0,`HDC-12 service-worker regressions failed (${hdc12Failures.length}):\n  ${hdc12Failures.join('\n  ')}`);
 assert.equal(hdc14Failures.length,0,`HDC-14 service-worker regressions failed (${hdc14Failures.length}):\n  ${hdc14Failures.join('\n  ')}`);
 assert.equal(hdc15Failures.length,0,`HDC-15 service-worker regressions failed (${hdc15Failures.length}):\n  ${hdc15Failures.join('\n  ')}`);
@@ -1962,5 +2101,6 @@ assert.equal(pmFailures.length,0,`V1.3 mobile UX service-worker regressions fail
 assert.equal(pcFailures.length,0,`V1.4 compact Picks UX service-worker regressions failed (${pcFailures.length}):\n  ${pcFailures.join('\n  ')}`);
 assert.equal(ppFailures.length,0,`V1.4 final polish service-worker regressions failed (${ppFailures.length}):\n  ${ppFailures.join('\n  ')}`);
 assert.equal(paFailures.length,0,`V1.4 collapsible slate groups service-worker regressions failed (${paFailures.length}):\n  ${paFailures.join('\n  ')}`);
+assert.equal(psFailures.length,0,`V1.4 multi-select slates service-worker regressions failed (${psFailures.length}):\n  ${psFailures.join('\n  ')}`);
 
-console.log('service-worker precache graph (share-card, Home dashboard, V1.3 mobile UX, V1.4 compact Picks UX, V1.4 final polish and V1.4 collapsible slate groups versions), fresh (cache:"reload") precache requests, all-or-nothing install, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');
+console.log('service-worker precache graph (share-card, Home dashboard, V1.3 mobile UX, V1.4 compact Picks UX, V1.4 final polish, V1.4 collapsible slate groups and V1.4 multi-select slates versions), fresh (cache:"reload") precache requests, all-or-nothing install, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');
