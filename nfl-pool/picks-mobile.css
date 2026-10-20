@@ -1,7 +1,8 @@
 /* V1.4 premium compact Picks UX (picks-mobile.js): one compact card per matchup on the Picks view below 761px (the comparison
-   table keeps wider screens exactly as before), the entries, slate and status controls, the entry selection panel, and the
-   collapsible Rules & rulings cards on the Games and Survivor views. Without the module the page is unchanged: the card and
-   filter containers stay hidden, the table shows at every width and the page copy describes the table. */
+   table keeps wider screens exactly as before), each kickoff slate a collapsible group behind its heading, the entries, slate
+   and status controls, the entry selection panel, and the collapsible Rules & rulings cards on the Games and Survivor views.
+   Without the module the page is unchanged: the card and filter containers stay hidden, the table shows at every width and
+   the page copy describes the table. */
 .picks.is-mobile-ready .picks-filters,.picks.is-mobile-ready .picks-board,.pm-copy-cards{display:none}
 @media(max-width:760px){
   .picks.is-mobile-ready .scroll{display:none}
@@ -34,7 +35,7 @@
 .pm-segment[aria-pressed="true"]{background:linear-gradient(180deg,#8f1c22,#6f1116);color:#fff;box-shadow:inset 0 1px 0 #ffffff14}
 .pm-segment[aria-pressed="true"] b{color:#fff}
 .pm-note{margin:0;color:var(--dim);font-size:9px;line-height:1.45}
-.pm-compare:focus-visible,.pm-select:focus-visible,.pm-segment:focus-visible,.pm-toggle:focus-visible,.pm-summary:focus-visible,.pm-entry:has(input:focus-visible),.rules-toggle:focus-visible{outline:2px solid #ef5a61;outline-offset:2px}
+.pm-compare:focus-visible,.pm-select:focus-visible,.pm-segment:focus-visible,.pm-toggle:focus-visible,.pm-summary:focus-visible,.pm-slate-toggle:focus-visible,.pm-slates-action:focus-visible,.pm-entry:has(input:focus-visible),.rules-toggle:focus-visible{outline:2px solid #ef5a61;outline-offset:2px}
 /* Disagreements only: one small switch under the status segments, off until tapped, disabled with fewer than two entries. */
 .pm-options{display:flex;flex-wrap:wrap;gap:6px}
 .pm-toggle{display:inline-flex;align-items:center;gap:8px;min-height:42px;padding:0 12px 0 10px;border:1px solid var(--line);border-radius:999px;background:#0a0d12;color:var(--muted);font-size:9.5px;font-weight:900;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;-webkit-tap-highlight-color:transparent}
@@ -45,10 +46,34 @@
 .pm-toggle[aria-pressed="true"] .pm-toggle-track{background:linear-gradient(180deg,#8f1c22,#6f1116)}
 .pm-toggle[aria-pressed="true"] .pm-toggle-track::after{transform:translateX(12px);background:#fff}
 .pm-toggle:disabled{opacity:.45;cursor:default}
-/* Kickoff slates and compact matchup cards. */
+/* Kickoff slates: each is a collapsible group whose heading is its one control, a full-width 44px button with the chevron,
+   the slate name, its date and game count and, while collapsed, the compact summary pills (each game counted once by its
+   card's status, FINAL TIE, VOID and HOLD among them, then reviews, unverified results and the tiebreak game); the body holds
+   the compact matchup cards and hides with the hidden attribute. Expand all and Collapse all are two quiet 42px text
+   controls above the slates of All Slates. */
 .pm-group{display:grid;gap:7px}
-.pm-group-title{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:4px 0 0;padding:0 2px;font-size:11px;font-weight:950;letter-spacing:.06em;text-transform:uppercase;color:#d84a50}
-.pm-group-title small{color:var(--dim);font-size:9px;font-weight:700;letter-spacing:0;text-transform:none;white-space:nowrap}
+.pm-group-title{margin:4px 0 0;padding:0;font-size:11px;font-weight:950;letter-spacing:.06em;text-transform:uppercase;color:#d84a50}
+.pm-slate-toggle{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;column-gap:8px;width:100%;min-height:44px;margin:0;padding:5px 4px 5px 2px;border:0;border-radius:10px;background:transparent;color:inherit;font:inherit;letter-spacing:inherit;text-transform:inherit;text-align:left;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.pm-slate-toggle:hover{background:#ffffff05}
+.pm-slate-chevron{width:8px;height:8px;margin:0 2px 3px 4px;border-right:2px solid #d84a50;border-bottom:2px solid #d84a50;transform:rotate(45deg);transition:transform .15s ease}
+.pm-slate-toggle[aria-expanded="true"] .pm-slate-chevron{transform:rotate(-135deg);margin-bottom:-2px}
+.pm-slate-copy{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:2px 8px;min-width:0}
+.pm-slate-meta{color:var(--dim);font-size:9px;font-weight:700;letter-spacing:0;text-transform:none;white-space:nowrap}
+.pm-slate-summary{grid-column:2;display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.pm-slate-summary:empty,.pm-group:not(.is-collapsed) .pm-slate-summary{display:none}
+.pm-slate-pill{display:inline-flex;align-items:center;padding:2px 6px;border-radius:999px;border:1px solid #ffffff14;font-size:7.5px;font-weight:900;letter-spacing:.06em;color:#c1c6cc;white-space:nowrap}
+.pm-slate-pill-live{color:#ef5a61;border-color:#d52d3466;background:#d52d3414}
+.pm-slate-pill-final{color:#a3a8ae}
+.pm-slate-pill-upcoming{color:var(--dim)}
+.pm-slate-pill-void{color:#c7b8ff;border-color:#8f7bd655}
+.pm-slate-pill-hold{color:var(--orange);border-color:#f28a3d66}
+.pm-slate-pill-tie,.pm-slate-pill-review{color:var(--gold);border-color:#f3bd4277}
+.pm-slate-pill-issue{color:#ffb1b5;border-color:#d52d3459}
+.pm-slate-pill-tiebreak{color:#8fc1ff;border-color:#1f3a5c}
+.pm-slate-body{display:grid;gap:7px}
+.pm-slates-bar{display:flex;justify-content:flex-end;gap:2px;margin:-4px 0 -8px}
+.pm-slates-action{min-height:42px;padding:0 10px;border:0;border-radius:8px;background:transparent;color:var(--muted);font-size:9.5px;font-weight:900;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.pm-slates-action:hover{color:var(--text);background:#ffffff05}
 .pm-card{border:1px solid #ffffff10;border-radius:12px;background:linear-gradient(180deg,#13171d,#0b0e13);box-shadow:inset 0 1px 0 #ffffff07,0 4px 14px #0004;overflow:hidden}
 .pm-card.pm-kind-live{border-color:#d52d3455}
 .pm-card.pm-kind-tie{border-color:#f3bd4240}
@@ -173,7 +198,7 @@ body:has(.pm-dialog[open]){overflow:hidden}
 .rules-alert-line.tone-bad{border-color:#d52d3459;background:#d52d3412;color:#ffb1b5}
 .rules-alert-line.tone-warn{border-color:#f3bd4259;background:#f3bd4212;color:#ffe2a3}
 .rules-alert-line.tone-info{border-color:#8f7bd655;background:#151324;color:#d9d0ff}
-@media(prefers-reduced-motion:reduce){.rules-chevron,.pm-chevron,.pm-toggle-track,.pm-toggle-track::after{transition:none}}
+@media(prefers-reduced-motion:reduce){.rules-chevron,.pm-chevron,.pm-slate-chevron,.pm-toggle-track,.pm-toggle-track::after{transition:none}}
 @media(max-width:480px){
   .rules-collapsible .rules-head{flex-wrap:wrap}.rules-toggle{width:100%;justify-content:center}
 }

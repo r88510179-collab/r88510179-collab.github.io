@@ -1,5 +1,5 @@
 'use strict';
-const CACHE='pool-center-shell-v28';
+const CACHE='pool-center-shell-v29';
 const SHELL=[
   './',
   './index.html',
@@ -19,8 +19,8 @@ const SHELL=[
   './share.css?v=1',
   './home-dashboard.js?v=1',
   './home-dashboard.css?v=1',
-  './picks-mobile.js?v=3',
-  './picks-mobile.css?v=3',
+  './picks-mobile.js?v=4',
+  './picks-mobile.css?v=4',
   './manifest.webmanifest',
   './assets/pool-center-icon.svg',
   './assets/pool-center-icon-192.svg',
