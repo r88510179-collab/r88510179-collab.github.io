@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="survivor.css?v=4">
 <link rel="stylesheet" href="share.css?v=1">
 <link rel="stylesheet" href="home-dashboard.css?v=1">
-<link rel="stylesheet" href="picks-mobile.css?v=2">
+<link rel="stylesheet" href="picks-mobile.css?v=3">
 </head>
 <body>
 <div class="stadium-glow" aria-hidden="true"></div>
@@ -208,6 +208,10 @@
           <div class="pm-sheet-head"><div><span class="section-kicker">Pick Board</span><h2 id="picksEntrantsTitle">Entries to compare</h2></div><button type="button" class="share-close" data-picks-close aria-label="Close entry selection">✕</button></div>
           <p class="pm-sheet-note">Choose any combination of the tracked entries. At least one stays selected; the choice is remembered in this browser.</p>
           <div class="pm-sheet-list" data-picks-entrants></div>
+          <div class="pm-sheet-setting" role="group" aria-labelledby="picksLabelsTitle">
+            <div class="pm-sheet-setting-copy"><span class="pm-sheet-setting-title" id="picksLabelsTitle">Card name labels</span><span class="pm-sheet-setting-meta">Compact shortens long names on the collapsed cards. Open matchups and this list always show full names.</span></div>
+            <div class="pm-segments pm-segments-2"><button type="button" class="pm-segment" data-picks-labels="compact" aria-pressed="false">Compact</button><button type="button" class="pm-segment" data-picks-labels="full" aria-pressed="false">Full labels</button></div>
+          </div>
           <p class="pm-sheet-status" data-picks-dialog-note role="status" aria-live="polite"></p>
           <div class="pm-sheet-actions"><button type="button" class="share-action" data-picks-entrant="*">Select all</button><button type="button" class="share-action primary" data-picks-close>Done</button></div>
         </div>
@@ -231,7 +235,7 @@
 <script type="module" src="survivor-app.js?v=12"></script>
 <script type="module" src="share-ui.js?v=2"></script>
 <script type="module" src="home-dashboard.js?v=1"></script>
-<script type="module" src="picks-mobile.js?v=2"></script>
+<script type="module" src="picks-mobile.js?v=3"></script>
 <script src="pwa.js?v=1" defer></script>
 </body>
 </html>

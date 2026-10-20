@@ -12,6 +12,14 @@
 // not validate is every entrant. The slate and the status filter are page state: kept through every refresh, reset by a reload.
 export const STORAGE_KEY='poolcenter.picks.v1';
 export const PREFERENCES_VERSION=1;
+// The card name labels live under their own key, so the selection key keeps its V1.3 shape: 'compact' shortens long names on
+// the collapsed cards, 'full' shows every name as published; anything else means the default for the screen (compact on a
+// narrow one). Disagreements only is page state like the slate and the status: off on load, kept through every refresh.
+export const LABELS_KEY='poolcenter.picks.labels.v1';
+export const LABEL_MODES=Object.freeze(['compact','full']);
+// A name of this many characters or fewer is never shortened; a longer one is cut to its first four letters and a full stop.
+export const LABEL_MAX=6;
+export const NARROW_SCREEN='(max-width:480px)';
 // Kickoff dates and times are shown in Eastern time, whatever the device's zone.
 export const TIME_ZONE='America/New_York';
 export const STATUS_FILTERS=Object.freeze(['all','final','live','upcoming']);
@@ -134,19 +142,84 @@ export function compareLabel(names,selected){
   return chosen.length===all.length?`All ${all.length} ${all.length===1?'entry':'entries'}`:chosen.join(' + ');
 }
 
+// ---- Card name labels. In compact mode a name longer than LABEL_MAX characters is shortened on the collapsed cards to its
+// first four letters and a full stop (Thaddeus → Thad.); a name of LABEL_MAX characters or fewer stays whole (D.C., JC, DJS).
+// A shortening is unambiguous only when no other name begins with its letters, so alike names are lengthened until they
+// differ (Thaddeus and Thadeus → Thadd. and Thade.; Thad and Thaddeus → Thad and Thadd.), and a name that cannot be
+// shortened unambiguously stays whole (Thaddeus beside Thaddeus Jr). Display only: the snapshot, the selection, the open
+// matchup and the selection panel always carry the full name, and the shortened label is never spoken (the full name is).
+const LABEL_CUT=4;
+const labelKey=s=>String(s).trim().toLowerCase().replace(/\.+$/,'');
+const cutName=(name,n)=>{const head=name.slice(0,n).trimEnd().replace(/\.+$/,'');return head&&head.length+1<name.trim().length?`${head}.`:name};
+export function shortLabels(names){
+  const all=(names||[]).map(n=>String(n??'')),whole=n=>n.trim().length<=LABEL_MAX;
+  return all.map(name=>{
+    if(whole(name))return name;
+    const others=all.filter(o=>o!==name).map(labelKey);
+    for(let n=LABEL_CUT;n<name.length;n++){
+      const label=cutName(name,n);
+      if(label===name)return name;
+      const stem=labelKey(label);
+      if(!others.some(o=>o.startsWith(stem)))return label;
+    }
+    return name;
+  });
+}
+// The label of each name in a mode: in full mode every name is its own label.
+export function labelMap(names,mode){
+  const all=(names||[]).map(n=>String(n??'')),labels=mode==='compact'?shortLabels(all):all;
+  return new Map(all.map((name,i)=>[name,labels[i]]));
+}
+// The default for a screen: compact on a narrow one, full otherwise or without a screen to ask.
+export function defaultLabels(win){
+  const w=win===undefined?(typeof window==='undefined'?null:window):win;
+  try{return typeof w?.matchMedia==='function'&&w.matchMedia(NARROW_SCREEN)?.matches===true?'compact':'full'}catch{return'full'}
+}
+export function readLabels(storage){
+  try{const raw=(storage??globalThis.localStorage)?.getItem(LABELS_KEY);return LABEL_MODES.includes(raw)?raw:null}catch{return null}
+}
+export function writeLabels(mode,storage){
+  try{const s=storage??globalThis.localStorage;if(!s||!LABEL_MODES.includes(mode))return false;s.setItem(LABELS_KEY,mode);return true}catch{return false}
+}
+
+// ---- Disagreements. A game is a disagreement when two or more of the compared entries picked different teams: the picks
+// submitted only (an entry without a pick for the game is left out), the grades aside (two entries on the same losing team
+// agree). The filter keeps VOID and HOLD games whatever their picks, as the status filter does: the commissioner's exceptions
+// stay listed in every filter, and the note and the open card say so.
+export function disagreement(game,selected){
+  const chosen=selected||[],teams=new Set();
+  for(const p of game?.picks||[])if(chosen.includes(p?.name)&&p?.team)teams.add(String(p.team).trim().toUpperCase());
+  return teams.size>=2;
+}
+export function filterDisagreements(games,selected,on){
+  const all=games||[];
+  return on===true?all.filter(g=>EXCEPTIONAL.has(g?.kind)||disagreement(g,selected)):all.slice();
+}
+// The empty state of Disagreements only: who was compared, and the status and the slate that narrowed it.
+export function emptyDisagreements(names,selected,status='all',slateLabel=''){
+  const all=names||[],chosen=selected||all;
+  const who=chosen.length===2?`between ${chosen[0]} and ${chosen[1]}`:chosen.length===all.length?`among all ${all.length} entries`:`among ${chosen.slice(0,-1).join(', ')} and ${chosen[chosen.length-1]}`;
+  const kind=STATUS_FILTERS.includes(status)&&status!=='all'?`${STATUS_LABELS[status].toLowerCase()} `:'';
+  return`No ${kind}disagreements ${who}${slateLabel?` in ${slateLabel}`:''}.`;
+}
+
 // ---- Markup. Everything shown is the snapshot's own text; names and feed text are escaped.
 // A pick's grade: the row class, the words in the expanded list, the spoken word and the compact mark.
 const RESULT={correct:['ok','✓ Correct','correct','✓'],incorrect:['bad','✕ Incorrect','incorrect','✕'],tie:['bad','✕ Tie · 1 loss','tie, one loss','✕'],pending:['pending','Pending','pending',''],void:['void','VOID','void',''],hold:['hold','HOLD','hold','']};
 function badge(team,size=''){
   return`<span class="pm-badge${size?` ${size}`:''}" style="--tc:${esc(team?.color||'#33465f')}" aria-hidden="true"><span class="pm-badge-code">${esc(team?.code)}</span>${team?.logo?`<img class="pm-logo" src="${esc(team.logo)}" alt="" loading="lazy" decoding="async" onerror="this.hidden=true">`:''}</span>`;
 }
-// The compact result token of one entry: the name, the pick (— without one) and, once the game is decided, the mark. A VOID
-// or HOLD game's tokens carry no mark: the card's one status pill already says so.
-function tokenHtml(pick,result){
+// The compact result token (chip) of one entry: the name (its compact label when shortened, with the full name for assistive
+// technology), the pick (— without one) and, once the game is decided, the mark. A VOID or HOLD game's tokens carry no mark:
+// the card's one status pill already says so.
+function tokenHtml(pick,result,label=null){
   const [cls,,word,mark]=RESULT[result]||RESULT.pending;
-  const code=pick?.team?esc(pick.team):'—';
-  return`<span class="pm-token ${cls}${pick?.team?'':' no-pick'}"><span class="pm-token-name">${esc(pick?.name)}</span><span class="pm-token-pick">${code}</span>${mark?`<span class="pm-token-mark" role="img" aria-label="${esc(word)}">${mark}</span>`:''}</span>`;
+  const code=pick?.team?esc(pick.team):'—',name=esc(pick?.name),shown=label==null?name:esc(label);
+  const nameHtml=shown===name?name:`<span class="pm-token-short" aria-hidden="true">${shown}</span><span class="pm-sr">${name}</span>`;
+  return`<span class="pm-token ${cls}${pick?.team?'':' no-pick'}"><span class="pm-token-name">${nameHtml}</span><span class="pm-token-pick">${code}</span>${mark?`<span class="pm-token-mark" role="img" aria-label="${esc(word)}">${mark}</span>`:''}</span>`;
 }
+// Chips for this many compared entries or more are denser.
+const DENSE_FROM=4;
 function pickHtml(pick,result){
   const [cls,word]=RESULT[result]||RESULT.pending;
   if(!pick?.team)return`<li class="pm-pick ${cls} no-pick-row"><span class="pm-name">${esc(pick?.name)}</span><span class="pm-pick-team no-pick">NO PICK</span><span class="pm-result">${result==='pending'?'Pending':result==='correct'?'✓':result==='incorrect'||result==='tie'?'✕ No pick':word}</span></li>`;
@@ -160,15 +233,18 @@ const selectedPicks=(game,selected)=>{
 // The collapsed card: the moment (the Eastern kickoff, or the clock while live), one status pill, the compact flags that
 // make an exceptional game recognisable at a glance, both teams with their logos and the verified score, the chevron and
 // one result token per selected entry. Scores, status and flags appear here only; the expanded part never repeats them.
-export function summaryHtml(game,selected,{time=null}={}){
+// With compact labels (a Map of name to label) the chips sit on one row, one column per entry, so the same entry is in the
+// same column on every card; with full labels they keep their width and wrap.
+export function summaryHtml(game,selected,{time=null,labels=null}={}){
   const kind=kindOf(game),away=game.away||{},home=game.home||{},scored=Number.isInteger(game.awayScore)&&Number.isInteger(game.homeScore);
   const winner=kind==='final'?game.winner:null;
   const moment=kind==='live'?(game.detail||'LIVE'):time?time:kind==='upcoming'?(game.detail||'Kickoff TBD'):'';
   const detail=kind==='final'||kind==='tie'?(game.detail&&!/^final$/i.test(game.detail)?game.detail:''):kind==='void'||kind==='hold'?(game.note||(kind==='void'?'Commissioner ruling':'Ruling data unavailable')):'';
   const flags=[game.underReview?'<span class="pm-flag pm-flag-review">UNDER REVIEW</span>':'',kind==='hold'&&game.hold?'<span class="pm-flag pm-flag-issue">NOT GRADED</span>':'',game.issue?'<span class="pm-flag pm-flag-issue">NOT VERIFIED</span>':'',game.tiebreak?'<span class="pm-flag pm-flag-tiebreak">TIEBREAK</span>':''].filter(Boolean).join('');
   const side=(team,isHome)=>`<span class="pm-side ${isHome?'pm-home':'pm-away'}${winner&&winner===team.code?' pm-winner':''}">${isHome?'':badge(team)}${isHome&&scored?`<span class="pm-score">${game.homeScore}</span>`:''}<span class="pm-code">${esc(team.code)}</span>${!isHome&&scored?`<span class="pm-score">${game.awayScore}</span>`:''}${isHome?badge(team):''}</span>`;
-  const tokens=selectedPicks(game,selected).map(p=>tokenHtml(p,p.result)).join('');
-  return`<span class="pm-top">${moment?`<span class="pm-moment">${esc(moment)}</span>`:''}<span class="pm-status pm-status-${kind}">${KIND_LABEL[kind]}</span>${flags}${detail?`<span class="pm-detail">${esc(detail)}</span>`:''}<span class="pm-chevron" aria-hidden="true"></span></span><span class="pm-matchup">${side(away,false)}<span class="pm-at">@</span>${side(home,true)}</span><span class="pm-results">${tokens||'<span class="pm-token pending"><span class="pm-token-name">No entry selected</span></span>'}</span>`;
+  const picks=selectedPicks(game,selected),map=labels instanceof Map?labels:null,tokens=picks.map(p=>tokenHtml(p,p.result,map?map.get(p.name)??null:null)).join('');
+  const results=`<span class="pm-results${picks.length>=DENSE_FROM?' is-dense':''}${map?' is-grid':''}" style="--pm-cols:${Math.max(1,picks.length)}">`;
+  return`<span class="pm-top">${moment?`<span class="pm-moment">${esc(moment)}</span>`:''}<span class="pm-status pm-status-${kind}">${KIND_LABEL[kind]}</span>${flags}${detail?`<span class="pm-detail">${esc(detail)}</span>`:''}<span class="pm-chevron" aria-hidden="true"></span></span><span class="pm-matchup">${side(away,false)}<span class="pm-at">@</span>${side(home,true)}</span>${results}${tokens||'<span class="pm-token pending"><span class="pm-token-name">No entry selected</span></span>'}</span>`;
 }
 // The expanded part: each selected entry's pick with the grade the table gives it, the full-field ownership of each side
 // when the field is published, and the explanations behind the compact flags in the page's own words.
@@ -183,30 +259,36 @@ export function detailsHtml(game,selected){
     game.tiebreak?`<span class="pm-why pm-why-tiebreak"><b>Tiebreak game</b>activates when this game is final</span>`:''].filter(Boolean).join('');
   return`<ul class="pm-picks">${picks||'<li class="pm-pick pending"><span class="pm-name">No entry selected</span></li>'}</ul>${ownership}${notes?`<div class="pm-whys">${notes}</div>`:''}`;
 }
-export function cardHtml(game,selected,{time=null,expanded=false}={}){
+export function cardHtml(game,selected,{time=null,expanded=false,labels=null}={}){
   const kind=kindOf(game),away=game.away||{},home=game.home||{},i=esc(game.index),on=expanded===true;
-  return`<article class="pm-card pm-kind-${kind}${on?' is-expanded':''}" data-game="${i}" aria-label="${esc(`${away.code} at ${home.code}, ${KIND_LABEL[kind]}`)}"><button type="button" class="pm-summary" data-picks-expand="${i}" aria-expanded="${on}" aria-controls="pm-details-${i}">${summaryHtml(game,selected,{time})}</button><div class="pm-details" id="pm-details-${i}"${on?'':' hidden'}>${detailsHtml(game,selected)}</div></article>`;
+  return`<article class="pm-card pm-kind-${kind}${on?' is-expanded':''}" data-game="${i}" aria-label="${esc(`${away.code} at ${home.code}, ${KIND_LABEL[kind]}`)}"><button type="button" class="pm-summary" data-picks-expand="${i}" aria-expanded="${on}" aria-controls="pm-details-${i}">${summaryHtml(game,selected,{time,labels})}</button><div class="pm-details" id="pm-details-${i}"${on?'':' hidden'}>${detailsHtml(game,selected)}</div></article>`;
 }
-export function boardHtml(snapshot,{entrants=null,status='all',slate=ALL_SLATES,expanded=null}={},{timeZone=TIME_ZONE}={}){
+// The board: the slate, the status and Disagreements only (two or more compared entries) apply together; the labels mode
+// decides how the chips name the entries.
+export function boardHtml(snapshot,{entrants=null,status='all',slate=ALL_SLATES,expanded=null,disagree=false,labels='full'}={},{timeZone=TIME_ZONE}={}){
   if(!snapshot||snapshot.ready!==true)return`<div class="empty">${esc(snapshot?.reason||'Picks are not available yet.')}</div>`;
   const names=(snapshot.entrants||[]).map(e=>e.name),selected=normalizeSelection({version:PREFERENCES_VERSION,entrants:entrants||names},names);
+  const map=labels==='compact'?labelMap(names,'compact'):null,only=disagree===true&&selected.length>=2;
   const options=slateOptions(snapshot.games,{timeZone}),key=resolveSlate(slate,options),label=options.find(o=>o.key===key)?.label||'';
-  const shown=filterGames(filterSlate(snapshot.games,key,{timeZone}),status);
-  if(!shown.length)return`<div class="empty">${esc(key===ALL_SLATES?(EMPTY[status]||EMPTY.all):`No ${STATUS_FILTERS.includes(status)&&status!=='all'?`${STATUS_LABELS[status].toLowerCase()} `:''}games in ${label}.`)}</div>`;
-  return groupGames(shown,{timeZone}).map(group=>`<section class="pm-group" data-slate="${esc(group.key)}" aria-label="${esc(group.label)}"><h3 class="pm-group-title"><span>${esc(group.label)}</span><small>${esc([group.date,`${group.games.length} game${group.games.length===1?'':'s'}`].filter(Boolean).join(' · '))}</small></h3>${group.games.map(({game,time})=>cardHtml(game,selected,{time,expanded:expanded!==null&&game.index===expanded})).join('')}</section>`).join('');
+  const listed=filterGames(filterSlate(snapshot.games,key,{timeZone}),status),shown=filterDisagreements(listed,selected,only);
+  if(!shown.length)return`<div class="empty">${esc(only&&listed.length?emptyDisagreements(names,selected,status,key===ALL_SLATES?'':label):key===ALL_SLATES?(EMPTY[status]||EMPTY.all):`No ${STATUS_FILTERS.includes(status)&&status!=='all'?`${STATUS_LABELS[status].toLowerCase()} `:''}games in ${label}.`)}</div>`;
+  return groupGames(shown,{timeZone}).map(group=>`<section class="pm-group" data-slate="${esc(group.key)}" aria-label="${esc(group.label)}"><h3 class="pm-group-title"><span>${esc(group.label)}</span><small>${esc([group.date,`${group.games.length} game${group.games.length===1?'':'s'}`].filter(Boolean).join(' · '))}</small></h3>${group.games.map(({game,time})=>cardHtml(game,selected,{time,expanded:expanded!==null&&game.index===expanded,labels:map})).join('')}</section>`).join('');
 }
 export function slateOptionsHtml(options,slate){
   const key=resolveSlate(slate,options);
   return(options||[]).map(o=>`<option value="${esc(o.key)}"${o.key===key?' selected':''}>${esc(`${o.label} (${o.count})`)}</option>`).join('');
 }
 // The filter bar: the one compact control for the entries compared (it opens the selection panel), the slate selector,
-// the status segments with their counts and one live note that says what is shown.
-export function filterBarHtml(names,{selected=null,status='all',counts=null,slates=null,slate=ALL_SLATES}={}){
+// the status segments with their counts, the Disagreements only switch (off until tapped, disabled with fewer than two
+// entries compared) and one live note that says what is shown.
+export function filterBarHtml(names,{selected=null,status='all',counts=null,slates=null,slate=ALL_SLATES,disagree=false}={}){
   const all=names||[],c=counts||{all:0,final:0,live:0,upcoming:0,exceptions:0},options=slates||[{key:ALL_SLATES,label:'All Slates',date:'',count:c.all}];
+  const chosen=normalizeSelection({version:PREFERENCES_VERSION,entrants:selected||all},all);
   const compare=`<button type="button" class="pm-compare" data-picks-compare aria-haspopup="dialog" aria-expanded="false" aria-controls="picksEntrants"><span class="pm-compare-copy"><span class="pm-compare-kicker">Comparing</span><b data-picks-compare-label>${esc(compareLabel(all,selected))}</b></span><span class="pm-caret" aria-hidden="true"></span></button>`;
   const select=`<label class="pm-sr" for="picksSlate">Slate</label><select id="picksSlate" class="pm-select" data-picks-slate>${slateOptionsHtml(options,slate)}</select>`;
   const segments=STATUS_FILTERS.map(s=>`<button type="button" class="pm-segment" data-picks-status="${s}" aria-pressed="${s===status}">${STATUS_LABELS[s]}<b data-picks-count="${s}">${c[s]}</b></button>`).join('');
-  return`<div class="pm-filters"><div class="pm-row">${compare}${select}</div><div class="pm-segments" role="group" aria-label="Game status">${segments}</div><p class="pm-note" data-picks-note aria-live="polite"></p></div>`;
+  const toggle=`<div class="pm-options"><button type="button" class="pm-toggle" data-picks-disagree aria-pressed="${disagree===true&&chosen.length>=2}"${chosen.length<2?' disabled':''}><span class="pm-toggle-track" aria-hidden="true"></span><span class="pm-toggle-copy">Disagreements only</span></button></div>`;
+  return`<div class="pm-filters"><div class="pm-row">${compare}${select}</div><div class="pm-segments" role="group" aria-label="Game status">${segments}</div>${toggle}<p class="pm-note" data-picks-note aria-live="polite"></p></div>`;
 }
 // The selection panel's rows: one labelled checkbox per tracked entry, with the entry's verified submission state.
 export function entrantPanelHtml(entrants,selected){
@@ -214,11 +296,11 @@ export function entrantPanelHtml(entrants,selected){
   return(entrants||[]).map((e,i)=>{const name=names[i],none=typeof e==='object'&&e?.noSubmission===true;
     return`<label class="pm-entry${none?' pm-entry-none':''}"><input type="checkbox" data-picks-entrant="${esc(name)}"${chosen.includes(name)?' checked':''}><span class="pm-entry-copy"><span class="pm-entry-name">${esc(name)}</span>${none?'<span class="pm-entry-meta">No picks submitted this week</span>':''}</span></label>`}).join('');
 }
-export function filterNote(names,selected,status,counts,shown,notice='',slateLabel=''){
+export function filterNote(names,selected,status,counts,shown,notice='',slateLabel='',disagree=false){
   const all=names||[],chosen=selected||all;
   const who=chosen.length===all.length?`All ${all.length} entries`:chosen.join(' + ');
-  const games=`${shown} of ${counts.all} game${counts.all===1?'':'s'}${status!=='all'?` · ${STATUS_LABELS[status]}`:''}`;
-  return[notice,[who,slateLabel,games].filter(Boolean).join(' · '),counts.exceptions?`${counts.exceptions} VOID/HOLD shown in every status filter`:''].filter(Boolean).join(' · ');
+  const games=`${shown} of ${counts.all} game${counts.all===1?'':'s'}${status!=='all'?` · ${STATUS_LABELS[status]}`:''}${disagree===true?' · Disagreements only':''}`;
+  return[notice,[who,slateLabel,games].filter(Boolean).join(' · '),counts.exceptions?`${counts.exceptions} VOID/HOLD shown in every ${disagree===true?'filter':'status filter'}`:''].filter(Boolean).join(' · ');
 }
 
 // ---- Rules & rulings: what the collapsed card says and what stays visible while it is collapsed, from the app's own
@@ -278,12 +360,18 @@ export function boot(){
   // The Picks board. The entrant selection is remembered in this browser; the slate, the status filter and the one expanded
   // matchup are page state, kept through every refresh of the same week. A new week collapses every card and drops a slate
   // that is not on its schedule.
-  const state={snapshot:null,names:[],entrants:[],selection:[],status:'all',slate:ALL_SLATES,slateLabel:'',expanded:null,week:null,notice:'',dialogNote:'',saved:true,built:null,options:[],optionsHtml:''};
+  const state={snapshot:null,names:[],entrants:[],selection:[],status:'all',slate:ALL_SLATES,slateLabel:'',expanded:null,week:null,notice:'',dialogNote:'',saved:true,built:null,options:[],optionsHtml:'',disagree:false,labels:readLabels(),savedLabels:true};
   const persist=()=>{state.saved=writeSelection(state.selection)};
-  const storageNote=()=>state.saved?'':'Selection not saved in this browser';
+  const storageNote=()=>[state.saved?'':'Selection not saved in this browser',state.savedLabels?'':'Label setting not saved in this browser'].filter(Boolean).join(' · ');
   const ready=()=>state.snapshot?.ready===true;
   const games=()=>ready()?state.snapshot.games:[];
   const slateGames=()=>filterSlate(games(),state.slate);
+  // The labels mode on screen: the remembered choice, else the default for this screen. Disagreements only applies with two
+  // or more entries compared; the games the counts describe and the games listed both honour it.
+  const labelsMode=()=>LABEL_MODES.includes(state.labels)?state.labels:defaultLabels();
+  const only=()=>state.disagree===true&&state.selection.length>=2;
+  const countGames=()=>filterDisagreements(slateGames(),state.selection,only());
+  const shownGames=()=>filterGames(countGames(),state.status);
   function applyExpanded(){
     if(!board)return;
     for(const toggle of board.querySelectorAll('[data-picks-expand]')){
@@ -341,13 +429,15 @@ export function boot(){
         for(const box of list.querySelectorAll('[data-picks-entrant]'))box.checked=state.selection.includes(box.dataset.picksEntrant);
       }
     }
+    const mode=labelsMode();
+    for(const button of dialog.querySelectorAll('[data-picks-labels]'))button.setAttribute('aria-pressed',String(button.dataset.picksLabels===mode));
     const all=dialog.querySelector('[data-picks-entrant="*"]');if(all)all.disabled=state.selection.length===state.names.length;
     const note=dialog.querySelector('[data-picks-dialog-note]');if(note)note.textContent=[state.dialogNote||'',storageNote()].filter(Boolean).join(' · ');
     state.dialogNote='';
   }
   function syncFilters(){
     if(!filters)return;
-    const names=state.names,counts=statusCounts(slateGames()),shown=filterGames(slateGames(),state.status).length;
+    const names=state.names,counts=statusCounts(countGames()),shown=shownGames().length;
     const key=names.join('\u0000');
     // No controls without a snapshot: the board shows the app's reason instead.
     if(!names.length){if(state.built!==key){filters.innerHTML='';state.built=key}return}
@@ -357,8 +447,10 @@ export function boot(){
     if(select){const html=slateOptionsHtml(state.options,state.slate);if(html!==state.optionsHtml){select.innerHTML=html;state.optionsHtml=html}if(select.value!==state.slate)select.value=state.slate}
     for(const seg of filters.querySelectorAll('[data-picks-status]'))seg.setAttribute('aria-pressed',String(seg.dataset.picksStatus===state.status));
     for(const count of filters.querySelectorAll('[data-picks-count]'))count.textContent=String(counts[count.dataset.picksCount]??0);
+    const toggle=filters.querySelector('[data-picks-disagree]');
+    if(toggle){toggle.setAttribute('aria-pressed',String(only()));toggle.disabled=state.selection.length<2}
     const note=filters.querySelector('[data-picks-note]');
-    if(note)note.textContent=filterNote(names,state.selection,state.status,counts,shown,[state.notice,storageNote()].filter(Boolean).join(' · '),state.slate===ALL_SLATES?'':state.slateLabel);
+    if(note)note.textContent=filterNote(names,state.selection,state.status,counts,shown,[state.notice,storageNote()].filter(Boolean).join(' · '),state.slate===ALL_SLATES?'':state.slateLabel,only());
     state.notice='';
   }
   function renderPicks(){
@@ -367,16 +459,22 @@ export function boot(){
     const entrants=ready()?state.snapshot.entrants:[],names=entrants.map(e=>e.name);
     if(names.join('\u0000')!==state.names.join('\u0000')){state.names=names;state.selection=readSelection(names)}
     state.entrants=entrants;
+    // Disagreements only needs two entries to compare: with fewer it switches off (and its switch is disabled) and says so once.
+    if(state.disagree&&state.selection.length<2){
+      state.disagree=false;
+      const said='Disagreements only is off: it needs two or more entries';
+      state.notice=[state.notice,said].filter(Boolean).join(' · ');state.dialogNote=[state.dialogNote,said].filter(Boolean).join(' · ');
+    }
     if(ready()){
       // The slate is checked against the week on screen only: while another week loads nothing is answered and nothing moves.
       const week=`${state.snapshot.season}-${state.snapshot.week}`;
       if(week!==state.week){if(state.week!==null)state.expanded=null;state.week=week}
       state.options=slateOptions(games());
       if(state.slate!==ALL_SLATES&&resolveSlate(state.slate,state.options)===ALL_SLATES){state.notice=`${state.slateLabel||'The chosen slate'} is not on this week's schedule · showing All Slates`;state.slate=ALL_SLATES;state.slateLabel=''}
-      const shown=filterGames(slateGames(),state.status);
+      const shown=shownGames();
       if(state.expanded!==null&&!shown.some(g=>g.index===state.expanded))state.expanded=null;
     }
-    patchBoard(boardHtml(state.snapshot,{entrants:state.selection,status:state.status,slate:state.slate,expanded:state.expanded}));
+    patchBoard(boardHtml(state.snapshot,{entrants:state.selection,status:state.status,slate:state.slate,expanded:state.expanded,disagree:only(),labels:labelsMode()}));
     applyExpanded();
     syncFilters();syncDialog();
   }
@@ -385,6 +483,7 @@ export function boot(){
     else{state.selection=next;persist()}
     renderPicks();
   };
+  const setLabels=mode=>{if(!LABEL_MODES.includes(mode))return;state.labels=mode;state.savedLabels=writeLabels(mode);renderPicks()};
   function openDialog(opener){
     if(!dialog)return;
     syncDialog();
@@ -410,9 +509,10 @@ export function boot(){
       if(state.expanded!==null)reveal(toggle.closest?.('.pm-card'));
     });
     filters?.addEventListener('click',event=>{
-      const compare=event.target?.closest?.('[data-picks-compare]'),segment=event.target?.closest?.('[data-picks-status]');
+      const compare=event.target?.closest?.('[data-picks-compare]'),segment=event.target?.closest?.('[data-picks-status]'),toggle=event.target?.closest?.('[data-picks-disagree]');
       if(compare)openDialog(compare);
       else if(segment&&STATUS_FILTERS.includes(segment.dataset.picksStatus)){state.status=segment.dataset.picksStatus;renderPicks()}
+      else if(toggle&&!toggle.disabled){state.disagree=!state.disagree;renderPicks()}
     });
     filters?.addEventListener('change',event=>{
       const select=event.target?.closest?.('[data-picks-slate]');if(!select)return;
@@ -427,8 +527,10 @@ export function boot(){
     });
     dialog?.addEventListener('click',event=>{
       if(event.target===dialog){closeDialog();return}
+      const labels=event.target?.closest?.('[data-picks-labels]');
       if(event.target?.closest?.('[data-picks-close]'))closeDialog();
       else if(event.target?.closest?.('[data-picks-entrant="*"]'))setSelection(toggleEntrant(state.selection,state.names,'*'));
+      else if(labels)setLabels(labels.dataset.picksLabels);
     });
   }
   document.addEventListener('poolcenter:update',event=>{const contest=event?.detail?.contest;if(contest==='pickem'){renderPicks();renderRules('pickem')}else if(contest==='survivor')renderRules('survivor')});
@@ -438,6 +540,8 @@ export function boot(){
     setStatus(status){if(STATUS_FILTERS.includes(status)){state.status=status;renderPicks()}},
     setSlate(slate){state.slate=resolveSlate(slate,state.options);state.slateLabel=state.options.find(o=>o.key===state.slate)?.label||'';renderPicks()},
     setExpanded(index){state.expanded=Number.isInteger(index)?index:null;applyExpanded()},
-    setSelection(names){setSelection(normalizeSelection({version:PREFERENCES_VERSION,entrants:names},state.names))}};
+    setSelection(names){setSelection(normalizeSelection({version:PREFERENCES_VERSION,entrants:names},state.names))},
+    setDisagree(on){state.disagree=on===true;renderPicks()},
+    setLabels};
 }
 if(typeof document!=='undefined'&&typeof document.querySelectorAll==='function'&&typeof document.getElementById==='function'&&(document.getElementById('picksBoard')||document.querySelector?.('[data-rules-card]')))boot();

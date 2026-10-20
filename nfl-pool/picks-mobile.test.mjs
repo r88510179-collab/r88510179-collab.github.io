@@ -1,6 +1,7 @@
-// V1.4 premium compact Picks UX regressions (after the V1.3 mobile UX). picks-mobile.js's pure parts directly (kickoff grouping
-// in Eastern time, the slate options and filter, the status filter, the entrant selection and its storage, the compact card,
-// board and control markup, the Rules & rulings summary and alerts), and its page part on a small DOM built from the real Games,
+// V1.4 premium compact Picks UX regressions (after the V1.3 mobile UX), with the V1.4 final polish (compact pick chips, card
+// name labels and Disagreements only). picks-mobile.js's pure parts directly (kickoff grouping in Eastern time, the slate
+// options and filter, the status filter, the entrant selection and its storage, the card name labels and their storage, the
+// disagreement filter, the compact card, board and control markup, the Rules & rulings summary and alerts), and its page part on a small DOM built from the real Games,
 // Survivor and Picks panels of index.html (so the markup the module needs is the markup the page ships), with the two apps stood
 // in for by poolcenter:picks and poolcenter:rules listeners that answer with fixtures and poolcenter:update announcements,
 // exactly as weekly-app.js and survivor-app.js do. The stylesheet and the page are checked as text for the small-screen layout
@@ -9,7 +10,8 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {STORAGE_KEY,PREFERENCES_VERSION,TIME_ZONE,STATUS_FILTERS,STATUS_LABELS,KINDS,ALL_SLATES,kickoffParts,dateParts,slotOf,slotLabel,groupGames,
   slateOptions,resolveSlate,filterSlate,matchesStatus,filterGames,statusCounts,normalizeSelection,readSelection,writeSelection,toggleEntrant,compareLabel,
-  summaryHtml,detailsHtml,cardHtml,boardHtml,slateOptionsHtml,filterBarHtml,entrantPanelHtml,filterNote,rulesSummary,alertsHtml} from './picks-mobile.js';
+  summaryHtml,detailsHtml,cardHtml,boardHtml,slateOptionsHtml,filterBarHtml,entrantPanelHtml,filterNote,rulesSummary,alertsHtml,
+  LABELS_KEY,LABEL_MODES,LABEL_MAX,NARROW_SCREEN,shortLabels,labelMap,defaultLabels,readLabels,writeLabels,disagreement,filterDisagreements,emptyDisagreements} from './picks-mobile.js';
 
 const failures=[];
 const check=async(name,fn)=>{try{await fn()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
@@ -47,6 +49,9 @@ const GAMES=()=>[
   game(10,'DET','CHI',{kickoff:'2026-09-27T17:00:00Z',date:'2026-09-27',kind:'live',status:'4th 2:10',detail:'4th 2:10',awayScore:21,homeScore:24,issue:'DET-CHI: final with contradictory status ignored'}),
   game(11,'HOU','IND',{kickoff:'2026-09-27T13:30:00Z',date:'2026-09-27',status:'Sun 9:30 AM',detail:'Sun 9:30 AM'})
 ];
+// The same week with the picks varied: D.C., JC and DJS split on games 0, 1, 2 and 10 and agree (all on the away side) on every
+// other game, Thaddeus has no picks anywhere; the VOID game 6 and the HOLD game 7 are unanimous.
+const MIXED=()=>GAMES().map(g=>[3,4,5,6,7,8,9,11].includes(g.index)?{...g,picks:pk([g.away.code,g.away.code,g.away.code,null],g.picks.map(p=>p.result))}:g);
 const snapshot=(o={})=>({ready:true,contest:'pickem',season:2026,week:3,revision:2,fieldSize:87,tiebreakIndex:5,entrants:[{name:'D.C.',noSubmission:false},{name:'JC',noSubmission:false},{name:'DJS',noSubmission:false},{name:'Thaddeus',noSubmission:true}],games:GAMES(),...o});
 const SLATES=[['all','All Slates',12],['2026-09-24|3','Thursday Night',1],['2026-09-27|0','Sunday Morning',1],['2026-09-27|1','Sunday Early',4],['2026-09-27|2','Sunday Late',2],['2026-09-27|3','Sunday Night',1],['2026-09-27|4','Sunday · Kickoff TBD',1],['2026-09-28|3','Monday Night',1],['tbd','Kickoff TBD',1]];
 const EARLY='2026-09-27|1',LATE='2026-09-27|2',NIGHT='2026-09-27|3';
@@ -61,6 +66,8 @@ await check('the constants: one versioned storage key (the V1.3 key), Eastern ti
   assert.deepEqual(STATUS_FILTERS,['all','final','live','upcoming']);assert.deepEqual(STATUS_LABELS,{all:'All',final:'Final',live:'Live',upcoming:'Upcoming'});
   assert.deepEqual(KINDS,['void','hold','final','tie','live','upcoming']);assert.equal(ALL_SLATES,'all');
   assert(Object.isFrozen(STATUS_FILTERS)&&Object.isFrozen(KINDS));
+  assert.equal(LABELS_KEY,'poolcenter.picks.labels.v1');assert.deepEqual(LABEL_MODES,['compact','full']);assert(Object.isFrozen(LABEL_MODES));
+  assert.equal(LABEL_MAX,6);assert.equal(NARROW_SCREEN,'(max-width:480px)');
 });
 
 // ---- Kickoffs in Eastern time.
@@ -297,8 +304,13 @@ await check('the controls: one Comparing control that opens the selection panel,
   const counts=statusCounts(GAMES()),html=filterBarHtml(NAMES,{selected:['D.C.','JC'],status:'live',counts,slates:slateOptions(GAMES()),slate:EARLY});
   assert.match(html,/^<div class="pm-filters"><div class="pm-row"><button type="button" class="pm-compare" data-picks-compare aria-haspopup="dialog" aria-expanded="false" aria-controls="picksEntrants"><span class="pm-compare-copy"><span class="pm-compare-kicker">Comparing<\/span><b data-picks-compare-label>D\.C\. \+ JC<\/b><\/span><span class="pm-caret" aria-hidden="true"><\/span><\/button><label class="pm-sr" for="picksSlate">Slate<\/label><select id="picksSlate" class="pm-select" data-picks-slate>/);
   assert.deepEqual([...html.matchAll(/<option value="([^"]+)"( selected)?>([^<]+)<\/option>/g)].map(m=>[m[1],m[3],!!m[2]]),SLATES.map(([key,label,count])=>[key,`${label} (${count})`,key===EARLY]));
-  assert.match(html,/<\/select><\/div><div class="pm-segments" role="group" aria-label="Game status"><button type="button" class="pm-segment" data-picks-status="all" aria-pressed="false">All<b data-picks-count="all">12<\/b><\/button><button type="button" class="pm-segment" data-picks-status="final" aria-pressed="false">Final<b data-picks-count="final">2<\/b><\/button><button type="button" class="pm-segment" data-picks-status="live" aria-pressed="true">Live<b data-picks-count="live">2<\/b><\/button><button type="button" class="pm-segment" data-picks-status="upcoming" aria-pressed="false">Upcoming<b data-picks-count="upcoming">6<\/b><\/button><\/div><p class="pm-note" data-picks-note aria-live="polite"><\/p><\/div>$/);
+  assert.match(html,/<\/select><\/div><div class="pm-segments" role="group" aria-label="Game status"><button type="button" class="pm-segment" data-picks-status="all" aria-pressed="false">All<b data-picks-count="all">12<\/b><\/button><button type="button" class="pm-segment" data-picks-status="final" aria-pressed="false">Final<b data-picks-count="final">2<\/b><\/button><button type="button" class="pm-segment" data-picks-status="live" aria-pressed="true">Live<b data-picks-count="live">2<\/b><\/button><button type="button" class="pm-segment" data-picks-status="upcoming" aria-pressed="false">Upcoming<b data-picks-count="upcoming">6<\/b><\/button><\/div><div class="pm-options"><button type="button" class="pm-toggle" data-picks-disagree aria-pressed="false"><span class="pm-toggle-track" aria-hidden="true"><\/span><span class="pm-toggle-copy">Disagreements only<\/span><\/button><\/div><p class="pm-note" data-picks-note aria-live="polite"><\/p><\/div>$/);
   assert(!html.includes('pm-chip'),'no chip strip');
+  assert.match(filterBarHtml(NAMES,{selected:['JC']}),/<button type="button" class="pm-toggle" data-picks-disagree aria-pressed="false" disabled>/,'one entry: Disagreements only is off and disabled');
+  assert.match(filterBarHtml(NAMES,{selected:['JC','DJS'],disagree:true}),/data-picks-disagree aria-pressed="true"><span/,'two entries: it can be on');
+  assert.match(filterBarHtml(NAMES,{selected:['JC'],disagree:true}),/data-picks-disagree aria-pressed="false" disabled>/,'asked on with one entry, it is off');
+  assert.match(filterBarHtml(NAMES,{}),/data-picks-disagree aria-pressed="false"><span/,'off by default');
+  assert.equal(filterBarHtml(NAMES,{}).split('data-picks-disagree').length-1,1,'one switch');
   assert.match(filterBarHtml(NAMES,{}),/<b data-picks-compare-label>All 4 entries<\/b>/,'everyone compared by default');
   assert.match(filterBarHtml(NAMES,{}),/<option value="all" selected>All Slates \(0\)<\/option><\/select>/,'All Slates alone without slates');
   assert.equal(slateOptionsHtml(slateOptions(GAMES()),'2026-10-04|1').split(' selected').length-1,1);assert.match(slateOptionsHtml(slateOptions(GAMES()),'2026-10-04|1'),/<option value="all" selected>/,'an absent slate selects All Slates');
@@ -307,6 +319,114 @@ await check('the controls: one Comparing control that opens the selection panel,
   assert.equal(filterNote(NAMES,NAMES,'all',counts,12),'All 4 entries · 12 of 12 games · 2 VOID/HOLD shown in every status filter');
   assert.equal(filterNote(NAMES,['D.C.','JC'],'live',counts,4,'At least one entry stays selected'),'At least one entry stays selected · D.C. + JC · 4 of 12 games · Live · 2 VOID/HOLD shown in every status filter');
   assert.equal(filterNote(NAMES,NAMES,'final',{all:1,final:1,live:0,upcoming:0,exceptions:0},1,'','Sunday Late'),'All 4 entries · Sunday Late · 1 of 1 game · Final');
+  assert.equal(filterNote(NAMES,['D.C.','JC'],'live',counts,2,'','Sunday Early',true),'D.C. + JC · Sunday Early · 2 of 12 games · Live · Disagreements only · 2 VOID/HOLD shown in every filter');
+  assert.equal(filterNote(NAMES,NAMES,'all',{all:3,final:0,live:0,upcoming:3,exceptions:0},3,'','',true),'All 4 entries · 3 of 3 games · Disagreements only');
+});
+
+// ---- Card name labels and Disagreements only (the V1.4 final polish).
+await check('compact labels: a name of six characters or fewer stays whole, a longer one is its first four letters and a full stop; two names that would shorten alike are lengthened until they differ; a shortening that would read like another name is lengthened; a name that cannot be shortened unambiguously stays whole; nothing is changed in place',()=>{
+  assert.deepEqual(shortLabels(NAMES),['D.C.','JC','DJS','Thad.']);
+  assert.deepEqual(shortLabels(['Marcus','Michael','Thaddeus','Jo','Jordan','Jeremiah']),['Marcus','Mich.','Thad.','Jo','Jordan','Jere.']);
+  assert.deepEqual(shortLabels(['Thaddeus','Thadeus']),['Thadd.','Thade.'],'alike shortenings are lengthened for both');
+  assert.deepEqual(shortLabels(['Thad','Thaddeus']),['Thad','Thadd.'],'a shortening that reads like another name is lengthened');
+  assert.deepEqual(shortLabels(['Thad.','Thaddeus','thad']),['Thad.','Thadd.','thad'],'case and a full stop do not make two labels differ');
+  assert.deepEqual(shortLabels(['Thaddeus','Thaddeus Jr']),['Thaddeus','Thaddeus Jr'],'no unambiguous shortening: whole');
+  assert.deepEqual(shortLabels(['A.B.C.D.E','Big Mike','Christopher']),['A.B.','Big.','Chri.'],'no doubled full stop, no trailing space');
+  assert.deepEqual(shortLabels([]),[]);assert.deepEqual(shortLabels(null),[]);
+  assert.deepEqual(shortLabels(['',null,undefined,7,'Thaddeus']),['','','','7','Thad.']);
+  const names=NAMES.slice();shortLabels(names);assert.deepEqual(names,NAMES,'the names are untouched');
+  assert.deepEqual([...labelMap(NAMES,'compact')],[['D.C.','D.C.'],['JC','JC'],['DJS','DJS'],['Thaddeus','Thad.']]);
+  assert.deepEqual([...labelMap(NAMES,'full')],NAMES.map(n=>[n,n]));assert.deepEqual([...labelMap(NAMES,'bogus')],NAMES.map(n=>[n,n]));
+});
+await check('the default label mode is compact on a narrow screen and full otherwise or without a screen to ask; the setting is read and written under its own key, never the selection key; a value that is not a mode, or storage trouble, means the default',()=>{
+  assert.equal(defaultLabels({matchMedia:q=>({matches:q===NARROW_SCREEN})}),'compact');
+  assert.equal(defaultLabels({matchMedia:()=>({matches:false})}),'full');
+  assert.equal(defaultLabels(null),'full');assert.equal(defaultLabels({}),'full');assert.equal(defaultLabels({matchMedia:()=>null}),'full');
+  assert.equal(defaultLabels({matchMedia(){throw new Error('no')}}),'full');
+  const store=new Map(),storage={getItem:k=>store.has(k)?store.get(k):null,setItem:(k,v)=>store.set(k,String(v))};
+  assert.equal(readLabels(storage),null);
+  assert.equal(writeLabels('compact',storage),true);assert.equal(store.get(LABELS_KEY),'compact');assert.equal(readLabels(storage),'compact');
+  assert.equal(writeLabels('full',storage),true);assert.equal(readLabels(storage),'full');
+  assert.equal(writeLabels('tiny',storage),false,'only a mode is written');assert.equal(readLabels(storage),'full');
+  assert.deepEqual([...store.keys()],[LABELS_KEY],'the selection key is never touched');
+  assert.deepEqual(readSelection(NAMES,storage),NAMES,'the selection reads as before');
+  assert.equal(writeSelection(['JC'],storage),true);assert.equal(readLabels(storage),'full','a selection write leaves the setting alone');
+  assert.deepEqual([...store.keys()].sort(),[STORAGE_KEY,LABELS_KEY].sort());
+  for(const bad of ['COMPACT','tiny','',' compact','{"compact":true}']){store.set(LABELS_KEY,bad);assert.equal(readLabels(storage),null,JSON.stringify(bad))}
+  assert.equal(readLabels({getItem(){throw new Error('denied')}}),null);
+  assert.equal(writeLabels('full',{setItem(){throw new Error('quota')}}),false);assert.equal(writeLabels('full',{}),false);
+});
+await check('a disagreement is two or more compared entries on different teams: submitted picks only, grades aside; one entry never disagrees; a missing pick never disagrees with anyone',()=>{
+  const g=GAMES()[0];
+  assert.equal(disagreement(g,NAMES),true);
+  assert.equal(disagreement(g,['D.C.','JC']),true);assert.equal(disagreement(g,['D.C.','DJS']),false,'the same team twice is agreement');
+  assert.equal(disagreement(g,['D.C.','Thaddeus']),false,'a missing pick is left out');assert.equal(disagreement(g,['JC','Thaddeus']),false);
+  assert.equal(disagreement(g,['D.C.','DJS','Thaddeus']),false,'three entries, two picks, one team');assert.equal(disagreement(g,['D.C.','JC','DJS']),true);
+  assert.equal(disagreement(g,['D.C.']),false);assert.equal(disagreement(g,[]),false);assert.equal(disagreement(g,null),false);assert.equal(disagreement(g,['Nobody','Thaddeus']),false);
+  assert.equal(disagreement(game(0,'A','B',{picks:pk(['A','A','A','A'],['correct','incorrect','pending','void'])}),NAMES),false,'different grades on one team are no disagreement');
+  assert.equal(disagreement(GAMES()[1],NAMES),true,'a tie with split picks is a disagreement: picks, not grades');
+  assert.equal(disagreement(GAMES()[6],NAMES),true,'a VOID game with split picks is one too');
+  assert.equal(disagreement({...g,picks:[{name:'D.C.',team:'den'},{name:'JC',team:' DEN '}]},['D.C.','JC']),false,'codes compare as codes');
+  assert.equal(disagreement(null,NAMES),false);assert.equal(disagreement({},NAMES),false);assert.equal(disagreement({picks:null},NAMES),false);
+});
+await check('Disagreements only keeps the games where the compared entries split and the VOID and HOLD games whatever their picks, in published order, with the slate and the status; off, it keeps everything; one entry cannot disagree',()=>{
+  const mixed=MIXED();
+  assert.deepEqual(filterDisagreements(mixed,NAMES,true).map(g=>g.index),[0,1,2,6,7,10],'splits plus the VOID and HOLD exceptions');
+  assert.deepEqual(filterDisagreements(mixed,['D.C.','JC'],true).map(g=>g.index),[0,1,2,6,7,10]);
+  assert.deepEqual(filterDisagreements(mixed,['D.C.','DJS'],true).map(g=>g.index),[6,7],'two entries that agree everywhere: the exceptions alone');
+  assert.deepEqual(filterDisagreements(mixed,['JC','Thaddeus'],true).map(g=>g.index),[6,7],'a missing submission never makes a disagreement');
+  assert.deepEqual(filterDisagreements(mixed,['D.C.','JC','DJS'],true).map(g=>g.index),[0,1,2,6,7,10]);
+  assert.deepEqual(filterDisagreements(mixed,['D.C.'],true).map(g=>g.index),[6,7],'one entry cannot disagree');
+  assert.deepEqual(filterDisagreements(mixed,NAMES,false).map(g=>g.index),[0,1,2,3,4,5,6,7,8,9,10,11]);
+  assert.deepEqual(filterDisagreements(mixed,NAMES,'yes').map(g=>g.index),[0,1,2,3,4,5,6,7,8,9,10,11],'only true switches it on');
+  assert.deepEqual(filterDisagreements(null,NAMES,true),[]);
+  assert.deepEqual(filterDisagreements(filterGames(filterSlate(mixed,EARLY),'live'),NAMES,true).map(g=>g.index),[2,6,10]);
+  assert.deepEqual(filterDisagreements(filterGames(filterSlate(mixed,EARLY),'final'),NAMES,true).map(g=>g.index),[1,6]);
+  assert.deepEqual(filterDisagreements(filterGames(filterSlate(mixed,LATE),'upcoming'),NAMES,true).map(g=>g.index),[7]);
+  assert.deepEqual(filterDisagreements(filterGames(filterSlate(mixed,NIGHT),'all'),NAMES,true),[]);
+  assert.deepEqual(statusCounts(filterDisagreements(mixed,NAMES,true)),{all:6,final:2,live:2,upcoming:0,exceptions:2});
+});
+await check('the board with Disagreements only: the split games and the exceptions, with the slate and the status; the empty state names who was compared and what narrowed it, or stays the plain one when nothing was listed to begin with; fewer than two entries means the filter does not apply',()=>{
+  const snap=snapshot({games:MIXED()}),ids=html=>cards(html).map(c=>c.match(/data-game="(\d+)"/)[1]);
+  assert.deepEqual(ids(boardHtml(snap,{entrants:NAMES,disagree:true})),['0','1','2','6','10','7']);
+  assert.deepEqual(ids(boardHtml(snap,{entrants:['D.C.','JC'],status:'live',slate:EARLY,disagree:true})),['2','6','10']);
+  assert.deepEqual(ids(boardHtml(snap,{entrants:['D.C.','DJS'],disagree:true})),['6','7'],'the exceptions alone');
+  assert.equal(boardHtml(snap,{entrants:['D.C.','DJS'],status:'upcoming',slate:NIGHT,disagree:true}),'<div class="empty">No upcoming disagreements between D.C. and DJS in Sunday Night.</div>');
+  assert.equal(boardHtml(snap,{entrants:NAMES,slate:NIGHT,disagree:true}),'<div class="empty">No disagreements among all 4 entries in Sunday Night.</div>');
+  assert.equal(boardHtml(snap,{entrants:['D.C.','JC','DJS'],slate:'2026-09-28|3',disagree:true}),'<div class="empty">No disagreements among D.C., JC and DJS in Monday Night.</div>');
+  assert.equal(boardHtml(snapshot({games:MIXED().filter(g=>[3,4].includes(g.index))}),{entrants:NAMES,disagree:true}),'<div class="empty">No disagreements among all 4 entries.</div>');
+  assert.equal(boardHtml(snapshot({games:MIXED().filter(g=>[3,4].includes(g.index))}),{entrants:NAMES,status:'upcoming',disagree:true}),'<div class="empty">No upcoming disagreements among all 4 entries.</div>');
+  assert.equal(boardHtml(snap,{entrants:NAMES,status:'live',slate:NIGHT,disagree:true}),'<div class="empty">No live games in Sunday Night.</div>','nothing listed to begin with: the plain empty state');
+  assert.equal(boardHtml(snapshot({games:[]}),{entrants:NAMES,disagree:true}),'<div class="empty">No games are published for this week.</div>');
+  assert.equal(ids(boardHtml(snap,{entrants:['D.C.'],disagree:true})).length,12,'one entry: the filter does not apply');
+  assert.equal(ids(boardHtml(snap,{entrants:NAMES,disagree:false})).length,12);assert.equal(ids(boardHtml(snap,{entrants:NAMES})).length,12,'off by default');
+  assert.equal(emptyDisagreements(NAMES,['JC','Thaddeus'],'final','Sunday Early'),'No final disagreements between JC and Thaddeus in Sunday Early.');
+  assert.equal(emptyDisagreements(NAMES,NAMES),'No disagreements among all 4 entries.');assert.equal(emptyDisagreements(NAMES,NAMES,'bogus'),'No disagreements among all 4 entries.');
+});
+await check('compact labels on the card: a shortened name shows its label and keeps its full name for assistive technology, a short name is plain; four compared entries make the chips dense; compact labels put the chips on a grid with one column per entry; the open matchup keeps every full name; hostile names stay text',()=>{
+  const map=labelMap(NAMES,'compact');
+  const html=cardHtml(GAMES()[0],NAMES,{time:'8:15 PM EDT',labels:map});
+  assert.match(html,/<span class="pm-results is-dense is-grid" style="--pm-cols:4"><span class="pm-token ok"><span class="pm-token-name">D\.C\.<\/span><span class="pm-token-pick">DEN<\/span><span class="pm-token-mark" role="img" aria-label="correct">✓<\/span><\/span>/,'a short name is plain text');
+  assert.match(html,/<span class="pm-token bad no-pick"><span class="pm-token-name"><span class="pm-token-short" aria-hidden="true">Thad\.<\/span><span class="pm-sr">Thaddeus<\/span><\/span><span class="pm-token-pick">—<\/span><span class="pm-token-mark" role="img" aria-label="incorrect">✕<\/span><\/span><\/span><\/button>/);
+  assert.equal((html.match(/pm-token-short/g)||[]).length,1,'only the long name is shortened');
+  const details=html.slice(html.indexOf('<div class="pm-details"'));
+  assert.deepEqual([...details.matchAll(/<span class="pm-name">([^<]+)<\/span>/g)].map(m=>m[1]),NAMES,'the open matchup keeps full names');
+  assert(!details.includes('Thad.')&&!details.includes('pm-sr'));
+  const full=cardHtml(GAMES()[0],NAMES,{time:'8:15 PM EDT'});
+  assert.match(full,/<span class="pm-results is-dense" style="--pm-cols:4">/,'full labels: dense, no grid');
+  assert(!full.includes('pm-token-short')&&!full.includes('pm-sr')&&!full.includes('Thad.'));
+  assert.deepEqual(tokensOf(full).map(t=>t[0]),NAMES);
+  assert.match(cardHtml(GAMES()[0],['D.C.','JC','Thaddeus'],{labels:map}),/<span class="pm-results is-grid" style="--pm-cols:3">/,'three entries are not dense');
+  assert.match(cardHtml(GAMES()[0],['JC'],{}),/<span class="pm-results" style="--pm-cols:1">/);
+  assert.match(cardHtml(GAMES()[0],[],{labels:map}),/<span class="pm-results is-grid" style="--pm-cols:1"><span class="pm-token pending"><span class="pm-token-name">No entry selected<\/span><\/span><\/span>/);
+  assert.match(summaryHtml(GAMES()[2],NAMES,{labels:map}),/<span class="pm-token-short" aria-hidden="true">Thad\.<\/span><span class="pm-sr">Thaddeus<\/span><\/span><span class="pm-token-pick">—<\/span><\/span>/,'a live game: the label, the pick, no mark');
+  assert(boardHtml(snapshot(),{entrants:NAMES,labels:'compact'}).includes('>Thad.<'));
+  assert(!boardHtml(snapshot(),{entrants:NAMES,labels:'full'}).includes('Thad.'));assert(!boardHtml(snapshot(),{entrants:NAMES}).includes('Thad.'),'full unless asked');
+  assert.equal((boardHtml(snapshot(),{entrants:NAMES,labels:'compact'}).match(/<span class="pm-sr">Thaddeus<\/span>/g)||[]).length,12,'every card speaks the full name');
+  assert(!boardHtml(snapshot(),{entrants:NAMES,labels:'compact'}).includes('pm-name">Thad.'),'no open matchup is shortened');
+  const hostile=cardHtml(game(0,'A','B',{picks:[{name:'<Thaddeus>',team:'A',result:'correct'}]}),['<Thaddeus>'],{labels:labelMap(['<Thaddeus>'],'compact')});
+  assert(hostile.includes('<span class="pm-token-short" aria-hidden="true">&lt;Tha.</span><span class="pm-sr">&lt;Thaddeus&gt;</span>'),'the label and the name are escaped');
+  assert(!/<Tha|<Thaddeus>/.test(hostile));
 });
 
 // ---- Rules & rulings summary and alerts.
@@ -442,12 +562,15 @@ function makeDocument(html){
 let instance=0;
 // A page: the real Games, Survivor and Picks panels, the two apps as listeners (answering a picks or rules request with their
 // fixture, or null for an app that is not there), storage as configured, and the module booted on it.
-async function page({picksAnswer=()=>snapshot(),pickemRules=()=>rulesAnswer(readyModel({incidents:[incident()]})),survivorRules=()=>({ready:true,contest:'survivor',week:3,model:readyModel({contestType:'Survivor contest',contestName:'Pool Center 2026 Survivor',policy:{revision:1,effectiveWeek:1,name:'Advance, team used',text:'…',publicNote:null},revisions:[{revision:1,effectiveWeek:1,name:'Advance, team used',publicNote:null}]})}),storage='ok',stored=null}={}){
+async function page({picksAnswer=()=>snapshot(),pickemRules=()=>rulesAnswer(readyModel({incidents:[incident()]})),survivorRules=()=>({ready:true,contest:'survivor',week:3,model:readyModel({contestType:'Survivor contest',contestName:'Pool Center 2026 Survivor',policy:{revision:1,effectiveWeek:1,name:'Advance, team used',text:'…',publicNote:null},revisions:[{revision:1,effectiveWeek:1,name:'Advance, team used',publicNote:null}]})}),storage='ok',stored=null,storedLabels=null,narrow=false}={}){
   const doc=makeDocument(PAGE);
   globalThis.document=doc;
   globalThis.location={href:'https://example.test/nfl-pool/?view=picks',search:'?view=picks'};
+  // The screen: narrow (a phone) or not, as the module asks matchMedia; no scrolling.
+  globalThis.window={matchMedia:query=>({matches:narrow===true&&query===NARROW_SCREEN,media:query})};
   const store=new Map(),writes=[];
   if(stored!==null)store.set(STORAGE_KEY,typeof stored==='string'?stored:JSON.stringify(stored));
+  if(storedLabels!==null)store.set(LABELS_KEY,String(storedLabels));
   const localStorage=storage==='absent'?undefined:storage==='throws'?{getItem(){throw new Error('denied')},setItem(){throw new Error('denied')}}
     :{getItem:k=>store.has(k)?store.get(k):null,setItem:(k,v)=>{writes.push([k,String(v)]);store.set(k,String(v))},removeItem:k=>store.delete(k)};
   if(localStorage)globalThis.localStorage=localStorage;else delete globalThis.localStorage;
@@ -476,6 +599,11 @@ async function page({picksAnswer=()=>snapshot(),pickemRules=()=>rulesAnswer(read
     toggleBox:name=>{const b=doc.querySelector(`[data-picks-entrants] [data-picks-entrant="${name}"]`);b.checked=!b.checked;b.change()},
     selectAll:()=>doc.querySelector('[data-picks-entrant="*"]'),dialogNote:()=>doc.querySelector('[data-picks-dialog-note]')?.textContent??null,
     done:()=>doc.querySelector('.pm-sheet-actions [data-picks-close]'),
+    labelsButton:mode=>doc.querySelector(`[data-picks-labels="${mode}"]`),
+    labelsMode:()=>doc.querySelectorAll('[data-picks-labels]').find(b=>b.getAttribute('aria-pressed')==='true')?.dataset.picksLabels??null,
+    labelsStored:()=>store.has(LABELS_KEY)?store.get(LABELS_KEY):null,
+    disagree:()=>doc.querySelector('[data-picks-disagree]'),
+    chipNames:article=>article.querySelectorAll('.pm-token-name').map(n=>n.querySelector('.pm-token-short')?.textContent??n.textContent),
     cards:()=>board().querySelectorAll('article'),cardOf:i=>board().querySelectorAll('article').find(a=>Number(a.dataset.game)===i),
     shown:()=>board().querySelectorAll('article').map(a=>Number(a.dataset.game)),
     groups:()=>board().querySelectorAll('.pm-group-title span').map(s=>s.textContent),
@@ -486,10 +614,12 @@ async function page({picksAnswer=()=>snapshot(),pickemRules=()=>rulesAnswer(read
     table:()=>[doc.getElementById('pickHead').innerHTML,doc.getElementById('pickBody').innerHTML],
     prefs:()=>JSON.parse(store.get(STORAGE_KEY)||'null')};
 }
-const namesOn=article=>article.querySelectorAll('.pm-token-name').map(n=>n.textContent);
-// What a reader gets: the text of the elements, aria-hidden decoration (the team badges) left out, one space between parts.
+// What a reader gets: the text of the elements, aria-hidden decoration (the team badges, a compact label) left out, one space
+// between parts.
 const visible=node=>node.nodeType===3?node.text:node.getAttribute('aria-hidden')==='true'?'':node.children.map(visible).filter(Boolean).join(' ');
 const spoken=node=>visible(node).replace(/\s+/g,' ').trim();
+// The names the chips speak: the full names, whatever label is shown.
+const namesOn=article=>article.querySelectorAll('.pm-token-name').map(spoken);
 const tokens=article=>article.querySelectorAll('.pm-token').map(spoken);
 
 // ---- The page part: collapsible Rules & rulings (unchanged from V1.3).
@@ -794,6 +924,91 @@ await check('a week change with the same tracked names: each entry’s submissio
   assert.deepEqual(p.checked(),{'D.C.':true,JC:true,DJS:false,Thaddeus:true});assert.equal(p.comparing(),'D.C. + JC + Thaddeus');
   p.done().click();assert.equal(p.doc.activeElement,compare);
 });
+await check('Disagreements only: off on load; on, the list keeps the games where the compared entries split and the VOID and HOLD exceptions, the counts and the note follow, an open matchup that left the list closes; it combines with the slate and the status, keeps the entries, survives refreshes and a week change, and writes nothing; fewer than two entries turn it off and disable it, with a note said once',async()=>{
+  const p=await page({picksAnswer:()=>snapshot({games:MIXED()})});
+  const sw=()=>p.disagree(),on=()=>sw().getAttribute('aria-pressed');
+  assert.equal(on(),'false');assert.equal(sw().disabled,false);assert.equal(sw().localName,'button');assert.equal(spoken(sw()),'Disagreements only');
+  assert(sw().closest('#picksFilters'),'the switch is part of the existing filters, not another toolbar');
+  assert.deepEqual(p.shown(),[0,11,1,2,6,10,7,3,4,8,5,9]);
+  p.expandOf(3).click();assert.deepEqual(p.expanded(),[3]);
+  const before=p.writes.length;
+  sw().click();
+  assert.equal(on(),'true');assert.deepEqual(p.shown(),[0,1,2,6,10,7]);assert.deepEqual(p.expanded(),[],'the open matchup left the list');
+  assert.deepEqual(p.counts(),{all:'6',final:'2',live:'2',upcoming:'0'});
+  assert.equal(p.note(),'All 4 entries · 6 of 6 games · Disagreements only · 2 VOID/HOLD shown in every filter');
+  assert.equal(p.comparing(),'All 4 entries');assert.equal(p.writes.length,before,'page state: nothing is written');
+  p.expandOf(2).click();assert.deepEqual(p.expanded(),[2]);
+  p.segment('live').click();assert.deepEqual(p.shown(),[2,6,10,7]);assert.deepEqual(p.expanded(),[2],'the open matchup stays while it is listed');
+  assert.equal(p.note(),'All 4 entries · 4 of 6 games · Live · Disagreements only · 2 VOID/HOLD shown in every filter');
+  p.chooseSlate(EARLY);assert.deepEqual(p.shown(),[2,6,10]);assert.deepEqual(p.counts(),{all:'4',final:'1',live:'2',upcoming:'0'});
+  assert.equal(p.note(),'All 4 entries · Sunday Early · 3 of 4 games · Live · Disagreements only · 1 VOID/HOLD shown in every filter');
+  p.segment('upcoming').click();assert.deepEqual(p.shown(),[6],'the exception alone');
+  assert.equal(p.note(),'All 4 entries · Sunday Early · 1 of 4 games · Upcoming · Disagreements only · 1 VOID/HOLD shown in every filter');
+  p.chooseSlate(NIGHT);
+  assert.equal(p.board().innerHTML,'<div class="empty">No upcoming disagreements among all 4 entries in Sunday Night.</div>');
+  assert.equal(p.note(),'All 4 entries · Sunday Night · 0 of 0 games · Upcoming · Disagreements only');
+  p.segment('live').click();assert.equal(p.board().innerHTML,'<div class="empty">No live games in Sunday Night.</div>','no game at all to disagree on: the plain empty state');
+  p.chooseSlate('all');p.segment('all').click();assert.deepEqual(p.shown(),[0,1,2,6,10,7]);
+  p.compare().click();p.toggleBox('JC');p.toggleBox('Thaddeus');p.done().click();
+  assert.equal(p.comparing(),'D.C. + DJS');assert.deepEqual(p.shown(),[6,7],'two entries that agree everywhere: the exceptions alone');
+  assert.equal(on(),'true','the choice stays through an entry change');
+  assert.equal(p.note(),'D.C. + DJS · 2 of 2 games · Disagreements only · 2 VOID/HOLD shown in every filter');
+  for(let i=0;i<3;i++)p.update('pickem');
+  assert.equal(on(),'true');assert.deepEqual(p.shown(),[6,7],'a refresh keeps it');
+  p.answers.picks=()=>snapshot({week:4,games:MIXED()});p.update('pickem');
+  assert.equal(on(),'true','a week change keeps it, like the status');assert.deepEqual(p.shown(),[6,7]);
+  p.compare().click();p.toggleBox('DJS');
+  assert.equal(p.dialogNote(),'Disagreements only is off: it needs two or more entries');
+  p.done().click();
+  assert.equal(on(),'false');assert.equal(sw().disabled,true);assert.deepEqual(p.shown(),[0,11,1,2,6,10,7,3,4,8,5,9]);
+  assert.equal(p.note(),'Disagreements only is off: it needs two or more entries · D.C. · 12 of 12 games · 2 VOID/HOLD shown in every status filter');
+  sw().click();assert.equal(on(),'false','disabled: a tap changes nothing');assert.deepEqual(p.shown(),[0,11,1,2,6,10,7,3,4,8,5,9]);
+  p.update('pickem');assert.equal(p.note(),'D.C. · 12 of 12 games · 2 VOID/HOLD shown in every status filter','the note is said once');
+  p.compare().click();p.toggleBox('JC');p.done().click();
+  assert.equal(sw().disabled,false);assert.equal(on(),'false','it stays off until tapped again');
+  sw().click();assert.deepEqual(p.shown(),[0,1,2,6,10,7]);
+  assert(p.writes.every(([k])=>k===STORAGE_KEY),'only the selection is written');
+});
+await check('card name labels: compact by default on a narrow screen (Thaddeus reads Thad., spoken in full), full elsewhere; the setting in the panel switches the cards in place, is remembered under its own key with the selection key untouched, and a reload restores it; storage trouble is said in the panel; the open matchup and the panel always show full names',async()=>{
+  const p=await page({narrow:true});
+  assert.equal(p.labelsMode(),'compact');
+  for(const article of p.cards()){assert.deepEqual(p.chipNames(article),['D.C.','JC','DJS','Thad.'],`card ${article.dataset.game} labels`);assert.deepEqual(namesOn(article),NAMES,`card ${article.dataset.game} speaks full names`)}
+  assert.equal(p.cardOf(0).querySelector('.pm-results').getAttribute('class'),'pm-results is-dense is-grid');
+  assert.deepEqual(tokens(p.cardOf(0)),['D.C. DEN ✓','JC KC ✕','DJS DEN ✓','Thaddeus — ✕']);
+  assert.equal(p.cardOf(0).querySelector('.pm-token-short').getAttribute('aria-hidden'),'true');
+  p.expandOf(0).click();assert.deepEqual(p.details(0).querySelectorAll('.pm-name').map(n=>n.textContent),NAMES,'the open matchup names everyone in full');p.expandOf(0).click();
+  const card=p.cardOf(0),t0=p.expandOf(0),compare=p.compare();
+  compare.click();
+  assert.deepEqual(p.boxes().map(b=>b.closest('.pm-entry').querySelector('.pm-entry-name').textContent),NAMES,'the panel lists full names');
+  assert.equal(p.labelsButton('compact').getAttribute('aria-pressed'),'true');assert.equal(p.labelsButton('full').getAttribute('aria-pressed'),'false');
+  assert.equal(p.doc.activeElement,p.box('D.C.'),'focus still moves to the first entry');
+  p.labelsButton('full').click();
+  assert.equal(p.labelsMode(),'full');assert.equal(p.dialog().open,true,'the panel stays open');
+  assert.equal(p.cardOf(0),card,'the same card element');assert.equal(p.expandOf(0),t0,'the same control');
+  for(const article of p.cards())assert.deepEqual(p.chipNames(article),NAMES);
+  assert.equal(p.cardOf(0).querySelector('.pm-results').getAttribute('class'),'pm-results is-dense');assert(!p.cardOf(0).querySelector('.pm-sr'));
+  assert.equal(p.labelsStored(),'full');assert.deepEqual(p.writes,[[LABELS_KEY,'full']]);assert.equal(p.prefs(),null,'the selection key is untouched');
+  p.labelsButton('compact').click();
+  assert.equal(p.labelsStored(),'compact');for(const article of p.cards())assert.deepEqual(p.chipNames(article),['D.C.','JC','DJS','Thad.']);
+  p.toggleBox('JC');
+  assert.deepEqual(p.prefs(),{version:1,entrants:['D.C.','DJS','Thaddeus']});assert.equal(p.labelsStored(),'compact','a selection write leaves the setting alone');
+  for(const article of p.cards())assert.deepEqual(p.chipNames(article),['D.C.','DJS','Thad.']);
+  assert.equal(p.cardOf(0).querySelector('.pm-results').getAttribute('class'),'pm-results is-grid','three entries: not dense');
+  p.done().click();assert.equal(p.doc.activeElement,compare);
+  const wide=await page();assert.equal(wide.labelsMode(),'full');for(const article of wide.cards())assert.deepEqual(wide.chipNames(article),NAMES);
+  const again=await page({storedLabels:'compact'});assert.equal(again.labelsMode(),'compact');for(const article of again.cards())assert.deepEqual(again.chipNames(article),['D.C.','JC','DJS','Thad.']);
+  const forced=await page({narrow:true,storedLabels:'full'});assert.equal(forced.labelsMode(),'full');for(const article of forced.cards())assert.deepEqual(forced.chipNames(article),NAMES);
+  const bad=await page({narrow:true,storedLabels:'tiny'});assert.equal(bad.labelsMode(),'compact','a value that is not a mode means the default');
+  const both=await page({narrow:true,stored:{version:1,entrants:['JC','Thaddeus']},storedLabels:'full'});
+  assert.equal(both.comparing(),'JC + Thaddeus');assert.equal(both.labelsMode(),'full');for(const article of both.cards())assert.deepEqual(both.chipNames(article),['JC','Thaddeus']);
+  const noStore=await page({storage:'throws',narrow:true});
+  noStore.compare().click();noStore.labelsButton('full').click();
+  assert.equal(noStore.labelsMode(),'full');assert.equal(noStore.dialogNote(),'Label setting not saved in this browser');
+  for(const article of noStore.cards())assert.deepEqual(noStore.chipNames(article),NAMES);
+  noStore.toggleBox('JC');assert.equal(noStore.dialogNote(),'Selection not saved in this browser · Label setting not saved in this browser');
+  assert.match(noStore.note(),/^Selection not saved in this browser · Label setting not saved in this browser · D\.C\. \+ DJS \+ Thaddeus/);
+  const absent=await page({storage:'absent',narrow:true});absent.compare().click();absent.labelsButton('full').click();assert.equal(absent.labelsMode(),'full');
+});
 await check('exceptional games on the page: VOID, HOLD, FINAL TIE, UNDER REVIEW, an unverified result and the tiebreak game read on the compact cards as the snapshot states them, say so once, and explain themselves when opened',async()=>{
   const p=await page({picksAnswer:()=>snapshot({games:GAMES().map(g=>g.index===6?{...g,note:'Commissioner ruling · UNDER REVIEW',underReview:'the feed now reports a completed final'}:g)})});
   const top=i=>spoken(p.cardOf(i).querySelector('.pm-top'));
@@ -833,6 +1048,12 @@ await check('small-screen layout and desktop fallback, as the stylesheet and the
   for(const rule of ['.picks.is-mobile-ready .scroll{display:none}','.picks.is-mobile-ready .picks-filters{display:block}','.picks.is-mobile-ready .picks-board{display:grid','.view-panel.is-mobile-ready .pm-copy-table{display:none}','.view-panel.is-mobile-ready .pm-copy-cards{display:inline}'])assert(mobile.includes(rule),`below 761px: ${rule}`);
   assert(!css.slice(0,css.indexOf('@media(max-width:760px){')).includes('.scroll{display:none}'),'the table is never hidden outside the narrow layout');
   assert.match(css,/\.pm-compare,\.pm-select\{[^}]*min-height:44px/);assert.match(css,/\.pm-segment\{[^}]*min-height:42px/);assert.match(css,/\.pm-summary\{[^}]*min-height:56px/);assert.match(css,/\.pm-entry\{[^}]*min-height:48px/);assert.match(css,/\.rules-toggle\{[^}]*min-height:44px/);
+  assert.match(css,/\.pm-toggle\{[^}]*min-height:42px/,'the Disagreements only switch is a 42px target');
+  assert(css.includes('.pm-results.is-grid{display:grid;grid-template-columns:repeat(var(--pm-cols,1),minmax(0,1fr))}'),'compact labels: one column per compared entry');
+  assert(css.includes('.pm-results.is-grid .pm-token{justify-self:start;max-width:100%;min-width:0}')&&css.includes('.pm-results.is-grid .pm-token-name{min-width:0;overflow:hidden;text-overflow:ellipsis}'),'a chip never overflows its column');
+  assert(css.includes('.pm-results.is-dense .pm-token{gap:3px;min-height:20px;padding:0 5px;font-size:9.5px}')&&css.includes('.pm-results.is-dense .pm-token{font-size:9px;padding:0 4px}'),'four compared entries: denser chips, denser still below 401px');
+  assert(css.includes('.pm-sheet-setting{')&&css.includes('.pm-segments-2{grid-template-columns:repeat(2,1fr)'),'the labels setting is styled for the panel');
+  assert.match(css,/\.pm-toggle\[aria-pressed="true"\]\{color:#fff;border-color:#d52d3466;background:#d52d3414\}/,'the switch takes the existing accent');
   assert(!/https?:\/\//.test(css),'the stylesheet names no remote resource');
   assert(!/pm-chip/.test(css),'no chip strip');
   assert.match(css,/\.pm-card\.is-expanded \.pm-results\{display:none\}/,'an open card shows its graded rows instead of its tokens');
@@ -845,6 +1066,9 @@ await check('small-screen layout and desktop fallback, as the stylesheet and the
   assert(picks.includes('<button type="button" class="share-action" data-picks-entrant="*">Select all</button>'));
   assert(picks.includes('<p class="pm-sheet-status" data-picks-dialog-note role="status" aria-live="polite"></p>'),'the panel’s note is a live status region');
   assert(picks.includes('<div class="pm-sheet-list" data-picks-entrants></div>'));
+  assert.equal(picks.split('data-picks-labels=').length-1,2,'the panel holds the Compact / Full labels setting');
+  assert(picks.indexOf('data-picks-entrants')<picks.indexOf('pm-sheet-setting')&&picks.indexOf('pm-sheet-setting')<picks.indexOf('data-picks-dialog-note'),'the setting sits between the list and the status');
+  assert(!/data-picks-labels|data-picks-disagree/.test(picks.slice(0,picks.indexOf('<dialog'))),'no permanently visible toolbar: the setting lives in the panel and the switch is rendered into the filters');
   assert(picks.indexOf('id="picksBoard"')<picks.indexOf('id="pickHead"')&&picks.indexOf('id="pickHead"')<picks.indexOf('id="picksEntrants"'),'cards, then the table, then the dialog');
 });
 await check('a page without the mobile markup is left alone',async()=>{
@@ -856,4 +1080,4 @@ await check('a page without the mobile markup is left alone',async()=>{
 });
 
 assert.equal(failures.length,0,`V1.4 compact Picks UX regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
-console.log('picks-mobile regressions passed: Eastern kickoff slates, slate, status and entry filters together, the compact card, board and control markup, the entry selection panel, one open matchup at a time, refresh stability, week changes, exceptional game states, the untouched comparison table, the declared small-screen layout and desktop fallback, and the collapsible Rules & rulings');
+console.log('picks-mobile regressions passed: Eastern kickoff slates, slate, status, entry and Disagreements only filters together, compact pick chips and card name labels, the compact card, board and control markup, the entry selection panel and its labels setting, one open matchup at a time, refresh stability, week changes, exceptional game states, the untouched comparison table, the declared small-screen layout and desktop fallback, and the collapsible Rules & rulings');
