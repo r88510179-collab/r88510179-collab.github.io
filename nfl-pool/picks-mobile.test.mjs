@@ -744,6 +744,56 @@ await check('a week with other tracked names rebuilds the controls and the panel
   silent.answers.picks=()=>snapshot();silent.update('pickem');
   assert.equal(silent.cards().length,12);assert.equal(silent.comparing(),'All 4 entries');
 });
+await check('a week change with the same tracked names: each entry’s submission note follows the week on screen (no picks last week, picks this week: the note goes; the other way round: it comes), on the same row elements, with the selection, Select all and focus as before',async()=>{
+  // Week A (the fixture week 3): Thaddeus has no submission; the remembered choice compares D.C. and Thaddeus.
+  const p=await page({stored:{version:1,entrants:['D.C.','Thaddeus']}});
+  const row=name=>p.box(name).closest('.pm-entry'),meta=name=>row(name).querySelector('.pm-entry-meta')?.textContent??null,none=name=>row(name).classList.contains('pm-entry-none');
+  const compare=p.compare();compare.click();
+  assert.equal(p.dialog().open,true);assert.deepEqual(p.checked(),{'D.C.':true,JC:false,DJS:false,Thaddeus:true});
+  assert.equal(meta('Thaddeus'),'No picks submitted this week');assert.equal(none('Thaddeus'),true);
+  assert.deepEqual(['D.C.','JC','DJS'].map(meta),[null,null,null]);assert.deepEqual(['D.C.','JC','DJS'].map(none),[false,false,false]);
+  const boxesA=p.boxes();
+  p.done().click();assert.equal(p.dialog().open,false);assert.equal(p.doc.activeElement,compare);
+  // Week B arrives as one update with the same four names in the same order (as weekly-app.js announces a chosen week once it
+  // is on screen): Thaddeus submitted, JC did not.
+  const g=(index,away,home,kickoff,teams)=>game(index,away,home,{kickoff,date:kickoff.slice(0,10),picks:pk(teams,['pending','pending','pending','pending'])});
+  const weekB=(jc,thaddeus)=>snapshot({week:4,entrants:[{name:'D.C.',noSubmission:false},{name:'JC',noSubmission:jc},{name:'DJS',noSubmission:false},{name:'Thaddeus',noSubmission:thaddeus}],
+    games:[g(0,'BUF','NYJ','2026-10-04T17:00:00Z',['BUF',jc?null:'NYJ','NYJ',thaddeus?null:'BUF']),g(1,'DAL','PHI','2026-10-04T20:25:00Z',['PHI',jc?null:'DAL','PHI',thaddeus?null:'PHI']),g(2,'KC','LV','2026-10-06T00:15:00Z',['KC',jc?null:'KC','LV',thaddeus?null:'KC'])]});
+  p.answers.picks=()=>weekB(true,false);
+  p.update('pickem');
+  assert.equal(p.comparing(),'D.C. + Thaddeus','the entries stay');assert.deepEqual(p.shown(),[0,1,2]);
+  compare.click();
+  assert.equal(p.dialog().open,true);
+  assert.equal(meta('Thaddeus'),null,'the Week A note is gone: Thaddeus submitted this week');assert.equal(none('Thaddeus'),false);
+  assert.equal(meta('JC'),'No picks submitted this week','JC did not submit this week');assert.equal(none('JC'),true);
+  assert.deepEqual(['D.C.','DJS'].map(meta),[null,null]);
+  assert(p.boxes().length===4&&p.boxes().every((b,i)=>b===boxesA[i]),'the same checkbox elements');
+  assert.deepEqual(p.boxes().map(b=>b.dataset.picksEntrant),NAMES,'in published order');
+  assert.deepEqual(p.checked(),{'D.C.':true,JC:false,DJS:false,Thaddeus:true},'the selection stays');
+  assert.equal(p.doc.activeElement,p.box('D.C.'),'focus moves into the panel');assert.equal(p.selectAll().disabled,false);
+  // A refresh while the panel is open with a focused checkbox that changes a submission state: the row follows, the focus and
+  // the selection stay, and a change still applies at once.
+  p.box('Thaddeus').focus();
+  p.answers.picks=()=>weekB(false,false);
+  p.update('pickem');
+  assert.equal(meta('JC'),null,'JC’s picks came in');assert.equal(none('JC'),false);assert.equal(meta('Thaddeus'),null);
+  assert.equal(p.doc.activeElement,p.box('Thaddeus'),'focus is not lost');assert.deepEqual(p.checked(),{'D.C.':true,JC:false,DJS:false,Thaddeus:true});
+  p.toggleBox('JC');
+  assert.deepEqual(p.checked(),{'D.C.':true,JC:true,DJS:false,Thaddeus:true});assert.equal(p.comparing(),'D.C. + JC + Thaddeus');
+  for(const article of p.cards())assert.deepEqual(namesOn(article),['D.C.','JC','Thaddeus']);
+  assert.deepEqual(p.prefs(),{version:1,entrants:['D.C.','JC','Thaddeus']});
+  p.selectAll().click();assert.deepEqual(p.checked(),{'D.C.':true,JC:true,DJS:true,Thaddeus:true});assert.equal(p.selectAll().disabled,true);
+  p.toggleBox('DJS');assert.deepEqual(p.checked(),{'D.C.':true,JC:true,DJS:false,Thaddeus:true});
+  p.done().click();
+  assert.equal(p.dialog().open,false);assert.equal(p.doc.activeElement,compare,'focus returns to the control');
+  // Back to Week A: Thaddeus’s note is back and JC’s is not; the choice made in Week B stays.
+  p.answers.picks=()=>snapshot();p.update('pickem');
+  compare.click();
+  assert.equal(meta('Thaddeus'),'No picks submitted this week');assert.equal(none('Thaddeus'),true);assert.equal(meta('JC'),null);assert.equal(none('JC'),false);
+  assert(p.boxes().every((b,i)=>b===boxesA[i]),'still the same checkbox elements');
+  assert.deepEqual(p.checked(),{'D.C.':true,JC:true,DJS:false,Thaddeus:true});assert.equal(p.comparing(),'D.C. + JC + Thaddeus');
+  p.done().click();assert.equal(p.doc.activeElement,compare);
+});
 await check('exceptional games on the page: VOID, HOLD, FINAL TIE, UNDER REVIEW, an unverified result and the tiebreak game read on the compact cards as the snapshot states them, say so once, and explain themselves when opened',async()=>{
   const p=await page({picksAnswer:()=>snapshot({games:GAMES().map(g=>g.index===6?{...g,note:'Commissioner ruling · UNDER REVIEW',underReview:'the feed now reports a completed final'}:g)})});
   const top=i=>spoken(p.cardOf(i).querySelector('.pm-top'));

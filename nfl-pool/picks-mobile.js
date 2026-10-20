@@ -321,13 +321,25 @@ export function boot(){
     const rect=card.getBoundingClientRect(),nav=document.querySelector('.bottom-nav'),limit=window.innerHeight-(nav?nav.getBoundingClientRect().height:0)-8;
     if(rect.bottom>limit)window.scrollBy({top:Math.min(rect.bottom-limit,Math.max(0,rect.top-8)),behavior:'smooth'});
   }
+  // The panel's rows are rebuilt for another set of tracked names. The same names keep their row elements (a focused checkbox
+  // keeps focus): each checkbox follows the selection, and each row's verified submission state follows the week on screen,
+  // since the same entry may have submitted this week and not last (a chosen week arrives as one update, with the same names).
   function syncDialog(){
     if(!dialog)return;
     const list=dialog.querySelector('[data-picks-entrants]');
     if(list){
-      const html=entrantPanelHtml(state.entrants,state.selection);
-      if(list.dataset.built!==state.names.join('\u0000')){list.innerHTML=html;list.dataset.built=state.names.join('\u0000')}
-      else for(const box of list.querySelectorAll('[data-picks-entrant]'))box.checked=state.selection.includes(box.dataset.picksEntrant);
+      const html=entrantPanelHtml(state.entrants,state.selection),key=state.names.join('\u0000');
+      if(list.dataset.built!==key){list.innerHTML=html;list.dataset.built=key}
+      else{
+        const fresh=document.createElement('div');fresh.innerHTML=html;
+        const rows=[...list.querySelectorAll('.pm-entry')],next=[...fresh.querySelectorAll('.pm-entry')];
+        rows.forEach((row,i)=>{
+          const fr=next[i];if(!fr)return;
+          if(row.getAttribute('class')!==fr.getAttribute('class'))row.setAttribute('class',fr.getAttribute('class'));
+          const a=row.querySelector('.pm-entry-copy'),b=fr.querySelector('.pm-entry-copy');if(a&&b&&a.innerHTML!==b.innerHTML)a.innerHTML=b.innerHTML;
+        });
+        for(const box of list.querySelectorAll('[data-picks-entrant]'))box.checked=state.selection.includes(box.dataset.picksEntrant);
+      }
     }
     const all=dialog.querySelector('[data-picks-entrant="*"]');if(all)all.disabled=state.selection.length===state.names.length;
     const note=dialog.querySelector('[data-picks-dialog-note]');if(note)note.textContent=[state.dialogNote||'',storageNote()].filter(Boolean).join(' · ');
