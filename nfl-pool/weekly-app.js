@@ -34,6 +34,8 @@ let SHARE_FEED=null,LAST_RACE=null;
 // built on request from the same M, P, G, NFL, SLOTS and field data render() draws. Both are presentation reads: nothing is
 // graded, ranked or fetched for them.
 let LAST_RULES=null;
+// Season record (season-record.js): why the weekly pool data could not be loaded at boot ('' until then, and while it loads).
+let BOOT_ERROR='';
 // Home dashboard (home-dashboard.js): a poolcenter:update event says the Pick'em state behind the share snapshot may have
 // changed (scores, a feed failure, a publication installed, verified or found stale, or boot failing), so the dashboard
 // re-reads the snapshot. It carries no data: the snapshot is the only interface, read with poolcenter:share.
@@ -141,8 +143,11 @@ async function loadPublicationIndex(signal){
 }
 // The full published row of one week, accepted only when it is exactly that locked week, at the listed revision or a later
 // one, and its config validates.
-async function loadPublishedWeek({season,week,revision},signal){
-  const data=await readPublished(`select=${PUB_ROW_COLUMNS}&season=eq.${season}&week=eq.${week}&status=eq.locked`,signal);
+async function loadPublishedWeek(entry,signal){
+  return acceptPublishedRow(await readPublished(`select=${PUB_ROW_COLUMNS}&season=eq.${entry.season}&week=eq.${entry.week}&status=eq.locked`,signal),entry);
+}
+function acceptPublishedRow(data,{season,week,revision}){
+  if(!Array.isArray(data))throw new Error('week data is not a list');
   if(data.length!==1)throw new Error(data.length?`${season} Week ${week} came back more than once`:`${season} Week ${week} is not published`);
   const row=publishedIdentity(data[0]);
   if(row.season!==season||row.week!==week)throw new Error(`asked for ${season} Week ${week}, got ${row.season} Week ${row.week}`);
@@ -154,10 +159,11 @@ function rulingsUnavailable(){return RULINGS!==null&&RULINGS.status==='hold'}
 function rulingsStale(){return RULINGS?.stale===true}
 // The ruling state of every game, then the scoring view. Before the first load (RULINGS null) nothing has been fetched,
 // so every game is still the configured, ungraded one.
-function deriveGames(){
-  SLOTS=M.map(([away,home])=>{const ruling=RULINGS?pickemSlotRuling(RULINGS,{week:CFG.week,season:CFG.season,away,home,events:LAST_EVENTS}):{state:'none'};return{ruling,effect:pickemSlotEffect(ruling)}});
-  G=NFL.map((game,i)=>pickemEffectiveGame(game,SLOTS[i].effect));
-}
+function deriveGames(){SLOTS=slotStates(RULINGS,CFG,M,LAST_EVENTS);G=scoringView(NFL,SLOTS)}
+// The same two steps for any published week: the ruling state of each of its games (checked against that week's own raw
+// feed), then its scoring view.
+function slotStates(rulings,{season,week},matchups,events){return matchups.map(([away,home])=>{const ruling=rulings?pickemSlotRuling(rulings,{week,season,away,home,events}):{state:'none'};return{ruling,effect:pickemSlotEffect(ruling)}})}
+const scoringView=(facts,slots)=>facts.map((game,i)=>pickemEffectiveGame(game,slots[i].effect));
 
 // A tracked entry that proves no submission: the full pick list with every pick null, and a null tiebreak.
 const isNoSubmission=(p,gameCount)=>Array.isArray(p?.pickNumbers)&&p.pickNumbers.length===gameCount&&p.pickNumbers.every(n=>n===null)&&p?.tiebreak===null;
@@ -206,16 +212,21 @@ function validateConfig(c){
 // derived from the previous config is reset (HDC-15: also a newer revision of the same week).
 function applyConfig(c,publication){
   CFG=validateConfig(c);PUB=publication;PUB_STALE=null;M=CFG.games.map(g=>[norm(g.away),norm(g.home)]);
-  const numberMap=new Map();CFG.games.forEach((g,i)=>{numberMap.set(g.awayNumber,{i,team:norm(g.away)});numberMap.set(g.homeNumber,{i,team:norm(g.home)})});
-  const mapTracked=(p,id,name)=>{const picks=Array(M.length).fill(null);p.pickNumbers.forEach(n=>{if(n===null)return;const hit=numberMap.get(n);if(hit)picks[hit.i]=hit.team});return{name,id,mnf:p.tiebreak,picks,pickNumbers:p.pickNumbers.slice(),noSubmission:isNoSubmission(p,M.length)}};
+  const numberMap=pickNumberMap(CFG);
   const mapField=(p,fi)=>{const picks=p.pickNumbers.map((n,i)=>{const g=CFG.games[i];if(n===g.awayNumber)return norm(g.away);if(n===g.homeNumber)return norm(g.home);return null});return{name:null,id:p.id||`field-${fi+1}`,mnf:p.tiebreak,picks,pickNumbers:p.pickNumbers.slice()}};
-  P=CFG.participants.map((p,pi)=>mapTracked(p,p.id||String(pi),p.displayName));
+  P=CFG.participants.map((p,pi)=>trackedEntry(p,p.id||String(pi),p.displayName,numberMap,M.length));
   // Only tracked entries that submitted picks take part in the group race while games remain.
   S=P.filter(p=>!p.noSubmission);
   F=(CFG.fieldEntries||[]).map(mapField);
-  TIEBREAK_INDEX=CFG.tiebreakGameIndex;NFL=M.map(([away,home])=>({away,home,state:'pre',completed:false,winner:null,awayScore:null,homeScore:null,detail:'Scheduled',eventId:null,kickoff:null}));
+  TIEBREAK_INDEX=CFG.tiebreakGameIndex;NFL=M.map(scheduledGame);
   RULINGS=null;LAST_EVENTS=null;FEED_ISSUES=[];LAST_RACE=null;LAST_RULES=null;deriveGames();renderStaticLabels();
 }
+// Each published pick number names one game and one team of a validated config.
+function pickNumberMap(c){const numbers=new Map();c.games.forEach((g,i)=>{numbers.set(g.awayNumber,{i,team:norm(g.away)});numbers.set(g.homeNumber,{i,team:norm(g.home)})});return numbers}
+// A tracked entry of a validated config: its pick (team, or null for no pick) in each game, in published order.
+function trackedEntry(p,id,name,numberMap,gameCount){const picks=Array(gameCount).fill(null);p.pickNumbers.forEach(n=>{if(n===null)return;const hit=numberMap.get(n);if(hit)picks[hit.i]=hit.team});return{name,id,mnf:p.tiebreak,picks,pickNumbers:p.pickNumbers.slice(),noSubmission:isNoSubmission(p,gameCount)}}
+// A published game before the feed has said anything about it.
+const scheduledGame=([away,home])=>({away,home,state:'pre',completed:false,winner:null,awayScore:null,homeScore:null,detail:'Scheduled',eventId:null,kickoff:null});
 function formatWeekDates(){
   const dates=(CFG.games||[]).map(g=>g.date||g.sourceDate).filter(Boolean).map(v=>new Date(`${String(v).slice(0,10)}T12:00:00Z`)).filter(d=>!Number.isNaN(d.valueOf()));
   if(!dates.length)return `${CFG.season} season`;const lo=new Date(Math.min(...dates)),hi=new Date(Math.max(...dates));const fmt=d=>d.toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'UTC'});return lo.valueOf()===hi.valueOf()?`${fmt(lo)}, ${CFG.season}`:`${fmt(lo)}–${fmt(hi)}, ${CFG.season}`;
@@ -414,7 +425,8 @@ function warn(list,{hold=null,notes=[],stale=false}={}){const e=$('error');e.rep
 // applied, unreviewed VOID whose evidence is the commissioner's attestation of that absence; a missing game under any other
 // ruling (or none) still warns.
 const absenceResolves=slot=>slot?.effect.kind==='void'&&!slot.effect.underReview&&isAbsenceEvidence(slot.effect.incident?.evidence);
-const reportableIssue=x=>!(x.halted&&SLOTS[x.i]?.effect.kind==='void')&&!(x.missing&&absenceResolves(SLOTS[x.i]));
+const reportableIssue=x=>reportableIn(SLOTS,x);
+const reportableIn=(slots,x)=>!(x.halted&&slots[x.i]?.effect.kind==='void')&&!(x.missing&&absenceResolves(slots[x.i]));
 function report(fetchedAt){
   const warnings=[],notes=[];
   for(const x of FEED_ISSUES)if(reportableIssue(x))warnings.push(x.text);
@@ -453,14 +465,17 @@ function haltedStatus(e){for(const name of [e.status?.type?.name,e.competitions[
 // can group games by kickoff; it grades nothing, and without one the kickoff last verified for the game is kept.
 const kickoffOf=(e,old)=>typeof e?.date==='string'&&Number.isFinite(Date.parse(e.date))?e.date:(old?.kickoff??null);
 function parseEvent(e,a,h,old,tiebreakGame=false){const pair=exactCompetitorPair(e);if(!pair)return{game:old,warning:`${a}-${h}: malformed competitor data ignored`};const {away,home}=pair,st=e.status?.type?.state||'pre',done=e.status?.type?.completed===true,as=score(away.score),hs=score(home.score);if((st==='in'||done)&&(as===null||hs===null))return{game:old,warning:`${a}-${h}: invalid score ignored`};const issue=done?finalEvidenceIssue(e,away,home,as,hs):null;if(issue)return{game:old,warning:`${a}-${h}: final with contradictory ${issue} ignored`};const tied=done&&as===hs,halted=done?null:haltedStatus(e);return{halted:!!halted,game:{away:a,home:h,state:st,completed:done,winner:done&&!tied?(as>hs?a:h):null,awayScore:as,homeScore:hs,detail:String(e.status?.type?.shortDetail||e.status?.type?.detail||(done?(tied?'Final · Tie':'Final'):'Scheduled')),eventId:e.id?String(e.id):old.eventId,kickoff:kickoffOf(e,old)},warning:halted?`${a}-${h}: ${tiebreakGame?'tiebreak game':'game'} halted (${halted}), not graded; awaiting a pool ruling or official resolution`:null}}
-function eventContextWarning(e,a,h){
+function eventContextWarning(e,a,h,context=CFG){
   const season=e?.season?.year,seasonType=e?.season?.type,week=e?.week?.number;
-  if(season!=null&&Number(season)!==CFG.season)return `${a}-${h}: feed season ${season} does not match ${CFG.season}`;
+  if(season!=null&&Number(season)!==context.season)return `${a}-${h}: feed season ${season} does not match ${context.season}`;
   if(seasonType!=null&&Number(seasonType)!==2)return `${a}-${h}: feed season type ${seasonType} is not regular season`;
-  if(week!=null&&Number(week)!==CFG.week)return `${a}-${h}: feed week ${week} does not match ${CFG.week}`;
+  if(week!=null&&Number(week)!==context.week)return `${a}-${h}: feed week ${week} does not match ${context.week}`;
   return null;
 }
-function selectEvent(events,a,h,old){const q=events.filter(e=>{const c=e?.competitions?.[0],competitors=Array.isArray(c?.competitors)?c.competitors:[],x=competitors.find(v=>v?.homeAway==='away'),y=competitors.find(v=>v?.homeAway==='home');return norm(x?.team?.abbreviation)===a&&norm(y?.team?.abbreviation)===h});if(!q.length)return{event:null,warning:`${a}-${h}: expected game missing from feed`,missing:true};if(q.length!==1)return{event:null,warning:`${a}-${h}: duplicate events ignored`};const e=q[0],pair=exactCompetitorPair(e);if(!pair||norm(pair.away?.team?.abbreviation)!==a||norm(pair.home?.team?.abbreviation)!==h)return{event:null,warning:`${a}-${h}: malformed competitor data ignored`};const contextWarning=eventContextWarning(e,a,h);if(contextWarning)return{event:null,warning:contextWarning};if(old.eventId&&e.id&&String(e.id)!==String(old.eventId))return{event:null,warning:`${a}-${h}: event identity changed`};return{event:e,warning:null}}
+function selectEvent(events,a,h,old,context=CFG){const q=events.filter(e=>{const c=e?.competitions?.[0],competitors=Array.isArray(c?.competitors)?c.competitors:[],x=competitors.find(v=>v?.homeAway==='away'),y=competitors.find(v=>v?.homeAway==='home');return norm(x?.team?.abbreviation)===a&&norm(y?.team?.abbreviation)===h});if(!q.length)return{event:null,warning:`${a}-${h}: expected game missing from feed`,missing:true};if(q.length!==1)return{event:null,warning:`${a}-${h}: duplicate events ignored`};const e=q[0],pair=exactCompetitorPair(e);if(!pair||norm(pair.away?.team?.abbreviation)!==a||norm(pair.home?.team?.abbreviation)!==h)return{event:null,warning:`${a}-${h}: malformed competitor data ignored`};const contextWarning=eventContextWarning(e,a,h,context);if(contextWarning)return{event:null,warning:contextWarning};if(old.eventId&&e.id&&String(e.id)!==String(old.eventId))return{event:null,warning:`${a}-${h}: event identity changed`};return{event:e,warning:null}}
+// The protected feed path over one week's published games: each game is read from its own exact event, and on any problem
+// the last verified game is kept and the problem reported.
+function verifiedGames(events,matchups,facts,tiebreakIndex,context){const issues=[],next=matchups.map(([a,h],i)=>{const s=selectEvent(events,a,h,facts[i],context);if(s.warning)issues.push({i,text:s.warning,missing:s.missing===true});if(!s.event)return facts[i];const p=parseEvent(s.event,a,h,facts[i],i===tiebreakIndex);if(p.warning)issues.push({i,text:p.warning,halted:p.halted});return p.game});return{next,issues}}
 function ageSeconds(ts){const ms=Date.parse(ts);if(!Number.isFinite(ms))return null;const delta=Date.now()-ms;if(delta<-60000)return null;return Math.max(0,Math.floor(delta/1000))}
 // HDC-15: published data that could not be verified is never LIVE: it takes LIVE's (or DELAYED's) place and rides along with
 // every more serious state, which keeps its precedence.
@@ -487,7 +502,7 @@ async function feed(signal){
 // view is derived again on every render. A rulings load that fails keeps rulings already verified this session, shown as
 // RULINGS STALE; with none, the contest holds and nothing is graded from the NFL feed alone. HDC-15: it runs inside a refresh
 // generation (refresh() or a week switch), which owns the abort controller and the REFRESH button.
-async function update(id,signal){try{const [scores,rulings]=await Promise.allSettled([feed(signal),CFG.season<FIRST_RULING_SEASON?Promise.resolve(null):loadRulings(signal)]);if(id!==gen)return;if(rulings.status==='rejected')console.warn(rulings.reason);RULINGS=evaluateContestRulings({contestId:contestIdFor(CFG.season,'pickem'),contestType:'pickem',season:CFG.season,...(rulings.status==='fulfilled'?{data:rulings.value}:{error:rulings.reason}),previous:RULINGS});if(scores.status==='rejected')throw scores.reason;const j=scores.value,issues=[],next=M.map(([a,h],i)=>{const s=selectEvent(j.events,a,h,NFL[i]);if(s.warning)issues.push({i,text:s.warning,missing:s.missing===true});if(!s.event)return NFL[i];const p=parseEvent(s.event,a,h,NFL[i],i===TIEBREAK_INDEX);if(p.warning)issues.push({i,text:p.warning,halted:p.halted});return p.game});if(id!==gen)return;NFL=next;LAST_EVENTS=j.events;FEED_ISSUES=issues;render();report(j.fetchedAt)}catch(e){if(e?.name==='AbortError'||id!==gen)return;SHARE_FEED={...(SHARE_FEED?.cfg===CFG?SHARE_FEED:{cfg:CFG,fetchedAt:null,incomplete:false,warnings:0,review:false}),failed:true};render();const staleText=`${PUB_STALE?' · PUBLISHED DATA STALE':''}${rulingsStale()?' · RULINGS STALE':''}`;if(document.body.dataset.view==='survivor')showPaused();else{$('sync').textContent=lastFetchedAt?`FEED UNAVAILABLE${staleText} · last good ${ageSeconds(lastFetchedAt)??'?'}s ago`:`FEED UNAVAILABLE${staleText}`;$('dot').style.background='var(--red)'}warn(['Automatic score refresh failed. Existing results are preserved; tap REFRESH to retry.'],{hold:rulingsUnavailable()?RULINGS.reason:null,stale:rulingsStale()});announce()}}
+async function update(id,signal){try{const [scores,rulings]=await Promise.allSettled([feed(signal),CFG.season<FIRST_RULING_SEASON?Promise.resolve(null):loadRulings(signal)]);if(id!==gen)return;if(rulings.status==='rejected')console.warn(rulings.reason);RULINGS=evaluateContestRulings({contestId:contestIdFor(CFG.season,'pickem'),contestType:'pickem',season:CFG.season,...(rulings.status==='fulfilled'?{data:rulings.value}:{error:rulings.reason}),previous:RULINGS});if(scores.status==='rejected')throw scores.reason;const j=scores.value,{next,issues}=verifiedGames(j.events,M,NFL,TIEBREAK_INDEX,CFG);if(id!==gen)return;NFL=next;LAST_EVENTS=j.events;FEED_ISSUES=issues;render();report(j.fetchedAt)}catch(e){if(e?.name==='AbortError'||id!==gen)return;SHARE_FEED={...(SHARE_FEED?.cfg===CFG?SHARE_FEED:{cfg:CFG,fetchedAt:null,incomplete:false,warnings:0,review:false}),failed:true};render();const staleText=`${PUB_STALE?' · PUBLISHED DATA STALE':''}${rulingsStale()?' · RULINGS STALE':''}`;if(document.body.dataset.view==='survivor')showPaused();else{$('sync').textContent=lastFetchedAt?`FEED UNAVAILABLE${staleText} · last good ${ageSeconds(lastFetchedAt)??'?'}s ago`:`FEED UNAVAILABLE${staleText}`;$('dot').style.background='var(--red)'}warn(['Automatic score refresh failed. Existing results are preserved; tap REFRESH to retry.'],{hold:rulingsUnavailable()?RULINGS.reason:null,stale:rulingsStale()});announce()}}
 // HDC-15. A full refresh: verify that the config on screen is still the published revision of its week (a newer revision is
 // loaded and validated before it replaces it whole), then read the scores and the rules and rulings for whatever config is
 // active. One generation covers both, so a later refresh or week switch supersedes all of it.
@@ -641,8 +656,60 @@ function rulesSnapshot(){
 }
 document.addEventListener('poolcenter:picks',event=>{if(event?.detail?.contest==='pickem')event.detail.snapshot=picksSnapshot()});
 document.addEventListener('poolcenter:rules',event=>{if(event?.detail?.contest==='pickem')event.detail.snapshot=rulesSnapshot()});
+// Season record (season-record.js): the season history asks with a poolcenter:season event, answered at once; nothing is
+// fetched, rendered or changed for it. 'state' is the season of the week on screen: the publication index this page last
+// verified, and the week on screen with its grade, from exactly the facts, raw feed, issues and rulings render() scores
+// (handed over read-only, so the week keeps its grade when another one is chosen). 'prepare' accepts another week's published
+// row by exactly the checks a chosen week's row passes. 'grade' grades such a week exactly as the week on screen is graded:
+// its own week's feed through the protected path (the last verified game kept on any problem), its own week's rulings
+// evaluated as update() evaluates them (a failed load keeps rulings verified earlier this session, stale, and a stale week
+// stays stale), then the scoring view and scoreEntry. Tracked names, ids and picks only, never a field entry; nothing is
+// answered while a chosen week loads.
+const trackedOf=(p,raw)=>({id:p.id,identified:typeof raw?.id==='string'&&raw.id!=='',name:p.name,picks:p.picks,noSubmission:p.noSubmission===true});
+function onScreenWeek(){return{season:PUB.season,week:PUB.week,revision:PUB.revision,publishedAt:PUB.publishedAt,tiebreakIndex:TIEBREAK_INDEX,matchups:M,tracked:P.map((p,i)=>trackedOf(p,CFG.participants[i]))}}
+function preparedWeek(row){
+  const c=row.config,matchups=c.games.map(g=>[norm(g.away),norm(g.home)]),numbers=pickNumberMap(c);
+  if(c.season!==row.season||c.week!==row.week)throw new Error(`${row.season} Week ${row.week} holds the config of ${c.season} Week ${c.week}`);
+  return{season:row.season,week:row.week,revision:row.revision,publishedAt:row.publishedAt,tiebreakIndex:c.tiebreakGameIndex,matchups,
+    tracked:c.participants.map((p,pi)=>trackedOf(trackedEntry(p,p.id||String(pi),p.displayName,numbers,matchups.length),p))};
+}
+// A void game is resolved but no NFL final; a held game, and a game not yet final, is not graded. A halted game awaiting a
+// ruling is ungraded, not unverified: only the other reportable feed issues leave a graded week unverified.
+function weekGrade(w,{nfl,events,issues,rulings}){
+  const slots=slotStates(rulings,w,w.matchups,events),games=scoringView(nfl,slots);
+  return{records:w.tracked.map(p=>({id:p.id,identified:p.identified,name:p.name,noSubmission:p.noSubmission,...scoreEntry(p.picks,games)})),
+    games:{total:games.length,final:games.filter(g=>g.completed&&!g.void).length,void:games.filter(g=>g.void).length,hold:games.filter(g=>g.hold).length},
+    settled:games.every(g=>g.completed),unverified:issues.filter(x=>!x.halted&&reportableIn(slots,x)).length,
+    rulings:rulings===null?'none':rulings.status==='hold'?'hold':rulings.stale===true?'stale':'ok'};
+}
+function seasonState(){
+  if(!CFG||!PUB)return BOOT_ERROR?{ready:false,failed:true,reason:`the weekly pool data could not be loaded (${BOOT_ERROR})`}:{ready:false,reason:"no Pick'em week is on screen"};
+  if(switching)return{ready:false,switching:true,reason:'another week is loading'};
+  if(CFG.season!==PUB.season||CFG.week!==PUB.week)return{ready:false,reason:`${PUB.season} Week ${PUB.week} holds the config of ${CFG.season} Week ${CFG.week}`};
+  const week=onScreenWeek(),feed=SHARE_FEED?.cfg===CFG?SHARE_FEED:null;
+  return{ready:true,season:PUB.season,week:PUB.week,revision:PUB.revision,publishedStale:PUB_STALE!==null,
+    index:PUB_WEEKS.map(({season,week,revision,publishedAt})=>({season,week,revision,publishedAt})),
+    current:{week,nfl:NFL,events:LAST_EVENTS,issues:FEED_ISSUES,rulings:RULINGS,feed:{fetchedAt:feed?.fetchedAt??null,failed:feed?.failed===true},
+      graded:weekGrade(week,{nfl:NFL,events:LAST_EVENTS,issues:FEED_ISSUES,rulings:RULINGS})}};
+}
+function seasonGrade({week,nfl=null,events=null,issues=[],parse=false,rulings,stale=false,previous=null}){
+  if(parse&&!Array.isArray(events))throw new Error('the score feed has no event list');
+  let facts=nfl||week.matchups.map(scheduledGame),dataset=previous;
+  if(parse)({next:facts,issues}=verifiedGames(events,week.matchups,facts,week.tiebreakIndex,week));
+  if(rulings!==undefined){
+    const evaluate=input=>evaluateContestRulings({contestId:contestIdFor(week.season,'pickem'),contestType:'pickem',season:week.season,...input});
+    dataset=evaluate({...rulings,previous});
+    if(stale&&dataset.status==='ready')dataset=evaluate({error:new Error('rules and rulings could not be refreshed'),previous:dataset});
+  }
+  return{nfl:facts,issues,rulings:dataset,graded:weekGrade(week,{nfl:facts,events,issues,rulings:dataset})};
+}
+document.addEventListener('poolcenter:season',event=>{
+  const d=event?.detail;if(!d||typeof d!=='object')return;
+  try{d.result=d.op==='state'?seasonState():d.op==='prepare'?{ok:true,week:preparedWeek(acceptPublishedRow(d.data,d.entry))}:d.op==='grade'?{ok:true,...seasonGrade(d)}:null}
+  catch(e){d.result={ok:false,error:e?.message||String(e)}}
+});
 setupViewNavigation();
 $('refresh').addEventListener('click',()=>void refresh());
 document.addEventListener('visibilitychange',autoRefresh);
-loadWeeks().catch(e=>{$('sync').textContent='CONFIG UNAVAILABLE';$('dot').style.background='var(--red)';$('error').innerHTML=`<div class="error">Unable to load weekly pool data: ${esc(e.message)}</div>`;console.error(e);announce()});
+loadWeeks().catch(e=>{$('sync').textContent='CONFIG UNAVAILABLE';$('dot').style.background='var(--red)';$('error').innerHTML=`<div class="error">Unable to load weekly pool data: ${esc(e.message)}</div>`;console.error(e);BOOT_ERROR=e?.message||String(e);announce()});
 setInterval(autoRefresh,20000);
