@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="survivor.css?v=4">
 <link rel="stylesheet" href="share.css?v=1">
 <link rel="stylesheet" href="home-dashboard.css?v=1">
-<link rel="stylesheet" href="picks-mobile.css?v=4">
+<link rel="stylesheet" href="picks-mobile.css?v=5">
 </head>
 <body>
 <div class="stadium-glow" aria-hidden="true"></div>
@@ -216,6 +216,15 @@
           <div class="pm-sheet-actions"><button type="button" class="share-action" data-picks-entrant="*">Select all</button><button type="button" class="share-action primary" data-picks-close>Done</button></div>
         </div>
       </dialog>
+      <dialog class="pm-dialog" id="picksSlates" aria-labelledby="picksSlatesTitle">
+        <div class="pm-sheet">
+          <div class="pm-sheet-head"><div><span class="section-kicker">Pick Board</span><h2 id="picksSlatesTitle">Slates to show</h2></div><button type="button" class="share-close" data-picks-slates-close aria-label="Close slate selection">✕</button></div>
+          <p class="pm-sheet-note">Choose any combination of this week's kickoff slates, in Eastern time. At least one stays selected. Select all also shows slates new to a later week; the choice is remembered in this browser.</p>
+          <div class="pm-sheet-list" data-picks-slate-list></div>
+          <p class="pm-sheet-status" data-picks-slates-note role="status" aria-live="polite"></p>
+          <div class="pm-sheet-actions"><button type="button" class="share-action" data-picks-slate-choice="*">Select all</button><button type="button" class="share-action primary" data-picks-slates-close>Done</button></div>
+        </div>
+      </dialog>
     </section>
   </div>
 
@@ -235,7 +244,7 @@
 <script type="module" src="survivor-app.js?v=12"></script>
 <script type="module" src="share-ui.js?v=2"></script>
 <script type="module" src="home-dashboard.js?v=1"></script>
-<script type="module" src="picks-mobile.js?v=4"></script>
+<script type="module" src="picks-mobile.js?v=5"></script>
 <script src="pwa.js?v=1" defer></script>
 </body>
 </html>

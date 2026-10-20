@@ -1,6 +1,7 @@
 /* V1.4 premium compact Picks UX (picks-mobile.js): one compact card per matchup on the Picks view below 761px (the comparison
-   table keeps wider screens exactly as before), each kickoff slate a collapsible group behind its heading, the entries, slate
-   and status controls, the entry selection panel, and the collapsible Rules & rulings cards on the Games and Survivor views.
+   table keeps wider screens exactly as before), each kickoff slate a collapsible group behind its heading, the entries, slates
+   and status controls, the entry and slate selection panels, and the collapsible Rules & rulings cards on the Games and
+   Survivor views.
    Without the module the page is unchanged: the card and filter containers stay hidden, the table shows at every width and
    the page copy describes the table. */
 .picks.is-mobile-ready .picks-filters,.picks.is-mobile-ready .picks-board,.pm-copy-cards{display:none}
@@ -14,20 +15,16 @@
   .picks.is-mobile-ready>.head h2{white-space:nowrap}
 }
 .pm-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
-/* Controls: the entries compared (one control that opens the selection panel), the slate and the game status; 44px targets. */
+/* Controls: the entries compared and the slates shown (one control each, opening its selection panel, side by side) and the
+   game status; 44px targets. A long summary is cut with an ellipsis, never widening the row. */
 .pm-filters{display:grid;gap:7px;padding:0 10px 10px}
 .pm-row{display:flex;flex-wrap:wrap;gap:6px}
-.pm-compare,.pm-select{flex:1 1 150px;min-width:0;min-height:44px;border:1px solid #3a414b;border-radius:11px;background:linear-gradient(180deg,#151a21,#0d1116);color:var(--text);font-size:11px;font-weight:900;box-shadow:inset 0 1px 0 #ffffff0a}
-.pm-compare{display:inline-flex;align-items:center;justify-content:space-between;gap:8px;padding:0 11px 0 12px;text-align:left;cursor:pointer}
-.pm-compare:hover,.pm-select:hover{border-color:#4a525d}
+.pm-compare{display:inline-flex;align-items:center;justify-content:space-between;gap:8px;flex:1 1 150px;min-width:0;min-height:44px;padding:0 11px 0 12px;border:1px solid #3a414b;border-radius:11px;background:linear-gradient(180deg,#151a21,#0d1116);color:var(--text);font-size:11px;font-weight:900;text-align:left;cursor:pointer;box-shadow:inset 0 1px 0 #ffffff0a}
+.pm-compare:hover{border-color:#4a525d}
 .pm-compare-copy{display:flex;flex-direction:column;min-width:0;line-height:1.15}
 .pm-compare-kicker{color:var(--dim);font-size:7.5px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}
 .pm-compare b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
 .pm-caret{flex:0 0 auto;width:7px;height:7px;margin:0 2px 3px 0;border-right:2px solid #c54b51;border-bottom:2px solid #c54b51;transform:rotate(45deg)}
-.pm-select{appearance:none;padding:0 30px 0 12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:
-  linear-gradient(45deg,transparent 50%,#c8cbd0 50%) calc(100% - 16px) 19px/5px 5px no-repeat,
-  linear-gradient(135deg,#c8cbd0 50%,transparent 50%) calc(100% - 11px) 19px/5px 5px no-repeat,
-  linear-gradient(180deg,#151a21,#0d1116)}
 .pm-segments{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line);border-radius:11px;overflow:hidden;background:#0a0d12}
 .pm-segment{min-height:42px;min-width:0;padding:0 4px;border:0;border-left:1px solid #ffffff0c;background:transparent;color:var(--muted);font-size:9.5px;font-weight:900;text-transform:uppercase;letter-spacing:.05em;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:5px}
 .pm-segment:first-child{border-left:0}
@@ -35,7 +32,7 @@
 .pm-segment[aria-pressed="true"]{background:linear-gradient(180deg,#8f1c22,#6f1116);color:#fff;box-shadow:inset 0 1px 0 #ffffff14}
 .pm-segment[aria-pressed="true"] b{color:#fff}
 .pm-note{margin:0;color:var(--dim);font-size:9px;line-height:1.45}
-.pm-compare:focus-visible,.pm-select:focus-visible,.pm-segment:focus-visible,.pm-toggle:focus-visible,.pm-summary:focus-visible,.pm-slate-toggle:focus-visible,.pm-slates-action:focus-visible,.pm-entry:has(input:focus-visible),.rules-toggle:focus-visible{outline:2px solid #ef5a61;outline-offset:2px}
+.pm-compare:focus-visible,.pm-segment:focus-visible,.pm-toggle:focus-visible,.pm-summary:focus-visible,.pm-slate-toggle:focus-visible,.pm-slates-action:focus-visible,.pm-entry:has(input:focus-visible),.rules-toggle:focus-visible{outline:2px solid #ef5a61;outline-offset:2px}
 /* Disagreements only: one small switch under the status segments, off until tapped, disabled with fewer than two entries. */
 .pm-options{display:flex;flex-wrap:wrap;gap:6px}
 .pm-toggle{display:inline-flex;align-items:center;gap:8px;min-height:42px;padding:0 12px 0 10px;border:1px solid var(--line);border-radius:999px;background:#0a0d12;color:var(--muted);font-size:9.5px;font-weight:900;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;-webkit-tap-highlight-color:transparent}
@@ -156,7 +153,8 @@
 .pm-why{display:block;color:var(--muted);font-size:9px;line-height:1.45;overflow-wrap:anywhere}
 .pm-why b{display:inline-block;margin-right:6px;font-size:7.5px;font-weight:950;letter-spacing:.08em;text-transform:uppercase;color:#c1c6cc}
 .pm-why-void b{color:#c7b8ff}.pm-why-review b{color:var(--gold)}.pm-why-issue b{color:#ffb1b5}.pm-why-tiebreak b{color:#8fc1ff}
-/* The entry selection panel: one labelled 48px checkbox row per tracked entry, Select all and Done. */
+/* The selection panels (entries, slates): one labelled 48px checkbox row per tracked entry or per slate of the week, Select
+   all and Done. */
 .pm-dialog{width:min(420px,calc(100vw - 24px));max-height:calc(100vh - 24px);max-height:calc(100dvh - 24px);padding:0;border:1px solid var(--line2);border-radius:18px;background:#0d1015;color:var(--text);box-shadow:var(--shadow);overflow:auto;overscroll-behavior:contain}
 .pm-dialog::backdrop{background:#000c}
 .pm-sheet{display:grid;gap:10px;padding:14px}

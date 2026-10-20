@@ -1,8 +1,9 @@
 // V1.4 premium compact Picks UX regressions (after the V1.3 mobile UX), with the V1.4 final polish (compact pick chips, card
-// name labels and Disagreements only) and the V1.4 collapsible slate groups. picks-mobile.js's pure parts directly (kickoff
-// grouping in Eastern time, the slate options and filter, the status filter, the slate expansion states and summaries, the
-// entrant selection and its storage, the card name labels and their storage, the
-// disagreement filter, the compact card, slate, board and control markup, the Rules & rulings summary and alerts), and its page part on a small DOM built from the real Games,
+// name labels and Disagreements only), the V1.4 collapsible slate groups and the V1.4 multi-select slates. picks-mobile.js's
+// pure parts directly (kickoff grouping in Eastern time, the stable slate names, the slate options, choice, filter and toggle,
+// their storage and labels, the status filter, the slate expansion states and summaries, the entrant selection and its storage,
+// the card name labels and their storage, the disagreement filter, the compact card, slate, board, control and panel markup,
+// the Rules & rulings summary and alerts), and its page part on a small DOM built from the real Games,
 // Survivor and Picks panels of index.html (so the markup the module needs is the markup the page ships), with the two apps stood
 // in for by poolcenter:picks and poolcenter:rules listeners that answer with fixtures and poolcenter:update announcements,
 // exactly as weekly-app.js and survivor-app.js do. The stylesheet and the page are checked as text for the small-screen layout
@@ -10,10 +11,12 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {STORAGE_KEY,PREFERENCES_VERSION,TIME_ZONE,STATUS_FILTERS,STATUS_LABELS,KINDS,ALL_SLATES,kickoffParts,dateParts,slotOf,slotLabel,groupGames,
-  slateOptions,resolveSlate,filterSlate,matchesStatus,filterGames,statusCounts,normalizeSelection,readSelection,writeSelection,toggleEntrant,compareLabel,
-  summaryHtml,detailsHtml,cardHtml,boardHtml,slateOptionsHtml,filterBarHtml,entrantPanelHtml,filterNote,rulesSummary,alertsHtml,
+  slateOptions,matchesStatus,filterGames,statusCounts,normalizeSelection,readSelection,writeSelection,toggleEntrant,compareLabel,
+  summaryHtml,detailsHtml,cardHtml,boardHtml,filterBarHtml,entrantPanelHtml,filterNote,rulesSummary,alertsHtml,
   LABELS_KEY,LABEL_MODES,LABEL_MAX,NARROW_SCREEN,shortLabels,labelMap,defaultLabels,readLabels,writeLabels,disagreement,filterDisagreements,emptyDisagreements,
-  slateHasLive,defaultSlateOpen,slateOpen,nextSlateStates,setSlateOpen,slateSummary,slateSummaryHtml,slateHtml,slatesBarHtml} from './picks-mobile.js';
+  slateHasLive,defaultSlateOpen,slateOpen,nextSlateStates,setSlateOpen,slateSummary,slateSummaryHtml,slateHtml,slatesBarHtml,
+  SLATES_KEY,SLATES_VERSION,SLATE_NAME,slateKeyOf,slateKeyLabel,slatesShown,filterSlates,toggleSlates,normalizeSlates,readSlates,writeSlates,
+  slatesLabel,shownSlateNames,slatesFallbackNote,slatePanelHtml} from './picks-mobile.js';
 
 const failures=[];
 const check=async(name,fn)=>{try{await fn()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
@@ -56,8 +59,13 @@ const GAMES=()=>[
 // other game, Thaddeus has no picks anywhere; the VOID game 6 and the HOLD game 7 are unanimous.
 const MIXED=()=>GAMES().map(g=>[3,4,5,6,7,8,9,11].includes(g.index)?{...g,picks:pk([g.away.code,g.away.code,g.away.code,null],g.picks.map(p=>p.result))}:g);
 const snapshot=(o={})=>({ready:true,contest:'pickem',season:2026,week:3,revision:2,fieldSize:87,tiebreakIndex:5,entrants:[{name:'D.C.',noSubmission:false},{name:'JC',noSubmission:false},{name:'DJS',noSubmission:false},{name:'Thaddeus',noSubmission:true}],games:GAMES(),...o});
-const SLATES=[['all','All Slates',12],['2026-09-24|3','Thursday Night',1],['2026-09-27|0','Sunday Morning',1],['2026-09-27|1','Sunday Early',4],['2026-09-27|2','Sunday Late',2],['2026-09-27|3','Sunday Night',1],['2026-09-27|4','Sunday · Kickoff TBD',1],['2026-09-28|3','Monday Night',1],['tbd','Kickoff TBD',1]];
+// The fixture week's slate options by their stable names (All Slates first), and each slate's board key (its Eastern date and
+// slot) beside its stable name.
+const SLATES=[['all','All Slates',12],['thursday-night','Thursday Night',1],['sunday-morning','Sunday Morning',1],['sunday-early','Sunday Early',4],['sunday-late','Sunday Late',2],['sunday-night','Sunday Night',1],['sunday-tbd','Sunday · Kickoff TBD',1],['monday-night','Monday Night',1],['tbd','Kickoff TBD',1]];
+const BOARD_KEYS=[['2026-09-24|3','thursday-night'],['2026-09-27|0','sunday-morning'],['2026-09-27|1','sunday-early'],['2026-09-27|2','sunday-late'],['2026-09-27|3','sunday-night'],['2026-09-27|4','sunday-tbd'],['2026-09-28|3','monday-night'],['tbd','tbd']];
 const EARLY='2026-09-27|1',LATE='2026-09-27|2',NIGHT='2026-09-27|3';
+const TN='thursday-night',SM='sunday-morning',SE='sunday-early',SL='sunday-late',SN='sunday-night',ST='sunday-tbd',MN='monday-night';
+const EVERY=SLATES.slice(1).map(([key])=>key);
 // The Rules & rulings answers, as the apps give them (the model is contest-rulings.js's rulesModel output).
 const incident=(o={})=>({key:'3|BUF|CIN|1',week:3,matchup:'BUF @ CIN',status:'APPLIED',detail:'VOID: removed from scoring, with no win, no loss and no points. Applied by commissioner ruling under policy revision 1.',review:null,evidence:'Recorded incident: STATUS_CANCELED · event 401437947',history:[{label:'Ruled VOID',date:'2026-10-08',note:'League canceled the game.'}],...o});
 const readyModel=(o={})=>({state:'ready',contestType:"Pick'em contest",contestName:"Pool Center 2026 Pick'em",stale:null,policy:{revision:1,effectiveWeek:1,name:'Void',text:'A canceled, postponed or suspended game…',publicNote:null},revisions:[{revision:1,effectiveWeek:1,name:'Void',publicNote:null}],confirmation:'Commissioner confirmation is required…',incidents:[],empty:'No incident ruling has been confirmed for this contest so far.',...o});
@@ -71,6 +79,8 @@ await check('the constants: one versioned storage key (the V1.3 key), Eastern ti
   assert(Object.isFrozen(STATUS_FILTERS)&&Object.isFrozen(KINDS));
   assert.equal(LABELS_KEY,'poolcenter.picks.labels.v1');assert.deepEqual(LABEL_MODES,['compact','full']);assert(Object.isFrozen(LABEL_MODES));
   assert.equal(LABEL_MAX,6);assert.equal(NARROW_SCREEN,'(max-width:480px)');
+  assert.equal(SLATES_KEY,'poolcenter.picks.slates.v1');assert.equal(SLATES_VERSION,1);
+  assert.equal(new Set([STORAGE_KEY,LABELS_KEY,SLATES_KEY]).size,3,'three keys, each with its own shape');
 });
 
 // ---- Kickoffs in Eastern time.
@@ -98,8 +108,9 @@ await check('slots are by clock time: before noon morning, noon to 2:59 early, 3
   assert.deepEqual([slotLabel('Thursday','night'),slotLabel('Sunday','early'),slotLabel('Sunday','late'),slotLabel('Sunday','night'),slotLabel('Monday','night'),slotLabel('Sunday','morning'),slotLabel('Saturday','tbd')],
     ['Thursday Night','Sunday Early','Sunday Late','Sunday Night','Monday Night','Sunday Morning','Saturday · Kickoff TBD']);
 });
-await check('games are grouped chronologically by Eastern date and slot, kickoff order inside a group, a date without a time in a TBD group on its date, no date at all last',()=>{
+await check('games are grouped chronologically by Eastern date and slot, kickoff order inside a group, a date without a time in a TBD group on its date, no date at all last; each group names its slate by a stable name',()=>{
   const groups=groupGames(GAMES());
+  assert.deepEqual(groups.map(g=>[g.key,g.slate]),BOARD_KEYS,'the board key is the date and slot, the stable name the weekday and slot');
   assert.deepEqual(groups.map(g=>[g.key,g.label,g.date,g.games.map(x=>x.game.index)]),[
     ['2026-09-24|3','Thursday Night','Thu, Sep 24',[0]],
     ['2026-09-27|0','Sunday Morning','Sun, Sep 27',[11]],
@@ -120,42 +131,138 @@ await check('unusual slates get true labels and are never invented: a Thanksgivi
   assert.deepEqual(groupGames([g(0,'2026-11-26T17:30:00Z'),g(1,'2026-11-26T21:30:00Z'),g(2,'2026-11-27T01:20:00Z'),g(3,'2026-12-19T18:00:00Z'),g(4,'2026-12-19T21:30:00Z'),g(5,'2026-12-20T01:15:00Z'),g(6,'2026-12-25T18:00:00Z'),g(7,'2026-12-26T00:15:00Z')]).map(x=>x.label),
     ['Thursday Early','Thursday Late','Thursday Night','Saturday Early','Saturday Late','Saturday Night','Friday Early','Friday Night']);
 });
+await check('stable slate names: the Eastern weekday and slot, never a date, so Sunday Early is sunday-early in every week, across the clock change, for an international morning, a Thanksgiving Thursday, a Black Friday, a Saturday doubleheader, a Christmas Wednesday and a rescheduled Tuesday night; a dated game without a kickoff is that day’s tbd, an undated one tbd; every name validates and labels back as the board labels it',()=>{
+  const g=(i,kickoff,date=null)=>game(i,'A','B',{kickoff,date});
+  const named=games=>groupGames(games).map(x=>[x.slate,x.label]);
+  assert.deepEqual(named([g(0,'2026-09-27T17:00:00Z'),g(1,'2026-10-04T17:00:00Z'),g(2,'2026-11-08T18:00:00Z'),g(3,'2026-11-08T17:00:00Z')]).map(x=>x[0]),[SE,SE,SE],'1:00 PM EDT, 1:00 PM EDT a week later and 1:00 PM EST (with noon EST beside it, still early): one name, three groups');
+  // Kickoffs from several seasons, listed out of order: grouped chronologically, each named by its Eastern weekday and slot.
+  const odd=[g(0,'2026-10-11T13:30:00Z'),g(1,'2026-11-26T17:30:00Z'),g(2,'2026-11-26T21:30:00Z'),g(3,'2026-11-27T01:20:00Z'),g(4,'2026-11-27T20:00:00Z'),g(5,'2026-12-19T18:00:00Z'),g(6,'2026-12-19T21:30:00Z'),g(7,'2026-12-20T01:00:00Z'),g(8,'2024-12-25T18:00:00Z'),g(9,'2024-12-25T21:30:00Z'),g(10,'2026-10-06T23:30:00Z'),g(11,'2026-09-28T03:59:00Z')];
+  assert.deepEqual(named(odd),[['wednesday-early','Wednesday Early'],['wednesday-late','Wednesday Late'],['sunday-night','Sunday Night'],['tuesday-night','Tuesday Night'],['sunday-morning','Sunday Morning'],
+    ['thursday-early','Thursday Early'],['thursday-late','Thursday Late'],['thursday-night','Thursday Night'],['friday-late','Friday Late'],['saturday-early','Saturday Early'],['saturday-late','Saturday Late'],['saturday-night','Saturday Night']],
+    'Christmas 2024 (a Wednesday), 11:59 PM on a Sunday, a game rescheduled to a Tuesday 7:30 PM, a London 9:30 AM, Thanksgiving, Black Friday 3:00 PM and a Saturday tripleheader');
+  assert.deepEqual(named([g(0,null,'2026-09-27'),g(1,null,null),g(2,null,'2026-11-26')]),[[ST,'Sunday · Kickoff TBD'],['thursday-tbd','Thursday · Kickoff TBD'],['tbd','Kickoff TBD']],'without a verified kickoff: the published date’s tbd, or tbd');
+  for(const [name,label] of [...named(odd),...named(GAMES()),[ST,'Sunday · Kickoff TBD'],['tbd','Kickoff TBD']]){assert.match(name,SLATE_NAME,name);assert.equal(slateKeyLabel(name),label,`${name} labels back as ${label}`)}
+  assert.deepEqual([slateKeyOf('Sunday','early'),slateKeyOf('Thursday','night'),slateKeyOf('Sunday','tbd'),slateKeyOf(null,'tbd'),slateKeyOf('','tbd')],[SE,TN,ST,'tbd','tbd']);
+  for(const bad of ['2026-09-27|1','Sunday-Early','sunday early','sunday-brunch','someday-early','sunday-','-early','all','',null,undefined,7,{}]){assert.equal(SLATE_NAME.test(String(bad)),false,String(bad));assert.equal(slateKeyLabel(bad),'',String(bad))}
+});
 
-// ---- Slates.
-await check('the slate options are exactly the kickoff groups present, All Slates first, each with its game count; a slate that is not offered resolves to All Slates',()=>{
+// ---- Slates (the V1.4 multi-select slates).
+await check('the slate options are exactly the slates present, by their stable names, in schedule order, All Slates first, each with its date and game count, from the whole schedule; a slate a week holds on two dates is one option with both dates and both counts; nothing is invented',()=>{
   assert.deepEqual(slateOptions(GAMES()).map(o=>[o.key,o.label,o.count]),SLATES);
   assert.deepEqual(slateOptions(GAMES()).map(o=>o.date),['','Thu, Sep 24','Sun, Sep 27','Sun, Sep 27','Sun, Sep 27','Sun, Sep 27','Sun, Sep 27','Mon, Sep 28','']);
   assert.deepEqual(slateOptions([]),[{key:'all',label:'All Slates',date:'',count:0}]);assert.deepEqual(slateOptions(null),[{key:'all',label:'All Slates',date:'',count:0}]);
-  const options=slateOptions(GAMES());
-  assert.equal(resolveSlate(EARLY,options),EARLY);assert.equal(resolveSlate('all',options),'all');
-  for(const missing of ['2026-10-04|1',null,undefined,42,'',{}])assert.equal(resolveSlate(missing,options),'all',String(missing));
-  assert.equal(resolveSlate(EARLY,[]),'all');
+  assert.deepEqual(slateOptions(GAMES().filter(g=>[3,7,5].includes(g.index))).map(o=>[o.key,o.count]),[['all',3],[SL,2],[MN,1]],'only the slates the games have');
+  // A game postponed a week within its pool week: Sunday Early on two dates.
+  const twice=[...GAMES(),game(12,'TEN','JAX',{kickoff:'2026-10-04T17:00:00Z',date:'2026-10-04'})];
+  assert.deepEqual(slateOptions(twice).filter(o=>o.key===SE).map(o=>[o.label,o.date,o.count]),[['Sunday Early','Sun, Sep 27 · Sun, Oct 4',5]]);
+  assert.deepEqual(slateOptions(twice).map(o=>o.key),SLATES.map(([key])=>key),'still one option per slate, in schedule order');
+  assert.deepEqual(groupGames(twice).filter(g=>g.slate===SE).map(g=>[g.key,g.date]),[[EARLY,'Sun, Sep 27'],['2026-10-04|1','Sun, Oct 4']],'the board keeps two groups, one per date');
 });
-await check('filtering by a slate keeps the published order and only that slate’s games; All Slates keeps everything; an absent slate keeps nothing',()=>{
-  assert.deepEqual(filterSlate(GAMES(),EARLY).map(g=>g.index),[1,2,6,10]);
-  assert.deepEqual(filterSlate(GAMES(),LATE).map(g=>g.index),[3,7],'published order, not kickoff order');
-  assert.deepEqual(filterSlate(GAMES(),'tbd').map(g=>g.index),[9]);
-  assert.deepEqual(filterSlate(GAMES(),'2026-09-27|4').map(g=>g.index),[8]);
-  assert.deepEqual(filterSlate(GAMES(),'all').map(g=>g.index),[0,1,2,3,4,5,6,7,8,9,10,11]);
-  assert.deepEqual(filterSlate(GAMES(),null).map(g=>g.index),[0,1,2,3,4,5,6,7,8,9,10,11]);
-  assert.deepEqual(filterSlate(GAMES(),'2026-10-04|1'),[]);assert.deepEqual(filterSlate(null,EARLY),[]);
+await check('the slates shown: All Slates for ALL_SLATES or anything that is not a list; a list shows the chosen slates the week offers in schedule order, keeping the others aside without dropping them; a list none of whose slates the week offers shows All Slates with a fallback; an empty week falls back to nothing',()=>{
+  const options=slateOptions(GAMES());
+  assert.deepEqual(slatesShown(ALL_SLATES,options),{all:true,keys:EVERY,fallback:false,missing:[]});
+  for(const notAList of [undefined,null,'all',SE,42,{}])assert.deepEqual(slatesShown(notAList,options),{all:true,keys:EVERY,fallback:false,missing:[]},String(notAList));
+  assert.deepEqual(slatesShown([SE],options),{all:false,keys:[SE],fallback:false,missing:[]});
+  assert.deepEqual(slatesShown([MN,TN,SN],options),{all:false,keys:[TN,SN,MN],fallback:false,missing:[]},'schedule order, whatever order they were chosen in');
+  assert.deepEqual(slatesShown(['saturday-late',SL,SE,SL],options),{all:false,keys:[SE,SL],fallback:false,missing:['saturday-late']},'a slate the week lacks is kept aside, a repeat counted once');
+  assert.deepEqual(slatesShown(EVERY,options),{all:false,keys:EVERY,fallback:false,missing:[]},'a list of every slate of the week is still a list, not All Slates');
+  assert.deepEqual(slatesShown(['saturday-late','friday-night'],options),{all:true,keys:EVERY,fallback:true,missing:['saturday-late','friday-night']},'none offered: All Slates for this week, the choice kept');
+  assert.deepEqual(slatesShown([],options),{all:true,keys:EVERY,fallback:false,missing:[]},'nothing chosen is no choice');
+  assert.deepEqual(slatesShown(['saturday-late'],slateOptions([])),{all:true,keys:[],fallback:false,missing:['saturday-late']},'a week without games has no slates to fall back to');
+  assert.deepEqual(slatesShown([SE],null),{all:true,keys:[],fallback:false,missing:[SE]});
+});
+await check('filtering by slates keeps the published order and only the chosen slates’ games, any combination of them; a list keeps nothing outside it; anything that is not a list keeps everything',()=>{
+  assert.deepEqual(filterSlates(GAMES(),[SE]).map(g=>g.index),[1,2,6,10]);
+  assert.deepEqual(filterSlates(GAMES(),[SL]).map(g=>g.index),[3,7],'published order, not kickoff order');
+  assert.deepEqual(filterSlates(GAMES(),[SE,SL]).map(g=>g.index),[1,2,3,6,7,10]);
+  assert.deepEqual(filterSlates(GAMES(),[MN,TN,SN]).map(g=>g.index),[0,4,5],'three slates');
+  assert.deepEqual(filterSlates(GAMES(),['tbd',ST]).map(g=>g.index),[8,9]);
+  assert.deepEqual(filterSlates(GAMES(),EVERY).map(g=>g.index),[0,1,2,3,4,5,6,7,8,9,10,11]);
+  for(const all of [ALL_SLATES,null,undefined])assert.deepEqual(filterSlates(GAMES(),all).map(g=>g.index),[0,1,2,3,4,5,6,7,8,9,10,11],String(all));
+  assert.deepEqual(filterSlates(GAMES(),['saturday-late']),[]);assert.deepEqual(filterSlates(GAMES(),[]),[]);assert.deepEqual(filterSlates(null,[SE]),[]);
+  assert.deepEqual(filterSlates(GAMES(),[EARLY]),[],'a board key is not a slate name');
+});
+await check('toggling the slates: from All Slates a tap removes one slate; taps add or remove one, two, three or every slate; the last slate shown cannot be removed; "*" is All Slates; a slate the week does not offer stays chosen out of sight; with a fallback a tap starts from every slate shown; a list never turns into All Slates by itself',()=>{
+  const options=slateOptions(GAMES());
+  assert.deepEqual(toggleSlates(ALL_SLATES,options,TN),EVERY.filter(k=>k!==TN),'All Slates minus Thursday Night');
+  let chosen=toggleSlates([SE],options,SL);assert.deepEqual(chosen,[SE,SL],'two');
+  chosen=toggleSlates(chosen,options,TN);assert.deepEqual(chosen,[TN,SE,SL],'three, in schedule order');
+  assert.deepEqual(toggleSlates(chosen,options,SE),[TN,SL]);
+  assert.deepEqual(toggleSlates([SE],options,SE),[SE],'the last slate shown stays');
+  assert.deepEqual(toggleSlates(['saturday-late',SE],options,SE),['saturday-late',SE],'the last slate shown stays, though another is chosen out of sight');
+  assert.deepEqual(toggleSlates(['saturday-late',SE],options,SN),[SE,SN,'saturday-late'],'a chosen slate the week lacks stays chosen');
+  assert.deepEqual(toggleSlates(['saturday-late',SE,SL],options,SL),[SE,'saturday-late']);
+  assert.deepEqual(toggleSlates(['saturday-late'],options,SM),[...EVERY.filter(k=>k!==SM),'saturday-late'],'fallback: from every slate shown, the choice kept');
+  for(const from of [ALL_SLATES,[SE],['saturday-late']])assert.equal(toggleSlates(from,options,'*'),ALL_SLATES,'Select all');
+  let every=[SE];for(const key of EVERY)if(key!==SE)every=toggleSlates(every,options,key);
+  assert.deepEqual(every,EVERY,'ticking every slate one by one gives a list of every slate');assert(Array.isArray(every),'not All Slates');
+  assert.deepEqual(slatesShown(toggleSlates(every,options,'*'),options),{all:true,keys:EVERY,fallback:false,missing:[]});
+  for(const key of ['saturday-late',EARLY,'all',null,undefined,7])assert.deepEqual(toggleSlates([SE],options,key),[SE],`${String(key)}: a slate the week does not offer changes nothing`);
+  assert.equal(toggleSlates(ALL_SLATES,options,'saturday-late'),ALL_SLATES);
+  const before=[SE,SL];toggleSlates(before,options,SL);assert.deepEqual(before,[SE,SL],'nothing is changed in place');
+});
+await check('storage: its own versioned key; All Slates and a chosen list are told apart; stable names only, each once; absent, refusing, malformed, old or foreign values are All Slates; writing touches only the one key, never the selection or labels keys, and reports failure instead of throwing',()=>{
+  const store=new Map(),storage={getItem:k=>store.has(k)?store.get(k):null,setItem:(k,v)=>store.set(k,String(v))};
+  assert.equal(readSlates(storage),ALL_SLATES,'nothing stored: All Slates');
+  assert.equal(readSlates(undefined),ALL_SLATES);assert.equal(readSlates({getItem(){throw new Error('denied')}}),ALL_SLATES);
+  assert.equal(writeSlates([SL,SE],storage),true);
+  assert.deepEqual(JSON.parse(store.get(SLATES_KEY)),{version:1,all:false,slates:[SL,SE]});assert.deepEqual(readSlates(storage),[SL,SE]);
+  assert.equal(writeSlates(ALL_SLATES,storage),true);
+  assert.deepEqual(JSON.parse(store.get(SLATES_KEY)),{version:1,all:true,slates:[]});assert.equal(readSlates(storage),ALL_SLATES);
+  assert.equal(writeSlates(EVERY,storage),true);assert.deepEqual(JSON.parse(store.get(SLATES_KEY)),{version:1,all:false,slates:EVERY},'every slate of a week, chosen one by one, is stored as that list');
+  assert.deepEqual([...store.keys()],[SLATES_KEY],'only the slates key is written');
+  store.set(STORAGE_KEY,JSON.stringify({version:1,entrants:['JC']}));store.set(LABELS_KEY,'full');
+  writeSlates([SE],storage);
+  assert.deepEqual(readSelection(NAMES,storage),['JC'],'the selection reads as before');assert.equal(readLabels(storage),'full','so does the labels setting');
+  for(const [raw,expected,why] of [
+    ['{not json',ALL_SLATES,'not JSON'],[JSON.stringify({version:2,all:false,slates:[SE]}),ALL_SLATES,'another version'],[JSON.stringify({all:false,slates:[SE]}),ALL_SLATES,'no version'],
+    [JSON.stringify({version:1,slates:[SE]}),ALL_SLATES,'no all flag'],[JSON.stringify({version:1,all:'false',slates:[SE]}),ALL_SLATES,'a flag that is not a boolean'],
+    [JSON.stringify({version:1,all:true,slates:[SE]}),ALL_SLATES,'All Slates whatever its list'],[JSON.stringify({version:1,all:false,slates:SE}),ALL_SLATES,'a list that is not a list'],
+    [JSON.stringify({version:1,all:false,slates:[]}),ALL_SLATES,'an empty list'],[JSON.stringify({version:1,all:false,slates:[EARLY,'Sunday Early',7,null]}),ALL_SLATES,'nothing valid'],
+    [JSON.stringify({version:1,all:false,slates:[SN,EARLY,SN,'friday-late']}),[SN,'friday-late'],'the valid names, each once, in the stored order'],
+    [JSON.stringify([SE]),ALL_SLATES,'an array'],[JSON.stringify(SE),ALL_SLATES,'a string'],['null',ALL_SLATES,'null'],[JSON.stringify({version:1,entrants:['JC']}),ALL_SLATES,'the selection’s shape']
+  ]){store.set(SLATES_KEY,raw);assert.deepEqual(readSlates(storage),expected,why)}
+  assert.deepEqual(normalizeSlates({version:SLATES_VERSION,all:false,slates:['tbd',ST,'wednesday-early']}),['tbd',ST,'wednesday-early']);
+  assert.equal(writeSlates([SE],undefined),false);assert.equal(writeSlates([SE],{setItem(){throw new Error('quota')}}),false);assert.equal(writeSlates(ALL_SLATES,{}),false);
+  store.clear();assert.equal(writeSlates(['bogus'],storage),true);assert.deepEqual(JSON.parse(store.get(SLATES_KEY)),{version:1,all:true,slates:[]},'a list with no valid name is written as All Slates');
+});
+await check('the Slates control and the note: All Slates, the one slate shown by name, or how many; the slates shown by name in schedule order; while a week offers none of the chosen slates, which they are and that All Slates is shown',()=>{
+  const options=slateOptions(GAMES()),label=chosen=>slatesLabel(slatesShown(chosen,options),options);
+  assert.equal(label(ALL_SLATES),'All Slates');assert.equal(label([SE]),'Sunday Early');assert.equal(label([SE,SL]),'2 Slates Selected');assert.equal(label([MN,TN,SN]),'3 Slates Selected');
+  assert.equal(label(EVERY),'8 Slates Selected','a list of every slate is a list');assert.equal(label(['saturday-late']),'All Slates','the fallback shows All Slates');
+  assert.equal(label(['saturday-late',ST]),'Sunday · Kickoff TBD');assert.equal(slatesLabel(null,options),'All Slates');assert.equal(slatesLabel({all:false,keys:['friday-late']},[]),'Friday Late','named from its stable name');
+  assert.deepEqual(shownSlateNames(slatesShown([MN,TN,SN],options),options),['Thursday Night','Sunday Night','Monday Night']);
+  assert.deepEqual(shownSlateNames(slatesShown(ALL_SLATES,options),options),[]);assert.deepEqual(shownSlateNames(slatesShown(['saturday-late'],options),options),[]);assert.deepEqual(shownSlateNames(null,options),[]);
+  assert.equal(slatesFallbackNote(slatesShown(['saturday-late'],options)),'Saturday Late is not on this week\'s schedule · showing All Slates');
+  assert.equal(slatesFallbackNote(slatesShown(['saturday-late','friday-night'],options)),'Saturday Late and Friday Night are not on this week\'s schedule · showing All Slates');
+  assert.equal(slatesFallbackNote(slatesShown(['saturday-early','saturday-late','friday-night'],options)),'Saturday Early, Saturday Late and Friday Night are not on this week\'s schedule · showing All Slates');
+  for(const chosen of [ALL_SLATES,[SE],['saturday-late',SE]])assert.equal(slatesFallbackNote(slatesShown(chosen,options)),'',`no note for ${JSON.stringify(chosen)}`);
+  assert.equal(slatesFallbackNote(slatesShown(['saturday-late'],slateOptions([]))),'','no note for a week without games');assert.equal(slatesFallbackNote(null),'');
 });
 
 // ---- Slate expansion (the V1.4 collapsible slate groups).
-await check('a slate’s default: open while it lists a live game in All Slates, open as the chosen slate; a state wins over the default, whatever its shape; anything that is not a boolean means the default',()=>{
+await check('a slate’s default: open while it lists a live game, open when it is the one slate chosen (alone); a manual state or a bare boolean wins over the default whatever its shape; an automatic state is opened while the slate is alone; anything that is not a boolean means the default',()=>{
   const groups=groupGames(GAMES()),by=key=>groups.find(g=>g.key===key);
   assert.deepEqual(groups.map(g=>[g.key,slateHasLive(g)]),[['2026-09-24|3',false],['2026-09-27|0',false],[EARLY,true],[LATE,false],[NIGHT,false],['2026-09-27|4',false],['2026-09-28|3',false],['tbd',false]]);
   assert.equal(slateHasLive(null),false);assert.equal(slateHasLive({games:[{game:{kind:'live'}}]}),true);assert.equal(slateHasLive({games:[{game:null},null]}),false);
   assert.deepEqual(groups.map(g=>defaultSlateOpen(g)),[false,false,true,false,false,false,false,false]);
-  assert.deepEqual(groups.map(g=>defaultSlateOpen(g,ALL_SLATES)),[false,false,true,false,false,false,false,false]);
-  assert.equal(defaultSlateOpen(by(LATE),LATE),true,'a chosen slate is open');assert.equal(defaultSlateOpen(by(NIGHT),'2026-10-04|1'),true,'any chosen slate');
-  assert.equal(slateOpen(by(EARLY)),true);assert.equal(slateOpen(by(LATE)),false);assert.equal(slateOpen(by(LATE),LATE),true);
-  assert.equal(slateOpen(by(EARLY),ALL_SLATES,new Map([[EARLY,{open:false,manual:true}]])),false,'a state wins');
-  assert.equal(slateOpen(by(LATE),ALL_SLATES,new Map([[LATE,{open:true,manual:false}]])),true);
-  assert.equal(slateOpen(by(LATE),ALL_SLATES,{[LATE]:true}),true,'an object of booleans');assert.equal(slateOpen(by(EARLY),ALL_SLATES,{[EARLY]:false}),false);
-  assert.equal(slateOpen(by(LATE),ALL_SLATES,new Map([[LATE,true]])),true,'a Map of booleans');
-  [null,undefined,new Map(),{},new Map([[LATE,'yes']]),{[LATE]:{open:'yes'}},{[LATE]:1},[LATE]].forEach((states,i)=>assert.equal(slateOpen(by(LATE),ALL_SLATES,states),false,`states ${i}`));
-  assert.equal(slateOpen(null,ALL_SLATES,null),false);assert.equal(slateOpen(null,LATE,null),true);
+  assert.deepEqual(groups.map(g=>defaultSlateOpen(g,false)),[false,false,true,false,false,false,false,false]);
+  assert.equal(defaultSlateOpen(by(LATE),true),true,'a slate chosen alone is open');assert.equal(defaultSlateOpen(by(NIGHT),true),true);
+  for(const notTrue of [ALL_SLATES,LATE,1,'true',{}])assert.equal(defaultSlateOpen(by(LATE),notTrue),false,`only true is alone: ${String(notTrue)}`);
+  assert.equal(slateOpen(by(EARLY)),true);assert.equal(slateOpen(by(LATE)),false);assert.equal(slateOpen(by(LATE),true),true);
+  assert.equal(slateOpen(by(EARLY),false,new Map([[EARLY,{open:false,manual:true}]])),false,'a state wins');
+  assert.equal(slateOpen(by(LATE),false,new Map([[LATE,{open:true,manual:false}]])),true);
+  assert.equal(slateOpen(by(LATE),false,{[LATE]:true}),true,'an object of booleans');assert.equal(slateOpen(by(EARLY),false,{[EARLY]:false}),false);
+  assert.equal(slateOpen(by(LATE),false,new Map([[LATE,true]])),true,'a Map of booleans');
+  [null,undefined,new Map(),{},new Map([[LATE,'yes']]),{[LATE]:{open:'yes'}},{[LATE]:1},[LATE]].forEach((states,i)=>assert.equal(slateOpen(by(LATE),false,states),false,`states ${i}`));
+  assert.equal(slateOpen(null,false,null),false);assert.equal(slateOpen(null,true,null),true);
+  // Alone: an automatic state (opened or closed by default) shows open; a manual close stays closed; a bare false is as given.
+  assert.equal(slateOpen(by(LATE),true,new Map([[LATE,{open:false,manual:false}]])),true,'a slate nobody touched opens when chosen alone');
+  assert.equal(slateOpen(by(LATE),true,new Map([[LATE,{open:false}]])),true,'a state without manual is automatic');
+  assert.equal(slateOpen(by(LATE),true,new Map([[LATE,{open:false,manual:true}]])),false,'a slate closed by hand stays closed when chosen alone');
+  assert.equal(slateOpen(by(EARLY),true,new Map([[EARLY,{open:false,manual:true}]])),false,'live or not');
+  assert.equal(slateOpen(by(LATE),true,{[LATE]:false}),false,'a bare boolean is as given');
+  assert.equal(slateOpen(by(LATE),true,new Map([[LATE,{open:true,manual:true}]])),true);
 });
 await check('the compact summary counts a slate’s listed games once each by the status its card shows (LIVE, FINAL, FINAL TIE, UPCOMING, VOID, HOLD), then the games under review, the unverified results and the tiebreak game; the pills name them in that order, in the page’s words, and nothing else',()=>{
   const groups=groupGames(GAMES()),by=key=>groups.find(g=>g.key===key);
@@ -182,7 +289,7 @@ await check('the All Slates states after a render: a new slate starts at its def
   assert.deepEqual([...first],keys.map(k=>[k,{open:k===EARLY,manual:false}]));
   assert.deepEqual([...nextSlateStates(undefined,groups,{})],[...first]);
   assert.deepEqual([...nextSlateStates(first,groups)],[...first],'a refresh with nothing new changes nothing');
-  assert.deepEqual([...nextSlateStates(null,groupGames(filterSlate(GAMES(),NIGHT)),{slate:NIGHT})],[[NIGHT,{open:false,manual:false}]],'the All Slates default, whatever else is passed: a chosen slate opens on the board, not in these states');
+  assert.deepEqual([...nextSlateStates(null,groupGames(filterSlates(GAMES(),[SN])),{slate:SN,alone:true})],[[NIGHT,{open:false,manual:false}]],'the default while several slates may be listed, whatever else is passed: a slate chosen alone opens on the board, not in these states');
   const closed=setSlateOpen(first,EARLY,false);
   assert.deepEqual(closed.get(EARLY),{open:false,manual:true});assert.deepEqual(first.get(EARLY),{open:true,manual:false},'the previous Map is untouched');assert.notEqual(closed,first);
   assert.deepEqual(nextSlateStates(closed,groups).get(EARLY),{open:false,manual:true},'a slate closed by hand never reopens by itself');
@@ -220,10 +327,10 @@ await check('All, Final, Live and Upcoming: a verified tie is a final; VOID and 
   for(const kind of ['void','hold'])for(const status of STATUS_FILTERS)assert.equal(matchesStatus(kind,status),true,`${kind} in ${status}`);
   assert.equal(matchesStatus('tie','final'),true);assert.equal(matchesStatus('tie','live'),false);assert.equal(matchesStatus('upcoming','final'),false);
   // Slate and status combine: the status filter runs over the slate's games, VOID and HOLD included.
-  assert.deepEqual(filterGames(filterSlate(games,EARLY),'live').map(g=>g.index),[2,6,10]);
-  assert.deepEqual(filterGames(filterSlate(games,LATE),'final').map(g=>g.index),[7]);
-  assert.deepEqual(filterGames(filterSlate(games,NIGHT),'live'),[]);
-  assert.deepEqual(statusCounts(filterSlate(games,EARLY)),{all:4,final:1,live:2,upcoming:0,exceptions:1});
+  assert.deepEqual(filterGames(filterSlates(games,[SE]),'live').map(g=>g.index),[2,6,10]);
+  assert.deepEqual(filterGames(filterSlates(games,[SL]),'final').map(g=>g.index),[7]);
+  assert.deepEqual(filterGames(filterSlates(games,[SN]),'live'),[]);
+  assert.deepEqual(statusCounts(filterSlates(games,[SE])),{all:4,final:1,live:2,upcoming:0,exceptions:1});
 });
 
 // ---- Entrant selection.
@@ -354,11 +461,11 @@ await check('the board: the slates in order with their headers, filtered by slat
   assert.equal(cards(html).length,12);assert(cards(html).every(c=>!c.includes('aria-expanded="true"')),'every card starts collapsed');
   assert.deepEqual(cards(boardHtml(snapshot(),{entrants:['JC'],status:'live'})).map(c=>c.match(/data-game="(\d+)"/)[1]),['2','6','10','7']);
   assert.equal((boardHtml(snapshot(),{entrants:['JC'],status:'live'}).match(/<span class="pm-token-name">/g)||[]).length,4,'one token per card for one entry');
-  assert.deepEqual(cards(boardHtml(snapshot(),{entrants:NAMES,status:'all',slate:EARLY})).map(c=>c.match(/data-game="(\d+)"/)[1]),['1','2','6','10']);
-  assert.deepEqual(cards(boardHtml(snapshot(),{entrants:NAMES,status:'live',slate:EARLY})).map(c=>c.match(/data-game="(\d+)"/)[1]),['2','6','10'],'slate and status together, the VOID game along');
-  assert.deepEqual(cards(boardHtml(snapshot(),{entrants:NAMES,status:'final',slate:LATE})).map(c=>c.match(/data-game="(\d+)"/)[1]),['7'],'the HOLD game rides with Final');
-  assert.equal(boardHtml(snapshot(),{entrants:NAMES,status:'live',slate:NIGHT}),'<div class="empty">No live games in Sunday Night.</div>');
-  assert.equal(boardHtml(snapshot(),{entrants:NAMES,status:'all',slate:'2026-10-04|1'}).split('<article ').length-1,12,'a slate that is not on the schedule means All Slates');
+  assert.deepEqual(cards(boardHtml(snapshot(),{entrants:NAMES,status:'all',chosen:[SE]})).map(c=>c.match(/data-game="(\d+)"/)[1]),['1','2','6','10']);
+  assert.deepEqual(cards(boardHtml(snapshot(),{entrants:NAMES,status:'live',chosen:[SE]})).map(c=>c.match(/data-game="(\d+)"/)[1]),['2','6','10'],'slate and status together, the VOID game along');
+  assert.deepEqual(cards(boardHtml(snapshot(),{entrants:NAMES,status:'final',chosen:[SL]})).map(c=>c.match(/data-game="(\d+)"/)[1]),['7'],'the HOLD game rides with Final');
+  assert.equal(boardHtml(snapshot(),{entrants:NAMES,status:'live',chosen:[SN]}),'<div class="empty">No live games in Sunday Night.</div>');
+  assert.equal(boardHtml(snapshot(),{entrants:NAMES,status:'all',chosen:['saturday-early']}).split('<article ').length-1,12,'a choice none of whose slates is on the schedule means All Slates');
   const open=boardHtml(snapshot(),{entrants:NAMES,status:'all',expanded:6});
   assert.deepEqual(cards(open).filter(c=>c.includes('aria-expanded="true"')).map(c=>c.match(/data-game="(\d+)"/)[1]),['6'],'exactly the one expanded matchup is open');
   assert.equal(cards(open).filter(c=>c.includes('is-expanded')).length,1);
@@ -369,7 +476,7 @@ await check('the board: the slates in order with their headers, filtered by slat
   assert.equal(cards(boardHtml(snapshot(),{entrants:['Nobody'],status:'all'})).length,12,'an unknown selection means everyone');
   assert.equal((boardHtml(snapshot(),{entrants:['Nobody'],status:'all'}).match(/<span class="pm-name">/g)||[]).length,48);
 });
-await check('the board’s slates are disclosures: each heading holds one button naming its state and the body it controls, the slate, its date and game count and its summary pills; in All Slates the slate with live games starts open and every other starts collapsed with its body hidden, under Expand all and Collapse all; given states win; a chosen slate starts open without the controls; an empty state carries nothing',()=>{
+await check('the board’s slates are disclosures: each heading holds one button naming its state and the body it controls, the slate, its date and game count and its summary pills; in All Slates the slate with live games starts open and every other starts collapsed with its body hidden, under Expand all and Collapse all; given states win; a slate chosen alone starts open without the controls unless it was closed by hand; two or more chosen slates keep the controls and their schedule order; an empty state carries nothing',()=>{
   const html=boardHtml(snapshot(),{entrants:NAMES});
   assert.match(html,/^<div class="pm-slates-bar" role="group" aria-label="Slates"><button type="button" class="pm-slates-action" data-picks-slates="expand">Expand all<\/button><button type="button" class="pm-slates-action" data-picks-slates="collapse">Collapse all<\/button><\/div><section /);
   assert.equal(html.split('pm-slates-bar').length-1,1);
@@ -391,14 +498,21 @@ await check('the board’s slates are disclosures: each heading holds one button
   assert.deepEqual([...boardHtml(snapshot(),{entrants:NAMES,slates:{[EARLY]:false,[NIGHT]:true}}).matchAll(/data-picks-slate-toggle="([^"]+)" aria-expanded="true"/g)].map(m=>m[1]),[NIGHT],'an object of booleans works too');
   assert.deepEqual([...boardHtml(snapshot(),{entrants:NAMES,status:'live'}).matchAll(/data-picks-slate-toggle="([^"]+)" aria-expanded="(true|false)"/g)].map(m=>[m[1],m[2]]),[[EARLY,'true'],[LATE,'false']],'the status filter: the defaults follow the games listed');
   assert.equal([...boardHtml(snapshot(),{entrants:NAMES,status:'final'}).matchAll(/aria-expanded="true"/g)].length,0,'Final lists no live game, so every slate starts collapsed');
-  const one=boardHtml(snapshot(),{entrants:NAMES,slate:LATE});
+  const one=boardHtml(snapshot(),{entrants:NAMES,chosen:[SL]});
   assert(!one.includes('pm-slates-bar'),'no Expand all or Collapse all for one chosen slate');
   assert.match(one,/^<section class="pm-group" data-slate="2026-09-27\|2" aria-label="Sunday Late"><h3 class="pm-group-title"><button type="button" class="pm-slate-toggle" data-picks-slate-toggle="2026-09-27\|2" aria-expanded="true" aria-controls="pm-slate-2026-09-27-2">/);
   assert.match(one,/<div class="pm-slate-body" id="pm-slate-2026-09-27-2"><article /,'the body is shown');
   assert.equal(one.split('</section>').length-1,1);
-  assert(boardHtml(snapshot(),{entrants:NAMES,slate:LATE,slates:new Map([[LATE,{open:false,manual:true}]])}).includes('data-picks-slate-toggle="2026-09-27|2" aria-expanded="false"'),'a chosen slate closed by hand stays closed');
-  assert(boardHtml(snapshot(),{entrants:NAMES,slate:'2026-10-04|1'}).startsWith('<div class="pm-slates-bar"'),'a slate that is not on the schedule means All Slates, with the controls');
-  for(const empty of [boardHtml(snapshot({games:[]}),{entrants:NAMES}),boardHtml(null,{}),boardHtml(snapshot(),{entrants:NAMES,status:'live',slate:NIGHT})])assert(empty.startsWith('<div class="empty">')&&!empty.includes('pm-slates-bar'),'an empty state carries no slate control');
+  assert(boardHtml(snapshot(),{entrants:NAMES,chosen:[SL],slates:new Map([[LATE,{open:false,manual:true}]])}).includes('data-picks-slate-toggle="2026-09-27|2" aria-expanded="false"'),'a chosen slate closed by hand stays closed');
+  assert(boardHtml(snapshot(),{entrants:NAMES,chosen:[SL],slates:new Map([[LATE,{open:false,manual:false}]])}).includes('data-picks-slate-toggle="2026-09-27|2" aria-expanded="true"'),'a slate chosen alone that nobody closed is open, whatever its automatic state');
+  const three=boardHtml(snapshot(),{entrants:NAMES,chosen:[MN,TN,SN]});
+  assert(three.startsWith('<div class="pm-slates-bar"'),'two or more chosen slates carry Expand all and Collapse all');assert.equal(three.split('pm-slates-bar').length-1,1);
+  assert.deepEqual([...three.matchAll(/data-picks-slate-toggle="([^"]+)" aria-expanded="(true|false)"/g)].map(m=>[m[1],m[2]]),[['2026-09-24|3','false'],[NIGHT,'false'],['2026-09-28|3','false']],'Thursday, Sunday, Monday: schedule order whatever the order chosen, each at its default');
+  assert.deepEqual(cards(three).map(c=>c.match(/data-game="(\d+)"/)[1]),['0','4','5']);
+  assert.deepEqual([...boardHtml(snapshot(),{entrants:NAMES,chosen:[SL,SE]}).matchAll(/data-picks-slate-toggle="([^"]+)" aria-expanded="(true|false)"/g)].map(m=>[m[1],m[2]]),[[EARLY,'true'],[LATE,'false']],'the live slate open, the other collapsed');
+  assert.deepEqual([...boardHtml(snapshot(),{entrants:NAMES,chosen:[SL,SE],slates:new Map([[EARLY,{open:false,manual:true}],[LATE,{open:true,manual:true}]])}).matchAll(/data-picks-slate-toggle="([^"]+)" aria-expanded="(true|false)"/g)].map(m=>[m[1],m[2]]),[[EARLY,'false'],[LATE,'true']],'given states win');
+  assert(boardHtml(snapshot(),{entrants:NAMES,chosen:['saturday-early']}).startsWith('<div class="pm-slates-bar"'),'a choice none of whose slates is on the schedule means All Slates, with the controls');
+  for(const empty of [boardHtml(snapshot({games:[]}),{entrants:NAMES}),boardHtml(null,{}),boardHtml(snapshot(),{entrants:NAMES,status:'live',chosen:[SN]})])assert(empty.startsWith('<div class="empty">')&&!empty.includes('pm-slates-bar'),'an empty state carries no slate control');
   assert.equal(slatesBarHtml(),'<div class="pm-slates-bar" role="group" aria-label="Slates"><button type="button" class="pm-slates-action" data-picks-slates="expand">Expand all</button><button type="button" class="pm-slates-action" data-picks-slates="collapse">Collapse all</button></div>');
   const group=groupGames(GAMES()).find(g=>g.key===LATE);
   assert.equal(slateHtml(group,NAMES,{open:false}),`<section class="pm-group is-collapsed" data-slate="2026-09-27|2" aria-label="Sunday Late"><h3 class="pm-group-title"><button type="button" class="pm-slate-toggle" data-picks-slate-toggle="2026-09-27|2" aria-expanded="false" aria-controls="pm-slate-2026-09-27-2"><span class="pm-slate-chevron" aria-hidden="true"></span><span class="pm-slate-copy"><span class="pm-slate-name">Sunday Late</span><small class="pm-slate-meta">Sun, Sep 27 · 2 games</small></span><span class="pm-slate-summary">${slateSummaryHtml(group)}</span></button></h3><div class="pm-slate-body" id="pm-slate-2026-09-27-2" hidden>${cardHtml(GAMES()[7],NAMES,{time:'4:05 PM EDT'})}${cardHtml(GAMES()[3],NAMES,{time:'4:25 PM EDT'})}</div></section>`,'a slate is its heading and its cards in kickoff order');
@@ -406,11 +520,12 @@ await check('the board’s slates are disclosures: each heading holds one button
   assert(slateHtml(group,NAMES,{open:true,labels:labelMap(NAMES,'compact')}).includes('>Thad.<'),'compact labels inside');
   assert.match(slateHtml({key:'a b"c|d',label:'<x>',date:'',games:[]},NAMES),/^<section class="pm-group" data-slate="a b&quot;c\|d" aria-label="&lt;x&gt;"><h3 class="pm-group-title"><button type="button" class="pm-slate-toggle" data-picks-slate-toggle="a b&quot;c\|d" aria-expanded="true" aria-controls="pm-slate-a-b-c-d">/,'a key and a label are escaped, the id made safe');
 });
-await check('the controls: one Comparing control that opens the selection panel, the slate selector with every present slate and its count, the four status segments with their counts, a live note; the panel rows name each entry and its submission state',()=>{
-  const counts=statusCounts(GAMES()),html=filterBarHtml(NAMES,{selected:['D.C.','JC'],status:'live',counts,slates:slateOptions(GAMES()),slate:EARLY});
-  assert.match(html,/^<div class="pm-filters"><div class="pm-row"><button type="button" class="pm-compare" data-picks-compare aria-haspopup="dialog" aria-expanded="false" aria-controls="picksEntrants"><span class="pm-compare-copy"><span class="pm-compare-kicker">Comparing<\/span><b data-picks-compare-label>D\.C\. \+ JC<\/b><\/span><span class="pm-caret" aria-hidden="true"><\/span><\/button><label class="pm-sr" for="picksSlate">Slate<\/label><select id="picksSlate" class="pm-select" data-picks-slate>/);
-  assert.deepEqual([...html.matchAll(/<option value="([^"]+)"( selected)?>([^<]+)<\/option>/g)].map(m=>[m[1],m[3],!!m[2]]),SLATES.map(([key,label,count])=>[key,`${label} (${count})`,key===EARLY]));
-  assert.match(html,/<\/select><\/div><div class="pm-segments" role="group" aria-label="Game status"><button type="button" class="pm-segment" data-picks-status="all" aria-pressed="false">All<b data-picks-count="all">12<\/b><\/button><button type="button" class="pm-segment" data-picks-status="final" aria-pressed="false">Final<b data-picks-count="final">2<\/b><\/button><button type="button" class="pm-segment" data-picks-status="live" aria-pressed="true">Live<b data-picks-count="live">2<\/b><\/button><button type="button" class="pm-segment" data-picks-status="upcoming" aria-pressed="false">Upcoming<b data-picks-count="upcoming">6<\/b><\/button><\/div><div class="pm-options"><button type="button" class="pm-toggle" data-picks-disagree aria-pressed="false"><span class="pm-toggle-track" aria-hidden="true"><\/span><span class="pm-toggle-copy">Disagreements only<\/span><\/button><\/div><p class="pm-note" data-picks-note aria-live="polite"><\/p><\/div>$/);
+await check('the controls: one Comparing control and one Slates control, each opening its selection panel, side by side; no slate selector; the four status segments with their counts, a live note; the panel rows name each entry and its submission state, and each slate of the week with its date and game count, checked while shown',()=>{
+  const counts=statusCounts(GAMES()),html=filterBarHtml(NAMES,{selected:['D.C.','JC'],status:'live',counts,slates:slateOptions(GAMES()),chosen:[SL,SE]});
+  assert.match(html,/^<div class="pm-filters"><div class="pm-row"><button type="button" class="pm-compare" data-picks-compare aria-haspopup="dialog" aria-expanded="false" aria-controls="picksEntrants"><span class="pm-compare-copy"><span class="pm-compare-kicker">Comparing<\/span><b data-picks-compare-label>D\.C\. \+ JC<\/b><\/span><span class="pm-caret" aria-hidden="true"><\/span><\/button><button type="button" class="pm-compare" data-picks-slates-open aria-haspopup="dialog" aria-expanded="false" aria-controls="picksSlates"><span class="pm-compare-copy"><span class="pm-compare-kicker">Slates<\/span><b data-picks-slates-label>2 Slates Selected<\/b><\/span><span class="pm-caret" aria-hidden="true"><\/span><\/button><\/div>/);
+  assert(!/<select|<option|data-picks-slate>|pm-select/.test(html),'no slate selector');
+  assert.match(html,/<\/button><\/div><div class="pm-segments" role="group" aria-label="Game status"><button type="button" class="pm-segment" data-picks-status="all" aria-pressed="false">All<b data-picks-count="all">12<\/b><\/button><button type="button" class="pm-segment" data-picks-status="final" aria-pressed="false">Final<b data-picks-count="final">2<\/b><\/button><button type="button" class="pm-segment" data-picks-status="live" aria-pressed="true">Live<b data-picks-count="live">2<\/b><\/button><button type="button" class="pm-segment" data-picks-status="upcoming" aria-pressed="false">Upcoming<b data-picks-count="upcoming">6<\/b><\/button><\/div><div class="pm-options"><button type="button" class="pm-toggle" data-picks-disagree aria-pressed="false"><span class="pm-toggle-track" aria-hidden="true"><\/span><span class="pm-toggle-copy">Disagreements only<\/span><\/button><\/div><p class="pm-note" data-picks-note aria-live="polite"><\/p><\/div>$/);
+  assert.equal(html.split('data-picks-slates-open').length-1,1,'one Slates control');
   assert(!html.includes('pm-chip'),'no chip strip');
   assert.match(filterBarHtml(NAMES,{selected:['JC']}),/<button type="button" class="pm-toggle" data-picks-disagree aria-pressed="false" disabled>/,'one entry: Disagreements only is off and disabled');
   assert.match(filterBarHtml(NAMES,{selected:['JC','DJS'],disagree:true}),/data-picks-disagree aria-pressed="true"><span/,'two entries: it can be on');
@@ -418,8 +533,17 @@ await check('the controls: one Comparing control that opens the selection panel,
   assert.match(filterBarHtml(NAMES,{}),/data-picks-disagree aria-pressed="false"><span/,'off by default');
   assert.equal(filterBarHtml(NAMES,{}).split('data-picks-disagree').length-1,1,'one switch');
   assert.match(filterBarHtml(NAMES,{}),/<b data-picks-compare-label>All 4 entries<\/b>/,'everyone compared by default');
-  assert.match(filterBarHtml(NAMES,{}),/<option value="all" selected>All Slates \(0\)<\/option><\/select>/,'All Slates alone without slates');
-  assert.equal(slateOptionsHtml(slateOptions(GAMES()),'2026-10-04|1').split(' selected').length-1,1);assert.match(slateOptionsHtml(slateOptions(GAMES()),'2026-10-04|1'),/<option value="all" selected>/,'an absent slate selects All Slates');
+  assert.match(filterBarHtml(NAMES,{}),/<b data-picks-slates-label>All Slates<\/b>/,'All Slates by default, with or without slates');
+  for(const [chosen,label] of [[ALL_SLATES,'All Slates'],[[SE],'Sunday Early'],[[MN,TN,SN],'3 Slates Selected'],[['saturday-early'],'All Slates']])assert(filterBarHtml(NAMES,{slates:slateOptions(GAMES()),chosen}).includes(`<b data-picks-slates-label>${label}</b>`),label);
+  const rows=slatePanelHtml(slateOptions(GAMES()),slatesShown([SN,SE],slateOptions(GAMES())));
+  assert.deepEqual([...rows.matchAll(/<label class="pm-entry"><input type="checkbox" data-picks-slate-choice="([^"]+)"( checked)?><span class="pm-entry-copy"><span class="pm-entry-name">([^<]+)<\/span><span class="pm-entry-meta">([^<]+)<\/span><\/span><\/label>/g)].map(m=>[m[1],m[3],m[4],!!m[2]]),[
+    [TN,'Thursday Night','Thu, Sep 24 · 1 game',false],[SM,'Sunday Morning','Sun, Sep 27 · 1 game',false],[SE,'Sunday Early','Sun, Sep 27 · 4 games',true],[SL,'Sunday Late','Sun, Sep 27 · 2 games',false],
+    [SN,'Sunday Night','Sun, Sep 27 · 1 game',true],[ST,'Sunday · Kickoff TBD','Sun, Sep 27 · 1 game',false],[MN,'Monday Night','Mon, Sep 28 · 1 game',false],['tbd','Kickoff TBD','1 game',false]],'every slate of the week, in schedule order, with its date and game count, the shown ones checked');
+  assert.equal(rows.split('<label ').length-1,8,'one row per slate, no row for All Slates');
+  assert.equal((slatePanelHtml(slateOptions(GAMES())).match(/ checked/g)||[]).length,8,'All Slates: every slate checked');
+  assert.equal((slatePanelHtml(slateOptions(GAMES()),slatesShown(['saturday-early'],slateOptions(GAMES()))).match(/ checked/g)||[]).length,8,'the fallback shows every slate, so every slate is checked');
+  assert.equal(slatePanelHtml(slateOptions([])),'');assert.equal(slatePanelHtml(null),'');
+  assert.equal(slatePanelHtml([{key:'all',label:'All Slates',date:'',count:1},{key:'a"b',label:'<x>',date:'<d>',count:1}]),'<label class="pm-entry"><input type="checkbox" data-picks-slate-choice="a&quot;b" checked><span class="pm-entry-copy"><span class="pm-entry-name">&lt;x&gt;</span><span class="pm-entry-meta">&lt;d&gt; · 1 game</span></span></label>','escaped');
   assert.equal(entrantPanelHtml(snapshot().entrants,['D.C.','DJS']),'<label class="pm-entry"><input type="checkbox" data-picks-entrant="D.C." checked><span class="pm-entry-copy"><span class="pm-entry-name">D.C.</span></span></label><label class="pm-entry"><input type="checkbox" data-picks-entrant="JC"><span class="pm-entry-copy"><span class="pm-entry-name">JC</span></span></label><label class="pm-entry"><input type="checkbox" data-picks-entrant="DJS" checked><span class="pm-entry-copy"><span class="pm-entry-name">DJS</span></span></label><label class="pm-entry pm-entry-none"><input type="checkbox" data-picks-entrant="Thaddeus"><span class="pm-entry-copy"><span class="pm-entry-name">Thaddeus</span><span class="pm-entry-meta">No picks submitted this week</span></span></label>');
   assert.equal((entrantPanelHtml(NAMES,null).match(/ checked/g)||[]).length,4,'plain names: everyone checked, no submission state');
   assert.equal(filterNote(NAMES,NAMES,'all',counts,12),'All 4 entries · 12 of 12 games · 2 VOID/HOLD shown in every status filter');
@@ -486,23 +610,23 @@ await check('Disagreements only keeps the games where the compared entries split
   assert.deepEqual(filterDisagreements(mixed,NAMES,false).map(g=>g.index),[0,1,2,3,4,5,6,7,8,9,10,11]);
   assert.deepEqual(filterDisagreements(mixed,NAMES,'yes').map(g=>g.index),[0,1,2,3,4,5,6,7,8,9,10,11],'only true switches it on');
   assert.deepEqual(filterDisagreements(null,NAMES,true),[]);
-  assert.deepEqual(filterDisagreements(filterGames(filterSlate(mixed,EARLY),'live'),NAMES,true).map(g=>g.index),[2,6,10]);
-  assert.deepEqual(filterDisagreements(filterGames(filterSlate(mixed,EARLY),'final'),NAMES,true).map(g=>g.index),[1,6]);
-  assert.deepEqual(filterDisagreements(filterGames(filterSlate(mixed,LATE),'upcoming'),NAMES,true).map(g=>g.index),[7]);
-  assert.deepEqual(filterDisagreements(filterGames(filterSlate(mixed,NIGHT),'all'),NAMES,true),[]);
+  assert.deepEqual(filterDisagreements(filterGames(filterSlates(mixed,[SE]),'live'),NAMES,true).map(g=>g.index),[2,6,10]);
+  assert.deepEqual(filterDisagreements(filterGames(filterSlates(mixed,[SE]),'final'),NAMES,true).map(g=>g.index),[1,6]);
+  assert.deepEqual(filterDisagreements(filterGames(filterSlates(mixed,[SL]),'upcoming'),NAMES,true).map(g=>g.index),[7]);
+  assert.deepEqual(filterDisagreements(filterGames(filterSlates(mixed,[SN]),'all'),NAMES,true),[]);
   assert.deepEqual(statusCounts(filterDisagreements(mixed,NAMES,true)),{all:6,final:2,live:2,upcoming:0,exceptions:2});
 });
 await check('the board with Disagreements only: the split games and the exceptions, with the slate and the status; the empty state names who was compared and what narrowed it, or stays the plain one when nothing was listed to begin with; fewer than two entries means the filter does not apply',()=>{
   const snap=snapshot({games:MIXED()}),ids=html=>cards(html).map(c=>c.match(/data-game="(\d+)"/)[1]);
   assert.deepEqual(ids(boardHtml(snap,{entrants:NAMES,disagree:true})),['0','1','2','6','10','7']);
-  assert.deepEqual(ids(boardHtml(snap,{entrants:['D.C.','JC'],status:'live',slate:EARLY,disagree:true})),['2','6','10']);
+  assert.deepEqual(ids(boardHtml(snap,{entrants:['D.C.','JC'],status:'live',chosen:[SE],disagree:true})),['2','6','10']);
   assert.deepEqual(ids(boardHtml(snap,{entrants:['D.C.','DJS'],disagree:true})),['6','7'],'the exceptions alone');
-  assert.equal(boardHtml(snap,{entrants:['D.C.','DJS'],status:'upcoming',slate:NIGHT,disagree:true}),'<div class="empty">No upcoming disagreements between D.C. and DJS in Sunday Night.</div>');
-  assert.equal(boardHtml(snap,{entrants:NAMES,slate:NIGHT,disagree:true}),'<div class="empty">No disagreements among all 4 entries in Sunday Night.</div>');
-  assert.equal(boardHtml(snap,{entrants:['D.C.','JC','DJS'],slate:'2026-09-28|3',disagree:true}),'<div class="empty">No disagreements among D.C., JC and DJS in Monday Night.</div>');
+  assert.equal(boardHtml(snap,{entrants:['D.C.','DJS'],status:'upcoming',chosen:[SN],disagree:true}),'<div class="empty">No upcoming disagreements between D.C. and DJS in Sunday Night.</div>');
+  assert.equal(boardHtml(snap,{entrants:NAMES,chosen:[SN],disagree:true}),'<div class="empty">No disagreements among all 4 entries in Sunday Night.</div>');
+  assert.equal(boardHtml(snap,{entrants:['D.C.','JC','DJS'],chosen:[MN],disagree:true}),'<div class="empty">No disagreements among D.C., JC and DJS in Monday Night.</div>');
   assert.equal(boardHtml(snapshot({games:MIXED().filter(g=>[3,4].includes(g.index))}),{entrants:NAMES,disagree:true}),'<div class="empty">No disagreements among all 4 entries.</div>');
   assert.equal(boardHtml(snapshot({games:MIXED().filter(g=>[3,4].includes(g.index))}),{entrants:NAMES,status:'upcoming',disagree:true}),'<div class="empty">No upcoming disagreements among all 4 entries.</div>');
-  assert.equal(boardHtml(snap,{entrants:NAMES,status:'live',slate:NIGHT,disagree:true}),'<div class="empty">No live games in Sunday Night.</div>','nothing listed to begin with: the plain empty state');
+  assert.equal(boardHtml(snap,{entrants:NAMES,status:'live',chosen:[SN],disagree:true}),'<div class="empty">No live games in Sunday Night.</div>','nothing listed to begin with: the plain empty state');
   assert.equal(boardHtml(snapshot({games:[]}),{entrants:NAMES,disagree:true}),'<div class="empty">No games are published for this week.</div>');
   assert.equal(ids(boardHtml(snap,{entrants:['D.C.'],disagree:true})).length,12,'one entry: the filter does not apply');
   assert.equal(ids(boardHtml(snap,{entrants:NAMES,disagree:false})).length,12);assert.equal(ids(boardHtml(snap,{entrants:NAMES})).length,12,'off by default');
@@ -668,7 +792,7 @@ function makeDocument(html){
 let instance=0;
 // A page: the real Games, Survivor and Picks panels, the two apps as listeners (answering a picks or rules request with their
 // fixture, or null for an app that is not there), storage as configured, and the module booted on it.
-async function page({picksAnswer=()=>snapshot(),pickemRules=()=>rulesAnswer(readyModel({incidents:[incident()]})),survivorRules=()=>({ready:true,contest:'survivor',week:3,model:readyModel({contestType:'Survivor contest',contestName:'Pool Center 2026 Survivor',policy:{revision:1,effectiveWeek:1,name:'Advance, team used',text:'…',publicNote:null},revisions:[{revision:1,effectiveWeek:1,name:'Advance, team used',publicNote:null}]})}),storage='ok',stored=null,storedLabels=null,narrow=false}={}){
+async function page({picksAnswer=()=>snapshot(),pickemRules=()=>rulesAnswer(readyModel({incidents:[incident()]})),survivorRules=()=>({ready:true,contest:'survivor',week:3,model:readyModel({contestType:'Survivor contest',contestName:'Pool Center 2026 Survivor',policy:{revision:1,effectiveWeek:1,name:'Advance, team used',text:'…',publicNote:null},revisions:[{revision:1,effectiveWeek:1,name:'Advance, team used',publicNote:null}]})}),storage='ok',stored=null,storedLabels=null,storedSlates=null,narrow=false}={}){
   const doc=makeDocument(PAGE);
   globalThis.document=doc;
   globalThis.location={href:'https://example.test/nfl-pool/?view=picks',search:'?view=picks'};
@@ -677,6 +801,7 @@ async function page({picksAnswer=()=>snapshot(),pickemRules=()=>rulesAnswer(read
   const store=new Map(),writes=[];
   if(stored!==null)store.set(STORAGE_KEY,typeof stored==='string'?stored:JSON.stringify(stored));
   if(storedLabels!==null)store.set(LABELS_KEY,String(storedLabels));
+  if(storedSlates!==null)store.set(SLATES_KEY,typeof storedSlates==='string'?storedSlates:JSON.stringify(storedSlates));
   const localStorage=storage==='absent'?undefined:storage==='throws'?{getItem(){throw new Error('denied')},setItem(){throw new Error('denied')}}
     :{getItem:k=>store.has(k)?store.get(k):null,setItem:(k,v)=>{writes.push([k,String(v)]);store.set(k,String(v))},removeItem:k=>store.delete(k)};
   if(localStorage)globalThis.localStorage=localStorage;else delete globalThis.localStorage;
@@ -696,8 +821,26 @@ async function page({picksAnswer=()=>snapshot(),pickemRules=()=>rulesAnswer(read
     update:contest=>doc.dispatchEvent(new CustomEvent('poolcenter:update',{detail:{contest}})),
     board,filters:()=>doc.getElementById('picksFilters'),dialog,
     compare:()=>doc.querySelector('[data-picks-compare]'),comparing:()=>doc.querySelector('[data-picks-compare-label]')?.textContent??null,
-    select:()=>doc.querySelector('[data-picks-slate]'),slates:()=>doc.querySelectorAll('[data-picks-slate] option').map(o=>[o.getAttribute('value'),o.textContent,o.hasAttribute('selected')]),
-    chooseSlate:key=>{const s=doc.querySelector('[data-picks-slate]');s.value=key;s.change()},
+    // The Slates control and its panel: each row's stable name, name, date and count, and whether it is checked.
+    slatesControl:()=>doc.querySelector('[data-picks-slates-open]'),slatesLabel:()=>doc.querySelector('[data-picks-slates-label]')?.textContent??null,
+    slatesDialog:()=>doc.getElementById('picksSlates'),slateBoxes:()=>doc.querySelectorAll('[data-picks-slate-list] [data-picks-slate-choice]'),
+    slateBox:key=>doc.querySelector(`[data-picks-slate-list] [data-picks-slate-choice="${key}"]`),
+    slateChoices:()=>doc.querySelectorAll('[data-picks-slate-list] [data-picks-slate-choice]').map(b=>{const row=b.closest('.pm-entry');return[b.dataset.picksSlateChoice,row.querySelector('.pm-entry-name').textContent,row.querySelector('.pm-entry-meta').textContent,b.checked]}),
+    checkedSlates:()=>doc.querySelectorAll('[data-picks-slate-list] [data-picks-slate-choice]').filter(b=>b.checked).map(b=>b.dataset.picksSlateChoice),
+    toggleSlateBox:key=>{const b=doc.querySelector(`[data-picks-slate-list] [data-picks-slate-choice="${key}"]`);b.checked=!b.checked;b.change()},
+    slatesSelectAll:()=>doc.querySelector('#picksSlates [data-picks-slate-choice="*"]'),slatesDone:()=>doc.querySelector('#picksSlates .pm-sheet-actions [data-picks-slates-close]'),
+    slatesClose:()=>doc.querySelector('#picksSlates .pm-sheet-head [data-picks-slates-close]'),slatesNote:()=>doc.querySelector('[data-picks-slates-note]')?.textContent??null,
+    slatesStored:()=>store.has(SLATES_KEY)?JSON.parse(store.get(SLATES_KEY)):null,
+    // Show exactly these slates, as a reader would: open the panel, tick the slates wanted and not shown, untick the slates shown
+    // and not wanted, then Done. (Every slate wanted is a list of every slate, not All Slates: that is Select all.)
+    onlySlates:keys=>{
+      doc.querySelector('[data-picks-slates-open]').click();
+      const boxes=()=>doc.querySelectorAll('[data-picks-slate-list] [data-picks-slate-choice]');
+      for(const b of boxes())if(keys.includes(b.dataset.picksSlateChoice)&&!b.checked){b.checked=true;b.change()}
+      for(const b of boxes())if(!keys.includes(b.dataset.picksSlateChoice)&&b.checked){b.checked=false;b.change()}
+      doc.querySelector('#picksSlates .pm-sheet-actions [data-picks-slates-close]').click();
+    },
+    allSlates:()=>{doc.querySelector('[data-picks-slates-open]').click();doc.querySelector('#picksSlates [data-picks-slate-choice="*"]').click();doc.querySelector('#picksSlates .pm-sheet-actions [data-picks-slates-close]').click()},
     segment:status=>doc.querySelector(`[data-picks-status="${status}"]`),
     note:()=>doc.querySelector('[data-picks-note]')?.textContent??null,
     boxes:()=>doc.querySelectorAll('[data-picks-entrants] [data-picks-entrant]'),box:name=>doc.querySelector(`[data-picks-entrants] [data-picks-entrant="${name}"]`),
@@ -732,6 +875,10 @@ const spoken=node=>visible(node).replace(/\s+/g,' ').trim();
 // The names the chips speak: the full names, whatever label is shown.
 const namesOn=article=>article.querySelectorAll('.pm-token-name').map(spoken);
 const tokens=article=>article.querySelectorAll('.pm-token').map(spoken);
+// Identity checks on elements go through same() and none(): a failing assert.equal formats both operands, and on this DOM
+// every element reaches the whole document through its getters, so the message would never finish.
+const same=(a,b,message)=>assert(a===b,message);
+const none=(a,message)=>assert(a===null,message);
 
 // ---- The page part: collapsible Rules & rulings (unchanged from V1.3).
 await check('boot: both Rules & rulings cards are collapsed as the page ships (body hidden, the control says Expand), with the summary and the alerts from the apps’ own models visible, nothing written, no timer started',async()=>{
@@ -802,7 +949,7 @@ await check('ON HOLD, HOLD, UNDER REVIEW and stale warnings stay visible while t
 });
 
 // ---- The page part: the compact Picks board.
-await check('boot: the compact list; every matchup is one collapsed card in kickoff order with all four entries’ tokens, the one Comparing control, the slate selector with every present slate and its count, All / Final / Live / Upcoming with counts, the note; the table is untouched',async()=>{
+await check('boot: the compact list; every matchup is one collapsed card in kickoff order with all four entries’ tokens, the Comparing control, the Slates control at All Slates with every slate of the week in its panel, All / Final / Live / Upcoming with counts, the note; the table is untouched',async()=>{
   const p=await page();
   assert.equal(p.board().hidden,false);assert.equal(p.filters().hidden,false);
   assert.equal(p.board().closest('.picks').classList.contains('is-mobile-ready'),true);
@@ -818,8 +965,10 @@ await check('boot: the compact list; every matchup is one collapsed card in kick
     assert.equal(article.querySelectorAll('.pm-status').length,1,'one status pill per card');
   }
   assert.equal(p.comparing(),'All 4 entries');assert.equal(p.compare().getAttribute('aria-haspopup'),'dialog');assert.equal(p.compare().getAttribute('aria-expanded'),'false');
-  assert.deepEqual(p.slates(),SLATES.map(([key,label,count])=>[key,`${label} (${count})`,key==='all']));
-  assert.equal(p.select().value,'all');
+  assert.equal(p.slatesLabel(),'All Slates','All Slates for a reader with nothing remembered');assert.equal(spoken(p.slatesControl()),'Slates All Slates');
+  assert.equal(p.slatesControl().getAttribute('aria-haspopup'),'dialog');assert.equal(p.slatesControl().getAttribute('aria-controls'),'picksSlates');assert.equal(p.slatesControl().getAttribute('aria-expanded'),'false');
+  assert.deepEqual(p.slateChoices().map(([key,,,checked])=>[key,checked]),EVERY.map(key=>[key,true]),'the panel lists every slate of the week, every one shown');
+  assert.equal(p.slatesDialog().open,false);none(p.filters().querySelector('select'),'no slate selector');none(p.board().querySelector('select'));
   assert.equal(p.status(),'all');assert.deepEqual(p.counts(),{all:'12',final:'2',live:'2',upcoming:'6'});
   assert.equal(p.note(),'All 4 entries · 12 of 12 games · 2 VOID/HOLD shown in every status filter');
   assert.equal(p.dialog().open,false);
@@ -844,34 +993,85 @@ await check('expansion: a tap opens one matchup (its grading, ownership and expl
   assert(!p.details(0).querySelector('.pm-score')&&!p.details(0).querySelector('.pm-status'),'the details repeat no score or status');
   assert.deepEqual(tokens(p.cardOf(0)),['D.C. DEN ✓','JC KC ✕','DJS DEN ✓','Thaddeus — ✕'],'the summary keeps its tokens while open');
 });
-await check('slate filtering: the selector shows only that slate, the status counts and the note follow the slate, All Slates restores everything',async()=>{
+await check('multi-select slates: the Slates control opens an accessible panel of the week’s slates; one, two, three or every slate can be shown, each tap applied at once, remembered under its own key and named on the control; the chosen slates are listed in schedule order whatever order they were ticked in; the status counts and the note follow; Select all returns to All Slates; closing returns focus to the control',async()=>{
   const p=await page();
-  p.chooseSlate(EARLY);
-  assert.equal(p.select().value,EARLY);assert.deepEqual(p.shown(),[1,2,6,10]);assert.deepEqual(p.groups(),['Sunday Early']);
+  const control=p.slatesControl();control.click();
+  assert.equal(p.slatesDialog().open,true);assert.equal(control.getAttribute('aria-expanded'),'true');
+  assert.equal(p.slatesDialog().getAttribute('aria-labelledby'),'picksSlatesTitle');assert.equal(p.doc.getElementById('picksSlatesTitle').textContent,'Slates to show');
+  same(p.doc.activeElement,p.slateBox(TN),'focus moves to the first slate');
+  assert.deepEqual(p.slateChoices(),[[TN,'Thursday Night','Thu, Sep 24 · 1 game',true],[SM,'Sunday Morning','Sun, Sep 27 · 1 game',true],[SE,'Sunday Early','Sun, Sep 27 · 4 games',true],[SL,'Sunday Late','Sun, Sep 27 · 2 games',true],
+    [SN,'Sunday Night','Sun, Sep 27 · 1 game',true],[ST,'Sunday · Kickoff TBD','Sun, Sep 27 · 1 game',true],[MN,'Monday Night','Mon, Sep 28 · 1 game',true],['tbd','Kickoff TBD','1 game',true]]);
+  assert.equal(p.slatesSelectAll().disabled,true,'Select all has nothing to do under All Slates');assert.equal(p.slatesNote(),'');
+  // One slate: untick every other, one tap at a time; each tap applies at once.
+  for(const key of [TN,SM,SL,SN,ST,MN,'tbd'])p.toggleSlateBox(key);
+  assert.deepEqual(p.checkedSlates(),[SE]);assert.equal(p.slatesLabel(),'Sunday Early');assert.deepEqual(p.shown(),[1,2,6,10]);assert.deepEqual(p.groups(),['Sunday Early']);
+  assert.deepEqual(p.slatesStored(),{version:1,all:false,slates:[SE]});assert.equal(p.slatesSelectAll().disabled,false);
   assert.deepEqual(p.counts(),{all:'4',final:'1',live:'2',upcoming:'0'});
   assert.equal(p.note(),'All 4 entries · Sunday Early · 4 of 4 games · 1 VOID/HOLD shown in every status filter');
-  assert.deepEqual(p.slates().filter(s=>s[2]).map(s=>s[0]),[EARLY],'the selector keeps the choice');
-  p.chooseSlate('tbd');assert.deepEqual(p.shown(),[9]);assert.equal(p.note(),'All 4 entries · Kickoff TBD · 1 of 1 game');
-  p.chooseSlate('2026-09-27|4');assert.deepEqual(p.shown(),[8]);assert.deepEqual(p.groups(),['Sunday · Kickoff TBD']);
-  p.chooseSlate('all');
-  assert.deepEqual(p.shown(),[0,11,1,2,6,10,7,3,4,8,5,9]);assert.equal(p.note(),'All 4 entries · 12 of 12 games · 2 VOID/HOLD shown in every status filter');
+  // Two.
+  p.toggleSlateBox(SL);
+  assert.equal(p.slatesLabel(),'2 Slates Selected');assert.deepEqual(p.groups(),['Sunday Early','Sunday Late']);assert.deepEqual(p.shown(),[1,2,6,10,7,3]);
+  assert.deepEqual(p.slatesStored(),{version:1,all:false,slates:[SE,SL]});
+  assert.equal(p.note(),'All 4 entries · Sunday Early + Sunday Late · 6 of 6 games · 2 VOID/HOLD shown in every status filter');
+  // Three, ticked out of schedule order: Monday Night, Thursday Night, then (the Sunday pair unticked) Sunday Night.
+  for(const key of [MN,TN,SE,SL,SN])p.toggleSlateBox(key);
+  assert.deepEqual(p.checkedSlates(),[TN,SN,MN]);assert.equal(p.slatesLabel(),'3 Slates Selected');
+  assert.deepEqual(p.groups(),['Thursday Night','Sunday Night','Monday Night'],'schedule order, not the order ticked');assert.deepEqual(p.shown(),[0,4,5]);
+  assert.deepEqual(p.slatesStored(),{version:1,all:false,slates:[TN,SN,MN]},'remembered in schedule order');
+  assert.deepEqual(p.counts(),{all:'3',final:'1',live:'0',upcoming:'2'});assert.equal(p.note(),'All 4 entries · Thursday Night + Sunday Night + Monday Night · 3 of 3 games');
+  // Every slate, ticked one by one: a list of every slate, not All Slates, and the control says so; Select all gives All Slates.
+  for(const key of [SM,SE,SL,ST,'tbd'])p.toggleSlateBox(key);
+  assert.deepEqual(p.checkedSlates(),EVERY);assert.equal(p.slatesLabel(),'8 Slates Selected');assert.deepEqual(p.shown(),[0,11,1,2,6,10,7,3,4,8,5,9]);
+  assert.deepEqual(p.slatesStored(),{version:1,all:false,slates:EVERY});assert.equal(p.slatesSelectAll().disabled,false,'Select all still has All Slates to give');
+  p.slatesSelectAll().click();
+  assert.equal(p.slatesLabel(),'All Slates');assert.deepEqual(p.slatesStored(),{version:1,all:true,slates:[]});assert.equal(p.slatesSelectAll().disabled,true);assert.deepEqual(p.checkedSlates(),EVERY);
+  assert.equal(p.note(),'All 4 entries · 12 of 12 games · 2 VOID/HOLD shown in every status filter');
+  p.slatesDone().click();
+  assert.equal(p.slatesDialog().open,false);assert.equal(control.getAttribute('aria-expanded'),'false');same(p.doc.activeElement,control,'focus returns to the control');
+  control.click();p.slatesClose().click();assert.equal(p.slatesDialog().open,false,'the close button closes too');same(p.doc.activeElement,control);
+  control.click();p.slatesDialog().click();assert.equal(p.slatesDialog().open,false,'a tap on the backdrop closes too');
+  same(p.slatesControl(),control,'the same control throughout');
+  assert(p.writes.length>0&&p.writes.every(([k])=>k===SLATES_KEY),'only the slates key is written');
 });
-await check('combined filters: slate, status and entries apply together; VOID and HOLD games stay in every status filter of their slate and the note says so; an empty combination is truthful',async()=>{
+await check('an empty selection is refused: the last slate shown stays checked and shown, the panel and the note say so once, nothing is written; a chosen slate this week lacks does not count as shown; Select all and any other tap still work',async()=>{
+  const p=await page({storedSlates:{version:1,all:false,slates:['saturday-late',SN]}});
+  assert.equal(p.slatesLabel(),'Sunday Night');assert.deepEqual(p.shown(),[4]);
+  p.slatesControl().click();
+  assert.deepEqual(p.checkedSlates(),[SN]);const before=p.writes.length;
+  p.toggleSlateBox(SN);
+  assert.deepEqual(p.checkedSlates(),[SN],'the last slate shown stays checked');assert.equal(p.slateBox(SN).checked,true);
+  assert.equal(p.slatesLabel(),'Sunday Night');assert.deepEqual(p.shown(),[4],'and shown');
+  assert.equal(p.slatesNote(),'At least one slate stays selected');assert.equal(p.writes.length,before,'nothing is written');
+  assert.deepEqual(p.slatesStored(),{version:1,all:false,slates:['saturday-late',SN]},'the choice is kept whole');
+  assert.equal(p.note(),'At least one slate stays selected · All 4 entries · Sunday Night · 1 of 1 game');
+  p.update('pickem');assert.equal(p.note(),'All 4 entries · Sunday Night · 1 of 1 game','said once');assert.equal(p.slatesNote(),'');
+  p.toggleSlateBox(MN);assert.deepEqual(p.checkedSlates(),[SN,MN]);assert.deepEqual(p.slatesStored(),{version:1,all:false,slates:[SN,MN,'saturday-late']});
+  p.toggleSlateBox(SN);p.toggleSlateBox(MN);assert.deepEqual(p.checkedSlates(),[MN],'refused again at the last one');assert.equal(p.slatesNote(),'At least one slate stays selected');
+  p.slatesSelectAll().click();assert.equal(p.slatesLabel(),'All Slates');assert.deepEqual(p.checkedSlates(),EVERY);
+  for(const key of EVERY.slice(0,-1))p.toggleSlateBox(key);
+  assert.deepEqual(p.checkedSlates(),['tbd']);p.toggleSlateBox('tbd');assert.deepEqual(p.checkedSlates(),['tbd'],'from All Slates down to one, and no further');
+  assert.deepEqual(p.slatesStored(),{version:1,all:false,slates:['tbd']});assert.deepEqual(p.shown(),[9]);
+});
+await check('combined filters: the slates, the status and the entries apply together; VOID and HOLD games stay in every status filter of their slates and the note says so; an empty combination is truthful and names the slates',async()=>{
   const p=await page();
-  p.chooseSlate(EARLY);p.segment('live').click();
+  p.onlySlates([SE]);p.segment('live').click();
   assert.deepEqual(p.shown(),[2,6,10]);assert.equal(p.status(),'live');
   assert.equal(p.note(),'All 4 entries · Sunday Early · 3 of 4 games · Live · 1 VOID/HOLD shown in every status filter');
   p.compare().click();p.toggleBox('JC');p.toggleBox('Thaddeus');p.done().click();
   assert.deepEqual(p.shown(),[2,6,10]);for(const article of p.cards())assert.deepEqual(namesOn(article),['D.C.','DJS']);
   assert.equal(p.comparing(),'D.C. + DJS');assert.equal(p.note(),'D.C. + DJS · Sunday Early · 3 of 4 games · Live · 1 VOID/HOLD shown in every status filter');
-  p.chooseSlate(LATE);p.segment('final').click();
+  p.onlySlates([SL]);p.segment('final').click();
   assert.deepEqual(p.shown(),[7],'the HOLD game rides with Final');assert.equal(p.note(),'D.C. + DJS · Sunday Late · 1 of 2 games · Final · 1 VOID/HOLD shown in every status filter');
   p.segment('upcoming').click();assert.deepEqual(p.shown(),[7,3]);
-  p.chooseSlate(NIGHT);p.segment('live').click();
+  p.onlySlates([SE,SL]);assert.deepEqual(p.shown(),[6,7,3],'two slates: Sunday Early’s VOID game, then Sunday Late');
+  assert.equal(p.note(),'D.C. + DJS · Sunday Early + Sunday Late · 3 of 6 games · Upcoming · 2 VOID/HOLD shown in every status filter');
+  p.onlySlates([SN]);p.segment('live').click();
   assert.equal(p.board().innerHTML,'<div class="empty">No live games in Sunday Night.</div>');assert.equal(p.note(),'D.C. + DJS · Sunday Night · 0 of 1 game · Live');
   assert.deepEqual(p.counts(),{all:'1',final:'0',live:'0',upcoming:'1'});
-  p.segment('all').click();assert.deepEqual(p.shown(),[4]);
-  p.chooseSlate('all');assert.deepEqual(p.shown(),[0,11,1,2,6,10,7,3,4,8,5,9]);
+  p.onlySlates([SN,MN]);assert.equal(p.board().innerHTML,'<div class="empty">No live games in Sunday Night or Monday Night.</div>');
+  p.onlySlates([TN,SN,MN]);assert.equal(p.board().innerHTML,'<div class="empty">No live games in Thursday Night, Sunday Night or Monday Night.</div>');
+  p.segment('all').click();assert.deepEqual(p.shown(),[0,4,5]);
+  p.allSlates();assert.deepEqual(p.shown(),[0,11,1,2,6,10,7,3,4,8,5,9]);
   for(const status of ['final','live','upcoming']){p.segment(status).click();assert(p.shown().includes(6)&&p.shown().includes(7),`VOID and HOLD under ${status}`)}
 });
 await check('the entry selection panel: the Comparing control opens an accessible dialog of labelled checkboxes (with each entry’s submission state), every change applies at once and is remembered, the last entry stays selected, Select all selects everyone, closing returns focus to the control',async()=>{
@@ -911,20 +1111,20 @@ await check('the entry selection panel: the Comparing control opens an accessibl
   assert.match(noStore.note(),/^Selection not saved in this browser · D\.C\. \+ DJS \+ Thaddeus/,'the page says the choice applies here only');
   const absent=await page({storage:'absent'});absent.compare().click();absent.toggleBox('JC');assert.equal(absent.comparing(),'D.C. + DJS + Thaddeus');
 });
-await check('refresh stability: an update of the same week keeps the slate, status and entries, keeps the one open matchup open with the same elements and focus, and redraws only what changed; a filter that hides the open matchup closes it',async()=>{
+await check('refresh stability: an update of the same week keeps the slates, status and entries, keeps the one open matchup open with the same elements and focus, and redraws only what changed; a filter that hides the open matchup closes it',async()=>{
   const p=await page();
   p.compare().click();p.toggleBox('JC');p.toggleBox('Thaddeus');p.done().click();
-  p.chooseSlate(EARLY);
+  p.onlySlates([SE]);
   const t2=p.expandOf(2);t2.focus();t2.click();
-  const cardBefore=p.cardOf(2),selectBefore=p.select(),compareBefore=p.compare(),segmentBefore=p.segment('live'),detailsBefore=p.details(2);
+  const cardBefore=p.cardOf(2),slatesBefore=p.slatesControl(),compareBefore=p.compare(),segmentBefore=p.segment('live'),detailsBefore=p.details(2),boxBefore=p.slateBox(SE);
   assert.deepEqual(p.shown(),[1,2,6,10]);assert.deepEqual(p.expanded(),[2]);
   p.answers.picks=()=>snapshot({games:GAMES().map(g=>g.index===2?{...g,kind:'final',status:'FINAL',detail:'Final',awayScore:27,homeScore:24,winner:'NYJ',picks:pk(['NYJ','NE','NYJ',null],['correct','incorrect','correct','incorrect'])}:g.index===3?{...g,kind:'live',status:'1st 12:00',detail:'1st 12:00',awayScore:0,homeScore:3}:g)});
   for(let i=0;i<5;i++)p.update('pickem');
-  assert.equal(p.select().value,EARLY,'the slate stays');assert.equal(p.status(),'all','the status stays');assert.equal(p.comparing(),'D.C. + DJS','the entries stay');
+  assert.equal(p.slatesLabel(),'Sunday Early','the slates stay');assert.equal(p.status(),'all','the status stays');assert.equal(p.comparing(),'D.C. + DJS','the entries stay');
   assert.deepEqual(p.shown(),[1,2,6,10]);assert.deepEqual(p.expanded(),[2],'the open matchup stays open');
   assert.equal(p.cardOf(2),cardBefore,'the same card element');assert.equal(p.expandOf(2),t2,'the same control');assert.equal(p.details(2),detailsBefore);
   assert.equal(p.doc.activeElement,t2,'focus is not lost');assert.equal(p.details(2).hidden,false);
-  assert.equal(p.select(),selectBefore);assert.equal(p.compare(),compareBefore);assert.equal(p.segment('live'),segmentBefore,'the controls are the same elements');
+  same(p.slatesControl(),slatesBefore);same(p.compare(),compareBefore);same(p.segment('live'),segmentBefore,'the controls are the same elements');same(p.slateBox(SE),boxBefore,'and so are the slate panel’s rows');
   assert.equal(p.cardOf(2).getAttribute('class'),'pm-card pm-kind-final is-expanded','the card follows the new state');
   assert.equal(p.cardOf(2).querySelector('.pm-status').textContent,'FINAL');assert.deepEqual(p.cardOf(2).querySelectorAll('.pm-score').map(s=>s.textContent),['27','24']);
   assert.deepEqual(tokens(p.cardOf(2)),['D.C. NYJ ✓','DJS NYJ ✓']);assert.deepEqual(p.details(2).querySelectorAll('.pm-pick').map(spoken),['D.C. NYJ ✓ Correct','DJS NYJ ✓ Correct']);
@@ -936,35 +1136,43 @@ await check('refresh stability: an update of the same week keeps the slate, stat
   assert.deepEqual(p.shown(),[6,10]);assert.deepEqual(p.expanded(),[],'the open matchup left the list, so nothing is open');
   p.segment('all').click();
   assert.deepEqual(p.shown(),[1,2,6,10]);assert.deepEqual(p.expanded(),[],'it comes back compact');
-  p.expandOf(6).click();p.chooseSlate('all');
+  p.expandOf(6).click();p.allSlates();
   assert.deepEqual(p.expanded(),[6],'a slate change that keeps the open matchup keeps it open');
   p.compare().click();p.selectAll().click();p.done().click();
   assert.deepEqual(p.expanded(),[6],'an entry change keeps it open');assert.deepEqual(namesOn(p.cardOf(6)),NAMES);
+  p.onlySlates([SL,SN]);assert.deepEqual(p.expanded(),[],'a slate change that hides it closes it');assert.deepEqual(p.shown(),[7,3,4]);
 });
-await check('a week change: the slates are rebuilt from the new schedule, a slate that is not on it falls back to All Slates with a note, every card is compact again, the status filter and the entries stay; while another week loads nothing moves',async()=>{
+await check('a week change: the slate panel is rebuilt from the new schedule; chosen slates the new week lacks are hidden, never forgotten; a week that offers none of them shows All Slates with a note for as long as that lasts, the choice kept; the choice comes back with a week that has its slates; every card is compact again, the status filter and the entries stay; while another week loads nothing moves',async()=>{
   const p=await page();
-  p.chooseSlate(LATE);p.segment('upcoming').click();p.expandOf(7).click();
-  assert.deepEqual(p.shown(),[7,3]);assert.deepEqual(p.expanded(),[7]);
+  p.onlySlates([SL]);p.segment('upcoming').click();p.expandOf(7).click();
+  assert.deepEqual(p.shown(),[7,3]);assert.deepEqual(p.expanded(),[7]);assert.deepEqual(p.slatesStored(),{version:1,all:false,slates:[SL]});
   p.answers.picks=()=>({ready:false,reason:'Another week is loading. The picks follow once it is on screen.'});
   p.update('pickem');
   assert.equal(p.board().innerHTML,'<div class="empty">Another week is loading. The picks follow once it is on screen.</div>');
   assert.equal(p.filters().innerHTML,'','no controls while nothing is answered, as in V1.3');
   p.answers.picks=()=>snapshot();p.update('pickem');
-  assert.deepEqual(p.shown(),[7,3],'the same week back: the same slate and status');assert.equal(p.select().value,LATE);assert.equal(p.status(),'upcoming');
+  assert.deepEqual(p.shown(),[7,3],'the same week back: the same slates and status');assert.equal(p.slatesLabel(),'Sunday Late');assert.equal(p.status(),'upcoming');
   assert.deepEqual(p.expanded(),[7],'the same week back: the open matchup is open again');
   const g=(index,away,home,kickoff,o={})=>game(index,away,home,{kickoff,date:kickoff.slice(0,10),...o});
-  p.answers.picks=()=>snapshot({week:4,games:[g(0,'BUF','NYJ','2026-10-03T17:00:00Z'),g(1,'DAL','PHI','2026-10-03T20:25:00Z',{kind:'final',status:'FINAL',detail:'Final',awayScore:13,homeScore:30,winner:'PHI',picks:pk(['DAL','PHI','DAL',null],['incorrect','correct','incorrect','incorrect'])}),g(2,'KC','LV','2026-10-05T00:15:00Z')]});
-  p.update('pickem');
-  assert.deepEqual(p.slates(),[['all','All Slates (3)',true],['2026-10-03|1','Saturday Early (1)',false],['2026-10-03|2','Saturday Late (1)',false],['2026-10-04|3','Sunday Night (1)',false]]);
-  assert.equal(p.select().value,'all');assert.equal(p.status(),'upcoming','the status filter stays');assert.deepEqual(p.shown(),[0,2]);
+  const week4=()=>snapshot({week:4,games:[g(0,'BUF','NYJ','2026-10-03T17:00:00Z'),g(1,'DAL','PHI','2026-10-03T20:25:00Z',{kind:'final',status:'FINAL',detail:'Final',awayScore:13,homeScore:30,winner:'PHI',picks:pk(['DAL','PHI','DAL',null],['incorrect','correct','incorrect','incorrect'])}),g(2,'KC','LV','2026-10-05T00:15:00Z')]});
+  p.answers.picks=week4;p.update('pickem');
+  assert.deepEqual(p.slateChoices(),[['saturday-early','Saturday Early','Sat, Oct 3 · 1 game',true],['saturday-late','Saturday Late','Sat, Oct 3 · 1 game',true],[SN,'Sunday Night','Sun, Oct 4 · 1 game',true]],'the new week’s slates, every one shown');
+  assert.equal(p.slatesLabel(),'All Slates');assert.equal(p.status(),'upcoming','the status filter stays');assert.deepEqual(p.shown(),[0,2]);
   assert.equal(p.note(),'Sunday Late is not on this week\'s schedule · showing All Slates · All 4 entries · 2 of 3 games · Upcoming');
+  assert.equal(p.slatesNote(),'Sunday Late is not on this week\'s schedule · showing All Slates');
   assert.deepEqual(p.expanded(),[],'a new week is compact');
-  p.update('pickem');
-  assert.equal(p.note(),'All 4 entries · 2 of 3 games · Upcoming','the note is said once');
-  p.chooseSlate('2026-10-03|2');p.segment('final').click();assert.deepEqual(p.shown(),[1]);
+  for(let i=0;i<3;i++)p.update('pickem');
+  assert.equal(p.note(),'Sunday Late is not on this week\'s schedule · showing All Slates · All 4 entries · 2 of 3 games · Upcoming','said for as long as All Slates stands in');
+  assert.deepEqual(p.slatesStored(),{version:1,all:false,slates:[SL]},'the choice is kept, never rewritten by the fallback');
+  p.onlySlates(['saturday-late']);p.segment('final').click();assert.deepEqual(p.shown(),[1]);
+  assert.equal(p.slatesLabel(),'Saturday Late');assert.deepEqual(p.slatesStored(),{version:1,all:false,slates:['saturday-late',SL]},'Sunday Late stays chosen, out of sight');
+  assert.equal(p.note(),'All 4 entries · Saturday Late · 1 of 1 game · Final');
   p.answers.picks=()=>snapshot();p.update('pickem');
-  assert.equal(p.select().value,'all');assert.equal(p.status(),'final');assert.deepEqual(p.shown(),[0,1,6,7]);
-  assert.equal(p.note(),'Saturday Late is not on this week\'s schedule · showing All Slates · All 4 entries · 4 of 12 games · Final · 2 VOID/HOLD shown in every status filter');
+  assert.equal(p.slatesLabel(),'Sunday Late','back to a week with Sunday Late: the choice is back, without a note');assert.equal(p.status(),'final');assert.deepEqual(p.shown(),[7]);
+  assert.deepEqual(p.checkedSlates(),[SL]);none(p.slateBox('saturday-late'),'Saturday Late is not on this schedule, so it is not listed');
+  assert.equal(p.note(),'All 4 entries · Sunday Late · 1 of 2 games · Final · 1 VOID/HOLD shown in every status filter');assert.equal(p.slatesNote(),'');
+  p.answers.picks=week4;p.update('pickem');
+  assert.equal(p.slatesLabel(),'Saturday Late','and Saturday Late with a week that has it');assert.deepEqual(p.shown(),[1]);
 });
 await check('a week with other tracked names rebuilds the controls and the panel and keeps the remembered choice where it still applies; an app that does not answer leaves the loading text and no controls',async()=>{
   const p=await page({stored:{version:1,entrants:['JC','DJS']}});
@@ -1051,15 +1259,15 @@ await check('Disagreements only: off on load; on, the list keeps the games where
   p.expandOf(2).click();assert.deepEqual(p.expanded(),[2]);
   p.segment('live').click();assert.deepEqual(p.shown(),[2,6,10,7]);assert.deepEqual(p.expanded(),[2],'the open matchup stays while it is listed');
   assert.equal(p.note(),'All 4 entries · 4 of 6 games · Live · Disagreements only · 2 VOID/HOLD shown in every filter');
-  p.chooseSlate(EARLY);assert.deepEqual(p.shown(),[2,6,10]);assert.deepEqual(p.counts(),{all:'4',final:'1',live:'2',upcoming:'0'});
+  p.onlySlates([SE]);assert.deepEqual(p.shown(),[2,6,10]);assert.deepEqual(p.counts(),{all:'4',final:'1',live:'2',upcoming:'0'});
   assert.equal(p.note(),'All 4 entries · Sunday Early · 3 of 4 games · Live · Disagreements only · 1 VOID/HOLD shown in every filter');
   p.segment('upcoming').click();assert.deepEqual(p.shown(),[6],'the exception alone');
   assert.equal(p.note(),'All 4 entries · Sunday Early · 1 of 4 games · Upcoming · Disagreements only · 1 VOID/HOLD shown in every filter');
-  p.chooseSlate(NIGHT);
+  p.onlySlates([SN]);
   assert.equal(p.board().innerHTML,'<div class="empty">No upcoming disagreements among all 4 entries in Sunday Night.</div>');
   assert.equal(p.note(),'All 4 entries · Sunday Night · 0 of 0 games · Upcoming · Disagreements only');
   p.segment('live').click();assert.equal(p.board().innerHTML,'<div class="empty">No live games in Sunday Night.</div>','no game at all to disagree on: the plain empty state');
-  p.chooseSlate('all');p.segment('all').click();assert.deepEqual(p.shown(),[0,1,2,6,10,7]);
+  p.allSlates();p.segment('all').click();assert.deepEqual(p.shown(),[0,1,2,6,10,7]);
   p.compare().click();p.toggleBox('JC');p.toggleBox('Thaddeus');p.done().click();
   assert.equal(p.comparing(),'D.C. + DJS');assert.deepEqual(p.shown(),[6,7],'two entries that agree everywhere: the exceptions alone');
   assert.equal(on(),'true','the choice stays through an entry change');
@@ -1078,7 +1286,7 @@ await check('Disagreements only: off on load; on, the list keeps the games where
   p.compare().click();p.toggleBox('JC');p.done().click();
   assert.equal(sw().disabled,false);assert.equal(on(),'false','it stays off until tapped again');
   sw().click();assert.deepEqual(p.shown(),[0,1,2,6,10,7]);
-  assert(p.writes.every(([k])=>k===STORAGE_KEY),'only the selection is written');
+  assert(p.writes.every(([k])=>k===STORAGE_KEY||k===SLATES_KEY),'only the selection and the slates are written');
 });
 await check('card name labels: compact by default on a narrow screen (Thaddeus reads Thad., spoken in full), full elsewhere; the setting in the panel switches the cards in place, is remembered under its own key with the selection key untouched, and a reload restores it; storage trouble is said in the panel; the open matchup and the panel always show full names',async()=>{
   const p=await page({narrow:true});
@@ -1147,10 +1355,6 @@ await check('exceptional games on the page: VOID, HOLD, FINAL TIE, UNDER REVIEW,
   }
 });
 // ---- The page part: the collapsible slate groups.
-// Identity checks on elements go through same() and none(): a failing assert.equal formats both operands, and on this DOM
-// every element reaches the whole document through its getters, so the message would never finish.
-const same=(a,b,message)=>assert(a===b,message);
-const none=(a,message)=>assert(a===null,message);
 await check('boot in All Slates: the slate with live games starts open and every other slate starts collapsed behind its summary; each heading is one button naming its state and the hidden body that holds its cards; Expand all and Collapse all sit above the slates; nothing is written and no timer starts',async()=>{
   const p=await page();
   assert.deepEqual(p.slatesOpen(),{'2026-09-24|3':false,'2026-09-27|0':false,[EARLY]:true,[LATE]:false,[NIGHT]:false,'2026-09-27|4':false,'2026-09-28|3':false,tbd:false});
@@ -1193,10 +1397,10 @@ await check('each slate opens and closes on its own with a tap on its heading (s
   late.click();assert.equal(p.slatesOpen()[LATE],true);assert.deepEqual(p.expanded(),[7]);
   p.expandOf(3).click();assert.deepEqual(p.expanded(),[3],'one open matchup at a time, as before');
   assert.deepEqual(p.writes,[],'page state: nothing is written');
-  assert.equal(p.select().value,'all');assert.equal(p.status(),'all');assert.equal(p.comparing(),'All 4 entries');assert.equal(p.disagree().getAttribute('aria-pressed'),'false');
+  assert.equal(p.slatesLabel(),'All Slates');assert.equal(p.status(),'all');assert.equal(p.comparing(),'All 4 entries');assert.equal(p.disagree().getAttribute('aria-pressed'),'false');
   assert.equal(p.note(),'All 4 entries · 12 of 12 games · 2 VOID/HOLD shown in every status filter','the note describes the games listed, open or not');
 });
-await check('Expand all opens every slate of the week and Collapse all closes every one, the live one too, each a manual choice; the headings still work afterwards; focus stays on the control, and returns to it after a rebuild; the controls are absent for a chosen slate',async()=>{
+await check('Expand all opens every slate of the week and Collapse all closes every one, the live one too, each a manual choice; the headings still work afterwards; focus stays on the control, and returns to it after a rebuild; the controls are absent for a slate chosen alone, which keeps the manual choice made for it; with two or more chosen slates they set the chosen slates only',async()=>{
   const p=await page();
   const expand=p.slatesAction('expand');
   expand.focus();expand.click();
@@ -1213,9 +1417,16 @@ await check('Expand all opens every slate of the week and Collapse all closes ev
   p.segment('all').click();p.slatesAction('collapse').click();p.segment('upcoming').click();
   assert(Object.values(p.slatesOpen()).every(v=>v===false),'Collapse all reaches them too');
   p.segment('all').click();
-  p.chooseSlate(LATE);none(p.bar(),'no Expand all or Collapse all for one chosen slate');none(p.slatesAction('expand'),'no Expand all');assert.deepEqual(p.slatesOpen(),{[LATE]:true},'a chosen slate opens whatever Collapse all said');
-  p.chooseSlate('all');assert(p.bar(),'back with All Slates');assert(Object.values(p.slatesOpen()).every(v=>v===false),'every slate as Collapse all left it, the one looked at alone included');
-  assert.deepEqual(p.writes,[]);
+  assert.deepEqual(p.writes,[],'page state: nothing is written');
+  p.onlySlates([SL]);none(p.bar(),'no Expand all or Collapse all for a slate chosen alone');none(p.slatesAction('expand'),'no Expand all');
+  assert.deepEqual(p.slatesOpen(),{[LATE]:false},'a slate chosen alone keeps the manual choice Collapse all made for it');
+  p.slateToggle(LATE).click();assert.deepEqual(p.slatesOpen(),{[LATE]:true},'and opens by hand');
+  p.onlySlates([SL,SN,MN]);assert(p.bar(),'two or more chosen slates: Expand all and Collapse all are back');
+  assert.deepEqual(p.slatesOpen(),{[LATE]:true,[NIGHT]:false,'2026-09-28|3':false},'each as it was left');
+  p.slatesAction('expand').click();assert.deepEqual(p.slatesOpen(),{[LATE]:true,[NIGHT]:true,'2026-09-28|3':true},'Expand all opens the slates chosen');
+  p.allSlates();assert(p.bar(),'back with All Slates');
+  assert.deepEqual(p.slatesOpen(),{'2026-09-24|3':false,'2026-09-27|0':false,[EARLY]:false,[LATE]:true,[NIGHT]:true,'2026-09-27|4':false,'2026-09-28|3':true,tbd:false},'Expand all reached the chosen slates only; every other slate is as Collapse all left it');
+  assert(p.writes.every(([k])=>k===SLATES_KEY),'only the slates are written: expansion is page state');
 });
 await check('refresh stability for slates: an update of the same week keeps every manual choice and the same heading elements and focus, and redraws only the summary pills that changed; a slate nobody touched opens once it goes live and never closes by itself; a slate the user closed never reopens by itself, live or not; a slate the user opened stays open; a rebuild returns focus to the same heading',async()=>{
   const p=await page();
@@ -1246,7 +1457,7 @@ await check('refresh stability for slates: an update of the same week keeps ever
   assert.deepEqual([p.slatesOpen()[EARLY],p.slatesOpen()[LATE],p.slatesOpen()[NIGHT]],[true,false,true],'the choices survive the rebuild');
   assert.deepEqual(p.writes,[]);
 });
-await check('filters and slates: a status change or Disagreements only keeps every manual choice and never closes an open slate; a slate chosen in the selector opens each time it is chosen (even one closed by hand), without Expand all or Collapse all, and can then be closed by hand, kept through refreshes and filters; All Slates comes back exactly as it was left, the slate looked at alone included; the entries, the status and the open matchup are untouched',async()=>{
+await check('filters and slates: a status change or Disagreements only keeps every manual choice and never closes an open slate; a slate chosen alone starts open unless it was closed by hand (manual choices hold whatever slates are chosen), without Expand all or Collapse all, can be closed by hand, kept through refreshes and filters, and its opening alone is not remembered; All Slates comes back exactly as it was left; the entries, the status and the open matchup are untouched',async()=>{
   const p=await page({picksAnswer:()=>snapshot({games:MIXED()})});
   p.slateToggle(EARLY).click();p.slateToggle(NIGHT).click();
   p.segment('final').click();
@@ -1257,21 +1468,23 @@ await check('filters and slates: a status change or Disagreements only keeps eve
   p.disagree().click();
   assert.deepEqual(p.shown(),[0,1,2,6,10,7]);assert.deepEqual(p.groups(),['Thursday Night','Sunday Early','Sunday Late']);assert.deepEqual(Object.values(p.slatesOpen()),[true,false,false]);
   p.disagree().click();
-  p.chooseSlate(EARLY);
-  assert.deepEqual(p.groups(),['Sunday Early']);assert.deepEqual(p.slatesOpen(),{[EARLY]:true},'a chosen slate starts open although it was closed by hand');none(p.bar(),'no slate actions for one chosen slate');
-  assert.equal(p.slateBody(EARLY).hidden,false);assert.equal(p.note(),'All 4 entries · Sunday Early · 4 of 4 games · 1 VOID/HOLD shown in every status filter');
-  p.slateToggle(EARLY).click();assert.deepEqual(p.slatesOpen(),{[EARLY]:false},'and can be closed by hand');
+  p.onlySlates([SE]);
+  assert.deepEqual(p.groups(),['Sunday Early']);assert.deepEqual(p.slatesOpen(),{[EARLY]:false},'a slate closed by hand stays closed when chosen alone: manual choices hold whatever slates are chosen');none(p.bar(),'no slate actions for one chosen slate');
+  assert.equal(p.slateBody(EARLY).hidden,true);assert.equal(p.note(),'All 4 entries · Sunday Early · 4 of 4 games · 1 VOID/HOLD shown in every status filter');
+  p.slateToggle(EARLY).click();assert.deepEqual(p.slatesOpen(),{[EARLY]:true},'it opens by hand');
+  p.slateToggle(EARLY).click();assert.deepEqual(p.slatesOpen(),{[EARLY]:false},'and closes by hand');
   for(let i=0;i<3;i++)p.update('pickem');assert.deepEqual(p.slatesOpen(),{[EARLY]:false},'kept through refreshes');
   p.segment('live').click();assert.deepEqual(p.slatesOpen(),{[EARLY]:false},'and through a status change');p.segment('all').click();
-  p.chooseSlate('all');
+  p.allSlates();
   assert.deepEqual(p.slatesOpen(),{'2026-09-24|3':true,'2026-09-27|0':false,[EARLY]:false,[LATE]:false,[NIGHT]:true,'2026-09-27|4':false,'2026-09-28|3':false,tbd:false},'All Slates comes back exactly as it was left');assert(p.bar());
-  p.chooseSlate(LATE);assert.deepEqual(p.slatesOpen(),{[LATE]:true});
-  p.chooseSlate(EARLY);assert.deepEqual(p.slatesOpen(),{[EARLY]:true},'chosen again: open again, whatever was chosen for it before');
-  p.chooseSlate('all');assert.equal(p.slatesOpen()[LATE],false,'a slate looked at alone keeps its All Slates state');assert.equal(p.slatesOpen()[EARLY],false,'and so does one closed by hand in All Slates');
+  p.onlySlates([SL]);assert.deepEqual(p.slatesOpen(),{[LATE]:true},'a slate nobody touched starts open when chosen alone');assert.equal(p.slateBody(LATE).hidden,false);
+  p.onlySlates([SL,SM]);assert.deepEqual(p.slatesOpen(),{'2026-09-27|0':false,[LATE]:false},'with another slate it is back at its default: being chosen alone opened nothing for good');
+  p.onlySlates([SL]);assert.deepEqual(p.slatesOpen(),{[LATE]:true},'alone again: open again');
+  p.allSlates();assert.equal(p.slatesOpen()[LATE],false,'a slate looked at alone keeps its All Slates state');assert.equal(p.slatesOpen()[EARLY],false,'and so does one closed by hand');
   p.slateToggle(EARLY).click();p.expandOf(2).click();p.compare().click();p.toggleBox('JC');p.done().click();
   assert.deepEqual(p.expanded(),[2]);assert.equal(p.comparing(),'D.C. + DJS + Thaddeus');assert.deepEqual([p.slatesOpen()[EARLY],p.slatesOpen()[NIGHT]],[true,true],'an entry change keeps the slates');
   p.segment('live').click();assert.deepEqual(p.expanded(),[2]);assert.equal(p.status(),'live');assert.deepEqual(p.slatesOpen(),{[EARLY]:true,[LATE]:false});
-  assert.deepEqual(p.prefs(),{version:1,entrants:['D.C.','DJS','Thaddeus']});assert(p.writes.every(([k])=>k===STORAGE_KEY),'only the selection is written');
+  assert.deepEqual(p.prefs(),{version:1,entrants:['D.C.','DJS','Thaddeus']});assert(p.writes.every(([k])=>k===STORAGE_KEY||k===SLATES_KEY),'only the selection and the slates are written');
 });
 await check('a week change returns every slate to its default (the live slates open, the rest collapsed) and a chosen slate to open, the choices made for the week before dropped even when the slates match; the status, the entries and Disagreements only stay; while another week loads nothing moves and the same week back restores the choices; a slate that leaves the schedule is forgotten',async()=>{
   const p=await page();
@@ -1304,10 +1517,10 @@ await check('a week change returns every slate to its default (the live slates o
   assert.deepEqual([p.slatesOpen()[EARLY],p.slatesOpen()[NIGHT],p.slatesOpen()[LATE]],[false,true,true]);
   p.answers.picks=()=>snapshot({week:4});p.update('pickem');
   assert.deepEqual([p.slatesOpen()[EARLY],p.slatesOpen()[NIGHT],p.slatesOpen()[LATE]],[true,false,false],'a different week starts afresh even when its slates match the week before');
-  p.chooseSlate(LATE);p.slateToggle(LATE).click();assert.deepEqual(p.slatesOpen(),{[LATE]:false});
+  p.onlySlates([SL]);p.slateToggle(LATE).click();assert.deepEqual(p.slatesOpen(),{[LATE]:false});
   p.answers.picks=()=>snapshot({week:5});p.update('pickem');
-  assert.equal(p.select().value,LATE,'the chosen slate is on the new schedule, so it stays chosen');assert.deepEqual(p.slatesOpen(),{[LATE]:true},'and opens again: closed by hand in the week before');
-  assert.deepEqual(p.writes,[]);
+  assert.equal(p.slatesLabel(),'Sunday Late','the chosen slate is on the new schedule, so it stays chosen');assert.deepEqual(p.slatesOpen(),{[LATE]:true},'and opens again: closed by hand in the week before');
+  assert(p.writes.every(([k])=>k===SLATES_KEY),'only the slates are written');
 });
 await check('VOID and HOLD games are discoverable from a collapsed slate: its summary pills name them (with ties, reviews, unverified results and the tiebreak game) in every status filter; opening the slate shows the same cards, graded exactly as before',async()=>{
   const p=await page({picksAnswer:()=>snapshot({games:GAMES().map(g=>g.index===6?{...g,note:'Commissioner ruling · UNDER REVIEW',underReview:'the feed now reports a completed final'}:g)})});
@@ -1350,10 +1563,147 @@ await check('accessibility and the stylesheet: a semantic heading with one butto
   assert.match(css,/prefers-reduced-motion:reduce\)\{[^}]*\.pm-slate-chevron/);
   assert(!/https?:\/\//.test(css));
 });
+// ---- The page part: the multi-select slates through weeks, reloads and the other filters.
+const wk=(index,away,home,kickoff,o={})=>game(index,away,home,{kickoff,date:kickoff.slice(0,10),...o});
+await check('Select all is All Slates, kept apart from a list of every slate: under All Slates a later week’s new slate is shown; under a list of every slate of one week it is offered unticked, and Select all brings it in',async()=>{
+  // Week 4: Thursday Night, a Saturday Late game (a slate week 3 does not have) and Sunday Early.
+  const week4=()=>snapshot({week:4,games:[wk(0,'BUF','NYJ','2026-10-02T00:15:00Z'),wk(1,'DAL','PHI','2026-10-04T17:00:00Z'),wk(2,'KC','LV','2026-10-03T20:30:00Z')]});
+  const listed=await page();
+  listed.slatesControl().click();listed.toggleSlateBox(TN);listed.toggleSlateBox(TN);listed.slatesDone().click();
+  assert.equal(listed.slatesLabel(),'8 Slates Selected');assert.deepEqual(listed.slatesStored(),{version:1,all:false,slates:EVERY});assert.equal(listed.shown().length,12);
+  listed.answers.picks=week4;listed.update('pickem');
+  assert.equal(listed.slatesLabel(),'2 Slates Selected');assert.deepEqual(listed.shown(),[0,1],'the list shows its own slates only');
+  assert.deepEqual(listed.slateChoices().map(([key,,,on])=>[key,on]),[[TN,true],['saturday-late',false],[SE,true]],'the new slate is offered, unticked');
+  listed.slatesControl().click();listed.slatesSelectAll().click();
+  assert.equal(listed.slatesLabel(),'All Slates');assert.deepEqual(listed.shown(),[0,2,1],'Select all brings it in, in schedule order');assert.deepEqual(listed.slatesStored(),{version:1,all:true,slates:[]});
+  const all=await page();
+  all.answers.picks=week4;all.update('pickem');
+  assert.equal(all.slatesLabel(),'All Slates');assert.deepEqual(all.shown(),[0,2,1],'All Slates shows a slate new to the week');
+  assert.deepEqual(all.slateChoices().map(([key,,,on])=>[key,on]),[[TN,true],['saturday-late',true],[SE,true]]);
+  assert.deepEqual(all.writes,[],'and needs nothing written');
+});
+await check('the slate choice survives a reload: it is read back under its own key, a list or All Slates, beside the remembered entries and labels; absent, refusing or malformed storage means All Slates; a choice that cannot be saved still applies, and the panel and the note say so',async()=>{
+  const first=await page();
+  first.onlySlates([SL,SE]);
+  const saved=first.store.get(SLATES_KEY);
+  assert.deepEqual(JSON.parse(saved),{version:1,all:false,slates:[SE,SL]});
+  const again=await page({storedSlates:saved});
+  assert.equal(again.slatesLabel(),'2 Slates Selected');assert.deepEqual(again.groups(),['Sunday Early','Sunday Late']);assert.deepEqual(again.shown(),[1,2,6,10,7,3]);
+  again.slatesControl().click();assert.deepEqual(again.checkedSlates(),[SE,SL]);assert.equal(again.slatesSelectAll().disabled,false);
+  assert.deepEqual(again.writes,[],'reading writes nothing');
+  const three=await page({stored:{version:1,entrants:['JC','DJS']},storedLabels:'compact',storedSlates:{version:1,all:false,slates:[MN,TN,SN]}});
+  assert.equal(three.comparing(),'JC + DJS');assert.equal(three.labelsMode(),'compact');assert.equal(three.slatesLabel(),'3 Slates Selected');
+  assert.deepEqual(three.groups(),['Thursday Night','Sunday Night','Monday Night'],'restored in schedule order');for(const article of three.cards())assert.deepEqual(namesOn(article),['JC','DJS']);
+  const whole=await page({storedSlates:{version:1,all:true,slates:[]}});assert.equal(whole.slatesLabel(),'All Slates');assert.deepEqual(whole.shown(),[0,11,1,2,6,10,7,3,4,8,5,9]);
+  for(const bad of ['{bad','"sunday-early"',{version:2,all:false,slates:[SE]},{version:1,all:false,slates:[]},{version:1,all:false,slates:[EARLY]},{version:1,slates:[SE]}]){
+    const q=await page({storedSlates:bad});assert.equal(q.slatesLabel(),'All Slates',JSON.stringify(bad));assert.equal(q.shown().length,12);assert.deepEqual(q.writes,[],'and nothing is rewritten');
+  }
+  const noStore=await page({storage:'throws'});
+  assert.equal(noStore.slatesLabel(),'All Slates');
+  noStore.onlySlates([SN]);
+  assert.equal(noStore.slatesLabel(),'Sunday Night');assert.deepEqual(noStore.shown(),[4],'the choice applies all the same');
+  assert.match(noStore.note(),/^Slate choice not saved in this browser · All 4 entries · Sunday Night · 1 of 1 game$/);
+  noStore.slatesControl().click();assert.equal(noStore.slatesNote(),'Slate choice not saved in this browser');
+  const absent=await page({storage:'absent'});absent.onlySlates([SN]);assert.equal(absent.slatesLabel(),'Sunday Night');assert.deepEqual(absent.shown(),[4]);
+});
+await check('stable slates across weeks with other dates and unusual schedules: Thursday Night and Sunday Early chosen in one week are the same slates after the clocks change, in a Thanksgiving week and in a week with Saturday games; a game rescheduled out of a chosen slate leaves it, true to its new kickoff, and the panel offers its new slate; nothing is invented',async()=>{
+  const p=await page();
+  p.onlySlates([TN,SE]);
+  assert.deepEqual(p.groups(),['Thursday Night','Sunday Early']);assert.deepEqual(p.shown(),[0,1,2,6,10]);
+  // Week 10, after the clocks change: Thursday Night, a London morning, two 1:00 PM EST games, Sunday Late and Monday Night.
+  p.answers.picks=()=>snapshot({week:10,games:[wk(0,'NYJ','NE','2026-11-06T01:15:00Z'),wk(1,'JAX','IND','2026-11-08T14:30:00Z'),wk(2,'BUF','MIA','2026-11-08T18:00:00Z'),wk(3,'DAL','PHI','2026-11-08T21:25:00Z'),wk(4,'KC','DEN','2026-11-10T01:15:00Z'),wk(5,'GB','CHI','2026-11-08T18:00:00Z')]});
+  p.update('pickem');
+  assert.equal(p.slatesLabel(),'2 Slates Selected');assert.deepEqual(p.groups(),['Thursday Night','Sunday Early']);assert.deepEqual(p.shown(),[0,2,5]);
+  assert.deepEqual(p.slateChoices().map(([key,,meta,on])=>[key,meta,on]),[[TN,'Thu, Nov 5 · 1 game',true],[SM,'Sun, Nov 8 · 1 game',false],[SE,'Sun, Nov 8 · 2 games',true],[SL,'Sun, Nov 8 · 1 game',false],[MN,'Mon, Nov 9 · 1 game',false]]);
+  // Week 12, Thanksgiving: Thursday Early, Late and Night, Black Friday and Sunday Early.
+  p.answers.picks=()=>snapshot({week:12,games:[wk(0,'CHI','DET','2026-11-26T17:30:00Z'),wk(1,'NYG','DAL','2026-11-26T21:30:00Z'),wk(2,'KC','BAL','2026-11-27T01:20:00Z'),wk(3,'MIA','NYJ','2026-11-27T20:00:00Z'),wk(4,'TEN','HOU','2026-11-29T18:00:00Z')]});
+  p.update('pickem');
+  assert.deepEqual(p.slateChoices().map(([key,label])=>[key,label]),[['thursday-early','Thursday Early'],['thursday-late','Thursday Late'],[TN,'Thursday Night'],['friday-late','Friday Late'],[SE,'Sunday Early']]);
+  assert.deepEqual(p.groups(),['Thursday Night','Sunday Early'],'Thursday Night is the night game alone: the afternoon games are slates of their own');assert.deepEqual(p.shown(),[2,4]);
+  // Week 16: Saturday games join; the list chosen earlier does not take them in.
+  p.answers.picks=()=>snapshot({week:16,games:[wk(0,'LAR','SEA','2026-12-18T01:15:00Z'),wk(1,'HOU','KC','2026-12-19T18:00:00Z'),wk(2,'PIT','BAL','2026-12-19T21:30:00Z'),wk(3,'DEN','LAC','2026-12-20T18:00:00Z')]});
+  p.update('pickem');
+  assert.deepEqual(p.groups(),['Thursday Night','Sunday Early']);assert.deepEqual(p.checkedSlates(),[TN,SE]);assert.deepEqual(p.slateChoices().map(([key])=>key),[TN,'saturday-early','saturday-late',SE]);
+  // The same week, refreshed: its Sunday Early game is rescheduled to Tuesday 7:30 PM and leaves the chosen slates.
+  p.answers.picks=()=>snapshot({week:16,games:[wk(0,'LAR','SEA','2026-12-18T01:15:00Z'),wk(1,'HOU','KC','2026-12-19T18:00:00Z'),wk(2,'PIT','BAL','2026-12-19T21:30:00Z'),wk(3,'DEN','LAC','2026-12-23T00:30:00Z')]});
+  p.update('pickem');
+  assert.deepEqual(p.groups(),['Thursday Night']);assert.deepEqual(p.shown(),[0]);assert.equal(p.slatesLabel(),'Thursday Night');
+  assert.deepEqual(p.slateChoices().map(([key,label,meta])=>[key,label,meta]),[[TN,'Thursday Night','Thu, Dec 17 · 1 game'],['saturday-early','Saturday Early','Sat, Dec 19 · 1 game'],['saturday-late','Saturday Late','Sat, Dec 19 · 1 game'],['tuesday-night','Tuesday Night','Tue, Dec 22 · 1 game']]);
+  assert.deepEqual(p.slatesStored(),{version:1,all:false,slates:[TN,SE]},'Sunday Early stays chosen for the weeks that have it');
+});
+await check('combined filters with several slates: the entries compared, the slates, the status and Disagreements only apply together, with compact labels; VOID and HOLD stay listed in every filter; the counts and the note follow; the slate panel lists the whole published week with its full counts, whatever the other filters hide',async()=>{
+  const p=await page({picksAnswer:()=>snapshot({games:MIXED()}),narrow:true});
+  p.compare().click();p.toggleBox('DJS');p.toggleBox('Thaddeus');p.done().click();
+  assert.equal(p.comparing(),'D.C. + JC');
+  p.onlySlates([SE,SL]);p.disagree().click();
+  assert.deepEqual(p.shown(),[1,2,6,10,7],'the splits and the VOID game of Sunday Early, the HOLD game of Sunday Late; its agreed game is out');
+  assert.deepEqual(p.counts(),{all:'5',final:'1',live:'2',upcoming:'0'});
+  assert.equal(p.note(),'D.C. + JC · Sunday Early + Sunday Late · 5 of 5 games · Disagreements only · 2 VOID/HOLD shown in every filter');
+  p.segment('live').click();
+  assert.deepEqual(p.shown(),[2,6,10,7]);assert.equal(p.note(),'D.C. + JC · Sunday Early + Sunday Late · 4 of 5 games · Live · Disagreements only · 2 VOID/HOLD shown in every filter');
+  for(const article of p.cards()){assert.deepEqual(namesOn(article),['D.C.','JC']);assert.deepEqual(p.chipNames(article),['D.C.','JC'])}
+  p.slatesControl().click();
+  assert.deepEqual(p.slateChoices().map(([key,,meta,on])=>[key,meta,on]),[[TN,'Thu, Sep 24 · 1 game',false],[SM,'Sun, Sep 27 · 1 game',false],[SE,'Sun, Sep 27 · 4 games',true],[SL,'Sun, Sep 27 · 2 games',true],[SN,'Sun, Sep 27 · 1 game',false],[ST,'Sun, Sep 27 · 1 game',false],[MN,'Mon, Sep 28 · 1 game',false],['tbd','1 game',false]],'every slate of the published week with its full count');
+  p.toggleSlateBox(MN);
+  assert.equal(p.slatesLabel(),'3 Slates Selected');assert.deepEqual(p.shown(),[2,6,10,7],'Monday Night’s one game agrees and is not live: nothing more is listed');
+  p.segment('upcoming').click();assert.deepEqual(p.shown(),[6,7],'the exceptions alone');
+  p.slatesDone().click();
+  p.compare().click();p.toggleBox('DJS');p.done().click();p.disagree().click();
+  assert.equal(p.comparing(),'D.C. + JC + DJS');assert.deepEqual(p.shown(),[6,7,3,5]);
+  assert.equal(p.note(),'D.C. + JC + DJS · Sunday Early + Sunday Late + Monday Night · 4 of 7 games · Upcoming · 2 VOID/HOLD shown in every status filter');
+  assert.deepEqual(p.prefs(),{version:1,entrants:['D.C.','JC','DJS']});assert.deepEqual(p.slatesStored(),{version:1,all:false,slates:[SE,SL,MN]});
+});
+await check('slate accordion state across slate choices: a manual choice made in any combination holds in every other, through refreshes, filters and entry changes; untouched slates keep their defaults (open while live, open when chosen alone), and one that goes live opens and stays open; Expand all touches the chosen slates only; a new week starts every slate afresh',async()=>{
+  const p=await page();
+  p.slateToggle(EARLY).click();p.slateToggle(LATE).click();
+  assert.deepEqual([p.slatesOpen()[EARLY],p.slatesOpen()[LATE],p.slatesOpen()[NIGHT]],[false,true,false],'Sunday Early (live) closed and Sunday Late opened by hand');
+  p.onlySlates([SE,SL]);assert.deepEqual(p.slatesOpen(),{[EARLY]:false,[LATE]:true},'both manual choices hold');
+  p.onlySlates([SL,SN]);assert.deepEqual(p.slatesOpen(),{[LATE]:true,[NIGHT]:false},'Sunday Late still open, Sunday Night at its default');
+  p.slateToggle(NIGHT).click();assert.deepEqual(p.slatesOpen(),{[LATE]:true,[NIGHT]:true});
+  const night=p.slateToggle(NIGHT);night.focus();
+  for(let i=0;i<3;i++)p.update('pickem');
+  assert.deepEqual(p.slatesOpen(),{[LATE]:true,[NIGHT]:true},'refreshes keep them');same(p.slateToggle(NIGHT),night,'the same heading');same(p.doc.activeElement,night,'focus kept');
+  p.onlySlates([SN]);assert.deepEqual(p.slatesOpen(),{[NIGHT]:true});
+  p.onlySlates([TN,SE]);assert.deepEqual(p.slatesOpen(),{'2026-09-24|3':false,[EARLY]:false},'Sunday Early still closed by hand, live as it is');
+  p.slatesAction('collapse').click();p.slatesAction('expand').click();assert.deepEqual(p.slatesOpen(),{'2026-09-24|3':true,[EARLY]:true},'Expand all opens the chosen slates');
+  p.allSlates();
+  assert.deepEqual(p.slatesOpen(),{'2026-09-24|3':true,'2026-09-27|0':false,[EARLY]:true,[LATE]:true,[NIGHT]:true,'2026-09-27|4':false,'2026-09-28|3':false,tbd:false},'every choice made along the way, and nothing else');
+  // Monday Night goes live while it is not chosen; untouched, it opens when shown, then stays open.
+  p.onlySlates([SE]);
+  p.answers.picks=()=>snapshot({games:GAMES().map(g=>g.index===5?{...g,kind:'live',status:'1st 9:00',detail:'1st 9:00',awayScore:0,homeScore:0}:g)});p.update('pickem');
+  p.allSlates();assert.equal(p.slatesOpen()['2026-09-28|3'],true,'Monday Night went live untouched: open');
+  p.answers.picks=()=>snapshot();p.update('pickem');assert.equal(p.slatesOpen()['2026-09-28|3'],true,'and it stays open after');
+  p.segment('live').click();p.compare().click();p.toggleBox('JC');p.done().click();p.segment('all').click();p.disagree().click();p.disagree().click();
+  assert.deepEqual(p.slatesOpen(),{'2026-09-24|3':true,'2026-09-27|0':false,[EARLY]:true,[LATE]:true,[NIGHT]:true,'2026-09-27|4':false,'2026-09-28|3':true,tbd:false},'filters and entries change nothing');
+  p.onlySlates([SE,SL]);p.answers.picks=()=>snapshot({week:4});p.update('pickem');
+  assert.deepEqual(p.slatesOpen(),{[EARLY]:true,[LATE]:false},'a new week: the live slate open, the other collapsed, the choices of the week before gone');assert.equal(p.slatesLabel(),'2 Slates Selected','the slates chosen stay');
+});
+await check('exceptional games under a slate choice: FINAL TIE, VOID, HOLD, UNDER REVIEW, an unverified result and the tiebreak game read on the cards and the summary pills exactly as under All Slates, graded as before; VOID and HOLD stay in every status filter of the slates chosen and the note counts them',async()=>{
+  const reviewed=()=>snapshot({games:GAMES().map(g=>g.index===6?{...g,note:'Commissioner ruling · UNDER REVIEW',underReview:'the feed now reports a completed final'}:g)});
+  const all=await page({picksAnswer:reviewed}),p=await page({picksAnswer:reviewed});
+  const html=i=>all.cardOf(i).innerHTML;
+  const under=[1,2,6,10,7,3,5].map(html);
+  p.onlySlates([SE,SL,MN]);
+  assert.deepEqual(p.groups(),['Sunday Early','Sunday Late','Monday Night']);
+  [1,2,6,10,7,3,5].forEach((i,n)=>assert.equal(p.cardOf(i).innerHTML,under[n],`card ${i} as under All Slates`));
+  assert.deepEqual(p.pills(EARLY),['2 LIVE','1 FINAL TIE','1 VOID','1 UNDER REVIEW','1 NOT VERIFIED']);assert.deepEqual(p.pills(LATE),['1 UPCOMING','1 HOLD']);assert.deepEqual(p.pills('2026-09-28|3'),['1 UPCOMING','TIEBREAK']);
+  const top=i=>spoken(p.cardOf(i).querySelector('.pm-top'));
+  assert.equal(top(6),'1:00 PM EDT VOID UNDER REVIEW Commissioner ruling · UNDER REVIEW');assert.equal(top(7),'4:05 PM EDT HOLD NOT GRADED Ruling information unusable');
+  assert.equal(top(1),'1:00 PM EDT FINAL TIE Final/OT');assert.equal(top(10),'4th 2:10 LIVE NOT VERIFIED');assert.equal(top(5),'8:15 PM EDT UPCOMING TIEBREAK');
+  assert.deepEqual(tokens(p.cardOf(1)),['D.C. MIA ✕','JC BUF ✕','DJS MIA ✕','Thaddeus — ✕'],'a tie: one loss for every pick');
+  assert.deepEqual(tokens(p.cardOf(6)),['D.C. CIN','JC PIT','DJS CIN','Thaddeus —'],'VOID: nothing graded');
+  p.expandOf(6).click();assert.deepEqual(p.details(6).querySelectorAll('.pm-why').map(spoken),['Void Commissioner ruling · UNDER REVIEW · removed from scoring · listed in every status filter','Under review the feed now reports a completed final']);
+  p.expandOf(7).click();assert.deepEqual(p.details(7).querySelectorAll('.pm-pick').map(spoken),['D.C. LV HOLD','JC LAC HOLD','DJS LV HOLD','Thaddeus NO PICK HOLD']);
+  for(const status of ['final','live','upcoming']){p.segment(status).click();assert(p.shown().includes(6)&&p.shown().includes(7),`VOID and HOLD under ${status}`)}
+  p.segment('all').click();
+  assert.equal(p.note(),'All 4 entries · Sunday Early + Sunday Late + Monday Night · 7 of 7 games · 2 VOID/HOLD shown in every status filter');
+  p.onlySlates([MN]);assert.deepEqual(p.shown(),[5]);assert.equal(p.note(),'All 4 entries · Monday Night · 1 of 1 game','no VOID or HOLD among the slates chosen: none counted');
+});
 await check('desktop table regression: through boot, every filter, the panel, every expansion and every update the module never writes the comparison table or the containers weekly-app.js owns',async()=>{
   const p=await page();
   p.doc.getElementById('pickHead').innerHTML='<tr><th class="name">Entry</th></tr>';p.doc.getElementById('pickBody').innerHTML='<tr><td class="name">D.C.</td></tr>';
-  p.compare().click();p.toggleBox('JC');p.done().click();p.chooseSlate(EARLY);p.segment('final').click();p.expandOf(1).click();p.update('pickem');p.update('survivor');p.toggle('pickem').click();
+  p.compare().click();p.toggleBox('JC');p.done().click();p.onlySlates([SE,SL]);p.segment('final').click();p.expandOf(1).click();p.update('pickem');p.update('survivor');p.toggle('pickem').click();
+  p.slatesControl().click();p.slatesSelectAll().click();p.slatesDone().click();p.slatesAction('collapse').click();p.disagree().click();p.update('pickem');
   assert.deepEqual(p.table(),['<tr><th class="name">Entry</th></tr>','<tr><td class="name">D.C.</td></tr>']);
   assert(p.doc.querySelector('.picks .scroll'),'the scrolling table wrapper stays for wide screens');
 });
@@ -1362,7 +1712,7 @@ await check('small-screen layout and desktop fallback, as the stylesheet and the
   const mobile=css.slice(css.indexOf('@media(max-width:760px){'),css.indexOf('\n}\n',css.indexOf('@media(max-width:760px){'))+3);
   for(const rule of ['.picks.is-mobile-ready .scroll{display:none}','.picks.is-mobile-ready .picks-filters{display:block}','.picks.is-mobile-ready .picks-board{display:grid','.view-panel.is-mobile-ready .pm-copy-table{display:none}','.view-panel.is-mobile-ready .pm-copy-cards{display:inline}'])assert(mobile.includes(rule),`below 761px: ${rule}`);
   assert(!css.slice(0,css.indexOf('@media(max-width:760px){')).includes('.scroll{display:none}'),'the table is never hidden outside the narrow layout');
-  assert.match(css,/\.pm-compare,\.pm-select\{[^}]*min-height:44px/);assert.match(css,/\.pm-segment\{[^}]*min-height:42px/);assert.match(css,/\.pm-summary\{[^}]*min-height:56px/);assert.match(css,/\.pm-entry\{[^}]*min-height:48px/);assert.match(css,/\.rules-toggle\{[^}]*min-height:44px/);
+  assert.match(css,/\.pm-compare\{[^}]*min-height:44px/);assert.match(css,/\.pm-segment\{[^}]*min-height:42px/);assert.match(css,/\.pm-summary\{[^}]*min-height:56px/);assert.match(css,/\.pm-entry\{[^}]*min-height:48px/);assert.match(css,/\.rules-toggle\{[^}]*min-height:44px/);
   assert.match(css,/\.pm-toggle\{[^}]*min-height:42px/,'the Disagreements only switch is a 42px target');
   assert(css.includes('.pm-results.is-grid{display:grid;grid-template-columns:repeat(var(--pm-cols,1),minmax(0,1fr))}'),'compact labels: one column per compared entry');
   assert(css.includes('.pm-results.is-grid .pm-token{justify-self:start;max-width:100%;min-width:0}')&&css.includes('.pm-results.is-grid .pm-token-name{min-width:0;overflow:hidden;text-overflow:ellipsis}'),'a chip never overflows its column');
@@ -1385,6 +1735,27 @@ await check('small-screen layout and desktop fallback, as the stylesheet and the
   assert(picks.indexOf('data-picks-entrants')<picks.indexOf('pm-sheet-setting')&&picks.indexOf('pm-sheet-setting')<picks.indexOf('data-picks-dialog-note'),'the setting sits between the list and the status');
   assert(!/data-picks-labels|data-picks-disagree/.test(picks.slice(0,picks.indexOf('<dialog'))),'no permanently visible toolbar: the setting lives in the panel and the switch is rendered into the filters');
   assert(picks.indexOf('id="picksBoard"')<picks.indexOf('id="pickHead"')&&picks.indexOf('id="pickHead"')<picks.indexOf('id="picksEntrants"'),'cards, then the table, then the dialog');
+  // The slate selection panel: one labelled dialog after the entries dialog, built like it (close control and Done, Select all,
+  // the list the module fills, a live status line), with nothing remote; no slate control or choice outside it.
+  assert.equal(picks.split('<dialog class="pm-dialog" id="picksSlates" aria-labelledby="picksSlatesTitle">').length-1,1,'one slate selection dialog');
+  const at=picks.indexOf('<dialog class="pm-dialog" id="picksSlates"'),slates=picks.slice(at,picks.indexOf('</dialog>',at));
+  assert(picks.indexOf('id="picksEntrants"')<at,'after the entries dialog');
+  assert(slates.includes('<h2 id="picksSlatesTitle">Slates to show</h2>'));
+  assert(slates.includes('<button type="button" class="share-close" data-picks-slates-close aria-label="Close slate selection">✕</button>'));
+  assert.equal(slates.split('data-picks-slates-close').length-1,2,'a close control in the head and Done');
+  assert(slates.includes('<div class="pm-sheet-list" data-picks-slate-list></div>')&&slates.includes('<p class="pm-sheet-status" data-picks-slates-note role="status" aria-live="polite"></p>'));
+  assert(slates.includes('<div class="pm-sheet-actions"><button type="button" class="share-action" data-picks-slate-choice="*">Select all</button><button type="button" class="share-action primary" data-picks-slates-close>Done</button></div>'));
+  assert(!/(?:src|href)="(?:https?:)?\/\//.test(slates),'nothing remote');
+  assert(!/data-picks-slate-choice|data-picks-slates-open|data-picks-slate-list/.test(picks.slice(0,picks.indexOf('<dialog'))),'no permanently expanded slate toolbar: the control is rendered into the filters, the choices live in the panel');
+  for(const id of ['picksSlates','picksSlatesTitle'])assert.equal(index.split(`id="${id}"`).length-1,1,`index.html has exactly one #${id}`);
+  // No horizontal overflow at phone widths (360px to 412px, Samsung's): the two controls share a wrapping row and never widen it
+  // (each may shrink, its summary cut with an ellipsis); a panel fits the screen and scrolls inside; a panel row's name wraps.
+  assert(css.includes('.pm-row{display:flex;flex-wrap:wrap;gap:6px}'),'the two controls share a wrapping row');
+  assert.match(css,/\.pm-compare\{[^}]*flex:1 1 150px;min-width:0;/,'each control may shrink');
+  assert(css.includes('.pm-compare-copy{display:flex;flex-direction:column;min-width:0;line-height:1.15}')&&css.includes('.pm-compare b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}'),'a long summary is cut, never widening the control');
+  assert(css.includes('.pm-dialog{width:min(420px,calc(100vw - 24px));max-height:calc(100vh - 24px);max-height:calc(100dvh - 24px);')&&/\.pm-dialog\{[^}]*overflow:auto/.test(css),'a panel fits the screen and scrolls inside');
+  assert(css.includes('.pm-entry{display:grid;grid-template-columns:auto minmax(0,1fr);')&&css.includes('.pm-entry-copy{display:flex;flex-direction:column;min-width:0}'),'a panel row never overflows');
+  assert(!/\.pm-select|<select/.test(css),'no selector styles left behind');
 });
 await check('a page without the mobile markup is left alone',async()=>{
   const doc=makeDocument('<div class="other"><div id="gamegrid"></div></div>');
@@ -1395,4 +1766,4 @@ await check('a page without the mobile markup is left alone',async()=>{
 });
 
 assert.equal(failures.length,0,`V1.4 compact Picks UX regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
-console.log('picks-mobile regressions passed: Eastern kickoff slates, slate, status, entry and Disagreements only filters together, compact pick chips and card name labels, the compact card, slate, board and control markup, the collapsible slate groups (defaults, independent and all-at-once expansion, refresh stability, filters, week changes, VOID/HOLD summaries and accessibility), the entry selection panel and its labels setting, one open matchup at a time, refresh stability, week changes, exceptional game states, the untouched comparison table, the declared small-screen layout and desktop fallback, and the collapsible Rules & rulings');
+console.log('picks-mobile regressions passed: Eastern kickoff slates and their stable names, the multi-select slates (any combination, never none, Select all, remembered under their own key, through weeks that lack or regain them, in schedule order), slates, status, entry and Disagreements only filters together, compact pick chips and card name labels, the compact card, slate, board and control markup, the collapsible slate groups (defaults, independent and all-at-once expansion, refresh stability, filters, week changes, VOID/HOLD summaries and accessibility), the entry selection panel and its labels setting, one open matchup at a time, refresh stability, week changes, exceptional game states, the untouched comparison table, the declared small-screen layout and desktop fallback, and the collapsible Rules & rulings');
