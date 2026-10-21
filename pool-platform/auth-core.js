@@ -73,6 +73,9 @@ export function authErrorMessage(code){
   if(raw.includes('deadline_passed'))return'The submission deadline has passed.';
   if(raw.includes('submission_locked'))return'This submission is locked.';
   if(raw.includes('week_not_open'))return'This week is not open for submissions.';
+  // participant_context: the pool is readable, but no season is active or no week is open, locked or final yet (weeks
+  // start as drafts), as before the commissioner opens the first week.
+  if(raw.includes('season_not_found')||raw.includes('week_not_found'))return'This pool has no week open for picks yet. Check back after your commissioner opens one.';
   if(raw.includes('entry_not_owned'))return'You do not own this pool entry.';
   if(raw.includes('commissioner_required'))return'Commissioner access is required.';
   if(raw.includes('invalid_payload'))return'These picks do not match the configured games or Survivor rules.';

@@ -82,8 +82,11 @@ async function initialize(){
   if(state.session)await openSession();
 }
 
-$('sendCode').addEventListener('click',async()=>{message('authError','');try{state.pendingEmail=await client.sendOtp($('email').value);show('otpWrap',true);$('otp').focus()}catch(e){message('authError',e.message)}});
-$('verifyCode').addEventListener('click',async()=>{message('authError','');try{state.session=await client.verifyOtp(state.pendingEmail||$('email').value,$('otp').value)}catch(e){message('authError',e.message);return}await openSession()});
+// A sign-in step runs with its button disabled, so a second tap while the first request is out asks for no second
+// code and starts no second sign-in (and so no second invite claim).
+const busy=(id,step)=>async()=>{$(id).disabled=true;try{await step()}finally{$(id).disabled=false}};
+$('sendCode').addEventListener('click',busy('sendCode',async()=>{message('authError','');try{state.pendingEmail=await client.sendOtp($('email').value);show('otpWrap',true);$('otp').focus()}catch(e){message('authError',e.message)}}));
+$('verifyCode').addEventListener('click',busy('verifyCode',async()=>{message('authError','');try{state.session=await client.verifyOtp(state.pendingEmail||$('email').value,$('otp').value)}catch(e){message('authError',e.message);return}await openSession()}));
 $('otp').addEventListener('keydown',e=>{if(e.key==='Enter')$('verifyCode').click()});
 // Sign out lives in the shell, so it stays reachable with no entry, after a failed invite claim and after any
 // load error. It drops the session and everything loaded for it but keeps an invite that was not claimed
@@ -93,6 +96,7 @@ $('signOut').addEventListener('click',async()=>{
   Object.assign(state,{session:null,context:null,entry:null,pendingEmail:''});
   for(const id of ['entryCard','pickForm','submittedCard','emptyCard','otpWrap'])show(id,false);
   for(const id of ['games','summary','entrySelect'])$(id).replaceChildren();
+  $('entrySelect').disabled=false; // a submit still in flight for the old session leaves it locked otherwise
   for(const id of ['email','otp','tiebreak'])$(id).value='';
   // Cleared only now, so an error that arrived while signing out does not stay on the sign-in screen.
   for(const id of ['sessionError','authError','validation'])message(id,'');
@@ -112,7 +116,7 @@ function renderContext(preferredEntryId=null){
 }
 function currentAccess(){return entrySubmissionAccess(state.entry,state.context.week.status,new Date().toISOString(),state.context.week.deadline_at)}
 function renderEntry(){
-  show('submittedCard',false);
+  show('submittedCard',false);message('validation','');
   const access=currentAccess(),sub=state.entry.submission;
   if(access.reason==='commissioner_claimed')$('sourceNotice').textContent='This entry was already submitted through the commissioner channel. Direct participant submission is closed for this week.';
   else if(access.reason==='participant_update')$('sourceNotice').textContent='You already submitted this entry. You may update it from this same participant channel until the deadline.';
@@ -151,10 +155,12 @@ function updateSummary(){
   const selections=pickemSelections();
   $('summary').replaceChildren(...normalizeGames(c.week.config).map(g=>{const side=selections[g.id];return summaryRow(`${g.away.label} vs ${g.home.label}`,side?g[side].label:'—')}),summaryRow('Tiebreak',$('tiebreak').value||'—'));
 }
-$('pickForm').addEventListener('change',updateSummary);$('tiebreak').addEventListener('input',updateSummary);
-$('clearBtn').addEventListener('click',()=>{for(const input of document.querySelectorAll('#pickForm input[type="radio"]'))input.checked=false;$('tiebreak').value='';message('validation','');updateSummary()});
+// The saved card describes the picks as they were saved, so any edit takes it down until they are saved again.
+const edited=()=>{show('submittedCard',false);updateSummary()};
+$('pickForm').addEventListener('change',edited);$('tiebreak').addEventListener('input',edited);
+$('clearBtn').addEventListener('click',()=>{for(const input of document.querySelectorAll('#pickForm input[type="radio"]'))input.checked=false;$('tiebreak').value='';message('validation','');edited()});
 $('pickForm').addEventListener('submit',async event=>{
-  event.preventDefault();message('validation','');if(!currentAccess().editable){message('validation','This entry is not editable.');return}
+  event.preventDefault();message('validation','');show('submittedCard',false);if(!currentAccess().editable){message('validation','This entry is not editable.');return}
   let payload;
   if(state.context.pool.pool_type==='survivor'){
     const team=document.querySelector('input[name="survivor-team"]:checked')?.value,result=validateSurvivorSelection(team,state.context.week.config,state.entry.history);
@@ -166,18 +172,24 @@ $('pickForm').addEventListener('submit',async event=>{
     const result=validatePickPayload(payload,{gameIds:games.map(g=>g.id),tiebreakRequired:required});
     if(!result.ok){message('validation','Complete every game and enter a valid tiebreak when required.');$('validation').focus();return}
   }
-  // Signing out while this is in flight must leave nothing of it on screen: no saved card, no error.
-  $('submitBtn').disabled=true;const session=state.session;
+  // Signing out while this is in flight must leave nothing of it on screen: no saved card, no error. The entry cannot
+  // be switched until the answer is in, so the answer is only ever shown on the entry it is about.
+  $('submitBtn').disabled=true;$('entrySelect').disabled=true;const session=state.session;
   try{
     let result;
-    if(client.live){result=await client.submitEntry({weekId:state.context.week.id,entryId:state.entry.id,source:SUBMISSION_SOURCES.PARTICIPANT,payload});await loadLiveContext()}
+    if(client.live){
+      result=await client.submitEntry({weekId:state.context.week.id,entryId:state.entry.id,source:SUBMISSION_SOURCES.PARTICIPANT,payload});
+      // The picks are saved once submitEntry answers. If reloading them fails, the page records the save itself, as the
+      // sandbox does, rather than report saved picks as unsaved.
+      await loadLiveContext().catch(()=>{if(state.session===session){state.entry.submission={source:SUBMISSION_SOURCES.PARTICIPANT,status:'submitted',payload,revision:result?.revision||1};renderEntry()}});
+    }
     else{
       const existing=state.entry.submission;if(existing&&existing.source!=='participant')throw new Error('This entry was already submitted through the commissioner channel.');
       state.entry.submission={source:'participant',status:'submitted',payload,revision:(existing?.revision||0)+1,submitted_at:new Date().toISOString()};renderEntry();result={code:existing?'updated':'created',revision:state.entry.submission.revision};
     }
     if(state.session!==session)return;
-    $('submittedTitle').textContent=result?.code==='updated'?'Picks updated':'Participant channel claimed';$('submittedMessage').textContent='Your picks are saved. A commissioner import cannot overwrite this entry/week.';$('submittedMeta').textContent=`Revision ${result?.revision||state.entry.submission?.revision||1} · same-source edits remain available only while the week is open.`;show('submittedCard',true);
+    $('submittedTitle').textContent=result?.code==='updated'?'Picks updated':'Participant channel claimed';$('submittedMessage').textContent='Your picks are saved. A commissioner import cannot overwrite this entry/week.';$('submittedMeta').textContent=`Revision ${result?.revision||state.entry.submission?.revision||1} · same-source edits remain available only while the week is open.`;show('submittedCard',true);$('submittedCard').focus();
   }catch(e){if(state.session===session){message('validation',e.message);$('validation').focus()}}
-  finally{if(state.context&&state.entry)$('submitBtn').disabled=!currentAccess().editable}
+  finally{if(state.context&&state.entry)$('submitBtn').disabled=!currentAccess().editable;if(state.session===session)$('entrySelect').disabled=false}
 });
 initialize().catch(e=>message('sessionError',e.message));
