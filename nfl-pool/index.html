@@ -19,6 +19,7 @@
 <link rel="stylesheet" href="share.css?v=1">
 <link rel="stylesheet" href="home-dashboard.css?v=1">
 <link rel="stylesheet" href="picks-mobile.css?v=5">
+<link rel="stylesheet" href="season-record.css?v=1">
 </head>
 <body>
 <div class="stadium-glow" aria-hidden="true"></div>
@@ -97,7 +98,7 @@
             <button type="button" class="dash-toggle" data-dash-toggle="standings" aria-expanded="true" aria-controls="dash-standings-body"><span class="dash-chevron" aria-hidden="true"></span><span class="dash-toggle-copy"><span class="section-kicker">Leaderboard</span><span class="dash-title" id="dash-standings-title">Live Standings</span></span><span class="dash-summary" data-dash-summary="standings"></span></button>
             <div class="dash-head-tools"><button class="text-action" type="button" data-view-target="standings">View all</button></div>
           </div>
-          <div class="dash-body" id="dash-standings-body"><div class="home-standings" id="homeStandings"></div></div>
+          <div class="dash-body" id="dash-standings-body"><div class="home-standings" id="homeStandings"></div><div class="season-strip" id="homeSeason"></div></div>
         </section>
 
         <section class="card dash-section" data-dash-section="survivor" aria-labelledby="dash-survivor-title">
@@ -165,6 +166,10 @@
       <section class="card standings" aria-labelledby="stand-title">
         <div class="head"><h2 id="stand-title">Your Group</h2><div class="meta" id="fieldSummary">Field data unavailable</div><button type="button" class="share-btn" data-share-card="pickem" aria-label="Share Pick'em standings" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12M7 8l5-5 5 5M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Share</span></button></div>
         <div class="table-wrap"><table><thead><tr><th>Group</th><th>Entry</th><th class="c">Overall</th><th class="c">W</th><th class="c">L</th><th class="c">Left</th><th class="c">Back</th><th class="c">Ceiling</th><th class="c">TB</th></tr></thead><tbody id="standings"></tbody></table></div>
+      </section>
+      <section class="card season-card" aria-labelledby="season-title">
+        <div class="head"><div><span class="section-kicker">Weekly &amp; season</span><h2 id="season-title">Season Record</h2></div><div class="meta" id="seasonMeta">Loading season record…</div></div>
+        <div class="season-body" id="seasonRecord"><div class="empty">Loading season record…</div></div>
       </section>
     </section>
 
@@ -240,11 +245,12 @@
 </nav>
 
 <script src="score-feed-proxy.js?v=2"></script>
-<script type="module" src="weekly-app.js?v=weekly-v23"></script>
+<script type="module" src="weekly-app.js?v=weekly-v24"></script>
 <script type="module" src="survivor-app.js?v=12"></script>
 <script type="module" src="share-ui.js?v=2"></script>
 <script type="module" src="home-dashboard.js?v=1"></script>
 <script type="module" src="picks-mobile.js?v=5"></script>
+<script type="module" src="season-record.js?v=1"></script>
 <script src="pwa.js?v=1" defer></script>
 </body>
 </html>
