@@ -43,10 +43,15 @@ Evidence tags used below:
 | G3 Neon question I | answered by Neon in writing or by the protocol, with the operator's recorded decision on the finding | `NEON_QUESTION_I_PROTOCOL.md` |
 | G4 Neon questions H and K | settled, so the production origin's Neon Auth and Data API settings are known | `HOSTING_ARCHITECTURE.md:126-132`, `:408` |
 | G5 Go-live gate | every item of the Step 2 go-live gate holds, including the browser/device matrix | `STEP2_RUNBOOK.md:308-320` |
-| G6 Offline suites | `npm test` with the browser opt-in passes on the exact commit to be published, after `npm ci` | `STAGE_B_ACCEPTANCE.md` |
+| G6 Offline suites | `npm test` with the browser opt-in passes on the exact commit to be published, after `npm ci`, and that commit contains `stage-b-acceptance.test.mjs` (a commit without it passes `npm test` without these checks) | `STAGE_B_ACCEPTANCE.md` |
 | G7 Final origin | section 2 decided and recorded | below |
 | G8 Deploy identity | section 3 recorded, and the published deploy is the authorized one | below |
-| G9 Rollback ready | section 7's restore point recorded, and the previous good deploy identified | below |
+| G9 Rollback ready | the current Firewall Traffic Rules recorded exactly as the restore point for section 8, and the previous good deploy identified | below |
+| G10 Hosting Stage A | Stage A checks 1 to 10 PASS, STOP conditions 2 (Cookie join) and 3 (upstream disclosure) included, against the section 3 deploy with its live server-only variables | `HOSTING_ARCHITECTURE.md:260-290` |
+| G11 Hosted origin | hosting-gate steps 5 and 6 recorded: rate limits and refusals verified on the deploy, and the browser and device matrix repeated against the production origin | `HOSTING_ARCHITECTURE.md:416-419` |
+
+G2, G10 and G11 count only if their evidence names the same deploy ID as G8: evidence from another deploy, or from
+before a change of server-only variables, is not evidence for this one.
 
 If any gate is not PASS, stop: nothing below proceeds.
 
@@ -68,18 +73,24 @@ Record: the origin; who controls its DNS; that no other app is or will be served
 **not** on the operator allow-list while the firewall is still operator-only, that both a page and
 `/api/auth/get-session` are refused at the edge. If the function path is not refused, record that the firewall does not
 cover functions: the proxy is then reachable by anyone while "operator-only" (its refusals still apply), and that
-changes what section 7 can restore.
+changes what section 8 can restore.
 
 ## 3. The exact authorized deploy
 
-Only a production deploy of `commercial-v1-netlify-adapter` can build; every other branch and context is skipped or
-refused (`netlify.toml:10`, `:16`; `netlify-hosting.test.mjs`, "the deploy-context guard") **[VERIFIED]**. Work done on
-any other branch, this candidate's included, reaches production only after review and a merge into that branch, which
-is outside this procedure.
+For any branch that carries this `netlify.toml`, only a production deploy of `commercial-v1-netlify-adapter` builds;
+every other branch and context is skipped or refused (`netlify.toml:10`, `:16`; `netlify-hosting.test.mjs`, "the
+deploy-context guard") **[VERIFIED for those branches]**. A branch without this file (such as `main`) builds under the
+site's own settings only (`HOSTING_ARCHITECTURE.md:247-249`), so the site must have production branch
+`commercial-v1-netlify-adapter`, branch deploys off, deploy previews off and no build hook **[ACTION: read the site
+settings and record them]**. Work done on any other branch, this candidate's included, reaches production only after
+review and a merge into that branch, which is outside this procedure.
 
 The authorization for opening names, and the operator records **[OPERATOR]**:
 
-1. The full 40-character commit SHA, on `commercial-v1-netlify-adapter`, and the Netlify deploy ID built from it.
+1. The full 40-character commit SHA, on `commercial-v1-netlify-adapter`, and the Netlify deploy ID built from it. That
+   commit must contain the invite-fragment transport (`8929046`; `d23448b3` predates it and issues query-string links,
+   `HOSTING_ARCHITECTURE.md:294-298`) and the participant fixes recorded in `STAGE_B_ACCEPTANCE.md`, checked with
+   `git merge-base --is-ancestor`, not assumed.
 2. The public build values: `POOL_PLATFORM_MODE=live`, the Data API URL, the default (pilot) pool slug; and the
    function values: `POOL_PLATFORM_MODE=live`, the Neon Auth upstream URL's host, `POOL_PLATFORM_APP_ORIGIN` (section 2).
    Never a credential: the design needs none (`HOSTING_ARCHITECTURE.md:225-240`).
@@ -126,7 +137,7 @@ they are **[UNVERIFIED]** until observed. Every answer has no `Access-Control-*`
 | `Sec-Fetch-Site: cross-site` or `same-site` | `403` |
 | `POST /api/auth/sign-out` with a foreign `Origin`, `Origin: null`, or none | `403` |
 | `OPTIONS` on any route | `405` |
-| the app cookie twice, or a non-breaking-space look-alike beside it | `401`, no `Set-Cookie` |
+| the app cookie twice in one `Cookie` line; the same as two separate `Cookie` header lines (Stage A STOP condition 2); a non-breaking-space look-alike beside it | `401`, no `Set-Cookie`, in all three cases |
 | `GET /api/auth/list-sessions` | `404` |
 | `PUT /api/auth/sign-out` | `405` |
 | `/.netlify/functions/auth-otp`, `/.netlify/functions/auth-session` | not the proxy (Stage A check 6) |
@@ -147,7 +158,7 @@ page. How far to open is an **[OPERATOR]** decision between:
 
 Either way:
 
-1. Record the current Firewall Traffic Rules exactly, as the restore point (section 7).
+1. Confirm the Firewall Traffic Rules still match the restore point recorded for G9 (section 8 re-applies it).
 2. The operator is present for the whole opening, with the monitoring in section 6 open.
 3. One customer, one pool. No invitation for any other customer exists or is created.
 4. Right after the change, from a network not on the allow-list (for B; the commissioner's for A): the pages load, the
@@ -155,16 +166,20 @@ Either way:
    shows no CSP report other than the documented `eval` probe from `vendor/neon-js.js`
    (`FRONTEND_INTEGRATION_RUNBOOK.md:279-282`).
 5. The commissioner signs in and loads the console. Invitations are created email-bound where possible (the console
-   supports it), so a forwarded link cannot be claimed by another account (`STEP2_RUNBOOK.md:204`); an invitation
-   without an email restriction stays a bearer link (`:206`).
+   supports it), so a forwarded link cannot be claimed by another account (`STEP2_RUNBOOK.md:203`); an invitation
+   without an email restriction stays a bearer link (`:205`).
 6. For B: invitations are sent to that pool's participants only. Watch the first claims and the first submissions
    arrive, and the console's "This week" column update.
 
 ## 6. Monitoring during and after the opening
 
 - Netlify function logs: one JSON line per Auth request with route, method, status, duration and a fixed reason
-  (`HOSTING_ARCHITECTURE.md:205-207`). Watch the share of `429` (rate limits: question I's symptom), `502` (Neon
-  unreachable or misbehaving), `401` `cookie-conflict`, `421` and `403`. These logs hold no email, OTP, cookie, token or
+  (`HOSTING_ARCHITECTURE.md:205-207`). Watch the share of `429` (a Neon refusal the proxy relays: question I's
+  symptom), `502` (Neon unreachable or misbehaving), `401` `cookie-conflict`, `421` and `403`.
+- Netlify's request logs or Observability, separately: Netlify answers its own edge rate limit (10 OTP requests per
+  180 s per client IP, `netlify/functions/auth-otp.mjs`) itself, so those `429`s never reach the function and never
+  appear in its log (`HOSTING_ARCHITECTURE.md:195-196`). Participants behind one shared address (an office or school
+  network) reach it together: about five sign-ins, each a send and a verify, within three minutes. These logs hold no email, OTP, cookie, token or
   invite token by design **[VERIFIED: `auth-proxy-core.test.mjs`, "the log never holds an OTP, email, body, cookie,
   session token, JWT or Authorization value"]**.
 - Reports from participants of "Your sign-in could not be confirmed" (two `auth_required` in a row,
@@ -181,7 +196,9 @@ Any one of these restores operator-only access at once (section 8), then is inve
    or a secret in a URL or log (`FRONTEND_INTEGRATION_RUNBOOK.md:180-181`).
 2. An invite token anywhere but a claim request body: in a URL, a log, Observability, a header.
 3. The proxy answering `404` to everything, sustained `502`, or `421`/`403` for ordinary use.
-4. Sign-in refusals (`429`) hitting more than one participant in the same minutes: question I's shared-bucket symptom.
+4. Sign-in refusals (`429`) hitting more than one participant in the same minutes, relayed from Neon (in the function
+   log): question I's shared-bucket symptom. Edge `429`s for participants on one shared network (section 6) are the
+   expected effect of Netlify's per-address limit, not this criterion; record them.
 5. Served bytes, headers or CSP that differ from section 3's record, or a published deploy other than the authorized one.
 6. Any CSP report other than the documented one.
 7. A participant shown a confirmation for picks the database does not hold, or the reverse (the defects fixed in

@@ -36,8 +36,12 @@ async function openSession(){
   try{await load()}catch(e){if(state.session===session)msg('sessionError',e.message)}
 }
 // A sign-in step runs with its button disabled, so a second tap while the first request is out asks for no second
-// code and starts no second sign-in.
-const busy=(id,step)=>async()=>{$(id).disabled=true;try{await step()}finally{$(id).disabled=false}};
+// code and starts no second sign-in. Disabling the focused button drops focus to the page, so it is given back when
+// nothing else took it, and a keyboard user can retry with Enter.
+const busy=(id,step)=>async()=>{
+  const button=$(id),focused=document.activeElement===button;button.disabled=true;
+  try{await step()}finally{button.disabled=false;if(focused&&document.activeElement===document.body)button.focus()}
+};
 $('sendCode').addEventListener('click',busy('sendCode',async()=>{msg('authError','');try{state.pendingEmail=await client.sendOtp($('email').value);show('otpWrap',true);$('otp').focus()}catch(e){msg('authError',e.message)}}));
 $('verifyCode').addEventListener('click',busy('verifyCode',async()=>{msg('authError','');try{state.session=await client.verifyOtp(state.pendingEmail||$('email').value,$('otp').value)}catch(e){msg('authError',e.message);return}await openSession()}));
 // Sign out lives in the shell, so it stays reachable whether or not the console loaded. It drops the session

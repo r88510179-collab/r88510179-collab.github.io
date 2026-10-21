@@ -55,12 +55,13 @@ test('every database refusal a participant can meet is shown as words, never as 
     assert.notEqual(copy,code,`${code} reaches the participant as a raw code`);
     assert.doesNotMatch(copy,/[a-z]+_[a-z_]+/,`${code}: ${copy}`);
   }
-  // A pool that is readable but has no season or week open yet (weeks start as draft) is not an error in the
-  // account or the invitation, and the copy must not suggest one.
-  for(const code of ['season_not_found','week_not_found']){
-    assert.match(authErrorMessage(code),/no week open for picks yet/i,code);
-    assert.doesNotMatch(authErrorMessage(code),/invitation|sign in|not own/i,code);
-  }
+  // Neither is an error in the account or the invitation, and the copy must not suggest one. week_not_found is the
+  // pre-season case (weeks start as draft); season_not_found means no season is in setup or active any more, which no
+  // opened week will fix (migration 002, pool_platform_participant_context).
+  for(const code of ['season_not_found','week_not_found'])assert.doesNotMatch(authErrorMessage(code),/invitation|sign in|not own/i,code);
+  assert.match(authErrorMessage('week_not_found'),/no week open for picks yet/i);
+  assert.match(authErrorMessage('season_not_found'),/no season open/i);
+  assert.doesNotMatch(authErrorMessage('season_not_found'),/yet|check back/i);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -423,6 +424,9 @@ describe('Stage B journeys against a stand-in Data API that refuses as the datab
   const submitted=(page,revision)=>page.locator('#submittedMeta',{hasText:`Revision ${revision} `}).waitFor();
   const refusedWith=(page,copy)=>page.locator('#validation',{hasText:copy}).waitFor({state:'visible'});
   const notice=page=>page.textContent('#sourceNotice');
+  // The address the page itself holds once its invite scrub has run. page.url() follows navigation events, which can
+  // trail a history.replaceState, so the page is asked directly.
+  const scrubbedUrl=async page=>{await page.waitForFunction(()=>!location.hash);return page.evaluate(()=>location.href)};
 
   // ---- 3 and 4: invitation links that cannot be claimed.
 
@@ -445,7 +449,7 @@ describe('Stage B journeys against a stand-in Data API that refuses as the datab
       await visible(page,{signOut:true,authCard:false,pickForm:true,emptyCard:false});
       assert.equal(await page.textContent('#poolName'),'IT Pick’em');
       assert.equal(await page.inputValue('#entrySelect'),'entry-2',`${label}: only the account's own entry is shown`);
-      assert.equal(page.url(),`${base}/participant.html?pool=it-pool`,`${label}: the token left the address bar`);
+      assert.equal(await scrubbedUrl(page),`${base}/participant.html?pool=it-pool`,`${label}: the token left the address bar`);
       assert.equal(JSON.stringify(w.invites[TOKEN]),before,`${label}: the invite was not consumed`);
       assert.equal(entryOf(w,'E01').owner,code==='entry_already_claimed'?OTHER:null,`${label}: E01 changed hands`);
       assert.deepEqual(calls(w,'pool_platform_claim_entry_invite').map(c=>c.body),[JSON.stringify({p_invite_token:TOKEN})],label);
@@ -458,7 +462,7 @@ describe('Stage B journeys against a stand-in Data API that refuses as the datab
       const {page,seen}=await openPage({w,signedInAs:PLAYER,query:'?pool=it-pool#invite=not-a-token'});
       await page.locator('#entryCard').waitFor({state:'visible'});
       assert.equal(await page.textContent('#sessionError'),'Invitation link is invalid.');
-      assert.equal(page.url(),`${base}/participant.html?pool=it-pool`);
+      assert.equal(await scrubbedUrl(page),`${base}/participant.html?pool=it-pool`);
       assert.deepEqual(w.calls.map(c=>c.name),['pool_platform_participant_context']);
       await clean(page,seen);
     }
@@ -477,7 +481,7 @@ describe('Stage B journeys against a stand-in Data API that refuses as the datab
       // its session in page memory, which the reload drops, so the invited account signs in again and claims it.
       await page.goto(`${base}/participant.html?pool=it-pool#invite=${FRESH}`);
       await page.locator('#authCard').waitFor({state:'visible'});
-      assert.equal(page.url(),`${base}/participant.html?pool=it-pool`);
+      assert.equal(await scrubbedUrl(page),`${base}/participant.html?pool=it-pool`);
       await signIn(page,INVITED);
       await page.locator('#pickForm').waitFor({state:'visible'});
       await visible(page,{sessionError:false});
@@ -763,7 +767,7 @@ describe('Stage B journeys against a stand-in Data API that refuses as the datab
       await clean(page,seen);
     }
     // Signing out mid-flight: the next session's selector is usable at once, before the old answer arrives, and the
-    // old answer changes nothing on screen.
+    // old answer changes nothing on screen: no reload, no lost picks, no Submit re-enabled under the next submit.
     {
       const w=world({entries:[['E01',{owner:PLAYER}],['E02',{owner:PLAYER}]]});
       const {page,seen}=await openPage({w,signedInAs:PLAYER});
@@ -776,11 +780,24 @@ describe('Stage B journeys against a stand-in Data API that refuses as the datab
       await page.locator('#entrySelectWrap').waitFor({state:'visible'});
       assert.equal(await page.isEnabled('#entrySelect'),true,'the new session inherited a locked selector');
       await page.selectOption('#entrySelect','entry-2');
+      await pick(page,['home','home','home']);await page.fill('#tiebreak','12');
+      // The new session's own submit, held in flight too.
+      const next=gate(w,'pool_platform_submit_entry');
+      await page.click('#submitBtn');await next.arrived;
+      const loads=calls(w,'pool_platform_participant_context').length;
       const done=page.waitForResponse(r=>r.url().endsWith('/rpc/pool_platform_submit_entry'));
       held.release();await done;await settle(page);
+      assert.equal(calls(w,'pool_platform_participant_context').length,loads,'the old answer reloaded the next session\'s page');
       assert.equal(await page.inputValue('#entrySelect'),'entry-2');
+      assert.deepEqual(await checked(page),['game-0-home','game-1-home','game-2-home'],'the next session\'s picks were replaced');
+      assert.equal(await page.inputValue('#tiebreak'),'12');
+      assert.equal(await page.isEnabled('#submitBtn'),false,'Submit came back while the next submit is still out');
+      assert.equal(await page.isEnabled('#entrySelect'),false,'the selector unlocked while the next submit is still out');
       await visible(page,{submittedCard:false,validation:false});
+      next.release();await submitted(page,1);
+      assert.equal(await page.inputValue('#entrySelect'),'entry-2');
       assert.equal(await page.isEnabled('#entrySelect'),true);
+      assert.deepEqual([entryOf(w,'E01').submission?.revision,entryOf(w,'E02').submission?.payload],[1,{picks:{g1:'home',g2:'home',g3:'home'},tiebreak:12}]);
       await clean(page,seen);
     }
     // A validation message belongs to the entry it was raised on.
@@ -794,16 +811,27 @@ describe('Stage B journeys against a stand-in Data API that refuses as the datab
     await clean(page,seen);
   });
 
-  test('pre-season: an invitation claimed before the commissioner opens a week says the pool has no open week, not a raw code, and the claim stands',async()=>{
+  test('pre-season: an invitation claimed before the commissioner opens a week says the pool has no open week, not a raw code, and the claim stands; a finished season says so too',async()=>{
     const TOKEN='ab'.repeat(32);
-    for(const flag of ['noWeek','noSeason']){
-      const w=world({invites:{[TOKEN]:{entryId:'entry-1',email:INVITED}}});w[flag]=true;
+    {
+      const w=world({invites:{[TOKEN]:{entryId:'entry-1',email:INVITED}}});w.noWeek=true;
       const {page,seen}=await openPage({w,signedInAs:INVITED,query:`?pool=it-pool#invite=${TOKEN}`});
       await page.locator('#sessionError').waitFor({state:'visible'});
       const copy=await page.textContent('#sessionError');
-      assert.doesNotMatch(copy,/_not_found/,`${flag}: raw code shown: ${copy}`);
-      assert.match(copy,/no week open for picks yet/i,flag);
-      assert.equal(entryOf(w,'E01').owner,INVITED,`${flag}: the invitation was claimed`);
+      assert.doesNotMatch(copy,/_not_found/,`raw code shown: ${copy}`);
+      assert.match(copy,/no week open for picks yet/i);
+      assert.equal(entryOf(w,'E01').owner,INVITED,'the invitation was claimed');
+      await visible(page,{signOut:true,authCard:false});
+      await clean(page,seen);
+    }
+    // The season was marked complete or archived: the entry holder is told there is no season, not to wait for a week.
+    {
+      const w=world({entries:[['E01',{owner:PLAYER}]]});w.noSeason=true;
+      const {page,seen}=await openPage({w,signedInAs:PLAYER});
+      await page.locator('#sessionError').waitFor({state:'visible'});
+      const copy=await page.textContent('#sessionError');
+      assert.doesNotMatch(copy,/_not_found/,`raw code shown: ${copy}`);
+      assert.match(copy,/no season open/i);
       await visible(page,{signOut:true,authCard:false});
       await clean(page,seen);
     }
@@ -989,14 +1017,21 @@ describe('Stage B journeys against a stand-in Data API that refuses as the datab
       await page.evaluate(()=>window.__releaseSend());
       await page.locator('#otpWrap').waitFor({state:'visible'});
       assert.equal(await page.isEnabled('#sendCode'),true,`${pagePath}: Send code is usable again to request a new code`);
-      // A refused send leaves the button usable too.
+      // A refused send, by keyboard: the button is usable again and keeps focus, so Enter retries.
       await page.evaluate(()=>{window.__fakeAuth.sendFailure='Too many attempts. Wait a few minutes, then try again.'});
-      await page.click('#sendCode');await page.locator('#authError',{hasText:'Too many attempts'}).waitFor();
+      const sendsBefore=(await fake()).sends;
+      await page.focus('#sendCode');await page.keyboard.press('Enter');
+      await page.locator('#authError',{hasText:'Too many attempts'}).waitFor();await settle(page);
       assert.equal(await page.isEnabled('#sendCode'),true);
+      assert.equal(await page.evaluate(()=>document.activeElement.id),'sendCode',`${pagePath}: focus left Send code`);
+      await page.keyboard.press('Enter');await settle(page);
+      assert.equal((await fake()).sends,sendsBefore+2,`${pagePath}: Enter did not retry`);
       await page.evaluate(()=>{window.__fakeAuth.sendFailure=null});
-      // A wrong code, then a double-tapped right one.
-      await page.fill('#otp','000000');await page.click('#verifyCode');await page.locator('#authError',{hasText:'Invalid OTP'}).waitFor();
+      // A wrong code, by keyboard on the button itself; then a double-tapped right one.
+      await page.fill('#otp','000000');await page.focus('#verifyCode');await page.keyboard.press('Enter');
+      await page.locator('#authError',{hasText:'Invalid OTP'}).waitFor();await settle(page);
       assert.equal(await page.isEnabled('#verifyCode'),true);
+      assert.equal(await page.evaluate(()=>document.activeElement.id),'verifyCode',`${pagePath}: focus left Verify`);
       await page.evaluate(()=>{window.__fakeAuth.verifyGate=new Promise(resolve=>{window.__releaseVerify=resolve})});
       const before=(await fake()).verifies;
       await page.fill('#otp','123456');await doubleTap('verifyCode');

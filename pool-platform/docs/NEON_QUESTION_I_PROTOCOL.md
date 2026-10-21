@@ -58,15 +58,24 @@ Hypotheses this leaves open for hosted Neon:
 
 Never production. Two options, each with a cost; the choice and its reason are recorded before anything runs.
 
-1. **A disposable Neon child branch of production**, under every rule `PRE_REGISTRATION_HARDENING.md` sets for child
-   branches: operator-run, K1 to K4 recorded, schema fingerprint equal to production's, no credential or session
-   crossing between branches, deleted in the same session (`PRE_REGISTRATION_HARDENING.md:457-498`). It reproduces
-   production's Neon Auth configuration as far as a child copies it, and it carries the child's known exposure: it
-   copies production's users, sessions and signing keys until deleted (`:461-477`, `:1358-1359`).
+1. **A disposable Neon child branch of production.** It reproduces production's Neon Auth configuration as far as a
+   child copies it, and it carries the child's known exposure: production's users, sessions and signing keys, private
+   halves included, until it is deleted; it is a second host that may mint JWTs production accepts
+   (`PRE_REGISTRATION_HARDENING.md:461-477`, `:1222-1224`). The hardening plan's K1 to K4 govern only its P0 child; any
+   other production-derived branch first needs **a separate security assessment of the state it copies (sessions,
+   signing keys, N0, 004, and the revocation and waiting gates that state would need again), reviewed before the branch
+   is created** (`:1230-1233`); without it the branch is an unsafe order (`:1205`). Timing matters too: a branch made
+   before the rollout window makes the window's precondition 6 false (`:986-987`), so the window would need its own
+   re-assessment, and one made after the window must have passed that review or it breaks Stage B prerequisite 8
+   (`:1263-1264`). If chosen, it is also run like the P0 child: operator-run, K1 to K4 recorded, schema fingerprint
+   equal to production's, no credential or session crossing between branches, deleted in the same session
+   (`:457-498`).
 2. **A separate throwaway Neon project** with Neon Auth enabled and nothing copied from production. It carries no
-   production data or keys, but it measures Neon's defaults only: whether production's Auth configuration differs from a
-   new project's is not known (NOT IN REPO), so a result transfers to production only if Neon confirms the
-   configuration is the same.
+   production data or keys and is outside those branch rules, but it measures Neon's defaults only: whether
+   production's Auth configuration differs from a new project's is not known (NOT IN REPO), so a result transfers to
+   production only if Neon confirms the configuration is the same.
+
+Unless the operator records a reason that option 1's assessment is worth its cost, option 2 is the default.
 
 Whether a branch's limiter state is shared with production's, or with any other Neon tenant, is itself unknown (I-4).
 That is why the request budget below stays at the smallest number that can trip one bucket, and why the run happens
@@ -173,7 +182,9 @@ first unexpected result and record it: no automatic retries, no extra requests t
 
 ## Authorizations (each separate and written)
 
-1. Choosing where to run (child branch or throwaway project), and creating it.
+1. Choosing where to run (child branch or throwaway project), and creating it. For a child branch, the reviewed
+   security assessment of `PRE_REGISTRATION_HARDENING.md:1230-1233` comes first, with its effect on the rollout window
+   and Stage B recorded.
 2. Every request to that Neon Auth endpoint, with the cell list and the request budget above.
 3. Sending any OTP (the S cells), even to a reserved address.
 4. The optional forwarded-header cell.

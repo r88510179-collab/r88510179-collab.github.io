@@ -83,8 +83,12 @@ async function initialize(){
 }
 
 // A sign-in step runs with its button disabled, so a second tap while the first request is out asks for no second
-// code and starts no second sign-in (and so no second invite claim).
-const busy=(id,step)=>async()=>{$(id).disabled=true;try{await step()}finally{$(id).disabled=false}};
+// code and starts no second sign-in (and so no second invite claim). Disabling the focused button drops focus to the
+// page, so it is given back when nothing else took it, and a keyboard user can retry with Enter.
+const busy=(id,step)=>async()=>{
+  const button=$(id),focused=document.activeElement===button;button.disabled=true;
+  try{await step()}finally{button.disabled=false;if(focused&&document.activeElement===document.body)button.focus()}
+};
 $('sendCode').addEventListener('click',busy('sendCode',async()=>{message('authError','');try{state.pendingEmail=await client.sendOtp($('email').value);show('otpWrap',true);$('otp').focus()}catch(e){message('authError',e.message)}}));
 $('verifyCode').addEventListener('click',busy('verifyCode',async()=>{message('authError','');try{state.session=await client.verifyOtp(state.pendingEmail||$('email').value,$('otp').value)}catch(e){message('authError',e.message);return}await openSession()}));
 $('otp').addEventListener('keydown',e=>{if(e.key==='Enter')$('verifyCode').click()});
@@ -179,6 +183,7 @@ $('pickForm').addEventListener('submit',async event=>{
     let result;
     if(client.live){
       result=await client.submitEntry({weekId:state.context.week.id,entryId:state.entry.id,source:SUBMISSION_SOURCES.PARTICIPANT,payload});
+      if(state.session!==session)return; // signed out meanwhile: reload nothing into the next account's page
       // The picks are saved once submitEntry answers. If reloading them fails, the page records the save itself, as the
       // sandbox does, rather than report saved picks as unsaved.
       await loadLiveContext().catch(()=>{if(state.session===session){state.entry.submission={source:SUBMISSION_SOURCES.PARTICIPANT,status:'submitted',payload,revision:result?.revision||1};renderEntry()}});
@@ -190,6 +195,7 @@ $('pickForm').addEventListener('submit',async event=>{
     if(state.session!==session)return;
     $('submittedTitle').textContent=result?.code==='updated'?'Picks updated':'Participant channel claimed';$('submittedMessage').textContent='Your picks are saved. A commissioner import cannot overwrite this entry/week.';$('submittedMeta').textContent=`Revision ${result?.revision||state.entry.submission?.revision||1} · same-source edits remain available only while the week is open.`;show('submittedCard',true);$('submittedCard').focus();
   }catch(e){if(state.session===session){message('validation',e.message);$('validation').focus()}}
-  finally{if(state.context&&state.entry)$('submitBtn').disabled=!currentAccess().editable;if(state.session===session)$('entrySelect').disabled=false}
+  // An answer for a session that has since ended leaves the next session's controls alone.
+  finally{if(state.session===session&&state.context&&state.entry)$('submitBtn').disabled=!currentAccess().editable;if(state.session===session)$('entrySelect').disabled=false}
 });
 initialize().catch(e=>message('sessionError',e.message));

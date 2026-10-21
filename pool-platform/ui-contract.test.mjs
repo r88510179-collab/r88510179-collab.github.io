@@ -75,7 +75,7 @@ test('participant Sign out and signed-in errors live in the shell, outside every
   assert.match(submit,/const session=state\.session;/);
   assert.match(submit,/if\(state\.session!==session\)return;\n    \$\('submittedTitle'\)/,'no saved card after sign out');
   assert.match(submit,/catch\(e\)\{if\(state\.session===session\)\{message\('validation',e\.message\)/,'no stale error after sign out');
-  assert.match(submit,/finally\{if\(state\.context&&state\.entry\)\$\('submitBtn'\)/);
+  assert.match(submit,/finally\{if\(state\.session===session&&state\.context&&state\.entry\)\$\('submitBtn'\)/,'no stale re-enable of Submit after sign out');
   assert.match(js,/catch\(e\)\{if\(!String\(e\?\.message\)\.includes\('pool_not_found'\)\)throw e\}/,'no readable pool means the empty state');
 });
 
