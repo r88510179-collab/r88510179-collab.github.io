@@ -23,6 +23,7 @@ BEGIN
       'dues_tracking_enabled',COALESCE(features.dues_tracking_enabled,false),
       'permissions',jsonb_build_object(
         'view_pool',true,
+        'manage_staff',public.pool_platform_is_tenant_commissioner(p.tenant_id),
         'manage_players',public.pool_platform_staff_can(p.id,'manage_players'),
         'review_picks',public.pool_platform_staff_can(p.id,'review_picks'),
         'edit_rules',public.pool_platform_staff_can(p.id,'edit_rules'),
