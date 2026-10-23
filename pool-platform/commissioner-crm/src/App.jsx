@@ -2,6 +2,7 @@ import React, {useEffect,useRef,useState} from "react";
 import {createCrmSessionStore} from "./crm-data.mjs";
 import {motion} from "motion/react";
 import StaffManager from "./StaffManager.jsx";
+import LiveDuesPanel from "./LiveDuesPanel.jsx";
 
 const DEMO_POOLS=[
   {id:"office",name:"Office Football Pool",type:"Pick'em",entries:24,submitted:18,week:7},
@@ -81,7 +82,7 @@ export default function App({gateway=null}){
     ?(currentContext??{...selectedPool,id:selectedPoolId??"",name:selectedPool?.name??"Loading pool…",
       type:selectedPool?.type??"Pick'em",entries:0,submitted:0,week:"—"})
     :(selectedPool??DEMO_POOLS[0]);
-  const trackerActive=gateway?pool.duesTrackingEnabled===true:!!trackerEnabled[poolId];
+  const trackerActive=gateway?(pool.duesTrackingEnabled===true&&pool.permissions?.record_dues===true):!!trackerEnabled[poolId];
   const entries=gateway
     ?(currentContext?.roster??[]).map(entry=>{
       const dueRecord=(liveDues[selectedPoolId]??[]).find(x=>x.id===entry.id);
@@ -115,6 +116,21 @@ export default function App({gateway=null}){
     if(!Number.isFinite(dollars)||cents<=0||cents>remaining) return;
     setExtraPayments(old=>({...old,[entry.id]:(old[entry.id]??0)+cents}));
     setAmountDraft(old=>({...old,[entry.id]:""}));
+  }
+  async function changeLiveDuesEnabled(enabled){
+    if(!gateway)return;
+    const id=pool.id;
+    storeRef.current?.invalidate(id);
+    setLivePools(old=>old.map(x=>x.id===id?{...x,duesTrackingEnabled:enabled}:x));
+    setLiveContexts(old=>({...old,[id]:{...old[id],duesTrackingEnabled:enabled}}));
+    setLiveDues(old=>{const next={...old};delete next[id];return next;});
+  }
+  async function refreshLiveDues(){
+    if(!gateway||!storeRef.current)return;
+    const store=storeRef.current;
+    store.invalidate(pool.id);
+    const rows=await store.readDues({...pool,duesTrackingEnabled:true});
+    if(storeRef.current===store)setLiveDues(old=>({...old,[pool.id]:rows}));
   }
   function changeRules(key,value){
     setRules(old=>({...old,[poolId]:{...old[poolId],[key]:value}}));
@@ -210,6 +226,9 @@ export default function App({gateway=null}){
         </div>}
         {tab==="dues"&&<div className="page-section">
           <SectionTitle eyebrow="Optional recordkeeping" title="Dues log" description="A private record of contributions handled completely outside this application."/>
+          {gateway?<LiveDuesPanel pool={pool} entries={entries}
+            loaded={Object.hasOwn(liveDues,selectedPoolId)} gateway={gateway}
+            onEnabledChange={changeLiveDuesEnabled} onRecorded={refreshLiveDues}/>:
           <section className="panel">
             <Toggle label="Enable dues tracking for this pool" help="No checkout, payments, transfer, or processing. You keep all funds outside the app." value={trackerActive} disabled={!!gateway} onChange={v=>setTrackerEnabled(old=>({...old,[poolId]:v}))}/>
             {trackerActive&&<>
@@ -222,7 +241,7 @@ export default function App({gateway=null}){
                 </div>;
               })}</div>
             </>}
-          </section>
+          </section>}
         </div>}
       </motion.div>
       <footer className="app-footer">NFL Pool Center · Commissioner CRM · No payment processing</footer>
