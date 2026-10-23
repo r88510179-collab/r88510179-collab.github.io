@@ -21,6 +21,15 @@ const DOLLARS = cents=>new Intl.NumberFormat("en-US",{style:"currency",currency:
 function Chip({children,tone=""}){return <span className={"chip "+tone}>{children}</span>;}
 function SectionTitle({eyebrow,title,description}){return <div className="section-heading"><div><div className="eyebrow">{eyebrow}</div><h2>{title}</h2>{description&&<p>{description}</p>}</div></div>;}
 function Metric({label,value,sub}){return <div className="metric"><span>{label}</span><strong>{value}</strong>{sub&&<small>{sub}</small>}</div>;}
+function ActionIcon({name}){
+  const common={viewBox:"0 0 24 24",width:22,height:22,fill:"none",
+    stroke:"currentColor",strokeWidth:1.8,strokeLinecap:"round",strokeLinejoin:"round",
+    "aria-hidden":"true",className:"action-icon"};
+  if(name==="users")return <svg {...common}><path d="M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-7A3.5 3.5 0 0 0 2 18.5V20"/><circle cx="9" cy="7.5" r="3.5"/><path d="M18 5a3.5 3.5 0 0 1 0 7m1 3a3.5 3.5 0 0 1 3 3.5V20"/></svg>;
+  if(name==="reminder")return <svg {...common}><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 7 9-7"/></svg>;
+  if(name==="dues")return <svg {...common}><rect x="5" y="2.5" width="14" height="19" rx="2"/><path d="M8.5 8h7M8.5 12h7M8.5 16h4"/></svg>;
+  return <svg {...common}><path d="M12 16V3m0 0L7 8m5-5 5 5M4 13v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/></svg>;
+}
 function Toggle({value,onChange,label,help,disabled=false}){return <label className="toggle-row"><span><b>{label}</b>{help&&<small>{help}</small>}</span><input aria-label={label} type="checkbox" checked={value} disabled={disabled} onChange={e=>onChange(e.target.checked)}/></label>;}
 
 export default function App({gateway=null}){
@@ -185,10 +194,10 @@ export default function App({gateway=null}){
           <section className="panel">
             <h3>Quick actions</h3>
             <div className="action-grid">
-              <button type="button" onClick={()=>chooseTab("players")}><span>＋</span>Manage players</button>
-              <button type="button" onClick={()=>openDraft("reminder")}><span>◉</span>Draft reminder</button>
-              <button type="button" onClick={()=>chooseTab("dues")}><span>＄</span>Track dues</button>
-              <button type="button" onClick={()=>openDraft("share")}><span>↗</span>Share standings</button>
+              <button type="button" onClick={()=>chooseTab("players")}><ActionIcon name="users"/>Manage players</button>
+              <button type="button" onClick={()=>openDraft("reminder")}><ActionIcon name="reminder"/>Draft reminder</button>
+              <button type="button" onClick={()=>chooseTab("dues")}><ActionIcon name="dues"/>Track dues</button>
+              <button type="button" onClick={()=>openDraft("share")}><ActionIcon name="share"/>Share standings</button>
             </div>
           </section>
           {messagePreview&&<section className="panel draft-panel"><div className="panel-top"><h3>Message preview</h3><Chip>Not sent</Chip></div><textarea aria-label="Message draft" value={messagePreview} onChange={e=>setMessagePreview(e.target.value)} rows={3}/><button className="primary-button" type="button" onClick={copyPreview}>Copy draft</button>{copyState&&<p className="subtle">{copyState}</p>}</section>}
