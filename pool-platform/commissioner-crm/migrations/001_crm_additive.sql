@@ -34,7 +34,7 @@ CREATE INDEX pool_platform_staff_grants_user_idx
   ON public.pool_platform_staff_grants(auth_user_id,tenant_id);
 
 ALTER TABLE public.pool_platform_staff_grants ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.pool_platform_staff_grants FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON public.pool_platform_staff_grants FROM PUBLIC,authenticated;
 GRANT SELECT ON public.pool_platform_staff_grants TO authenticated;
 
 CREATE POLICY pool_platform_staff_grants_read
@@ -80,7 +80,7 @@ AS $$
     )
   ),false)
 $$;
-REVOKE ALL ON FUNCTION public.pool_platform_staff_can(uuid,text) FROM PUBLIC,anon;
+REVOKE ALL ON FUNCTION public.pool_platform_staff_can(uuid,text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.pool_platform_staff_can(uuid,text) TO authenticated;
 
 CREATE FUNCTION public.pool_platform_set_staff_grants(
@@ -162,7 +162,7 @@ BEGIN
   RETURN v_grants;
 END;
 $$;
-REVOKE ALL ON FUNCTION public.pool_platform_set_staff_grants(uuid,text,text,uuid[],text[]) FROM PUBLIC,anon;
+REVOKE ALL ON FUNCTION public.pool_platform_set_staff_grants(uuid,text,text,uuid[],text[]) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.pool_platform_set_staff_grants(uuid,text,text,uuid[],text[]) TO authenticated;
 
 CREATE TABLE public.pool_platform_pool_features (
@@ -172,7 +172,7 @@ CREATE TABLE public.pool_platform_pool_features (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE public.pool_platform_pool_features ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.pool_platform_pool_features FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON public.pool_platform_pool_features FROM PUBLIC,authenticated;
 GRANT SELECT ON public.pool_platform_pool_features TO authenticated;
 CREATE POLICY pool_platform_pool_features_read ON public.pool_platform_pool_features
 FOR SELECT TO authenticated
@@ -197,7 +197,7 @@ BEGIN
   RETURN p_enabled;
 END;
 $$;
-REVOKE ALL ON FUNCTION public.pool_platform_set_dues_enabled(uuid,boolean) FROM PUBLIC,anon;
+REVOKE ALL ON FUNCTION public.pool_platform_set_dues_enabled(uuid,boolean) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.pool_platform_set_dues_enabled(uuid,boolean) TO authenticated;
 
 -- Manual bookkeeping ONLY: no payment token, processor reference, card details, or money movement.
@@ -215,7 +215,7 @@ CREATE INDEX pool_platform_dues_events_entry_time_idx
 ON public.pool_platform_dues_events(entry_id,created_at DESC);
 
 ALTER TABLE public.pool_platform_dues_events ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.pool_platform_dues_events FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON public.pool_platform_dues_events FROM PUBLIC,authenticated;
 GRANT SELECT ON public.pool_platform_dues_events TO authenticated;
 CREATE POLICY pool_platform_dues_events_read ON public.pool_platform_dues_events
 FOR SELECT TO authenticated
@@ -264,7 +264,7 @@ BEGIN
   RETURN v_id;
 END;
 $$;
-REVOKE ALL ON FUNCTION public.pool_platform_record_dues_event(uuid,text,bigint,text) FROM PUBLIC,anon;
+REVOKE ALL ON FUNCTION public.pool_platform_record_dues_event(uuid,text,bigint,text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.pool_platform_record_dues_event(uuid,text,bigint,text) TO authenticated;
 
 -- Ledger changes are append-only. A mistake is corrected with another event.
@@ -274,7 +274,7 @@ BEGIN
   RAISE EXCEPTION 'dues_history_is_append_only';
 END;
 $$;
-REVOKE ALL ON FUNCTION public.pool_platform_dues_immutable() FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.pool_platform_dues_immutable() FROM PUBLIC,authenticated;
 CREATE TRIGGER pool_platform_dues_events_immutable
   BEFORE UPDATE OR DELETE ON public.pool_platform_dues_events
   FOR EACH ROW EXECUTE FUNCTION public.pool_platform_dues_immutable();
