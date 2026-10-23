@@ -22,5 +22,13 @@ The build explicitly requires \`CRM_SANDBOX_BUILD=1\`; it never reads or writes 
 5. Add the static entrypoint to the existing explicit build allowlist only after build and CSP compatibility are verified. Netlify deploy gate remains unchanged until separately reviewed.
 6. Re-run tenant isolation, source lock, invite, deadline, Survivor reuse, AUTH-C, and personal-site non-regression tests. Owner approves release separately.
 
-## No deployments or production migrations
-This is a source-only branch. No hosting, Neon or runtime configuration is changed.
+## Database validation status (Oct 23, 2026)
+- The additive source migration `migrations/001_crm_additive.sql` was **applied only to the disposable Neon validation branch** `crm-permissions-dues-validation-20261023` (`br-orange-forest-b5nyu8ov`).
+- All three new tables have RLS enabled; authenticated table INSERT privileges are absent; functions are granted to `authenticated` only; a nonexistent pool receives no access.
+- Production Neon branch `br-hidden-darkness-b55g0j83` has **zero** of the three CRM tables. This is intentionally nonproduction work; branch cleanup needs explicit owner approval.
+- **Authorization migration is NOT complete:** older `co_commissioner` tenant-wide RPCs and RLS helpers remain active, so no pool-scoped grants are yet authoritative. Never connect the React permission switches to live accounts before their atomic replacement and authenticated negative tests.
+
+## Build validation
+- GitHub Actions sandbox job on commit `8d7223467dc51bb422271373da9563e8cd220e63` passed all five permission unit tests, temporary dependency resolution, `npm ci`, React/Vite production bundle build, and sandbox isolation check.
+- The generated dependency lockfile exists as a CI artifact, but **has not been committed to the repository**. This is still a release blocker.
+- No Netlify deployment or production migration was performed in this branch.
