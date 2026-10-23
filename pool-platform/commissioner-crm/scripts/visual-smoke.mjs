@@ -34,7 +34,13 @@ const cases=[
 ];
 let browser=null,checks=0;
 try{
-  browser=await chromium.launch({headless:true});
+  const browserPaths=["/usr/bin/google-chrome","/usr/bin/google-chrome-stable","/usr/bin/chromium"];
+  let browserPath=null;
+  for(const candidate of browserPaths){
+    try{await fs.access(candidate);browserPath=candidate;break;}catch{}
+  }
+  if(!browserPath)throw new Error("No system Chrome/Chromium browser available for viewport QA");
+  browser=await chromium.launch({headless:true,executablePath:browserPath,args:["--no-sandbox"]});
   await fs.mkdir("visual-evidence",{recursive:true});
   for(const c of cases){
     const page=await browser.newPage({viewport:{width:c.width,height:c.height},deviceScaleFactor:1,reducedMotion:"reduce"});
