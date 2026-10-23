@@ -47,6 +47,7 @@ export default function App({gateway=null}){
   // The demo is the only default. An authenticated gateway must be injected by a
   // reviewed host integration; without it there are no network calls or secrets.
   const [livePools,setLivePools]=useState([]);
+  const [poolListLoaded,setPoolListLoaded]=useState(false);
   const [liveContexts,setLiveContexts]=useState({});
   const [liveDues,setLiveDues]=useState({});
   const [crmError,setCrmError]=useState("");
@@ -56,10 +57,10 @@ export default function App({gateway=null}){
     let active=true;
     const store=createCrmSessionStore(gateway);
     storeRef.current=store;
-    setLivePools([]);setLiveContexts({});setLiveDues({});setCrmError("");
+    setLivePools([]);setPoolListLoaded(false);setLiveContexts({});setLiveDues({});setCrmError("");
     store.listPools().then(pools=>{
       if(!active)return;
-      setLivePools(pools);setPoolId(pools[0]?.id??"");
+      setLivePools(pools);setPoolListLoaded(true);setPoolId(pools[0]?.id??"");
     }).catch(e=>{if(active)setCrmError(e.message)});
     return ()=>{active=false;store.clear();if(storeRef.current===store)storeRef.current=null;};
   },[gateway]);
@@ -98,8 +99,9 @@ export default function App({gateway=null}){
       return dueRecord?{...entry,charge:dueRecord.charge,initialPaid:dueRecord.initialPaid,balanceOverride:dueRecord.balanceOverride}:entry;
     })
     :DEMO_ENTRIES.filter(x=>x.pool===selectedPoolId);
-  const paid=entries.reduce((sum,x)=>sum+x.initialPaid+(gateway?0:(extraPayments[x.id]??0)),0);
-  const balance=entries.reduce((sum,x)=>sum+(Number.isSafeInteger(x.balanceOverride)?x.balanceOverride:x.charge-x.initialPaid-(gateway?0:(extraPayments[x.id]??0))),0);
+  const ledgerRows=liveDues[selectedPoolId]??[];
+  const paid=gateway?ledgerRows.reduce((sum,x)=>sum+x.initialPaid,0):entries.reduce((sum,x)=>sum+x.initialPaid+(extraPayments[x.id]??0),0);
+  const balance=gateway?ledgerRows.reduce((sum,x)=>sum+x.balanceOverride,0):entries.reduce((sum,x)=>sum+(Number.isSafeInteger(x.balanceOverride)?x.balanceOverride:x.charge-x.initialPaid-(extraPayments[x.id]??0)),0);
   const tenantPools=pools.filter(p=>p.tenantId===pool.tenantId);
   const pct=pool.entries?Math.round(pool.submitted/pool.entries*100):0;
   function chooseTab(next){setTab(next);setMessagePreview("");setCopyState("");}
@@ -144,6 +146,25 @@ export default function App({gateway=null}){
   function changeRules(key,value){
     setRules(old=>({...old,[poolId]:{...old[poolId],[key]:value}}));
   }
+  if(gateway&&livePools.length===0&&!poolListLoaded&&!crmError){
+    return <main className="app-main" role="status">
+      <div className="eyebrow">NFL POOL CENTER / COMMISSIONER</div>
+      <h1>Loading your pools…</h1>
+    </main>;
+  }
+  if(gateway&&livePools.length===0&&crmError){
+    return <main className="app-main" role="alert">
+      <div className="eyebrow">NFL POOL CENTER / COMMISSIONER</div>
+      <h1>Could not open your pools</h1>
+      <p className="subtle">{crmError}</p>
+    </main>;
+  }
+  if(gateway&&poolListLoaded&&livePools.length===0){
+    return <main className="app-main">
+      <h1>No pools assigned</h1>
+      <p>Your account does not currently have commissioner access to a pool.</p>
+    </main>;
+  }
   if(gateway&&(!selectedPool||!currentContext)){
     return <main className="app-main" role="status">
       <div className="eyebrow">NFL POOL CENTER / COMMISSIONER</div>
@@ -160,12 +181,12 @@ export default function App({gateway=null}){
       <nav aria-label="Commissioner navigation" className="side-menu">
         {TABS.map(([id,label])=><button key={id} type="button" className={tab===id?"nav-button active":"nav-button"} onClick={()=>chooseTab(id)}>{label}</button>)}
       </nav>
-      <div className="side-note">Sandbox interface · fictional data</div>
+      <div className="side-note">{gateway?"Commissioner dashboard":"Sandbox interface · fictional data"}</div>
     </aside>
     <main className="app-main">
       <header className="top-line">
         <div><div className="eyebrow">NFL POOL CENTER / COMMISSIONER</div><h1>Manage your pool</h1></div>
-        <Chip tone="sandbox">{gateway?"READ ONLY":"SANDBOX"}</Chip>
+        {!gateway&&<Chip tone="sandbox">SANDBOX</Chip>}
       </header>
       <div className="pool-toolbar">
         <label htmlFor="pool-picker">Current pool</label>
@@ -174,7 +195,7 @@ export default function App({gateway=null}){
         </select>
         <Chip tone="live">Active · Week {pool.week}</Chip>
       </div>
-      <div className="sandbox-notice" role="status">{gateway?"Authenticated read-only CRM view. Write actions remain disabled until server acceptance.":"Preview only. Nothing here modifies accounts, sends messages, or records real payments."}</div>
+      <div className="sandbox-notice" role="status">{gateway?"Pool access and changes are checked against your account. Money is handled outside this app.":"Preview only. Nothing here modifies accounts, sends messages, or records real payments."}</div>
       {gateway&&crmError&&<div className="sandbox-notice" role="alert">Unable to load commissioner data: {crmError}</div>}
       {gateway&&livePools.length===0&&!crmError&&<div className="sandbox-notice" role="status">Loading your pools…</div>}
       <motion.div key={tab+"-"+poolId} initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} transition={{duration:0.18}}>
@@ -183,7 +204,7 @@ export default function App({gateway=null}){
           <div className="metric-grid">
             <Metric label="Entries" value={pool.entries} sub="This season"/>
             <Metric label="Missing picks" value={pool.entries-pool.submitted} sub="Need a reminder"/>
-            {trackerActive&&<><Metric label="Dues recorded" value={DOLLARS(paid)} sub="Sample participants"/><Metric label="Balance outstanding" value={DOLLARS(balance)} sub="Sample participants"/></>}
+            {trackerActive&&(!gateway||Object.hasOwn(liveDues,selectedPoolId))&&<><Metric label="Paid outside app" value={DOLLARS(paid)} sub={gateway?"Current season":"Sample participants"}/><Metric label="Balance outstanding" value={DOLLARS(balance)} sub={gateway?"Current season":"Sample participants"}/></>}
           </div>
           <section className="panel">
             <div className="panel-top"><h3>Week {pool.week} status</h3><Chip>{pct}% submitted</Chip></div>
@@ -205,9 +226,9 @@ export default function App({gateway=null}){
         {tab==="players"&&<section className="page-section">
           <SectionTitle eyebrow="Roster" title="Players" description="Search, invites and entry management will connect to your existing commissioner permissions."/>
           <div className="panel">
-            <div className="panel-top"><h3>Sample entries</h3><Chip>{entries.length} shown</Chip></div>
+            <div className="panel-top"><h3>{gateway?"Entries":"Sample entries"}</h3><Chip>{entries.length} shown</Chip></div>
             <div className="entry-list">{entries.map(e=><div className="entry-row" key={e.id}><div className="avatar">{e.name.slice(0,1)}</div><div className="entry-name"><strong>{e.name}</strong><small>Participant entry</small></div><Chip tone={e.submitted?"live":"pending"}>{e.submitted?"Submitted":"Missing pick"}</Chip></div>)}</div>
-            <p className="subtle">Invite generation and real roster changes remain locked until the existing Auth and Neon integration passes review.</p>
+            <p className="subtle">{gateway?"Only available actions appear for your commissioner permissions.":"Invitations and roster changes are available when signed in to a live pool."}</p>
           </div>
         </section>}
         {tab==="picks"&&<section className="page-section">
@@ -215,7 +236,7 @@ export default function App({gateway=null}){
           <div className="panel">
             <div className="panel-top"><h3>Submissions</h3><Chip>{pool.submitted} of {pool.entries}</Chip></div>
             <div className="progress" role="progressbar" aria-label="Weekly submissions" aria-valuenow={pool.submitted} aria-valuemin={0} aria-valuemax={pool.entries}><span style={{width:pct+"%"}} /></div>
-            <p className="subtle">When connected, this view will reuse the current authorized submission status and weekly deadlines.</p>
+            <p className="subtle">{gateway?"Based on the authorized submission status for the selected week. Existing deadlines and pick source locks are unchanged.":"Preview of weekly submission status."}</p>
           </div>
         </section>}
         {tab==="settings"&&<div className="page-section">
