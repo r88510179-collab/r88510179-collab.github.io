@@ -1,8 +1,9 @@
-import React, {useState} from "react";
+import React, {useEffect,useRef,useState} from "react";
+import {createCrmSessionStore} from "./crm-data.mjs";
 import {motion} from "motion/react";
 import {CAPABILITIES,PRESETS,canUseDelegation,validateDelegation} from "./permissions.mjs";
 
-const POOLS=[
+const DEMO_POOLS=[
   {id:"office",name:"Office Football Pool",type:"Pick'em",entries:24,submitted:18,week:7},
   {id:"survivor",name:"Friday Survivor",type:"Survivor",entries:15,submitted:12,week:7}
 ];
@@ -19,9 +20,9 @@ const DOLLARS = cents=>new Intl.NumberFormat("en-US",{style:"currency",currency:
 function Chip({children,tone=""}){return <span className={"chip "+tone}>{children}</span>;}
 function SectionTitle({eyebrow,title,description}){return <div className="section-heading"><div><div className="eyebrow">{eyebrow}</div><h2>{title}</h2>{description&&<p>{description}</p>}</div></div>;}
 function Metric({label,value,sub}){return <div className="metric"><span>{label}</span><strong>{value}</strong>{sub&&<small>{sub}</small>}</div>;}
-function Toggle({value,onChange,label,help}){return <label className="toggle-row"><span><b>{label}</b>{help&&<small>{help}</small>}</span><input aria-label={label} type="checkbox" checked={value} onChange={e=>onChange(e.target.checked)}/></label>;}
+function Toggle({value,onChange,label,help,disabled=false}){return <label className="toggle-row"><span><b>{label}</b>{help&&<small>{help}</small>}</span><input aria-label={label} type="checkbox" checked={value} disabled={disabled} onChange={e=>onChange(e.target.checked)}/></label>;}
 
-export default function App(){
+export default function App({gateway=null}){
   const [poolId,setPoolId]=useState("office");
   const [tab,setTab]=useState("overview");
   const [scope,setScope]=useState("selected");
@@ -37,24 +38,77 @@ export default function App(){
   });
   const [messagePreview,setMessagePreview]=useState("");
   const [copyState,setCopyState]=useState("");
-  const pool=POOLS.find(x=>x.id===poolId)??POOLS[0];
-  const entries=DEMO_ENTRIES.filter(x=>x.pool===poolId);
-  const paid=entries.reduce((sum,x)=>sum+x.initialPaid+(extraPayments[x.id]??0),0);
-  const balance=entries.reduce((sum,x)=>sum+x.charge-x.initialPaid-(extraPayments[x.id]??0),0);
-  const pct=Math.round(pool.submitted/pool.entries*100);
+  // The demo is the only default. An authenticated gateway must be injected by a
+  // reviewed host integration; without it there are no network calls or secrets.
+  const [livePools,setLivePools]=useState([]);
+  const [liveContexts,setLiveContexts]=useState({});
+  const [liveDues,setLiveDues]=useState({});
+  const [crmError,setCrmError]=useState("");
+  const storeRef=useRef(null);
+  useEffect(()=>{
+    if(!gateway){storeRef.current=null;setLivePools([]);return;}
+    let active=true;
+    const store=createCrmSessionStore(gateway);
+    storeRef.current=store;
+    setLivePools([]);setLiveContexts({});setLiveDues({});setCrmError("");
+    store.listPools().then(pools=>{
+      if(!active)return;
+      setLivePools(pools);setPoolId(pools[0]?.id??"");
+    }).catch(e=>{if(active)setCrmError(e.message)});
+    return ()=>{active=false;store.clear();if(storeRef.current===store)storeRef.current=null;};
+  },[gateway]);
+  const pools=gateway?livePools:DEMO_POOLS;
+  const selectedPoolId=pools.some(p=>p.id===poolId)?poolId:pools[0]?.id;
+  const selectedPool=pools.find(p=>p.id===selectedPoolId);
+  useEffect(()=>{
+    if(!gateway||!selectedPool||liveContexts[selectedPool.id])return;
+    let active=true;
+    const store=storeRef.current;
+    if(!store)return;
+    store.readContext(selectedPool).then(data=>{
+      if(active&&storeRef.current===store)setLiveContexts(old=>({...old,[selectedPool.id]:data}));
+    }).catch(e=>{if(active&&storeRef.current===store)setCrmError(e.message)});
+    return ()=>{active=false};
+  },[gateway,selectedPoolId,livePools,liveContexts]);
+  useEffect(()=>{
+    if(!gateway||!selectedPool?.duesTrackingEnabled||selectedPool.permissions?.record_dues!==true||
+       Object.hasOwn(liveDues,selectedPool.id))return;
+    let active=true;const store=storeRef.current;
+    if(!store)return;
+    store.readDues(selectedPool).then(rows=>{
+      if(active&&storeRef.current===store)setLiveDues(old=>({...old,[selectedPool.id]:rows}));
+    }).catch(e=>{if(active&&storeRef.current===store)setCrmError(e.message)});
+    return ()=>{active=false};
+  },[gateway,selectedPoolId,livePools,liveDues]);
+  const currentContext=liveContexts[selectedPoolId];
+  const pool=gateway
+    ?(currentContext??{...selectedPool,id:selectedPoolId??"",name:selectedPool?.name??"Loading pool…",
+      type:selectedPool?.type??"Pick'em",entries:0,submitted:0,week:"—"})
+    :(selectedPool??DEMO_POOLS[0]);
+  const trackerActive=gateway?pool.duesTrackingEnabled===true:!!trackerEnabled[poolId];
+  const entries=gateway
+    ?(currentContext?.roster??[]).map(entry=>{
+      const dueRecord=(liveDues[selectedPoolId]??[]).find(x=>x.id===entry.id);
+      return dueRecord?{...entry,charge:dueRecord.charge,initialPaid:dueRecord.initialPaid,balanceOverride:dueRecord.balanceOverride}:entry;
+    })
+    :DEMO_ENTRIES.filter(x=>x.pool===selectedPoolId);
+  const paid=entries.reduce((sum,x)=>sum+x.initialPaid+(gateway?0:(extraPayments[x.id]??0)),0);
+  const balance=entries.reduce((sum,x)=>sum+(Number.isSafeInteger(x.balanceOverride)?x.balanceOverride:x.charge-x.initialPaid-(gateway?0:(extraPayments[x.id]??0))),0);
+  const tenantPools=pools.filter(p=>p.tenantId===pool.tenantId);
+  const pct=pool.entries?Math.round(pool.submitted/pool.entries*100):0;
   let delegation;
   try {
     delegation=validateDelegation({
-      tenantPoolIds:POOLS.map(x=>x.id),scope,selectedPoolIds,capabilities
+      tenantPoolIds:tenantPools.map(x=>x.id),scope,selectedPoolIds,capabilities
     });
   } catch {
     delegation=null;
   }
   const delegatedHere=delegation&&canUseDelegation(delegation,{
-    tenantPoolIds:POOLS.map(x=>x.id),poolId,capability:"view_pool"
+    tenantPoolIds:tenantPools.map(x=>x.id),poolId:selectedPoolId,capability:"view_pool"
   });
   function chooseTab(next){setTab(next);setMessagePreview("");setCopyState("");}
-  function choosePool(next){setPoolId(next);setTab("overview");setMessagePreview("");}
+  function choosePool(next){setPoolId(next);setTab("overview");setMessagePreview("");setCrmError("");}
   function togglePool(id,enabled){setSelectedPoolIds(old=>enabled?[...new Set([...old,id])]:old.filter(x=>x!==id));}
   function toggleCapability(id,enabled){
     setPreset("custom");
@@ -78,6 +132,7 @@ export default function App(){
     }catch{setCopyState("Select and copy the text above");}
   }
   function recordDemoPayment(entry){
+    if(gateway)return; // A live dues entry requires the reviewed server RPC; demo never sends funds.
     const dollars=Number(amountDraft[entry.id]??"");
     const cents=Math.round(dollars*100);
     const remaining=entry.charge-entry.initialPaid-(extraPayments[entry.id]??0);
@@ -99,23 +154,25 @@ export default function App(){
     <main className="app-main">
       <header className="top-line">
         <div><div className="eyebrow">NFL POOL CENTER / COMMISSIONER</div><h1>Manage your pool</h1></div>
-        <Chip tone="sandbox">SANDBOX</Chip>
+        <Chip tone="sandbox">{gateway?"READ ONLY":"SANDBOX"}</Chip>
       </header>
       <div className="pool-toolbar">
         <label htmlFor="pool-picker">Current pool</label>
         <select id="pool-picker" value={poolId} onChange={e=>choosePool(e.target.value)}>
-          {POOLS.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+          {pools.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <Chip tone="live">Active · Week {pool.week}</Chip>
       </div>
-      <div className="sandbox-notice" role="status">Preview only. Nothing here modifies accounts, sends messages, or records real payments.</div>
+      <div className="sandbox-notice" role="status">{gateway?"Authenticated read-only CRM view. Write actions remain disabled until server acceptance.":"Preview only. Nothing here modifies accounts, sends messages, or records real payments."}</div>
+      {gateway&&crmError&&<div className="sandbox-notice" role="alert">Unable to load commissioner data: {crmError}</div>}
+      {gateway&&livePools.length===0&&!crmError&&<div className="sandbox-notice" role="status">Loading your pools…</div>}
       <motion.div key={tab+"-"+poolId} initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} transition={{duration:0.18}}>
         {tab==="overview"&&<div className="page-section">
           <SectionTitle eyebrow="Your pool at a glance" title="Commissioner Home" description="The essentials for this week, without extra administration."/>
           <div className="metric-grid">
             <Metric label="Entries" value={pool.entries} sub="This season"/>
             <Metric label="Missing picks" value={pool.entries-pool.submitted} sub="Need a reminder"/>
-            {trackerEnabled[poolId]&&<><Metric label="Dues recorded" value={DOLLARS(paid)} sub="Sample participants"/><Metric label="Balance outstanding" value={DOLLARS(balance)} sub="Sample participants"/></>}
+            {trackerActive&&<><Metric label="Dues recorded" value={DOLLARS(paid)} sub="Sample participants"/><Metric label="Balance outstanding" value={DOLLARS(balance)} sub="Sample participants"/></>}
           </div>
           <section className="panel">
             <div className="panel-top"><h3>Week {pool.week} status</h3><Chip>{pct}% submitted</Chip></div>
@@ -163,7 +220,7 @@ export default function App(){
             <h3>Assistant commissioner access</h3>
             <p className="subtle">Choose what an assistant can access. Only a pool owner can delegate roles.</p>
             <label className="field"><span>Which pools can they access?</span><select value={scope} onChange={e=>setScope(e.target.value)}><option value="selected">Only selected pools</option><option value="all">All of my pools</option></select></label>
-            {scope==="selected"&&<div className="check-list">{POOLS.map(p=><label key={p.id}><input type="checkbox" checked={selectedPoolIds.includes(p.id)} onChange={e=>togglePool(p.id,e.target.checked)}/>{p.name}</label>)}</div>}
+            {scope==="selected"&&<div className="check-list">{tenantPools.map(p=><label key={p.id}><input type="checkbox" checked={selectedPoolIds.includes(p.id)} onChange={e=>togglePool(p.id,e.target.checked)}/>{p.name}</label>)}</div>}
             <label className="field"><span>Starting permissions</span><select value={preset} onChange={e=>choosePreset(e.target.value)}><option value="viewer">Viewer</option><option value="scorekeeper">Pick reviewer</option><option value="assistant">Assistant commissioner</option><option value="custom">Custom</option></select></label>
             <div className="check-list">{CAPABILITIES.map(item=><label key={item.id}><input type="checkbox" checked={capabilities.includes(item.id)} onChange={e=>toggleCapability(item.id,e.target.checked)}/>{item.label}</label>)}</div>
             <div className="mini-alert"><span>{delegation?(delegatedHere?"Assistant can view this pool":"Assistant cannot view this pool"):"Select at least one pool"}</span><Chip tone={delegatedHere?"live":"pending"}>Preview</Chip></div>
@@ -173,21 +230,21 @@ export default function App(){
         {tab==="dues"&&<div className="page-section">
           <SectionTitle eyebrow="Optional recordkeeping" title="Dues log" description="A private record of contributions handled completely outside this application."/>
           <section className="panel">
-            <Toggle label="Enable dues tracking for this pool" help="No checkout, payments, transfer, or processing. You keep all funds outside the app." value={!!trackerEnabled[poolId]} onChange={v=>setTrackerEnabled(old=>({...old,[poolId]:v}))}/>
-            {trackerEnabled[poolId]&&<>
+            <Toggle label="Enable dues tracking for this pool" help="No checkout, payments, transfer, or processing. You keep all funds outside the app." value={trackerActive} disabled={!!gateway} onChange={v=>setTrackerEnabled(old=>({...old,[poolId]:v}))}/>
+            {trackerActive&&<>
               <div className="metric-grid two"><Metric label="Sample dues logged" value={DOLLARS(paid)}/><Metric label="Still outstanding" value={DOLLARS(balance)}/></div>
               <div className="entry-list">{entries.map(e=>{
-                const due=e.charge-e.initialPaid-(extraPayments[e.id]??0);
+                const due=Number.isSafeInteger(e.balanceOverride)?e.balanceOverride:e.charge-e.initialPaid-(extraPayments[e.id]??0);
                 return <div className="dues-entry" key={e.id}>
                   <div className="dues-head"><strong>{e.name}</strong><Chip tone={due===0?"live":"pending"}>{due===0?"Recorded in full":DOLLARS(due)+" outstanding"}</Chip></div>
-                  {due>0&&<div className="dues-controls"><label><span>Record external payment ($)</span><input aria-label={"Amount paid by "+e.name} inputMode="decimal" type="number" min="0.01" max={due/100} step="0.01" value={amountDraft[e.id]??""} onChange={event=>setAmountDraft(old=>({...old,[e.id]:event.target.value}))}/></label><button type="button" onClick={()=>recordDemoPayment(e)} disabled={!(Number(amountDraft[e.id])>0&&Math.round(Number(amountDraft[e.id])*100)<=due)}>Log in demo</button></div>}
+                  {due>0&&<div className="dues-controls"><label><span>Record external payment ($)</span><input aria-label={"Amount paid by "+e.name} inputMode="decimal" type="number" min="0.01" max={due/100} step="0.01" value={amountDraft[e.id]??""} onChange={event=>setAmountDraft(old=>({...old,[e.id]:event.target.value}))}/></label><button type="button" onClick={()=>recordDemoPayment(e)} disabled={!!gateway||!(Number(amountDraft[e.id])>0&&Math.round(Number(amountDraft[e.id])*100)<=due)}>Log in demo</button></div>}
                 </div>;
               })}</div>
             </>}
           </section>
         </div>}
       </motion.div>
-      <footer className="app-footer">NFL Pool Center · Commissioner CRM sandbox · No live data or payment processing</footer>
+      <footer className="app-footer">NFL Pool Center · Commissioner CRM · No payment processing</footer>
     </main>
     <nav className="mobile-nav" aria-label="Mobile commissioner navigation">
       {TABS.filter(([id])=>id!=="dues").map(([id,label])=><button key={id} type="button" className={tab===id?"active":""} onClick={()=>chooseTab(id)}>{label}</button>)}
