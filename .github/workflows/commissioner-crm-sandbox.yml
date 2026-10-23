@@ -4,6 +4,9 @@ on:
     branches:
       - feature/commissioner-crm-react-foundation
   workflow_dispatch:
+  pull_request:
+    branches:
+      - commercial-v1-netlify-adapter
 
 permissions:
   contents: read
@@ -23,6 +26,12 @@ jobs:
         run: npm test
       - name: Resolve exact versions and create temporary lockfile
         run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Save resolved sandbox dependency lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: crm-sandbox-package-lock
+          path: pool-platform/commissioner-crm/package-lock.json
+          retention-days: 3
       - name: Install from temporary lockfile
         run: npm ci --no-audit --no-fund
       - name: Build sandbox only
