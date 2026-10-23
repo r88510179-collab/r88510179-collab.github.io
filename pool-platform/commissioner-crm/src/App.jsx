@@ -143,7 +143,7 @@ export default function App(){
           </div>
         </section>}
         {tab==="picks"&&<section className="page-section">
-          <SectionTitle eyebrow="Week "+pool.week title="Pick status" description="A simple overview of who has submitted. No source-lock or deadline changes."/>
+          <SectionTitle eyebrow={"Week "+pool.week} title="Pick status" description="A simple overview of who has submitted. No source-lock or deadline changes."/>
           <div className="panel">
             <div className="panel-top"><h3>Submissions</h3><Chip>{pool.submitted} of {pool.entries}</Chip></div>
             <div className="progress" role="progressbar" aria-label="Weekly submissions" aria-valuenow={pool.submitted} aria-valuemin={0} aria-valuemax={pool.entries}><span style={{width:pct+"%"}} /></div>
