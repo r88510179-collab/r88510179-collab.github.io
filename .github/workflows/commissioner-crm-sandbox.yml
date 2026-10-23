@@ -42,8 +42,8 @@ jobs:
           retention-days: 3
 
   visual:
-    # Browser checks run only on the isolated CRM feature branch, never Netlify production.
-    if: github.event_name == 'push'
+    # Browser checks run only for the isolated CRM feature branch or its draft PR, never Netlify production.
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     needs: sandbox
     runs-on: ubuntu-latest
     defaults:
