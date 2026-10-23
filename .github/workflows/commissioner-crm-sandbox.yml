@@ -40,3 +40,36 @@ jobs:
           name: crm-sandbox-dist
           path: pool-platform/commissioner-crm/dist/
           retention-days: 3
+
+  visual:
+    # Browser checks run only on the isolated CRM feature branch, never Netlify production.
+    if: github.event_name == 'push'
+    needs: sandbox
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pool-platform/commissioner-crm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install committed CRM dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Build disconnected sandbox
+        run: npm run build:sandbox
+      - name: Install Playwright in temporary directory only
+        run: npm install --prefix /tmp/crm-visual-deps --ignore-scripts --no-audit --no-fund --no-save playwright@1.56.1
+      - name: Install isolated Chromium browser
+        run: /tmp/crm-visual-deps/node_modules/.bin/playwright install --with-deps chromium
+      - name: Verify 360px, 412px and desktop layouts and controls
+        env:
+          CRM_VISUAL_DEPS: /tmp/crm-visual-deps
+        run: node scripts/visual-smoke.mjs
+      - name: Save screenshots from disconnected sandbox
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crm-viewport-evidence
+          path: pool-platform/commissioner-crm/visual-evidence/
+          retention-days: 3
