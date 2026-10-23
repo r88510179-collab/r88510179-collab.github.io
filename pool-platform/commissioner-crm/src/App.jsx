@@ -226,7 +226,7 @@ export default function App({gateway=null}){
         </div>}
         {tab==="dues"&&<div className="page-section">
           <SectionTitle eyebrow="Optional recordkeeping" title="Dues log" description="A private record of contributions handled completely outside this application."/>
-          {gateway?<LiveDuesPanel pool={pool} entries={entries}
+          {gateway?<LiveDuesPanel pool={pool} entries={liveDues[selectedPoolId]??[]}
             loaded={Object.hasOwn(liveDues,selectedPoolId)} gateway={gateway}
             onEnabledChange={changeLiveDuesEnabled} onRecorded={refreshLiveDues}/>:
           <section className="panel">
