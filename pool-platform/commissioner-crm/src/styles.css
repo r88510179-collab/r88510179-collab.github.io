@@ -36,7 +36,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .chip.sandbox { color: #e0c16d; background: #352a10; border-color: #5e501f; }
 .pool-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 24px 0 10px; }
 .pool-toolbar label { font-size: 13px; font-weight: 700; color: #aeb8c4; }
-select, input[type="number"], textarea { background: #141b23; border: 1px solid #394555; color: #f6f7fa; border-radius: 10px; min-height: 42px; padding: 9px 12px; max-width: 100%; }
+select, input[type="number"], input[type="text"], input[type="email"], textarea { background: #141b23; border: 1px solid #394555; color: #f6f7fa; border-radius: 10px; min-height: 42px; padding: 9px 12px; max-width: 100%; }
 .pool-toolbar select { min-width: 210px; font-weight: 650; }
 .sandbox-notice { background: #1d2228; border: 1px solid #343b46; color: #c0c8d3; border-radius: 10px; padding: 10px 14px; font-size: 12px; line-height: 1.5; margin-bottom: 28px; }
 .page-section { display: grid; gap: 18px; }
@@ -126,4 +126,17 @@ select, input[type="number"], textarea { background: #141b23; border: 1px solid 
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+/* Assistant-management and external-only bookkeeping forms */
+.form-message {margin: 14px 0 0; padding: 11px 12px; border-radius: 10px; font-size: 12px; line-height: 1.5;}
+.error-message {color: #ffc3c3; background: #3c2226; border: 1px solid #79424d;}
+.success-message {color: #b5f3c5; background: #183426; border: 1px solid #327249;}
+.dues-form-grid {display: grid; grid-template-columns: minmax(0,1.4fr) minmax(0,1fr); gap: 12px; max-width: 570px;}
+.dues-form-grid .field {margin: 13px 0;}
+.dues-entry > .field {max-width: 570px;}
+@media (max-width: 420px) {
+  .dues-form-grid {grid-template-columns: minmax(0,1fr);}
+  .dues-head {align-items: flex-start;}
+  .dues-head .chip {white-space: normal; text-align: right;}
 }
