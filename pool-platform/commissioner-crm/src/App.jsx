@@ -143,6 +143,16 @@ export default function App({gateway=null}){
   function changeRules(key,value){
     setRules(old=>({...old,[poolId]:{...old[poolId],[key]:value}}));
   }
+  if(gateway&&(!selectedPool||!currentContext)){
+    return <main className="app-main" role="status">
+      <div className="eyebrow">NFL POOL CENTER / COMMISSIONER</div>
+      <h1>Commissioner dashboard</h1>
+      <section className="panel" style={{marginTop:24}}>
+        <h3>{crmError?"Could not load this pool":"Loading your pool…"}</h3>
+        <p className="subtle">{crmError||"Your authorized pool details are being retrieved."}</p>
+      </section>
+    </main>;
+  }
   return <div className="app-shell">
     <aside className="side-nav">
       <div className="identity"><span className="logo-mark">N</span><div><strong>NFL POOL CENTER</strong><small>COMMISSIONER</small></div></div>
@@ -224,7 +234,7 @@ export default function App({gateway=null}){
             <label className="field"><span>Starting permissions</span><select value={preset} onChange={e=>choosePreset(e.target.value)}><option value="viewer">Viewer</option><option value="scorekeeper">Pick reviewer</option><option value="assistant">Assistant commissioner</option><option value="custom">Custom</option></select></label>
             <div className="check-list">{CAPABILITIES.map(item=><label key={item.id}><input type="checkbox" checked={capabilities.includes(item.id)} onChange={e=>toggleCapability(item.id,e.target.checked)}/>{item.label}</label>)}</div>
             <div className="mini-alert"><span>{delegation?(delegatedHere?"Assistant can view this pool":"Assistant cannot view this pool"):"Select at least one pool"}</span><Chip tone={delegatedHere?"live":"pending"}>Preview</Chip></div>
-            <p className="subtle">These are draft settings in your browser only. Server-enforced staff access is not activated yet.</p>
+            <p className="subtle">Preview only — these choices have not been saved.</p>
           </section>
         </div>}
         {tab==="dues"&&<div className="page-section">
@@ -237,7 +247,7 @@ export default function App({gateway=null}){
                 const due=Number.isSafeInteger(e.balanceOverride)?e.balanceOverride:e.charge-e.initialPaid-(extraPayments[e.id]??0);
                 return <div className="dues-entry" key={e.id}>
                   <div className="dues-head"><strong>{e.name}</strong><Chip tone={due===0?"live":"pending"}>{due===0?"Recorded in full":DOLLARS(due)+" outstanding"}</Chip></div>
-                  {due>0&&<div className="dues-controls"><label><span>Record external payment ($)</span><input aria-label={"Amount paid by "+e.name} inputMode="decimal" type="number" min="0.01" max={due/100} step="0.01" value={amountDraft[e.id]??""} onChange={event=>setAmountDraft(old=>({...old,[e.id]:event.target.value}))}/></label><button type="button" onClick={()=>recordDemoPayment(e)} disabled={!!gateway||!(Number(amountDraft[e.id])>0&&Math.round(Number(amountDraft[e.id])*100)<=due)}>Log in demo</button></div>}
+                  {due>0&&<div className="dues-controls"><label><span>Record external payment ($)</span><input aria-label={"Amount paid by "+e.name} inputMode="decimal" type="number" min="0.01" max={due/100} step="0.01" value={amountDraft[e.id]??""} disabled={!!gateway} onChange={event=>setAmountDraft(old=>({...old,[e.id]:event.target.value}))}/></label><button type="button" onClick={()=>recordDemoPayment(e)} disabled={!!gateway||!(Number(amountDraft[e.id])>0&&Math.round(Number(amountDraft[e.id])*100)<=due)}>Log in demo</button></div>}
                 </div>;
               })}</div>
             </>}
