@@ -17,6 +17,7 @@ export default function ConnectedApp({clientLoader=loadExistingPlatformClient}) 
   const [pendingEmail,setPendingEmail]=useState("");
   const [otpSent,setOtpSent]=useState(false);
   const generation=useRef(0);
+  const gateway=React.useMemo(()=>client?createCrmGateway(client):null,[client]);
 
   useEffect(()=>{
     let active=true;
@@ -101,7 +102,6 @@ export default function ConnectedApp({clientLoader=loadExistingPlatformClient}) 
     <p>Return to the existing commissioner page to manage your pool.</p></main>;
 
   if(session?.user?.id&&session?.session){
-    const gateway=createCrmGateway(client);
     return <div>
       <div className="crm-session-bar">
         <span>Commissioner account</span>
