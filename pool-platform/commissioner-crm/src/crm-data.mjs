@@ -81,8 +81,7 @@ export function normalizeDuesRows(raw,expectedPoolId) {
 
 export function createCrmGateway(existingPlatformClient) {
   if(!existingPlatformClient||typeof existingPlatformClient.rpc!=="function"||
-     typeof existingPlatformClient.commissionerContext!=="function"||
-     typeof existingPlatformClient.createInvite!=="function")
+     typeof existingPlatformClient.commissionerContext!=="function")
     throw new Error("An authenticated PlatformClient is required");
   const assistantCache=new Map();
   const listAssistants=tenantId=>{
@@ -96,7 +95,10 @@ export function createCrmGateway(existingPlatformClient) {
   return Object.freeze({
     listPools:()=>existingPlatformClient.rpc("pool_platform_crm_pools"),
     readContext:pool=>existingPlatformClient.commissionerContext(pool.slug),
-    createInvite:request=>existingPlatformClient.createInvite(request),
+    createInvite:request=>{
+      if(typeof existingPlatformClient.createInvite!=="function")throw new Error("Invitations are unavailable.");
+      return existingPlatformClient.createInvite(request);
+    },
     readDues:pool=>existingPlatformClient.rpc("pool_platform_crm_dues_summary",{p_pool_id:pool.id}),
     setDuesEnabled:(poolId,enabled)=>existingPlatformClient.rpc("pool_platform_set_dues_enabled",{
       p_pool_id:poolId,p_enabled:enabled
