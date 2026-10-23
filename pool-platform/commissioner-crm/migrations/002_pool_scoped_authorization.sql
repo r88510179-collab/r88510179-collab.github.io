@@ -27,7 +27,7 @@ AS $function$
       AND m.auth_user_id=public.pool_platform_current_user_id()
       AND m.role IN ('owner','commissioner')
   )
-$function$
+$function$;
 
 
 CREATE OR REPLACE FUNCTION public.pool_platform_can_read_pool(p_pool_id uuid)
@@ -51,7 +51,7 @@ AS $function$
         )
       )
   )
-$function$
+$function$;
 
 
 CREATE OR REPLACE FUNCTION public.pool_platform_can_read_season(p_season_id uuid)
@@ -74,7 +74,7 @@ AS $function$
         )
       )
   )
-$function$
+$function$;
 
 
 CREATE OR REPLACE FUNCTION public.pool_platform_commissioner_context(p_pool_slug text)
@@ -134,7 +134,7 @@ BEGIN
     ),'[]'::jsonb)
   );
 END;
-$function$
+$function$;
 
 
 CREATE OR REPLACE FUNCTION public.pool_platform_create_entry_invite(p_entry_id uuid, p_email text DEFAULT NULL::text, p_expires_hours integer DEFAULT 168)
@@ -173,7 +173,7 @@ BEGIN
 
   RETURN jsonb_build_object('entry_id',p_entry_id,'invite_token',v_raw,'expires_at',v_expires);
 END;
-$function$
+$function$;
 
 
 CREATE OR REPLACE FUNCTION public.pool_platform_submit_batch(p_week_id uuid, p_source text, p_items jsonb)
@@ -227,7 +227,7 @@ BEGIN
 
   RETURN v_result;
 END;
-$function$
+$function$;
 
 
 CREATE OR REPLACE FUNCTION public.pool_platform_submit_entry(p_week_id uuid, p_entry_id uuid, p_source text, p_payload jsonb)
@@ -346,7 +346,7 @@ EXCEPTION WHEN unique_violation THEN
   THEN RAISE EXCEPTION 'team_already_used'; END IF;
   RAISE;
 END;
-$function$
+$function$;
 
 
 ALTER POLICY pool_platform_membership_read ON public.pool_platform_memberships USING (auth_user_id=public.pool_platform_current_user_id() OR public.pool_platform_is_tenant_commissioner(tenant_id));
