@@ -140,3 +140,24 @@ select, input[type="number"], input[type="text"], input[type="email"], textarea 
   .dues-head {align-items: flex-start;}
   .dues-head .chip {white-space: normal; text-align: right;}
 }
+
+/* Connected candidate account controls; never part of the existing commercial stylesheet. */
+.auth-shell { max-width: 560px; margin: clamp(32px,8vh,90px) auto; padding: 24px; }
+.auth-shell .panel { margin-top: 22px; }
+.auth-shell .field { display:block; margin: 0 0 16px; }
+.auth-shell .field input { width: 100%; min-height: 44px; }
+.auth-shell button { min-height: 44px; }
+.crm-session-bar {
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  border-bottom:1px solid #2d333b; padding:9px max(16px,env(safe-area-inset-right));
+  background:#10151b; color:#b7c2cb; font-size:12px;
+}
+.crm-session-bar button {
+  cursor:pointer; border:1px solid #4a535f; background:transparent;
+  color:inherit; border-radius:9px; min-height:36px; padding:6px 12px;
+}
+.crm-session-bar button:focus-visible,.auth-shell button:focus-visible {
+  outline:2px solid #d4af37; outline-offset:3px;
+}
+.invite-private-result {margin-top:18px;padding:12px;border:1px solid #3c4f53;border-radius:12px;}
+.invite-private-result input {font-family:inherit; font-size:12px; width:100%; }
