@@ -24,15 +24,7 @@ jobs:
           node-version: "22"
       - name: Test pure permission model
         run: npm test
-      - name: Resolve exact versions and create temporary lockfile
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-      - name: Save resolved sandbox dependency lockfile
-        uses: actions/upload-artifact@v4
-        with:
-          name: crm-sandbox-package-lock
-          path: pool-platform/commissioner-crm/package-lock.json
-          retention-days: 3
-      - name: Install from temporary lockfile
+      - name: Install exact committed dependencies
         run: npm ci --no-audit --no-fund
       - name: Build sandbox only
         run: npm run build:sandbox
@@ -42,29 +34,3 @@ jobs:
           test ! -f dist/participant.html
           test -f dist/index.html
           test -d dist/assets
-
-  lockfile:
-    if: github.event_name == 'push' && github.ref_name == 'feature/commissioner-crm-react-foundation' && !contains(github.event.head_commit.message, 'lock CRM sandbox dependencies')
-    needs: sandbox
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: feature/commissioner-crm-react-foundation
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Resolve and commit reproducible lockfile on CRM branch only
-        working-directory: pool-platform/commissioner-crm
-        run: |
-          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          cd ../..
-          git add pool-platform/commissioner-crm/package-lock.json
-          if ! git diff --cached --quiet; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git commit -m "chore(crm): lock CRM sandbox dependencies"
-            git push origin HEAD:feature/commissioner-crm-react-foundation
-          fi
