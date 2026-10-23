@@ -35,8 +35,8 @@ BEGIN
   RETURN COALESCE((
     SELECT jsonb_agg(jsonb_build_object(
       'id',m.auth_user_id,
-      'name',u.name,
-      'email',u.email,
+      'name',COALESCE(NULLIF(u.name,''),'Existing assistant'),
+      'email',COALESCE(u.email,''),
       'scope',CASE WHEN EXISTS(
           SELECT 1 FROM public.pool_platform_staff_grants gg
           WHERE gg.tenant_id=m.tenant_id AND gg.auth_user_id=m.auth_user_id
