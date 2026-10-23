@@ -53,7 +53,7 @@ BEGIN
         FROM public.pool_platform_staff_grants gg
         WHERE gg.tenant_id=m.tenant_id AND gg.auth_user_id=m.auth_user_id
       ),'[]'::jsonb)
-    ) ORDER BY lower(u.email),m.auth_user_id)
+    ) ORDER BY lower(COALESCE(u.email,'')),m.auth_user_id)
     FROM public.pool_platform_memberships m
     LEFT JOIN neon_auth."user" u ON u.id::text=m.auth_user_id
     WHERE m.tenant_id=p_tenant_id AND m.role='co_commissioner'
