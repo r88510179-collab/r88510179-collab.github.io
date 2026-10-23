@@ -96,6 +96,12 @@ export function createCrmGateway(existingPlatformClient) {
     listPools:()=>existingPlatformClient.rpc("pool_platform_crm_pools"),
     readContext:pool=>existingPlatformClient.commissionerContext(pool.slug),
     readDues:pool=>existingPlatformClient.rpc("pool_platform_crm_dues_summary",{p_pool_id:pool.id}),
+    setDuesEnabled:(poolId,enabled)=>existingPlatformClient.rpc("pool_platform_set_dues_enabled",{
+      p_pool_id:poolId,p_enabled:enabled
+    }),
+    recordDuesEvent:event=>existingPlatformClient.rpc("pool_platform_record_dues_event",{
+      p_entry_id:event.entryId,p_kind:event.kind,p_amount_cents:event.amountCents,p_note:event.note
+    }),
     listAssistants,
     addAssistant:async request=>{
       const result=await existingPlatformClient.rpc("pool_platform_crm_add_assistant",{
