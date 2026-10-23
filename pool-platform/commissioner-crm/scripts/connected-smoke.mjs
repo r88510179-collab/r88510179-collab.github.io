@@ -66,7 +66,7 @@ try{
     await page.getByRole("button",{name:"Send sign-in code"}).click();
     await page.getByRole("textbox",{name:"Sign-in code"}).fill("123456");
     await page.getByRole("button",{name:"Verify and continue"}).click();
-    await page.getByRole("option",{name:poolName}).waitFor({timeout:10000});
+    await page.getByRole("option",{name:poolName}).waitFor({state:"attached",timeout:10000});
   }
   await login("first@example.test","First Pool");
   await page.getByRole("button",{name:"Sign out"}).click();
