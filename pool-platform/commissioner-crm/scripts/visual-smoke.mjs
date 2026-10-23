@@ -53,7 +53,7 @@ try{
     await page.getByRole("heading",{name:"Commissioner Home"}).waitFor();
     for(const tab of c.tabs){
       const nav=c.width<=720?page.getByRole("navigation",{name:"Mobile commissioner navigation"}):page.getByRole("navigation",{name:"Commissioner navigation"});
-      await nav.getByRole("button",{name:tab,exact:true}).click();
+      await nav.getByRole("button",{name:c.width>720&&tab==="Dues"?"Dues log":tab,exact:true}).click();
       await page.waitForTimeout(75);
       const sizes=await page.evaluate(()=>({
         scrollWidth:document.documentElement.scrollWidth,
