@@ -1,0 +1,35 @@
+name: Commissioner CRM sandbox validation
+on:
+  push:
+    branches:
+      - feature/commissioner-crm-react-foundation
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sandbox:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pool-platform/commissioner-crm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test pure permission model
+        run: npm test
+      - name: Resolve exact versions and create temporary lockfile
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Install from temporary lockfile
+        run: npm ci --no-audit --no-fund
+      - name: Build sandbox only
+        run: npm run build:sandbox
+      - name: Assert release remains disconnected
+        run: |
+          test ! -f dist/platform-config.js
+          test ! -f dist/participant.html
+          test -f dist/index.html
+          test -d dist/assets
