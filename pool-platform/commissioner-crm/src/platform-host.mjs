@@ -4,7 +4,7 @@ import {createCrmGateway} from "./crm-data.mjs";
 // may invoke this bridge; it relies on the existing live PlatformClient and
 // same-origin Neon Auth proxy, NOT a second login stack or browser-held API key.
 // The CRM React build never publishes platform-config.js or PlatformClient.
-export async function connectExistingPlatform({
+export async function loadExistingPlatformClient({
   origin = globalThis.location?.origin,
   importer = specifier=>import(/* @vite-ignore */ specifier)
 }={}) {
@@ -18,7 +18,14 @@ export async function connectExistingPlatform({
   if(PLATFORM_CONFIG?.mode!=="live"||!PLATFORM_CONFIG?.dataUrl)throw new Error("Live app configuration is unavailable");
   if(typeof PlatformClient!=="function")throw new Error("Existing authenticated client is unavailable");
   const client=await new PlatformClient(PLATFORM_CONFIG).init();
+  return client;
+}
+
+// Preserves the existing fail-closed bridge for callers that already have a session.
+export async function connectExistingPlatform(options={}) {
+  const client=await loadExistingPlatformClient(options);
   const session=await client.getSession();
-  if(!session?.user||!session?.session)throw new Error("Sign in with your NFL Pool Center account to continue.");
+  if(!session?.user||!session?.session)
+    throw new Error("Sign in with your NFL Pool Center account to continue.");
   return createCrmGateway(client);
 }
