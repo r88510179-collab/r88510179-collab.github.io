@@ -86,7 +86,16 @@ export function createCrmGateway(existingPlatformClient) {
   return Object.freeze({
     listPools:()=>existingPlatformClient.rpc("pool_platform_crm_pools"),
     readContext:pool=>existingPlatformClient.commissionerContext(pool.slug),
-    readDues:pool=>existingPlatformClient.rpc("pool_platform_crm_dues_summary",{p_pool_id:pool.id})
+    readDues:pool=>existingPlatformClient.rpc("pool_platform_crm_dues_summary",{p_pool_id:pool.id}),
+    listAssistants:tenantId=>existingPlatformClient.rpc("pool_platform_crm_assistants",{p_tenant_id:tenantId}),
+    addAssistant:request=>existingPlatformClient.rpc("pool_platform_crm_add_assistant",{
+      p_tenant_id:request.tenantId,p_email:request.email,p_scope:request.scope,
+      p_pool_ids:request.poolIds,p_capabilities:request.capabilities
+    }),
+    updateAssistant:request=>existingPlatformClient.rpc("pool_platform_crm_update_assistant",{
+      p_tenant_id:request.tenantId,p_staff_user_id:request.userId,p_scope:request.scope,
+      p_pool_ids:request.poolIds,p_capabilities:request.capabilities
+    })
   });
 }
 
