@@ -32,3 +32,19 @@ The build explicitly requires \`CRM_SANDBOX_BUILD=1\`; it never reads or writes 
 - GitHub Actions sandbox job on commit `8d7223467dc51bb422271373da9563e8cd220e63` passed all five permission unit tests, temporary dependency resolution, `npm ci`, React/Vite production bundle build, and sandbox isolation check.
 - The generated dependency lockfile was subsequently committed to the feature branch, and CI now requires `npm ci` against it.
 - No Netlify deployment or production migration was performed in this branch.
+
+## Phase 2 staging progress (Oct 23, 2026)
+- `migrations/002_pool_scoped_authorization.sql` was executed atomically **only** on Neon validation branch `br-orange-forest-b5nyu8ov`: seven existing functions and six SELECT policies now use pool-scoped capabilities. Existing co-commissioner privileges were backfilled with six tenant-all capabilities (new dues permission is not granted implicitly).
+- `migrations/003_crm_read_models.sql` added authenticated read-only `pool_platform_crm_pools()` and `pool_platform_crm_dues_summary(pool_id)` on that validation branch only; without a verified user both raise `auth_required` before table reads.
+- `migrations/004_validate_crm_invariants.sql` **passed** on staging: three CRM tables have RLS, direct writes are blocked, old commissioner RPCs no longer contain tenant-wide checks, five relevant SELECT policies are pool scoped, legacy grants are preserved, and unauthorized pool access denies.
+- `src/crm-data.mjs` provides a typed read model and an in-memory per-session cache. Switching A→B→A reuses A without another request. `src/platform-host.mjs` can reuse the existing same-origin `platform-client.js`, but is **not invoked by the sandbox bootstrap** and has not been connected to live auth.
+- `App.jsx` can be injected with an authenticated gateway and renders real pool, entry and dues read models. By default, it renders **fictional demo data**; no write actions are activated in connected mode.
+- New unit tests cover the pool adapter, cached navigation, fail-closed login, identity mismatches and dues permissions. CI must be checked at each commit; build green is not a hosted browser test.
+
+### Remaining nonnegotiable gates
+1. Read the independently accepted AUTH-C final production SHA, then reconcile the CRM branch against that accepted authentication/code baseline before any shared-site build changes.
+2. Run **real authenticated** positive/negative tests with distinct commissioner and co-commissioner users in two tenants, including per-pool denial for RLS reads, commissioner context, invite creation, direct/manual and batch submissions; unauthorized requests must reveal no week/entry details.
+3. Verify normal participant submissions, invite claim, source locking, deadlines, Survivor team-reuse prevention, audit integrity and service-worker cache separation.
+4. Add secure staff-enrollment and RPC-write integration for permission assignment, dues toggles and manual ledger events; keep checkout/payment handling completely absent.
+5. Review Vite build integration with the existing pinned Neon SDK, CSP, same-origin proxy and Netlify's explicit output allowlist; validate Samsung-size and desktop screen tests.
+6. Seek separate owner approval before production migration, merge or deployment. The validation Neon branch should be deleted only with explicit owner approval.
