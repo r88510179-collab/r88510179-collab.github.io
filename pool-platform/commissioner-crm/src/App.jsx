@@ -1,7 +1,7 @@
 import React, {useEffect,useRef,useState} from "react";
 import {createCrmSessionStore} from "./crm-data.mjs";
 import {motion} from "motion/react";
-import {CAPABILITIES,PRESETS,canUseDelegation,validateDelegation} from "./permissions.mjs";
+import StaffManager from "./StaffManager.jsx";
 
 const DEMO_POOLS=[
   {id:"office",name:"Office Football Pool",type:"Pick'em",entries:24,submitted:18,week:7},
@@ -25,10 +25,6 @@ function Toggle({value,onChange,label,help,disabled=false}){return <label classN
 export default function App({gateway=null}){
   const [poolId,setPoolId]=useState("office");
   const [tab,setTab]=useState("overview");
-  const [scope,setScope]=useState("selected");
-  const [selectedPoolIds,setSelectedPoolIds]=useState(["office"]);
-  const [preset,setPreset]=useState("assistant");
-  const [capabilities,setCapabilities]=useState([...PRESETS.assistant]);
   const [trackerEnabled,setTrackerEnabled]=useState({office:true,survivor:false});
   const [extraPayments,setExtraPayments]=useState({});
   const [amountDraft,setAmountDraft]=useState({});
@@ -96,28 +92,8 @@ export default function App({gateway=null}){
   const balance=entries.reduce((sum,x)=>sum+(Number.isSafeInteger(x.balanceOverride)?x.balanceOverride:x.charge-x.initialPaid-(gateway?0:(extraPayments[x.id]??0))),0);
   const tenantPools=pools.filter(p=>p.tenantId===pool.tenantId);
   const pct=pool.entries?Math.round(pool.submitted/pool.entries*100):0;
-  let delegation;
-  try {
-    delegation=validateDelegation({
-      tenantPoolIds:tenantPools.map(x=>x.id),scope,selectedPoolIds,capabilities
-    });
-  } catch {
-    delegation=null;
-  }
-  const delegatedHere=delegation&&canUseDelegation(delegation,{
-    tenantPoolIds:tenantPools.map(x=>x.id),poolId:selectedPoolId,capability:"view_pool"
-  });
   function chooseTab(next){setTab(next);setMessagePreview("");setCopyState("");}
   function choosePool(next){setPoolId(next);setTab("overview");setMessagePreview("");setCrmError("");}
-  function togglePool(id,enabled){setSelectedPoolIds(old=>enabled?[...new Set([...old,id])]:old.filter(x=>x!==id));}
-  function toggleCapability(id,enabled){
-    setPreset("custom");
-    setCapabilities(old=>enabled?[...new Set([...old,id])]:old.filter(x=>x!==id));
-  }
-  function choosePreset(name){
-    setPreset(name);
-    setCapabilities([...PRESETS[name]]);
-  }
   function openDraft(kind){
     chooseTab("overview");
     setMessagePreview(kind==="reminder"
@@ -221,21 +197,16 @@ export default function App({gateway=null}){
           <SectionTitle eyebrow="Pool preferences" title="Settings" description="Every option is written for commissioners, not developers."/>
           <section className="panel">
             <h3>Rules for {pool.name}</h3>
+            {gateway?<p className="subtle">Your existing pool rules are unchanged. Rule editing in this dashboard will be available after the next review.</p>:
+            <>
             {pool.type==="Survivor"
               ?<label className="field"><span>How many losses eliminate an entry?</span><select value={rules[poolId].strikes} onChange={e=>changeRules("strikes",e.target.value)}><option value="1">One loss</option><option value="2">Two losses</option><option value="3">Three losses</option></select><small>Two and three strikes require scoring support before release.</small></label>
               :<Toggle label="Use a weekly tiebreaker" help="Break tied Pick'em scores using total points" value={!!rules[poolId].tiebreak} onChange={v=>changeRules("tiebreak",v)}/>}
             <label className="field"><span>When do picks lock?</span><select value={rules[poolId].deadline} onChange={e=>changeRules("deadline",e.target.value)}><option>Weekly cutoff</option><option>At each game's kickoff</option></select><small>Per-game locking will be enabled only after scoring and deadline testing.</small></label>
+            </>}
           </section>
-          <section className="panel">
-            <h3>Assistant commissioner access</h3>
-            <p className="subtle">Choose what an assistant can access. Only a pool owner can delegate roles.</p>
-            <label className="field"><span>Which pools can they access?</span><select value={scope} onChange={e=>setScope(e.target.value)}><option value="selected">Only selected pools</option><option value="all">All of my pools</option></select></label>
-            {scope==="selected"&&<div className="check-list">{tenantPools.map(p=><label key={p.id}><input type="checkbox" checked={selectedPoolIds.includes(p.id)} onChange={e=>togglePool(p.id,e.target.checked)}/>{p.name}</label>)}</div>}
-            <label className="field"><span>Starting permissions</span><select value={preset} onChange={e=>choosePreset(e.target.value)}><option value="viewer">Viewer</option><option value="scorekeeper">Pick reviewer</option><option value="assistant">Assistant commissioner</option><option value="custom">Custom</option></select></label>
-            <div className="check-list">{CAPABILITIES.map(item=><label key={item.id}><input type="checkbox" checked={capabilities.includes(item.id)} onChange={e=>toggleCapability(item.id,e.target.checked)}/>{item.label}</label>)}</div>
-            <div className="mini-alert"><span>{delegation?(delegatedHere?"Assistant can view this pool":"Assistant cannot view this pool"):"Select at least one pool"}</span><Chip tone={delegatedHere?"live":"pending"}>Preview</Chip></div>
-            <p className="subtle">Preview only — these choices have not been saved.</p>
-          </section>
+          {(!gateway||pool.permissions?.manage_staff===true)&&
+            <StaffManager pool={pool} tenantPools={tenantPools} gateway={gateway} />}
         </div>}
         {tab==="dues"&&<div className="page-section">
           <SectionTitle eyebrow="Optional recordkeeping" title="Dues log" description="A private record of contributions handled completely outside this application."/>
