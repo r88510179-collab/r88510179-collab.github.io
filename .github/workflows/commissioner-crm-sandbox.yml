@@ -75,6 +75,12 @@ jobs:
         env:
           CRM_VISUAL_DEPS: /tmp/crm-visual-deps
         run: node scripts/visual-smoke.mjs
+      - name: Build the isolated connected candidate
+        run: npm run build:connected-candidate
+      - name: Test signed-in account separation using offline intercepted HTTPS
+        env:
+          CRM_VISUAL_DEPS: /tmp/crm-visual-deps
+        run: node scripts/connected-smoke.mjs
       - name: Save screenshots from disconnected sandbox
         if: always()
         uses: actions/upload-artifact@v4
