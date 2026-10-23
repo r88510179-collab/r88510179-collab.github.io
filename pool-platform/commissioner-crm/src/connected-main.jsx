@@ -5,4 +5,4 @@ import "./styles.css";
 
 const root=document.getElementById("root");
 if(!root)throw new Error("Missing CRM app root");
-createRoot(root).render(<React.StrictMode><ConnectedApp/></React.StrictMode>);
+createRoot(root).render(<ConnectedApp/>);
