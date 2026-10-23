@@ -30,5 +30,5 @@ The build explicitly requires \`CRM_SANDBOX_BUILD=1\`; it never reads or writes 
 
 ## Build validation
 - GitHub Actions sandbox job on commit `8d7223467dc51bb422271373da9563e8cd220e63` passed all five permission unit tests, temporary dependency resolution, `npm ci`, React/Vite production bundle build, and sandbox isolation check.
-- The generated dependency lockfile exists as a CI artifact, but **has not been committed to the repository**. This is still a release blocker.
+- The generated dependency lockfile was subsequently committed to the feature branch, and CI now requires `npm ci` against it.
 - No Netlify deployment or production migration was performed in this branch.
