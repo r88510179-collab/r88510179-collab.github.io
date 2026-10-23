@@ -3,6 +3,7 @@ import {createCrmSessionStore} from "./crm-data.mjs";
 import {motion} from "motion/react";
 import StaffManager from "./StaffManager.jsx";
 import LiveDuesPanel from "./LiveDuesPanel.jsx";
+import InviteManager from "./InviteManager.jsx";
 
 const DEMO_POOLS=[
   {id:"office",name:"Office Football Pool",type:"Pick'em",entries:24,submitted:18,week:7},
@@ -228,8 +229,10 @@ export default function App({gateway=null}){
           <div className="panel">
             <div className="panel-top"><h3>{gateway?"Entries":"Sample entries"}</h3><Chip>{entries.length} shown</Chip></div>
             <div className="entry-list">{entries.map(e=><div className="entry-row" key={e.id}><div className="avatar">{e.name.slice(0,1)}</div><div className="entry-name"><strong>{e.name}</strong><small>Participant entry</small></div><Chip tone={e.submitted?"live":"pending"}>{e.submitted?"Submitted":"Missing pick"}</Chip></div>)}</div>
-            <p className="subtle">{gateway?"Only available actions appear for your commissioner permissions.":"Invitations and roster changes are available when signed in to a live pool."}</p>
+            <p className="subtle">{gateway?"Entry access follows your commissioner permissions.":"Invitations and roster changes are available when signed in to a live pool."}</p>
           </div>
+          {gateway&&pool.permissions?.manage_players===true&&
+            <InviteManager key={pool.id} pool={pool} entries={entries} gateway={gateway}/>}
         </section>}
         {tab==="picks"&&<section className="page-section">
           <SectionTitle eyebrow={"Week "+pool.week} title="Pick status" description="A simple overview of who has submitted. No source-lock or deadline changes."/>
