@@ -61,7 +61,7 @@ select, input[type="number"], input[type="text"], input[type="email"], textarea 
 .action-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 11px; }
 .action-grid button { min-height: 95px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 12px; border: 1px solid #445061; border-radius: 11px; background: #242d37; color: #f8f9fa; text-align: left; font-size: 13px; font-weight: 700; padding: 14px; }
 .action-grid button:hover { border-color: #d4af37; }
-.action-grid button span { font-size: 21px; color: #f3c858; }
+.action-grid .action-icon { width: 22px; height: 22px; color: #f3c858; flex: none; }
 .draft-panel textarea { display: block; margin: 15px 0; width: 100%; resize: vertical; }
 .primary-button { background: #d4af37; border: 0; border-radius: 9px; color: #121212; font-weight: 800; padding: 11px 18px; }
 .entry-list { display: grid; margin-top: 8px; }
