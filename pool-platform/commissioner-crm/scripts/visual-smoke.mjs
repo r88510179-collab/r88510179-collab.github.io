@@ -11,6 +11,12 @@ if(!prefix)throw new Error("CRM_VISUAL_DEPS must point to an isolated Playwright
 const {chromium}=await import(pathToFileURL(path.join(prefix,"node_modules","playwright","index.mjs")).href);
 const root=path.resolve("dist");
 const types={".html":"text/html; charset=utf-8",".css":"text/css; charset=utf-8",".js":"text/javascript; charset=utf-8",".svg":"image/svg+xml"};
+// Match the existing commercial host's default security policy for same-origin assets.
+// No external SDK host or inline script/style exemptions in the CRM sandbox.
+const csp=["default-src 'self'","script-src 'self'","style-src 'self'",
+  "img-src 'self'","font-src 'none'","connect-src 'self'","worker-src 'self'",
+  "manifest-src 'self'","object-src 'none'","frame-src 'none'",
+  "frame-ancestors 'none'","base-uri 'none'","form-action 'self'"].join("; ");
 const server=http.createServer(async (req,res)=>{
   try {
     const raw=new URL(req.url,"http://127.0.0.1").pathname;
@@ -20,7 +26,7 @@ const server=http.createServer(async (req,res)=>{
     }
     const file=path.join(root,raw==="/"?"/index.html":raw);
     const body=await fs.readFile(file);
-    res.writeHead(200,{"Content-Type":types[path.extname(file)]||"application/octet-stream","Cache-Control":"no-store"});
+    res.writeHead(200,{"Content-Type":types[path.extname(file)]||"application/octet-stream","Cache-Control":"no-store","Content-Security-Policy":csp});
     res.end(body);
   } catch{res.writeHead(404);res.end();}
 });
