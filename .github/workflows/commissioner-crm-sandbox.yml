@@ -28,12 +28,21 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Build sandbox only
         run: npm run build:sandbox
-      - name: Assert release remains disconnected
+      - name: Build separate release-locked connected candidate (never published)
+        run: npm run build:connected-candidate
+      - name: Assert both UI outputs remain isolated from commercial publishing
         run: |
+          test -f dist/index.html
+          test ! -f dist/connected.html
           test ! -f dist/platform-config.js
           test ! -f dist/participant.html
-          test -f dist/index.html
+          test -f dist-connected-candidate/connected.html
+          test ! -f dist-connected-candidate/index.html
+          test ! -f dist-connected-candidate/platform-config.js
+          test ! -f dist-connected-candidate/participant.html
+          test ! -f dist-connected-candidate/commissioner.html
           test -d dist/assets
+          test -d dist-connected-candidate/assets
       - name: Archive sandbox-only UI for viewport checks
         uses: actions/upload-artifact@v4
         with:
