@@ -48,3 +48,17 @@ The build explicitly requires \`CRM_SANDBOX_BUILD=1\`; it never reads or writes 
 4. Add secure staff-enrollment and RPC-write integration for permission assignment, dues toggles and manual ledger events; keep checkout/payment handling completely absent.
 5. Review Vite build integration with the existing pinned Neon SDK, CSP, same-origin proxy and Netlify's explicit output allowlist; validate Samsung-size and desktop screen tests.
 6. Seek separate owner approval before production migration, merge or deployment. The validation Neon branch should be deleted only with explicit owner approval.
+
+## Phase 2 assistant management and dues ledger (Oct 23, 2026)
+- `migrations/005_assistant_enrollment.sql` is installed on validation Neon branch `br-orange-forest-b5nyu8ov`: verified-account assistant enrollment, read-only assistant roster, audited role updates and permission revocation. Normal authenticated callers cannot execute the lower-level un-audited grant writer.
+- `migrations/006_staging_role_simulation.sql` **PASSED** on the isolated branch: within one transaction/savepoint it temporarily narrowed an existing assistant from two pools to one, then denied second-pool access through commissioner context, invite and submission RPCs and authenticated-role RLS reads. The mock actor function and permission update were rolled back; this is NOT a real JWT acceptance test.
+- `migrations/007_staging_dues_simulation.sql` **PASSED** on staging: manual charge/payment/refund/credit balance, server summary, append-only mutation refusal, assistant denial, foreign-tenant denial and direct-write privilege checks. Test entries were rolled back, leaving zero ledger records.
+- After both tests, verified that `pool_platform_current_user_id()` still calls `auth.user_id()`, no test-actor override exists, the existing six legacy co-commissioner grants remain, and production has zero CRM tables.
+- React `StaffManager.jsx` allows selection of an existing assistant or addition using an existing verified email, selected/all pools, presets and individual permissions; server RPCs enforce all writes. Assistant rosters cache by tenant and invalidate after changes.
+- React `LiveDuesPanel.jsx` allows optional external bookkeeping: manually recorded amount owed, paid outside app, credit and refund; **no payments are accepted or moved by this app**.
+- GitHub sandbox CI: **29/29 tests passed**, React/Vite bundle passed, npm lockfile installed via `npm ci`, no production config or participant file in output.
+
+### Important next gates
+- Actual signed-in JWT sessions (including multi-tenant, two-pool role enforcement and unverified/unknown assistant enrollment) have not been tested. Do NOT call the simulation a production auth sign-off.
+- A co-commissioner role in the existing seed data lacks an authenticated verified Neon user; the read model retains that legacy staff record, but new email enrollment requires a genuinely verified account.
+- The React entrypoint still runs as a disconnected sandbox until AUTH-C release reconciliation, CSP/Netlify integration, full regression, mobile viewport checks, and a separate production authorization.
