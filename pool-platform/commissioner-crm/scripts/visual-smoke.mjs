@@ -14,6 +14,7 @@ const types={".html":"text/html; charset=utf-8",".css":"text/css; charset=utf-8"
 const server=http.createServer(async (req,res)=>{
   try {
     const raw=new URL(req.url,"http://127.0.0.1").pathname;
+    if(raw==="/favicon.ico"){res.writeHead(204,{"Cache-Control":"no-store"});res.end();return;}
     if(raw.includes("..")||!/^\/(?:assets\/[a-zA-Z0-9._-]+|index\.html)?$/.test(raw)){
       res.writeHead(404);res.end();return;
     }
@@ -47,6 +48,7 @@ try{
     const errors=[];
     page.on("pageerror",e=>errors.push(e.message));
     page.on("console",m=>{if(m.type()==="error")errors.push(m.text())});
+    page.on("response",r=>{if(r.status()>=400)errors.push("HTTP "+r.status()+" "+r.url())});
     await page.goto(url,{waitUntil:"networkidle"});
     await page.getByRole("heading",{name:"Commissioner Home"}).waitFor();
     for(const tab of c.tabs){
