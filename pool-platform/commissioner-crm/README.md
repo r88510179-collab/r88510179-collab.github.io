@@ -62,3 +62,16 @@ The build explicitly requires \`CRM_SANDBOX_BUILD=1\`; it never reads or writes 
 - Actual signed-in JWT sessions (including multi-tenant, two-pool role enforcement and unverified/unknown assistant enrollment) have not been tested. Do NOT call the simulation a production auth sign-off.
 - A co-commissioner role in the existing seed data lacks an authenticated verified Neon user; the read model retains that legacy staff record, but new email enrollment requires a genuinely verified account.
 - The React entrypoint still runs as a disconnected sandbox until AUTH-C release reconciliation, CSP/Netlify integration, full regression, mobile viewport checks, and a separate production authorization.
+
+## Phase 3 connected-candidate integration (October 23, 2026)
+
+The separate `connected.html` / `src/ConnectedApp.jsx` entrypoint builds ONLY when explicitly invoked with `npm run build:connected-candidate`. It is deliberately **not included** in `pool-platform/scripts/build.mjs`, Netlify, the existing service-worker cache list, or the normal commercial distribution. The existing `index.html` remains a disconnected fictional-data sandbox.
+
+- Signed-out state loads the existing same-origin `platform-config.js` and `platform-client.js` (not a new Auth service). It uses the exact original OTP send, verify, session and sign-out APIs.
+- No valid account/session => sign-in form; no live config/module => an error screen; **never fallback to fictional pool records**.
+- Authenticated state mounts the already-built React CRM with a stable gateway per existing PlatformClient instance. Sign-out unmounts the pool UI and discards its in-memory pool, assistant, and dues caches. Foreground/focus checks can discard stale sessions; accounts use separate React keys.
+- Live-mode labels now reflect that some protected staff/dues writes are functional. Dues totals use the full-season ledger (including eliminated/inactive entries), not only active roster entries.
+- Existing participant-invite RPC `createInvite` is available on the connected Players tab to commissioners with `manage_players`. URLs use `participant.html?pool=slug#invite=TOKEN` and never transmit tokens as query parameters; copy is explicitly user-initiated.
+- The CI sandbox job builds **both outputs separately** and verifies candidate files are absent from the commercial publishing directory. The browser job enforces same-origin strict CSP, runs 360/412/1440px demo checks and a fake-account HTTPS interception rehearsal with no production JWT or API traffic.
+
+**Not yet delivered or approved:** a connected deployment, AUTH-C reconciliation, real verified JWT positive/negative acceptance, production migration, production Netlify integration, or a real-device signoff. Merge/deploy requires explicit separate authorization.
