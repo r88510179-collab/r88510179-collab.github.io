@@ -60,8 +60,8 @@ jobs:
         run: npm run build:sandbox
       - name: Install Playwright in temporary directory only
         run: npm install --prefix /tmp/crm-visual-deps --ignore-scripts --no-audit --no-fund --no-save playwright@1.56.1
-      - name: Install isolated Chromium browser
-        run: /tmp/crm-visual-deps/node_modules/.bin/playwright install --with-deps chromium
+      - name: Confirm system Chrome is installed
+        run: command -v google-chrome || command -v google-chrome-stable || command -v chromium
       - name: Verify 360px, 412px and desktop layouts and controls
         env:
           CRM_VISUAL_DEPS: /tmp/crm-visual-deps
