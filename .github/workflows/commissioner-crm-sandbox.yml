@@ -34,3 +34,9 @@ jobs:
           test ! -f dist/participant.html
           test -f dist/index.html
           test -d dist/assets
+      - name: Archive sandbox-only UI for viewport checks
+        uses: actions/upload-artifact@v4
+        with:
+          name: crm-sandbox-dist
+          path: pool-platform/commissioner-crm/dist/
+          retention-days: 3
