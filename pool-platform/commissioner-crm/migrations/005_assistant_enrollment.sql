@@ -55,7 +55,7 @@ BEGIN
       ),'[]'::jsonb)
     ) ORDER BY lower(u.email),m.auth_user_id)
     FROM public.pool_platform_memberships m
-    JOIN neon_auth."user" u ON u.id::text=m.auth_user_id
+    LEFT JOIN neon_auth."user" u ON u.id::text=m.auth_user_id
     WHERE m.tenant_id=p_tenant_id AND m.role='co_commissioner'
   ),'[]'::jsonb);
 END;
