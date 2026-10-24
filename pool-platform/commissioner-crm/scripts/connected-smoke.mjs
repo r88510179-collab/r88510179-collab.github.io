@@ -25,7 +25,10 @@ const fakeClient=[
   "  if(name==='pool_platform_crm_pools')return [{id:loggedIn==='first'?'11111111-1111-1111-1111-111111111111':'22222222-2222-2222-2222-222222222222',",
   "  tenant_id:loggedIn==='first'?'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa':'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',",
   "  slug:loggedIn+'-pool',display_name:loggedIn==='first'?'First Pool':'Second Pool',pool_type:'pickem',status:'active',",
-  "  dues_tracking_enabled:false,permissions:{view_pool:true,manage_players:false,manage_staff:false,record_dues:false}}];",
+  "  dues_tracking_enabled:false,permissions:{view_pool:true,manage_players:false,manage_staff:true,record_dues:false}}];",
+  "  if(name==='pool_platform_crm_assistants')return [{id:loggedIn+'-helper',",
+  "   name:loggedIn==='first'?'First Private Assistant':'Second Private Assistant',",
+  "   email:loggedIn+'-helper@example.test',scope:'all',pool_ids:[],capabilities:['view_pool']}];",
   "  if(name==='pool_platform_crm_dues_summary')return [];throw new Error('Unexpected RPC: '+name);}",
   "async commissionerContext(slug){if(!loggedIn||slug!==loggedIn+'-pool')throw new Error('commissioner_required');",
   " return {pool:{id:loggedIn==='first'?'11111111-1111-1111-1111-111111111111':'22222222-2222-2222-2222-222222222222',slug},",
@@ -69,12 +72,18 @@ try{
     await page.getByRole("option",{name:poolName}).waitFor({state:"attached",timeout:10000});
   }
   await login("first@example.test","First Pool");
+  await page.getByRole("navigation",{name:"Mobile commissioner navigation"}).getByRole("button",{name:"Settings"}).click();
+  await page.getByRole("option",{name:"first-helper@example.test"}).waitFor({state:"attached"});
+  assert.equal(await page.getByRole("option",{name:"second-helper@example.test"}).count(),0);
   await page.getByRole("button",{name:"Sign out"}).click();
   await page.getByRole("heading",{name:"Sign in to manage your pools"}).waitFor();
   assert.equal(await page.getByText("First Entry",{exact:true}).count(),0);
   await login("second@example.test","Second Pool");
+  await page.getByRole("navigation",{name:"Mobile commissioner navigation"}).getByRole("button",{name:"Settings"}).click();
+  await page.getByRole("option",{name:"second-helper@example.test"}).waitFor({state:"attached"});
+  assert.equal(await page.getByRole("option",{name:"first-helper@example.test"}).count(),0);
   assert.equal(await page.getByRole("option",{name:"First Pool"}).count(),0);
   assert.deepEqual(errors,[]);
   assert.ok(requests>=5);
-  console.log("CONNECTED browser PASS: no demo fallback; first account -> sign-out -> second account, strict CSP, all requests intercepted.");
+  console.log("CONNECTED browser PASS: no demo fallback; two-account sign-out and assistant directory isolation, strict CSP, all requests intercepted.");
 }finally{await browser.close();}
