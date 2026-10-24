@@ -14,6 +14,7 @@ const policy=["default-src 'self'","script-src 'self'","style-src 'self'",
 const fakeConfig="export const PLATFORM_CONFIG={mode:'live',dataUrl:'https://data.example.invalid'};";
 const fakeClient=[
   "let loggedIn=null;",
+  "export function simulateOtherTabLogin(account){loggedIn=account}",
   "export class PlatformClient {",
   "constructor(config){if(config.mode!=='live')throw new Error('config')} ",
   "async init(){return this}",
@@ -83,7 +84,19 @@ try{
   await page.getByRole("option",{name:"second-helper@example.test"}).waitFor({state:"attached"});
   assert.equal(await page.getByRole("option",{name:"first-helper@example.test"}).count(),0);
   assert.equal(await page.getByRole("option",{name:"First Pool"}).count(),0);
+  // Another tab can change the active Auth identity without pressing our sign-out.
+  // The focused window must replace the gateway, assistant directory and pool UI.
+  await page.evaluate(async()=>{
+    const module=await import("/platform-client.js");
+    module.simulateOtherTabLogin("first");
+    window.dispatchEvent(new Event("focus"));
+  });
+  await page.getByRole("option",{name:"First Pool"}).waitFor({state:"attached",timeout:10000});
+  await page.getByRole("navigation",{name:"Mobile commissioner navigation"}).getByRole("button",{name:"Settings"}).click();
+  await page.getByRole("option",{name:"first-helper@example.test"}).waitFor({state:"attached"});
+  assert.equal(await page.getByRole("option",{name:"second-helper@example.test"}).count(),0);
+  assert.equal(await page.getByRole("option",{name:"Second Pool"}).count(),0);
   assert.deepEqual(errors,[]);
   assert.ok(requests>=5);
-  console.log("CONNECTED browser PASS: no demo fallback; two-account sign-out and assistant directory isolation, strict CSP, all requests intercepted.");
+  console.log("CONNECTED browser PASS: no demo fallback; two-account sign-out, other-tab account changes and assistant directory isolation, strict CSP, all requests intercepted.");
 }finally{await browser.close();}
