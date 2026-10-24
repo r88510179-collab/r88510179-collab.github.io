@@ -255,11 +255,11 @@ export default function App({gateway=null}){
             </>}
           </section>
           {(!gateway||pool.permissions?.manage_staff===true)&&
-            <StaffManager pool={pool} tenantPools={tenantPools} gateway={gateway} />}
+            <StaffManager key={gateway?pool.tenantId:"demo"} pool={pool} tenantPools={tenantPools} gateway={gateway} />}
         </div>}
         {tab==="dues"&&<div className="page-section">
           <SectionTitle eyebrow="Optional recordkeeping" title="Dues log" description="A private record of contributions handled completely outside this application."/>
-          {gateway?<LiveDuesPanel pool={pool} entries={liveDues[selectedPoolId]??[]}
+          {gateway?<LiveDuesPanel key={selectedPoolId} pool={pool} entries={liveDues[selectedPoolId]??[]}
             loaded={Object.hasOwn(liveDues,selectedPoolId)} gateway={gateway}
             onEnabledChange={changeLiveDuesEnabled} onRecorded={refreshLiveDues}/>:
           <section className="panel">
