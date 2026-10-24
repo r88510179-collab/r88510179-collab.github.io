@@ -20,7 +20,8 @@ export default function ConnectedApp({clientLoader=loadExistingPlatformClient}) 
   // A gateway owns an assistant-directory cache. Recreate it on every identity
   // change (and on sign-out), not merely when the long-lived Auth client changes.
   const accountId=session?.user?.id??null;
-  const gateway=React.useMemo(()=>client&&accountId?createCrmGateway(client):null,[client,accountId]);
+  const sessionKey=accountId?accountId+":"+(session?.session?.id??"unknown"):null;
+  const gateway=React.useMemo(()=>client&&sessionKey?createCrmGateway(client):null,[client,sessionKey]);
 
   useEffect(()=>{
     let active=true;
@@ -50,7 +51,8 @@ export default function ConnectedApp({clientLoader=loadExistingPlatformClient}) 
         if(!next?.user||!next?.session)return null;
         // Same account needs no remount; a different account always discards
         // cached pool and ledger data by remounting a new App instance.
-        return previous?.user?.id===next.user.id?previous:next;
+        return previous?.user?.id===next.user.id&&previous?.session?.id===next.session.id
+          ?previous:next;
       });
     }catch{
       // Do not retain old account information after Auth becomes uncertain.
@@ -110,7 +112,7 @@ export default function ConnectedApp({clientLoader=loadExistingPlatformClient}) 
         <span>Commissioner account</span>
         <button type="button" onClick={signOut} disabled={busy}>{busy?"Signing out…":"Sign out"}</button>
       </div>
-      <App key={session.user.id} gateway={gateway}/>
+      <App key={sessionKey} gateway={gateway}/>
       {error&&<p role="alert" className="form-message error-message">{error}</p>}
     </div>;
   }
