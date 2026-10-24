@@ -17,7 +17,10 @@ export default function ConnectedApp({clientLoader=loadExistingPlatformClient}) 
   const [pendingEmail,setPendingEmail]=useState("");
   const [otpSent,setOtpSent]=useState(false);
   const generation=useRef(0);
-  const gateway=React.useMemo(()=>client?createCrmGateway(client):null,[client]);
+  // A gateway owns an assistant-directory cache. Recreate it on every identity
+  // change (and on sign-out), not merely when the long-lived Auth client changes.
+  const accountId=session?.user?.id??null;
+  const gateway=React.useMemo(()=>client&&accountId?createCrmGateway(client):null,[client,accountId]);
 
   useEffect(()=>{
     let active=true;
