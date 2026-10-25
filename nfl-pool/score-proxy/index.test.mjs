@@ -3,7 +3,7 @@
 // parameter coercion, the exact upstream URL and the HTTP handler. No live network: every upstream fetch here is a stub.
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import proxy,{ALLOWED_ORIGIN,UPSTREAM_TIMEOUT_MS,parseSeasonWeek,upstreamUrl,projectScoreboard,createHandler} from './index.mjs';
+import proxy,{ALLOWED_ORIGIN,PERSONAL_ORIGIN,ALLOWED_ORIGINS,UPSTREAM_TIMEOUT_MS,parseSeasonWeek,upstreamUrl,projectScoreboard,createHandler} from './index.mjs';
 import {survivorMarketMatchups,survivorBuildResults,survivorEntryState,survivorFeedContextError} from '../survivor-math.js';
 
 // Deployed as one unbundled file: nothing imported, no environment or secrets read.
@@ -11,7 +11,9 @@ const source=readFileSync(new URL('./index.mjs',import.meta.url),'utf8');
 assert.doesNotMatch(source,/^\s*import[\s{*'"]|\bimport\s*\(|\brequire\s*\(/m,'the function source imports nothing');
 assert.doesNotMatch(source,/\bprocess\s*\.|\bDeno\b|\bBun\b/,'the function source reads no runtime environment');
 assert.equal(typeof proxy?.fetch,'function','default export is {fetch(request)}');
-assert.equal(ALLOWED_ORIGIN,'https://r88510179-collab.github.io','the only CORS origin is the Pages origin');
+assert.equal(ALLOWED_ORIGIN,'https://r88510179-collab.github.io','the original Pages origin remains approved');
+assert.equal(PERSONAL_ORIGIN,'https://picks.smokkeventures.com','the personal custom domain is approved');
+assert.deepEqual(ALLOWED_ORIGINS,[ALLOWED_ORIGIN,PERSONAL_ORIGIN],'the approved origin list is limited to the two expected origins');
 assert(UPSTREAM_TIMEOUT_MS>0&&UPSTREAM_TIMEOUT_MS<=10000,'upstream time limit is at most 10 s');
 
 // ---- ESPN-shaped fixtures, with the extra fields ESPN sends at every level (as on the live 2026 Week 3 scoreboard).
@@ -372,9 +374,10 @@ console.log('score proxy projection, odds subset, final evidence, structure pres
 // ---- HTTP handler with a stubbed upstream: status codes, bodies and headers for every Origin and method.
 const NOW=Date.parse(FETCHED),CACHE='public, max-age=5, s-maxage=10, stale-while-revalidate=20',JSON_TYPE='application/json; charset=utf-8';
 const CORS={'access-control-allow-headers':'Accept, Content-Type','access-control-allow-methods':'GET, OPTIONS','access-control-allow-origin':ALLOWED_ORIGIN,vary:'Origin'};
-const H={cors:{...CORS,'cache-control':CACHE,'content-type':JSON_TYPE},plain:{'cache-control':CACHE,'content-type':JSON_TYPE},preflight:{...CORS,'cache-control':CACHE},
-  corsFailed:{...CORS,'cache-control':'no-store','content-type':JSON_TYPE},plainFailed:{'cache-control':'no-store','content-type':JSON_TYPE}};
-const ORIGINS={none:undefined,empty:'',allowed:ALLOWED_ORIGIN,foreign:'https://evil.example','null':'null',slash:`${ALLOWED_ORIGIN}/`,upper:ALLOWED_ORIGIN.toUpperCase(),http:ALLOWED_ORIGIN.replace('https:','http:')};
+const PERSONAL_CORS={...CORS,'access-control-allow-origin':PERSONAL_ORIGIN};
+const H={cors:{...CORS,'cache-control':CACHE,'content-type':JSON_TYPE},personalCors:{...PERSONAL_CORS,'cache-control':CACHE,'content-type':JSON_TYPE},plain:{'cache-control':CACHE,'content-type':JSON_TYPE},preflight:{...CORS,'cache-control':CACHE},personalPreflight:{...PERSONAL_CORS,'cache-control':CACHE},
+  corsFailed:{...CORS,'cache-control':'no-store','content-type':JSON_TYPE},personalCorsFailed:{...PERSONAL_CORS,'cache-control':'no-store','content-type':JSON_TYPE},plainFailed:{'cache-control':'no-store','content-type':JSON_TYPE}};
+const ORIGINS={none:undefined,empty:'',allowed:ALLOWED_ORIGIN,personal:PERSONAL_ORIGIN,foreign:'https://evil.example','null':'null',slash:`${ALLOWED_ORIGIN}/`,upper:ALLOWED_ORIGIN.toUpperCase(),http:ALLOWED_ORIGIN.replace('https:','http:'),personalSlash:`${PERSONAL_ORIGIN}/`,personalHttp:PERSONAL_ORIGIN.replace('https:','http:'),commercial:'https://pool.smokkeventures.com'};
 function harness(upstream=async()=>Response.json(W3),timeoutMs=25){
   const calls=[],handle=createHandler({fetch:async(url,init)=>{calls.push({url,init});return upstream(url,init)},now:()=>NOW,timeoutMs});
   return{calls,async send(method,query,origin){
@@ -385,21 +388,23 @@ function harness(upstream=async()=>Response.json(W3),timeoutMs=25){
 }
 const Q='?season=2026&week=3',BAD='?season=2026&week=0',error=code=>JSON.stringify({error:code}),OK=JSON.stringify(projected(W3));
 const MATRIX=[
-  // GET: an absent or empty Origin is served without CORS headers; any other Origin but the Pages origin is refused
-  // before the parameters are read.
-  ['GET','allowed',Q,200,OK,H.cors],['GET','none',Q,200,OK,H.plain],['GET','empty',Q,200,OK,H.plain],
+  // GET: either exact personal Pool Center origin succeeds, absent/empty Origin has no CORS, any other origin is refused.
+  ['GET','allowed',Q,200,OK,H.cors],['GET','personal',Q,200,OK,H.personalCors],['GET','none',Q,200,OK,H.plain],['GET','empty',Q,200,OK,H.plain],
   ['GET','foreign',Q,403,error('origin_not_allowed'),H.plain],['GET','null',Q,403,error('origin_not_allowed'),H.plain],
   ['GET','slash',Q,403,error('origin_not_allowed'),H.plain],['GET','upper',Q,403,error('origin_not_allowed'),H.plain],['GET','http',Q,403,error('origin_not_allowed'),H.plain],
-  ['GET','allowed',BAD,400,error('invalid_season_or_week'),H.cors],['GET','none',BAD,400,error('invalid_season_or_week'),H.plain],
+  ['GET','personalSlash',Q,403,error('origin_not_allowed'),H.plain],['GET','personalHttp',Q,403,error('origin_not_allowed'),H.plain],['GET','commercial',Q,403,error('origin_not_allowed'),H.plain],
+  ['GET','allowed',BAD,400,error('invalid_season_or_week'),H.cors],['GET','personal',BAD,400,error('invalid_season_or_week'),H.personalCors],['GET','none',BAD,400,error('invalid_season_or_week'),H.plain],
   ['GET','foreign',BAD,403,error('origin_not_allowed'),H.plain],
   // The path is not part of the contract.
   ['GET','allowed',`other/path${Q}`,200,OK,H.cors],
-  // OPTIONS: only the Pages origin gets a preflight answer, whatever the parameters.
+  // OPTIONS: both approved exact origins get a preflight answer, regardless of the query.
   ['OPTIONS','allowed',Q,204,'',H.preflight],['OPTIONS','allowed',BAD,204,'',H.preflight],
+  ['OPTIONS','personal',Q,204,'',H.personalPreflight],['OPTIONS','personal',BAD,204,'',H.personalPreflight],
   ['OPTIONS','none',Q,403,error('origin_not_allowed'),H.plain],['OPTIONS','empty',Q,403,error('origin_not_allowed'),H.plain],
   ['OPTIONS','foreign',Q,403,error('origin_not_allowed'),H.plain],['OPTIONS','null',Q,403,error('origin_not_allowed'),H.plain],
+  ['OPTIONS','commercial',Q,403,error('origin_not_allowed'),H.plain],['OPTIONS','personalSlash',Q,403,error('origin_not_allowed'),H.plain],
   // Every other method is 405 whatever the Origin; CORS headers only for the Pages origin.
-  ['POST','allowed',Q,405,error('method_not_allowed'),H.cors],['POST','none',Q,405,error('method_not_allowed'),H.plain],
+  ['POST','allowed',Q,405,error('method_not_allowed'),H.cors],['POST','personal',Q,405,error('method_not_allowed'),H.personalCors],['POST','none',Q,405,error('method_not_allowed'),H.plain],
   ['POST','foreign',Q,405,error('method_not_allowed'),H.plain],['POST','null',Q,405,error('method_not_allowed'),H.plain],
   ['HEAD','allowed',Q,405,error('method_not_allowed'),H.cors],['HEAD','none',Q,405,error('method_not_allowed'),H.plain],
   ['HEAD','foreign',Q,405,error('method_not_allowed'),H.plain],['HEAD','null',Q,405,error('method_not_allowed'),H.plain],
