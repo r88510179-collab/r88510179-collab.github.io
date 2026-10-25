@@ -1,0 +1,24 @@
+{
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "/nfl-pool/",
+      "permanent": false
+    },
+    {
+      "source": "/nfl-pool",
+      "destination": "/nfl-pool/",
+      "permanent": false
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/nfl-pool/",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/nfl-pool/:path*",
+      "destination": "/:path*"
+    }
+  ]
+}
