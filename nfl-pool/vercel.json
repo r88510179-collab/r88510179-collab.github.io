@@ -17,6 +17,14 @@
       "destination": "/index.html"
     },
     {
+      "source": "/nfl-pool/admin/",
+      "destination": "/admin/index.html"
+    },
+    {
+      "source": "/nfl-pool/admin",
+      "destination": "/admin/index.html"
+    },
+    {
       "source": "/nfl-pool/:path*",
       "destination": "/:path*"
     }
