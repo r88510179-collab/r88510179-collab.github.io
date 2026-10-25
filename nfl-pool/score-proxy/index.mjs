@@ -7,6 +7,9 @@
 // globals only; no secrets or environment variables.
 
 export const ALLOWED_ORIGIN='https://r88510179-collab.github.io';
+export const PERSONAL_ORIGIN='https://picks.smokkeventures.com';
+export const ALLOWED_ORIGINS=Object.freeze([ALLOWED_ORIGIN,PERSONAL_ORIGIN]);
+const originAllowed=origin=>ALLOWED_ORIGINS.includes(origin);
 export const ESPN_SCOREBOARD='https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
 export const UPSTREAM_TIMEOUT_MS=10000;
 const CACHEABLE='public, max-age=5, s-maxage=10, stale-while-revalidate=20';
@@ -94,12 +97,12 @@ export function projectScoreboard(payload,fetchedAt){
   return{fetchedAt,events:payload.events.filter(isRecord).map(projectEvent)};
 }
 
-// CORS headers, and Vary, only for the Pages origin.
+// CORS headers echo only one of the two exact personal Pool Center origins; no wildcard or other origin is trusted.
 function headers(origin,{type=JSON_TYPE,cache=CACHEABLE}={}){
   const out=new Headers();
   if(type)out.set('content-type',type);
-  if(origin===ALLOWED_ORIGIN){
-    out.set('access-control-allow-origin',ALLOWED_ORIGIN);
+  if(originAllowed(origin)){
+    out.set('access-control-allow-origin',origin);
     out.set('access-control-allow-methods','GET, OPTIONS');
     out.set('access-control-allow-headers','Accept, Content-Type');
     out.set('vary','Origin');
@@ -109,18 +112,18 @@ function headers(origin,{type=JSON_TYPE,cache=CACHEABLE}={}){
 }
 const json=(status,body,origin,cache)=>new Response(JSON.stringify(body),{status,headers:headers(origin,{cache})});
 
-// Deployment-1 request order: OPTIONS answers only the Pages origin and never reads parameters; every other method but
-// GET is 405; a GET from any other non-empty Origin (including "null") is 403 before its parameters are read, while a
-// GET without an Origin is served without CORS headers; then 400 for invalid parameters. The path is ignored.
+// Preserve deployment-1 method/parameter behavior: OPTIONS answers only a trusted exact origin, GET rejects all
+// other non-empty origins (including "null") before reading parameters, and GET without Origin remains served without
+// CORS headers. No other methods are allowed; the request path is ignored.
 export function createHandler({fetch:upstream=(url,init)=>globalThis.fetch(url,init),now=Date.now,timeoutMs=UPSTREAM_TIMEOUT_MS}={}){
   return async function handle(request){
     const origin=request.headers.get('origin');
     if(request.method==='OPTIONS'){
-      if(origin!==ALLOWED_ORIGIN)return json(403,{error:'origin_not_allowed'},origin);
+      if(!originAllowed(origin))return json(403,{error:'origin_not_allowed'},origin);
       return new Response(null,{status:204,headers:headers(origin,{type:null})});
     }
     if(request.method!=='GET')return json(405,{error:'method_not_allowed'},origin);
-    if(origin&&origin!==ALLOWED_ORIGIN)return json(403,{error:'origin_not_allowed'},origin);
+    if(origin&&!originAllowed(origin))return json(403,{error:'origin_not_allowed'},origin);
     const params=parseSeasonWeek(new URL(request.url).searchParams);
     if(!params)return json(400,{error:'invalid_season_or_week'},origin);
     // Non-2xx, network failure, the time limit (headers and body), non-JSON or no events array: 502, never cached.
