@@ -138,12 +138,16 @@ BEGIN
   THEN RAISE EXCEPTION 'commissioner_required'; END IF;
   IF p_email IS NULL OR length(p_email)>254 OR p_email !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'
   THEN RAISE EXCEPTION 'invalid_assistant_email'; END IF;
-  -- The target must have signed up and verified their own account before staff enrollment.
-  -- Return one generic response for unknown, banned and unverified accounts.
+  -- The target must have signed up and verified their own account before staff enrollment, and must be an
+  -- identity the AUTH-C helpers accept: a user holding a password or OAuth account row (neon_auth.account) is
+  -- nobody to migration 004, so enrolling one would only create V1 standing for a contested identity (the
+  -- identity audit's I08). Return one generic response for unknown, banned, unverified and account-holding
+  -- addresses.
   SELECT u.id::text INTO v_user_id
   FROM neon_auth."user" u
   WHERE lower(u.email)=lower(btrim(p_email))
-    AND u."emailVerified"=true AND COALESCE(u.banned,false)=false;
+    AND u."emailVerified"=true AND COALESCE(u.banned,false)=false
+    AND NOT EXISTS (SELECT 1 FROM neon_auth.account a WHERE a."userId"=u.id);
   IF v_user_id IS NULL THEN RAISE EXCEPTION 'assistant_account_not_ready'; END IF;
   IF v_user_id=v_actor THEN RAISE EXCEPTION 'assistant_self_enrollment_forbidden'; END IF;
 

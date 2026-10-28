@@ -1,5 +1,5 @@
 -- CRM-008: READ ONLY. Run after an independently accepted and migrated AUTH-C release.
--- Every row must be PASS before any CRM merge, production migration or Netlify build.
+-- Every one of its 19 rows must be PASS before any CRM merge, production migration or Netlify build.
 -- Do NOT fix a failure by bypassing another team's AUTH-C migration or recreating
 -- its helper functions from an older migration. Never connect with real user tokens.
 WITH definitions AS (
@@ -12,7 +12,8 @@ WITH definitions AS (
     lower(coalesce(pg_get_functiondef(to_regprocedure('public.pool_platform_commissioner_context(text)')),'')) AS context_def,
     lower(coalesce(pg_get_functiondef(to_regprocedure('public.pool_platform_create_entry_invite(uuid,text,integer)')),'')) AS invite_def,
     lower(coalesce(pg_get_functiondef(to_regprocedure('public.pool_platform_submit_entry(uuid,uuid,text,jsonb)')),'')) AS entry_def,
-    lower(coalesce(pg_get_functiondef(to_regprocedure('public.pool_platform_submit_batch(uuid,text,jsonb)')),'')) AS batch_def
+    lower(coalesce(pg_get_functiondef(to_regprocedure('public.pool_platform_submit_batch(uuid,text,jsonb)')),'')) AS batch_def,
+    lower(coalesce(pg_get_functiondef(to_regprocedure('public.pool_platform_crm_add_assistant(uuid,text,text,uuid[],text[])')),'')) AS add_def
 )
 SELECT test_name,
        CASE WHEN passed THEN 'PASS' ELSE 'FAIL' END AS result
@@ -36,6 +37,7 @@ FROM definitions, LATERAL (
   ('Authenticated cannot write ledger directly',NOT coalesce(has_table_privilege('authenticated',to_regclass('public.pool_platform_dues_events'),'INSERT'),false)
      AND NOT coalesce(has_table_privilege('authenticated',to_regclass('public.pool_platform_dues_events'),'UPDATE'),false)),
   ('Unaudited grant writer is inaccessible',NOT coalesce(has_function_privilege('authenticated',to_regprocedure('public.pool_platform_set_staff_grants(uuid,text,text,uuid[],text[])'),'EXECUTE'),false)),
-  ('Audited assistant updates are permitted',coalesce(has_function_privilege('authenticated',to_regprocedure('public.pool_platform_crm_update_assistant(uuid,text,text,uuid[],text[])'),'EXECUTE'),false))
+  ('Audited assistant updates are permitted',coalesce(has_function_privilege('authenticated',to_regprocedure('public.pool_platform_crm_update_assistant(uuid,text,text,uuid[],text[])'),'EXECUTE'),false)),
+  ('Assistant enrollment refuses account-holding users',add_def LIKE '%neon_auth.account%' AND add_def LIKE '%not exists%')
 ) AS gate(test_name,passed)
 ORDER BY test_name;
