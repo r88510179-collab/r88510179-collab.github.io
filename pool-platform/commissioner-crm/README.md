@@ -75,3 +75,7 @@ The separate `connected.html` / `src/ConnectedApp.jsx` entrypoint builds ONLY wh
 - The CI sandbox job builds **both outputs separately** and verifies candidate files are absent from the commercial publishing directory. The browser job enforces same-origin strict CSP, runs 360/412/1440px demo checks and a fake-account HTTPS interception rehearsal with no production JWT or API traffic.
 
 **Not yet delivered or approved:** a connected deployment, AUTH-C reconciliation, real verified JWT positive/negative acceptance, production migration, production Netlify integration, or a real-device signoff. Merge/deploy requires explicit separate authorization.
+
+## Post-window reconciliation (October 28, 2026)
+
+`CRM_RESUMPTION_RECONCILIATION_2026-10-28.md` records the read-only reconciliation against the post-AUTH-C production state and the continuation that followed it. In short: 005 now refuses assistant enrollment of a user who holds a `neon_auth.account` row (migration 004 treats such a user as nobody), 004 and 008 check for it, 004 accepts the post-005 grant surface, 009 is the read-only catalog baseline of the CRM additions beside the unchanged AUTH-C verifier, `src/migrations-contract.test.mjs` pins these as text contracts in `npm test`, and `validation/` holds the prepared, not yet executed, read-only verification of production and of the legacy validation branch. The whole migration sequence, 008 (19 rows) and 009 were rehearsed on a local PostgreSQL 16 with a stub of Neon Auth; nothing has run on Neon.

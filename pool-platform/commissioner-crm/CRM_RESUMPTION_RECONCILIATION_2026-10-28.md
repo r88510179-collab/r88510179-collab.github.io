@@ -207,3 +207,205 @@ Neon branch; did not read `neon_auth` tables, keys or JWKS; did not retrieve a c
 not merge, rebase, reset, push to or otherwise change PR #19 or `feature/commissioner-crm-react-foundation`; did
 not deploy; did not change Netlify or Neon settings; did not touch the production branch, `main`, or any
 Commercial V1 recovery branch.
+
+---
+
+# Part 2: continuation from the verified reconciliation (2026-10-28, later the same day)
+
+Same rules as Part 1: read-only against Neon, Netlify and Drive; no SQL on any Neon branch; PR #19 and its head
+untouched. New this part: CRM SQL and test changes on the session branch, rehearsed on a disposable local
+PostgreSQL 16.15 with a stub of Neon Auth (never Neon), and the exact read-only verification the production
+baseline needs, prepared but not executed.
+
+## 10. Inputs the owner resolved
+
+- **Completion report.** `~/Documents/Commercial-V1/recovery-20261026/COMMERCIAL-V1-COMPLETION-REPORT-20261028.md`,
+  SHA-256 `8d2e1805abd9991ffa8e27ebe6e5ccb52350aae054840967ade90885415f14cb` **[owner-provided]**. The file is on the
+  owner's computer; this cloud session has no home-directory copy and no Remote Control folder, and it is not in
+  the owner's Drive. The Stage B readiness assessment written earlier today by another cloud session, kept in the
+  owner's private Drive folder, records that SHA as verified and quotes the window record: migration 004 applied
+  on 2026-10-26; N0, N1 and N2 applied about 15:15 UTC on 2026-10-28; Gate W passed 15:19:51 UTC; step 9 closed
+  15:20:55 UTC; M2 CLEAN 15:21:19 UTC **[RECORDED there; not re-verified here]**. That folder is classified for the
+  private workspace, so nothing more of it is reproduced in this public file.
+- **M2** is the owner's post-step-9 read-only security audit: 0 new users, 0 new accounts, 0 unexpected
+  sign-ins, D=1, E=2, A=1, four expected live sessions **[owner-provided]**. It is a session and account count,
+  not the `neon-identity-audit.sql` I99 audit, which (per the same assessment) has not yet run live. A fresh I99
+  is therefore still part of the production verification below.
+
+## 11. A. Neon credential custody: exact steps, and what each layer enforces
+
+What this session observed:
+
+| Fact | Evidence |
+| --- | --- |
+| Neon's documented unauthenticated tool-list endpoint returns 127 tools for the plain MCP URL, 120 with `?projectId=fancy-brook-65396623`, and **49** with `?readonly=true&projectId=…`. The 49 keep `run_sql`, `inspect_database`, schema and listing tools; they drop `run_sql_transaction`, `get_connection_string`, and every create, delete, reset, restore, update, rotate and provision tool. Project scope also drops `list_projects`, `list_organizations`, `search` and `fetch`. | `curl https://mcp.neon.tech/api/list-tools?…` **[VERIFIED]** |
+| In read-only mode `run_sql` runs each query inside a `READ ONLY` transaction; under OAuth, `readonly=true` on the URL cannot be widened on the consent page; `roleName=<role>` pins the Postgres login role for the whole connection, a limit Postgres itself enforces, and the server resolves that role's credentials internally and never returns them; `get_connection_string` is unavailable on a pinned connection. | Neon MCP server README and docs **[VERIFIED as documented]** |
+| The organization is on Neon's **free** plan: protected branches (paid plans) and IP Allow (Scale) are not available. | `list_organizations` **[VERIFIED]** |
+| Both branches hold the same four roles with identical `updated_at` (2026-09-24 22:24 UTC): no password reset has happened on the validation branch since it was created, so per Neon's documented default its `neondb_owner` and `authenticator` passwords are production's. | `list_postgres_roles` **[VERIFIED]**, Neon docs |
+| Roles created in the Neon Console, CLI or API are members of `neon_superuser` and can read all data; a least-privilege role has to be created with SQL. | Neon docs "Manage roles" **[VERIFIED as documented]** |
+
+The steps, in order (owner actions unless marked otherwise):
+
+1. **Replace the connector.** In claude.ai, Settings → Connectors → Neon: disconnect, then add it again and, on
+   Neon's consent page, choose the single project `pool-platform-commercial-dev` (`fancy-brook-65396623`) and the
+   read-only scope (uncheck "Allow writes"); or use the parameterized URL
+   `https://mcp.neon.tech/mcp?readonly=true&projectId=fancy-brook-65396623`. Under OAuth both are fixed at
+   authorization and cannot be widened from inside a session.
+2. **Pin a least-privilege Postgres role, on the new child branch only**, once that branch exists (§14, step A4).
+   Created with SQL by the migration owner, never from the console:
+
+       CREATE ROLE crm_reader LOGIN PASSWORD '<chosen by the owner, never recorded>'
+         NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+       ALTER ROLE crm_reader SET default_transaction_read_only = on;
+       GRANT USAGE ON SCHEMA public, neon_auth TO crm_reader;
+       GRANT SELECT ON ALL TABLES IN SCHEMA public TO crm_reader;
+       GRANT SELECT (id, email, "emailVerified", banned) ON neon_auth."user" TO crm_reader;
+       GRANT SELECT ("userId", "providerId") ON neon_auth.account TO crm_reader;
+       GRANT SELECT ("userId", "expiresAt", "impersonatedBy") ON neon_auth.session TO crm_reader;
+
+   Nothing on `neon_auth.jwks`, `neon_auth.verification`, `session.token` or `account.password`. Then add
+   `&roleName=crm_reader` to the URL (or the role field on the consent page). Neon's docs show exactly this
+   SQL-created-role pattern; whether the hosted server can log in as a role Neon did not create is confirmed by the
+   first probe below, and if it cannot, the fallback is `readonly=true&projectId=…` without a role: SQL then runs
+   as the owner but still inside `READ ONLY` transactions.
+3. **Prove it, on the child, before relying on it** (one approved probe set, nothing on production):
+   the session's tool list holds at most the 49 read-only tools and no `get_connection_string`;
+   `SELECT current_user, current_setting('transaction_read_only'), pg_has_role(current_user,'neon_superuser','MEMBER')`
+   returns `crm_reader`, `on`, `false`; `CREATE TEMP TABLE crm_probe(x int)` fails with SQLSTATE `25006`
+   (read-only transaction). Record the three results only.
+4. **Keep production out of any AI session's reach.** Production reads (§12) run by the operator with psql under
+   the window's own `service=` host guard, or in the Neon SQL Editor, never through the connector, which follows
+   Neon's own MCP guidance ("never connect MCP agents to production databases").
+5. **Inherited passwords.** With protected branches unavailable on the free plan, rotate the child's
+   `neondb_owner` password right after the child is created (`reset_postgres_role_password` scoped to the child's
+   branch id, by the owner); leave `authenticator` to Neon, which manages it for the Data API; never read or change
+   a production password. The alternative is a plan upgrade so `production` can be set protected (children then
+   get fresh passwords automatically, and production can no longer be deleted or reset); that is the owner's
+   decision, not a precondition.
+6. **The standing connection used on 2026-10-28** was unscoped, write-capable and ADMIN. Until step 1 is done, no
+   CRM session should hold it; this session issued only metadata reads with it and no SQL.
+
+## 12. B. Accepted production baseline, and the smallest read-only verification of it
+
+**Baseline, as far as it is established:**
+
+| Component | State | Evidence |
+| --- | --- | --- |
+| Production code | `48e0ac4e` on `commercial-v1-netlify-adapter`; the production Netlify site's current deploy is a **locked** production-context deploy of that commit, published 2026-10-28 01:15 UTC, with the two Auth proxy functions and their edge rate limits; the older commercial site holds the same commit from 2026-10-07 | Netlify API, read-only **[VERIFIED]** |
+| Production database | `001` + `002` (as of `48e0ac4e`) + `003` live since Step 2; `004` applied 2026-10-26 **[owner record]**; hardened helper fingerprints **[not yet read]** | §2, §10 |
+| Neon Auth | N0 `require_email_verification=true`, N1 `allow_sign_up=false`, N2 no OAuth provider, trusted origin the production app origin only, `allow_localhost=true` | `get_neon_auth_config` (redacted) **[VERIFIED]** |
+| Data API | exposes `public` only; `pool_platform_private` is listed as available but **not** exposed | `get_data_api` **[VERIFIED]** |
+| PR #19 base | `48e0ac4e`, the production code; the CRM branch needs no rebase or base merge today | §1 |
+
+**The verification, prepared in `validation/` and not executed** (see `validation/README.md` for the run order,
+roles, wrapper and output rule):
+
+| File | Reads | Verdict | Expected on production |
+| --- | --- | --- | --- |
+| `P1_identity_helpers_004.sql` | catalogs only | `H99` | `PASS`: the three helpers hash to 004's hardened column (`001b7601…`, `b605c8f5…`, `7615a729…`), SECURITY DEFINER with the pinned search_path, `authenticated` may execute only `current_user_id()`, `auth.session()` returns jsonb, `neon_auth.account."userId"` readable by the owner |
+| `P2_private_schema_inventory.sql` | catalogs and `pg_stat_all_tables` | inventory | every relation and function in `pool_platform_private` with owner, ACL, RLS flag, approximate row count, extension membership and a body fingerprint, plus an OID-order provenance hint; no row of any table is read |
+| `P3_crm_preconditions.sql` | catalogs; `X05` counts memberships and the `neon_auth` user and account rows they point at | `X99` | `PASS`: no CRM table, function, constraint or index exists; the seven RPC bodies CRM 002 replaces hash to their baseline fingerprints (reproduced from `48e0ac4e` and 003 with the same method 004 uses; the method reproduces 004's own pre-hardening and hardened columns and the README's recorded 003 fingerprint `f5218373…`) |
+| AUTH-C `neon-catalog-verify.sql` (from `2c6e2a80`, not the CRM branch's older copy) | catalogs | `C99` | `PASS` |
+| AUTH-C `neon-identity-audit.sql` | `neon_auth` counts | `I99` | `PASS`; `I07` total at most the four window sessions |
+| `migrations/008_post_auth_c_readonly_gate.sql` | catalogs | rows | the four `AUTH-C …` rows `PASS`; the other fifteen `FAIL` until the CRM exists there |
+
+Authorization each run needs is stated in `validation/README.md`: branch and endpoint named, files by commit SHA,
+the migration owner, `BEGIN READ ONLY; … ROLLBACK;`, verdicts, counts and fingerprints only, operator-run.
+
+**Rehearsal evidence (local PostgreSQL 16.15, stub Neon Auth, never Neon):** baseline 001 + AUTH-C 002 + 003
+applied; AUTH-C 004 accepted its own hardened bodies as a no-op; the AUTH-C verifier `C99 PASS`; `P1 H99 PASS`;
+`P2` reports the schema absent; `P3 X99 PASS` before and after the synthetic `F1`/`O1` fixtures; CRM 001, 002,
+003, 005 applied; 004 invariants pass; 006 and 007 pass as single transactions; 008 **19/19 PASS**; 009 `K99
+PASS`; the AUTH-C verifier then reports exactly `FINDINGS: C02, C03, C08, C09, C10, C11, C12, C14` (the CRM
+additions, as 009's header states); the identity audit `I99 PASS`; enrolling a verified user who holds an
+account row is refused with `assistant_account_not_ready` while a clean verified user enrolls; 004's guard refuses
+a mock identity helper left behind by a simulation ("not a reviewed definition: stop"); `L1` parses.
+
+## 13. C. CRM changes on the session branch (PR #19's head untouched)
+
+| Change | File | Why |
+| --- | --- | --- |
+| **F1** | `migrations/005_assistant_enrollment.sql` | `pool_platform_crm_add_assistant` now also requires no `neon_auth.account` row, mirroring 004; enrolling a contested identity is refused with the same generic error |
+| F1 checks | `migrations/004_validate_crm_invariants.sql`, `migrations/008_post_auth_c_readonly_gate.sql` | 004 raises `crm_assistant_enrollment_admits_account_holders` once 005 exists without the predicate; 008 gains row 19, "Assistant enrollment refuses account-holding users" |
+| **F2** | `migrations/009_crm_catalog_baseline.sql` | read-only catalog baseline of the CRM additions (K01 to K14, K99): tables, policies, privileges, ACLs, functions, grants, trigger, composite key and scope index, sequence, untouched helpers, rewritten RPC scope, legacy backfill, and K12, which recomputes what the unchanged AUTH-C verifier must then report |
+| **F4** (found by the rehearsal) | `migrations/004_validate_crm_invariants.sql` | the grants check expected `authenticated` to execute the grant writer that 005 withdraws, so the gate's documented order (001, 002, 003, 005, then 004) failed; it now expects the audited wrappers after 005 and raises `crm_unaudited_grant_writer_exposed` if the writer is still callable |
+| contracts | `src/migrations-contract.test.mjs` | text contracts CI runs with `npm test`: the reviewed file set, F1 present in 005/004/008, no forward migration redefines an identity helper, 006/007 savepoint discipline, 008/009 single read-only statements, 009 names every table, policy and function of 001/003/005 and states the verifier's expected findings, 002 rewrites exactly the seven RPCs |
+| kit | `validation/` | P1, P2, P3, L1 and their README |
+
+Suite: 41 of 41 pass (35 existing plus 6 contracts). No React, CSS, Vite, workflow, `platform-host.mjs` or baseline
+file changed; the CI evidence on `92ee3c17` stands.
+
+**Real signed-in testing and integration plan (not applied; each item is one reviewable commit on PR #19):**
+
+1. `src/platform-host.mjs`: accept exactly `http://localhost:<port>` beside `https://` (the commercial app's own
+   localhost gate; Chromium keeps the `__Host-` cookie there per `FRONTEND_INTEGRATION_RUNBOOK.md`), keeping the
+   origin-mismatch check; `src/platform-host.test.mjs` gains the localhost case and keeps the `http://example.test`
+   refusal.
+2. `scripts/build.mjs` fourth source class: the CRM bundle built from its locked tree with fixed names under
+   `crm/`, the allow-list rule extended to that one subdirectory, `OUTPUT_FILES` extended,
+   `scripts/netlify-headers.mjs` verifying those files by rebuild, the service worker leaving `crm/` to the
+   network, `netlify.toml` adding the CRM install and build, and `frontend-readiness`, `netlify-hosting`,
+   `ui-contract` and the CRM `commercial-compat` tests updated deliberately. CSP unchanged (no inline script or
+   style, no `url()`, `data:` or font in the CRM sources; CI already runs it under `script-src 'self'; style-src
+   'self'`).
+3. `validation/live/harness/lib.mjs`: endpoint pin from an explicit variable (default unchanged) and an Email-OTP
+   identity mode for N identities, since password identities are inert after 004 and N0.
+4. Identities and fixtures on the new child: the Stage B draft's synthetic Email-OTP identities (participant,
+   commissioner) plus two the CRM needs (a tenant A pool-scoped assistant, a tenant B commissioner), on
+   operator-controlled mailboxes; memberships by owner SQL on the child; the synthetic `F1` fixtures come with the
+   child by copy. One authorization can cover both workstreams' identities.
+5. The matrix of Part 1 §6.5, through `scripts/serve.mjs --dir dist` at `http://localhost:4173` against the
+   child's Auth and Data API endpoints (public values, server-only variables), evidence per
+   `validation/live/README.md`; then 360/412/1440 and real devices.
+
+## 14. D. Decision report
+
+**1. Verified now.** PR #19 head and branch unchanged; production code `48e0ac4e` locked and served; Neon Auth at
+N0/N1/N2; Data API exposes `public` only; no Neon branch create, reset, restore or delete since 2026-10-23;
+read-only MCP mode and project scope enforced server-side (tool list) and SQL confined to `READ ONLY`
+transactions, with `roleName` as a Postgres-enforced limit; free plan (no protected branches); the CRM SQL
+(001, 002, 003, 005 with F1, 004 with F4, 006, 007, 008 at 19 rows, 009) and the four verification files all
+execute as expected on PostgreSQL 16 over the AUTH-C baseline; the completion report's facts as the owner and the
+Stage B readiness assessment state them (SHA verified there, not here).
+
+**2. Security issues that need owner action.**
+- Replace the standing Neon connector with the read-only, project-scoped one (§11 steps 1 to 3).
+- Decide inherited credentials: child password rotation after creation, or a plan upgrade for a protected
+  production branch (§11 step 5).
+- Retire the legacy validation branch (below): it is a pre-window copy of production (pre-004 helpers, Auth
+  config with sign-up open and Google present, copied sessions and signing key), which the hardening plan treats
+  as a second host able to mint production-valid tokens, and it is also the Stage B assessment's blocker 2.
+- Explain or inspect `pool_platform_private` (P2) before any CRM migration order is finalized.
+- Run the fresh I99 identity audit on production as part of the baseline verification.
+- Authorize nothing on production for the CRM beyond the read-only kit until all of the above are recorded.
+
+**3. Can the legacy validation branch be retired safely? Yes.** Nothing the CRM needs lives only there: the
+migrations are in git, their results are in the README and PR #19, the AUTH-C gate already rules the branch
+inadequate for acceptance, and a fresh post-AUTH-C child is required regardless. Preserve first, read-only and
+without touching its `neon_auth` schema: the `L1` inventory and the 008 output (expected 15 PASS / 4 FAIL on that
+branch), the K1-style identity record (branch id, parent id, parent LSN and timestamp, endpoint host, Auth base
+URL), and the Neon operation timestamps around 2026-10-24 and 2026-10-25 already captured in Part 1. Then delete
+with an explicit approval and record K4 (branch listing without it; its Auth base URL no longer serving
+`/.well-known/jwks.json`). Deleting it is a Neon write and stays owner-authorized.
+
+**4. Smallest separately approvable actions toward real signed-in CRM testing, in order.**
+
+| # | Action | Writes? | Who |
+| --- | --- | --- | --- |
+| A1 | Run the read-only production verification (§12) and record the verdicts, including a fresh I99 | none | operator, psql or SQL Editor, under written authorization |
+| A2 | Replace the Neon connector with read-only + project scope (§11 steps 1 and 3; the role in step 2 waits for A4) | none | owner |
+| A3 | Capture `L1` and 008 on the legacy branch, then delete it and record K4 | delete one branch | owner-authorized |
+| A4 | Create the post-AUTH-C child under K1 to K4; on the child only: revoke the copied sessions (`DELETE FROM neon_auth.session`, the P0-5 method), rotate `neondb_owner`, create `crm_reader`; record K1 and K2 | child only | owner-authorized |
+| A5 | On the child: 001 → 002 → 003 → 005, then 004, 006, 007, 008 (19/19), 009 (`K99 PASS`), the AUTH-C verifier (its eight expected findings and nothing else), the identity audit | child only | owner-authorized, migration owner |
+| A6 | Commit the three code items of §13 on PR #19; create the OTP identities and memberships on the child; run the signed-in matrix from the localhost gate; devices | child only; CRM branch commits | owner-authorized identities; CI-reviewed code |
+
+Netlify packaging, the production migration, the PR #19 merge and the deploy remain after A6, each with its own
+approval, as Part 1 §6 lists. None of A1 to A6 touches production except A1's read-only reads.
+
+## 15. What this part did not do
+
+No SQL on any Neon branch; no Neon branch created, reset, restored or deleted; no Neon or Netlify setting changed;
+no credential, connection string, key or token retrieved or recorded; no production write; no change to PR #19,
+its branch, the production branch or `main`; no merge or deploy; nothing from the owner's private Drive folder
+reproduced beyond the facts the owner stated in this session. The disposable local PostgreSQL cluster used for the
+rehearsal was stopped and deleted afterwards.

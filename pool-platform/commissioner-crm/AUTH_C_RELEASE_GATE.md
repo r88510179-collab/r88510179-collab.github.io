@@ -15,7 +15,7 @@
 1. Obtain independent acceptance of the exact final AUTH-C production SHA, deployment and database migration. Do not treat the previous candidate as approval. Verify Stage A and B evidence on that release.
 2. Verify production branch and Neon schema match the accepted AUTH-C identity. Do not apply old migrations in arbitrary order.
 3. Create a fresh isolated Neon validation branch derived from accepted AUTH-C production. The prior CRM staging branch br-orange-forest-b5nyu8ov was cloned from pre-AUTH-C and is NOT adequate for final acceptance.
-4. Reconcile all seven overlapping functions against the accepted AUTH-C code. Apply CRM migrations 001, 002, 003, then 005 in the new staging branch. Run 004 invariants, rollback-only 006/007 simulations and read-only 008_post_auth_c_readonly_gate.sql. All 18 rows of 008 must pass.
+4. Reconcile all seven overlapping functions against the accepted AUTH-C code. Apply CRM migrations 001, 002, 003, then 005 in the new staging branch. Run 004 invariants, rollback-only 006/007 simulations, read-only 008_post_auth_c_readonly_gate.sql and read-only 009_crm_catalog_baseline.sql. All 19 rows of 008 must pass and 009 must end `K99 PASS`; the unchanged AUTH-C catalog verifier must then report exactly the findings 009's header lists (C02, C03, C08, C09, C10, C11, C12, C14) and nothing else. Rehearsed end to end on a local PostgreSQL 16 with a stub of Neon Auth on 2026-10-28 (`CRM_RESUMPTION_RECONCILIATION_2026-10-28.md`, Part 2).
 5. Use real, distinct authenticated owner, pool-scoped assistant, participant and foreign-tenant commissioner accounts. Verify positive and negative RLS, grants, invite creation and claiming, source locks, pick deadlines, Survivor reuse, append-only dues and sign-out/session changes. No credentials, OTP, JWT or private tokens in reports.
 6. Separately review Netlify packaging changes for the connected CRM entrypoint, CSP, service worker and explicit allowlist. Do not publish raw SQL, demo assets or unrelated files.
 7. Verify authenticated host in 360/412/1440px browser sizes, then real Samsung and desktop. Check A→B→A pool switching, token refresh, revocation and account changes.
@@ -23,7 +23,7 @@
 
 ## Expected negative gate today
 
-On the original isolated CRM validation branch, read-only gate 008 returned 15 PASS and 3 FAIL: AUTH-C session-subject validation, linked-account exclusion, and verified-email claim checks. The old staging branch predates AUTH-C; these failures are expected. Do NOT weaken these assertions.
+On the original isolated CRM validation branch, read-only gate 008 returned 15 PASS and 3 FAIL: AUTH-C session-subject validation, linked-account exclusion, and verified-email claim checks. The old staging branch predates AUTH-C; these failures are expected. Do NOT weaken these assertions. With the 19th row added on 2026-10-28 (assistant enrollment refuses account-holding users), that branch would report 15 PASS and 4 FAIL: its copy of 005 predates the predicate. The branch is a pre-window copy of production and is to be retired under owner approval after its state is captured read-only (`validation/L1_legacy_branch_inventory.sql`); the status of gate 1 and the production baseline are tracked in `CRM_RESUMPTION_RECONCILIATION_2026-10-28.md`.
 
 ## Restrictions
 
