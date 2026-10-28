@@ -4,12 +4,15 @@ Four single-statement, read-only SQL files that establish the accepted post-AUTH
 CRM migration is applied anywhere, and record the legacy validation branch before it is retired. None of them has
 been executed. Each is one `SELECT`; each runs unchanged in psql, the Neon SQL Editor or one HTTP SQL call, and
 each can be wrapped in `BEGIN READ ONLY; ... ROLLBACK;`. `src/migrations-contract.test.mjs` does not cover these
-files; the single-statement and no-write properties are visible on inspection.
+files; the single-statement and no-write properties are visible on inspection. `A1_AUTHORIZATION.md` is the exact
+text the production run (A1) needs the owner to sign, with the pinned hashes and PASS conditions, and `a1_run.sh`
+is the operator's fail-closed runner for it (hash check, host/database/role guard, read-only wrapper, outputs and
+fingerprints in a private directory).
 
 | File | Target | Reads | Verdict row | Expected |
 | --- | --- | --- | --- | --- |
 | `P1_identity_helpers_004.sql` | production | catalogs only | `H99` | `PASS` (the three helpers at 004's hardened fingerprints) |
-| `P2_private_schema_inventory.sql` | production | catalogs and `pg_stat_all_tables` only | none (inventory) | the owner explains every object listed |
+| `P2_private_schema_inventory.sql` | production | catalogs and `pg_stat_all_tables` only | none (inventory) | the owner explains every object listed; dependencies in both directions by name (foreign keys, views, triggers, reviewed public functions or policies that name the schema) |
 | `P3_crm_preconditions.sql` | production | catalogs; `X05` counts memberships and the `neon_auth` user/account rows they point at | `X99` | `PASS` (no CRM object yet; the seven RPC bodies at their baseline fingerprints) |
 | `L1_legacy_branch_inventory.sql` | `br-orange-forest-b5nyu8ov` | catalogs and CRM table row counts; never `neon_auth` | none (inventory) | as the CRM README recorded; captured once, before retirement |
 

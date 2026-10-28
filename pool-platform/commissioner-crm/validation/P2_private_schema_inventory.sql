@@ -27,6 +27,33 @@ ext AS (
   FROM pg_depend d JOIN pg_extension x ON x.oid=d.refobjid
   WHERE d.refclassid='pg_extension'::regclass AND d.deptype='e'
 ),
+-- Dependencies in both directions, by name only: foreign keys that leave or enter the schema, views or
+-- materialized views that read relations outside it, triggers on relations outside it that call its functions,
+-- and reviewed public objects (functions by body, policies by expression) that name the schema.
+fk AS (
+  SELECT k.conname::text AS conname,k.conrelid::regclass::text AS from_rel,k.confrelid::regclass::text AS to_rel
+  FROM pg_constraint k JOIN ns ON true
+  WHERE k.contype='f' AND (k.connamespace=ns.oid OR (SELECT c.relnamespace FROM pg_class c WHERE c.oid=k.confrelid)=ns.oid)
+),
+view_dep AS (
+  SELECT DISTINCT v.relname::text AS view_name,d.refobjid::regclass::text AS reads
+  FROM rel v JOIN pg_rewrite r ON r.ev_class=v.oid
+  JOIN pg_depend d ON d.classid='pg_rewrite'::regclass AND d.objid=r.oid AND d.refclassid='pg_class'::regclass AND d.refobjid<>v.oid
+  WHERE v.relkind IN ('v','m')
+),
+trigger_dep AS (
+  SELECT tg.tgrelid::regclass::text AS on_rel,tg.tgname::text AS tgname,tg.tgfoid::regproc::text AS calls
+  FROM pg_trigger tg JOIN fn ON fn.oid=tg.tgfoid
+  WHERE NOT tg.tgisinternal
+),
+named_by AS (
+  SELECT 'function '||p.proname::text AS object FROM pg_proc p
+  WHERE p.pronamespace=to_regnamespace('public') AND p.prosrc ILIKE '%pool\_platform\_private%'
+  UNION ALL
+  SELECT 'policy '||pol.polname::text||' on '||pol.polrelid::regclass::text FROM pg_policy pol
+  WHERE pg_get_expr(pol.polqual,pol.polrelid) ILIKE '%pool\_platform\_private%'
+     OR pg_get_expr(pol.polwithcheck,pol.polrelid) ILIKE '%pool\_platform\_private%'
+),
 -- OIDs are assigned in creation order (absent wraparound), so the schema's OID against the newest reviewed
 -- commercial function hints whether it was created after migration 003.
 marker AS (
@@ -52,6 +79,14 @@ SELECT 'function',sig,owner,
          ||' body_sha256='||body_sha256||COALESCE(' extension='||e.extname,''),
        fn.oid::bigint
 FROM fn LEFT JOIN ext e ON e.objid=fn.oid
+UNION ALL
+SELECT 'dependency','foreign key '||conname,'','from '||from_rel||' to '||to_rel,NULL::bigint FROM fk
+UNION ALL
+SELECT 'dependency','view '||view_name,'','reads '||reads,NULL::bigint FROM view_dep
+UNION ALL
+SELECT 'dependency','trigger '||tgname,'','on '||on_rel||' calls '||calls,NULL::bigint FROM trigger_dep
+UNION ALL
+SELECT 'dependency','named by reviewed public object','',object,NULL::bigint FROM named_by
 UNION ALL
 SELECT 'provenance hint','oid order','',
        CASE WHEN schema_oid IS NULL THEN 'schema absent'

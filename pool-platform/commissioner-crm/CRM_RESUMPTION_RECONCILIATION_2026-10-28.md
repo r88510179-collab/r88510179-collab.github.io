@@ -409,3 +409,142 @@ no credential, connection string, key or token retrieved or recorded; no product
 its branch, the production branch or `main`; no merge or deploy; nothing from the owner's private Drive folder
 reproduced beyond the facts the owner stated in this session. The disposable local PostgreSQL cluster used for the
 rehearsal was stopped and deleted afterwards.
+
+---
+
+# Part 3: A1 and A2 execution readiness, legacy branch retirement, the new child (2026-10-28, evening)
+
+Same rules. New facts read this part, all Neon metadata: the production endpoint is `ep-still-recipe-b5g7680z`
+with direct host `ep-still-recipe-b5g7680z.c-7.us-east-2.aws.neon.tech`; database `neondb` is owned by
+`neondb_owner` on both branches; the legacy branch has no Neon Functions, triggers, storage buckets, child
+branches or snapshots that depend on it; a **manual snapshot of production** named
+`commercial-v1-owner-recovery-2026-10-28` was taken at 16:28 UTC today (it holds a copy of production's sessions
+and keys, so restoring it would fall under the hardening plan's "Restores and new branches" rule; nothing here
+uses it); both endpoints allow Neon's passwordless console access and the organization does not require MFA, so
+the Neon account itself is the root of every access path described below. P2 was extended with dependency rows in
+both directions and parse-checked on a stub schema; its hash in `A1_AUTHORIZATION.md` is the final one.
+
+## 16. A1: the exact read-only run, ready for signature
+
+`validation/A1_AUTHORIZATION.md` is the approval text: target (project, branch, database, owner, endpoint host,
+server), path (operator psql, service entry held only on that machine, history off, private output directory),
+the five files with their SHA-256 and the order they run in, what is read and never read, the PASS and STOP
+conditions per file, the output and redaction rule, and the signature and separate run-approval blocks.
+`validation/a1_run.sh` executes exactly that: it refuses any file whose SHA-256 differs, guards every connection
+(`:HOST`, `current_database()`, `current_user` must be production's), wraps each file in `BEGIN READ ONLY; …
+ROLLBACK;` with `ON_ERROR_STOP`, keeps the rows in the private directory and fingerprints sources and outputs.
+Expected: `H99 PASS`, `X99 PASS`, `C99 PASS`, `I99 PASS`, and a P2 inventory the owner can explain line by line.
+
+For `pool_platform_private`, P2 now lists: the schema (owner, ACL, comment, USAGE and CREATE for the Data API
+roles); each relation (kind, owner, RLS, ACL, approximate row count, extension membership); each function (language,
+SECURITY DEFINER, config, ACL, body SHA-256, extension membership); foreign keys leaving or entering the schema;
+views that read relations outside it; triggers outside it that call its functions; reviewed public functions or
+policies that name it; and the OID-order provenance hint. No row content and no function text is returned.
+
+## 17. A2: the scoped Neon connection, and how it is verified after the fact
+
+**Reconnect (owner, in claude.ai):** Settings → Connectors → Neon → remove the connector. Add it again as a custom
+connector with the URL
+
+    https://mcp.neon.tech/mcp?readonly=true&projectId=fancy-brook-65396623
+
+and authorize it; on Neon's consent page the grant shows read-only and the single project with no editor to widen
+them (the official connector's page offers the same choices, read-only scope and one project, but the parameterized
+URL is the one whose grant cannot be widened later). Leave the Postgres role empty until `crm_reader` exists on the
+new child (§19); then reconnect once more with `&roleName=crm_reader`. A cloud session picks the new connection up
+when it starts, so the next CRM session runs the verification below before anything else.
+
+**Verification protocol (the public tool list is not proof; these are):**
+
+| # | Probe | Where | Pass |
+| --- | --- | --- | --- |
+| V1 | Enumerate the Neon tools the session actually holds | session | at most the 49 read-only tools; none of `get_connection_string`, `run_sql_transaction`, `create_branch`, `delete_branch`, `reset_from_parent`, `reset_postgres_role_password`, `create_credential`, `update_auth_config`, `provision_neon_auth`, `list_projects`, `list_organizations`, `search`, `fetch` |
+| V2 | `describe_project` for one of the personal projects, and `list_branches` without a project id | session | refused or scoped to `fancy-brook-65396623` only |
+| V3 | `run_sql`: `SELECT current_user, current_setting('transaction_read_only'), pg_has_role(current_user,'neon_superuser','MEMBER')` | legacy branch only, never production | `transaction_read_only = on`; the role is reported (the owner, and a `neon_superuser` member, until `roleName` pins `crm_reader`) |
+| V4 | `run_sql`: `CREATE TEMP TABLE crm_probe(x int)` (a write that must be refused; nothing persists either way) | legacy branch only; needs the owner's explicit OK for this one probe | SQLSTATE `25006` "cannot execute CREATE TABLE in a read-only transaction"; success is a STOP: the mode is not read-only |
+| V5 | `run_sql`: `SELECT has_table_privilege(current_user,'neon_auth.jwks','SELECT'), has_table_privilege(current_user,'neon_auth.session','SELECT')` (catalog function, reads no row) | legacy branch only | records the residual reach of the SQL role: true for the owner, which is why §19 pins `crm_reader` on the child; false once pinned |
+
+Until V1 to V5 are recorded, the connector is not relied on for anything. The standing unscoped connection is not
+used for SQL at all; this session used it for metadata only.
+
+**Root of trust.** Neon's passwordless connect (enabled on both endpoints) and the console both authenticate
+through the Neon account, which has no MFA requirement set at the organization. Requiring MFA on that account is
+the owner's call and the one control above every connector setting.
+
+## 18. Legacy branch `br-orange-forest-b5nyu8ov`: evidence, risks, blockers, retirement plan
+
+**Dependencies checked (read-only):** no child branch; no snapshot of it (the only snapshot is of production);
+no Neon Function, trigger or storage bucket on it; its compute `ep-bold-unit-b5gq0wuk` idle; the two Netlify
+commercial deploys predate it or point at production (the production site serves the production Data API, the
+older site's deploy is from 2026-10-07); the CRM CI intercepts all network traffic and names no Neon host. Nothing
+in the repository or the hosting records depends on it.
+
+**Inherited credentials and authorization state:** its `neondb_owner` and `authenticator` passwords are
+production's (no reset since creation); its Neon Auth endpoint is live with sign-up open, Google present and no
+email verification requirement; its helpers are pre-004; it holds the users, the pre-revocation session rows and
+the signing key copied on 2026-10-23. Deleting the branch removes its databases, roles, compute and Auth endpoint
+(Neon's documented effect). Deletion does not change production's passwords: anyone who extracted the branch's
+owner password before deletion still holds production's. Whether to rotate production's owner password afterwards
+is a separate owner decision and a production change; it is not required by the CRM.
+
+**Blockers before retirement:** none technical. Three records and one approval: (1) the L1 inventory and the 008
+rows captured on the branch (read-only, operator path, the same guard with the branch's host
+`ep-bold-unit-b5gq0wuk.c-7.us-east-2.aws.neon.tech`, never touching `neon_auth`; expected 15 PASS / 4 FAIL on 008),
+(2) the K1-style identity record (branch id, parent `br-hidden-darkness-b55g0j83`, parent LSN `0/2E95158` at
+2026-10-23 18:12:37 UTC, endpoint host, Auth base URL), (3) agreement with the Stage B workstream that this one
+deletion closes its blocker 2 as well, and (4) the owner's written deletion approval naming the branch id.
+
+**Deletion plan (owner, console or a write-capable path of the owner's, never a read-only connector):**
+1. Confirm the branch listing still shows exactly `production` and `br-orange-forest-b5nyu8ov`, and that nobody is
+   signed in through the branch's Auth endpoint (no one should be).
+2. Delete `br-orange-forest-b5nyu8ov`.
+3. Record K4: the deletion time, `list_branches` showing only `production`, the Neon operation (`delete_timeline`)
+   for the branch, and the branch's Auth base URL no longer serving `/.well-known/jwks.json`.
+4. Update `AUTH_C_RELEASE_GATE.md` and the CRM README to say the branch is gone.
+
+## 19. The new post-AUTH-C child: K1 to K4 plan (no creation yet)
+
+Preconditions: A1 recorded `PASS`; A2 verified; the legacy branch deleted (one production-derived child at a time);
+the owner's written creation approval. The child is the hardening plan's "production-derived branch", so this plan
+is the security assessment that rule requires: it names every piece of state the branch copies and what is done
+about each.
+
+| Copied state | Risk | Handling on the child, in order |
+| --- | --- | --- |
+| Signing keys (`neon_auth.jwks`, private halves) | the child's Auth host can mint tokens production's Data API may accept (K2: expect the same public key as production) | never present a child token, cookie or session to any production endpoint; K3 provenance from a child-only identity's first JWT (`iss`, `aud`, `kid` fingerprint, `exp - iat` only); the child lives only for the acceptance run; K4 deletion afterwards |
+| Session rows (whatever is live on production at creation: the operator's D, E, A and any since) | a second host holding production sessions | first action after creation, child only: `DELETE FROM neon_auth.session` as the owner under a host guard that asserts the child's endpoint host (the P0-5 method); record the count |
+| Role passwords (`neondb_owner`, `authenticator`) | production's passwords on a second host | reset the child's `neondb_owner` password (console or API, scoped to the child's branch id); `authenticator` stays Neon-managed; production never touched |
+| Users (verified operator identities, inert synthetic password identities) | the child's Auth can sign them in by Email OTP | operator-held mailboxes only; no customer exists |
+| Neon Auth configuration (N0 true, N1 sign-up closed, N2 no OAuth, trusted origin production's, `allow_localhost` true) | sign-up closed means the four CRM test identities cannot be created | on the child only: set `allow_sign_up=true`, create the four identities by Email OTP (no password, so no account row), set `allow_sign_up=false` again; record both reads; N0 stays true throughout; the child's identity audit must then show the four new users verified with no account row |
+| Identity helpers at 004's hardened bodies, catalog at the AUTH-C baseline | none; this is the point of the branch | P1 and the AUTH-C verifier on the child before any CRM file: `H99 PASS`, `C99 PASS` |
+| Data (synthetic `F1` fixtures, memberships of password identities) | none; synthetic by construction | the CRM's 006 and 007 use them; new memberships for the OTP identities by owner SQL |
+
+Records: K1 (child branch id and name, parent id, parent LSN and timestamp, endpoint host, Auth base URL, each
+different from production's where it must be); K2 (public JWKS of child and production: `kty`, `crv`, `alg`,
+`kid` fingerprint, RFC 7638 thumbprint; no private field); K3 at the first CRM sign-in; K4 at deletion. Also the
+child's Neon Auth schema fingerprint (`del(.servers) | sha256` of the public `open-api/generate-schema`), so the
+CRM tests are tied to the Neon Auth version they ran on, as the Stage B assessment asks for production.
+
+Then, on the child: `crm_reader` (§11 step 2), the A2 reconnect with `roleName`, CRM 001 → 002 → 003 → 005, 004,
+006, 007, 008 (19/19), 009 (`K99 PASS`), the AUTH-C verifier (its eight expected findings only), the identity
+audit; then the OTP identities, memberships and the signed-in matrix through the localhost gate.
+
+## 20. The shortest sequence to real authenticated CRM testing
+
+| Step | Needs | Writes | Output |
+| --- | --- | --- | --- |
+| A1 | owner signature on `A1_AUTHORIZATION.md` + "run now" | none | `H99`, `X99`, `C99`, `I99` PASS; P2 explained |
+| A2 | owner reconnects the connector; OK for probe V4 | none (V4 must fail) | V1 to V5 recorded |
+| A3 | owner approval naming `br-orange-forest-b5nyu8ov` | one branch deleted | L1 and 008 captured; K4 recorded |
+| A4 | owner creation approval | child only: session delete, owner password reset, `crm_reader`, `allow_sign_up` toggled | K1, K2 recorded; `H99`, `C99` PASS on the child |
+| A5 | migration-owner run on the child | child only | 004 ok, 006 ok, 007 ok, 008 19/19, 009 PASS, verifier eight findings, I99 PASS |
+| A6 | the three PR #19 code items (localhost origin, build integration under `crm/`, harness endpoint variable and OTP identities); four OTP identities and memberships on the child | child only; CRM branch commits | the Part 1 §6.5 matrix, K3, viewports, devices |
+
+Everything after A6 (Netlify packaging on production, the production migration, the PR #19 merge, the deploy)
+keeps its own approval. No step above writes to production.
+
+## 21. What this part did not do
+
+No SQL on any Neon branch; no connector change (the owner makes it); no branch created or deleted; no credential,
+password or key read, exported, rotated or changed; no production change; PR #19 and its branch unchanged. The
+disposable local cluster used for the P2 parse check was deleted again afterwards.
