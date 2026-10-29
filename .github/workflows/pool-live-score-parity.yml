@@ -1,0 +1,32 @@
+# Read-only score verification against the deployed public NFL score proxy.
+# Pull request checks are deliberately bounded and use no secrets, login or database access.
+# This does NOT prove independent official NFL scores or any write-path E2E acceptance.
+name: Pool live score parity (read-only)
+
+on:
+  pull_request:
+    paths:
+      - 'nfl-pool/acceptance/**'
+      - 'nfl-pool/score-proxy/index.mjs'
+      - '.github/workflows/pool-live-score-parity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deployed-score-parity:
+    name: deployed-score-parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Compare completed NFL games in ESPN with live nflscores2
+        run: node nfl-pool/acceptance/score-reconcile.mjs --season 2026 --weeks 1-8
