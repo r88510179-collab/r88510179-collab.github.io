@@ -6,12 +6,12 @@ Supplement to validation/A1_AUTHORIZATION.md. It changes nothing in that file, w
   Authorization  pool-platform/commissioner-crm/validation/A1_AUTHORIZATION.md
                  SHA-256 8de895da4d7f75eb5654497a41c6e7c0f888f64d65c76d2a711725d872331c12 (owner-signed, unchanged)
   Runner         pool-platform/commissioner-crm/validation/a1_run.sh, version 2
-                 SHA-256 314ef9e4f0d0eeb264ce51cbc30f4f10a52be07179a76512da53820c2f3400b5
+                 SHA-256 661ac92eeebdfaf6dfed5ab4ca5c10ea9367ac543655590fcf4f5e1aca824d93
   Replaces       version 1, SHA-256 d63654bc4ccd91ae88bbf1641527b0827b0e13272916554fb837453db9c78557, which must not
                  be run: it did not stop on a missing or failing verdict, and its hash steps used GNU-only options.
   Tests          pool-platform/commissioner-crm/validation/a1_run.test.sh
-                 SHA-256 f38d62c109e32ae9e3f2459b5e82eaf93bca7dd7f64f5296989c75c231f0c09b
-                 1089 assertions, all passing, run locally with no connection to Neon: bash 5.2 and bash 3.2.57
+                 SHA-256 9c63f36c3b76b8129e6d6ad7b53858952a56ce2349566ec4bfffe45f77975d86
+                 1103 assertions, all passing, run locally with no connection to Neon: bash 5.2 and bash 3.2.57
                  (the macOS /bin/bash version), mawk and BWK awk (the macOS awk), psql 16 and 18 clients, and a
                  local PostgreSQL 18 server holding the Commercial V1 baseline schema.
   Review         An independent reviewer rejected two earlier builds of version 2. Round 1: a line break or a tab
@@ -66,12 +66,12 @@ Supplement to validation/A1_AUTHORIZATION.md. It changes nothing in that file, w
     an impersonated live session, or one not of a verified user without an account row (I07), is a STOP.
   - After P2, inside its read-only transaction, the runner runs one query of its own, over pg_catalog only, and
     keeps its row whole in the evidence: every object outside pool_platform_private that depends on one of its
-    relations, functions or types, directly or through views and functions that record their dependencies (views,
-    materialized views, SQL functions with a BEGIN ATOMIC body, defaults, constraints, triggers, policies, columns,
-    indexes); the schema's other members that P2 does not list, such as types; every view in public that a Data API
-    role can read, whatever it reads; and every enabled login event trigger. A function whose body is a string
-    (PL/pgSQL, or SQL written as a string) records no dependency: only P2's own check of function bodies sees it,
-    and that check covers functions in public.
+    relations, functions or types (views, materialized views, rules, SQL functions with a BEGIN ATOMIC body,
+    defaults, constraints, triggers, policies, columns, indexes), directly or through views and materialized views
+    that read it and functions that record a dependency on it; the schema's other members that P2 does not list,
+    such as types; every view in public that a Data API role can read, whatever it reads; and every enabled login
+    event trigger. A function whose body is a string (PL/pgSQL, or SQL written as a string) records no dependency:
+    only P2's own check of function bodies sees it, and that check covers functions in public.
   - The server's view of TLS (pg_stat_ssl) is recorded, not required: TLS from the operator's machine ends at Neon's
     proxy, and sslmode=verify-full is what protects that hop.
   - It refuses to run without a terminal or in an AI-agent or CI shell, shows the target and both hashes, and goes on
@@ -117,6 +117,10 @@ Supplement to validation/A1_AUTHORIZATION.md. It changes nothing in that file, w
     the schema's name at run time.
   - Login event triggers are listed for you; code that an extension or the server itself runs when a session starts
     is beyond what a client can see or prevent.
+  - Each check sees the catalog as it is when it runs. A change that another session makes while A1 runs (an
+    overload created after the overload check, for example) could go unseen: PostgreSQL looks names up in a catalog
+    snapshot of its own, refreshed during the transaction, so no isolation level holds them to one moment. Making
+    such a change needs the same rights in production as planting one before the run.
   - The runner hashes itself just after bash has read it; a change to the file in that instant would not be seen.
   - Not exercised before the real run: macOS's own sed, grep, date and ls (only POSIX features are used), a Homebrew
     or Postgres.app psql, Neon's TLS chain and SNI routing, and the production catalog itself.
@@ -124,7 +128,7 @@ Supplement to validation/A1_AUTHORIZATION.md. It changes nothing in that file, w
 6. Acknowledgment
 
   I have read this acknowledgment. I accept a1_run.sh with SHA-256
-      314ef9e4f0d0eeb264ce51cbc30f4f10a52be07179a76512da53820c2f3400b5
+      661ac92eeebdfaf6dfed5ab4ca5c10ea9367ac543655590fcf4f5e1aca824d93
   as the runner that section 2 of A1_AUTHORIZATION.md names, in place of version 1, with the stricter readings of
   section 4 and the limits of section 5. This does not authorize running A1: that still needs my separate "Run A1
   now" approval.

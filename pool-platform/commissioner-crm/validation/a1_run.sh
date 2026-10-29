@@ -90,7 +90,7 @@ F_REQ=('H01 H02 H03 H04 H05 H06'
 # such a twin is always hidden by pg_catalog, which the search path puts first. Any other could take the place of a
 # built-in the five files call without a schema name, and change what they compute.
 IFS= read -r -d '' OVERLOAD_SQL <<'SQL' || true
-SELECT pg_catalog.count(*) OPERATOR(pg_catalog.=) 0 AS a1_no_overloads,
+SELECT pg_catalog.count(*) OPERATOR(pg_catalog.=) 0 AS a1_no_overloads, pg_catalog.count(*) AS a1_overload_count,
        COALESCE(pg_catalog.left(pg_catalog.string_agg(s.what, ', ' ORDER BY s.what), 300), '') AS a1_overloads
 FROM (
   SELECT pg_catalog.regexp_replace(p.oid::pg_catalog.regprocedure::pg_catalog.text, '[^[:print:]]', '?', 'g') AS what
@@ -109,18 +109,19 @@ FROM (
 ) s \gset
 \if :a1_no_overloads
 \else
-\echo 'A1 STOP: public holds functions or operators that can take the place of pg_catalog ones in the five files:' :'a1_overloads'
+\echo 'A1 STOP: public holds' :a1_overload_count 'function(s) or operator(s) that can take the place of pg_catalog ones in the five files:' :'a1_overloads'
 \quit
 \endif
 SQL
 
 # After P2, in the same read-only transaction, one row of the runner's own over pg_catalog: (2-5) every object outside
-# pool_platform_private that depends on one of its relations, functions or types, directly or through views and
-# functions, with how many of them are views a Data API role can read (any column) and how many are public functions
-# or policies, and their names; (6-7) the objects inside it that P2 does not list (types and the like); (8-9) the
+# pool_platform_private that depends on one of its relations, functions or types, directly or through views (their
+# SELECT rule, which is what they read) and functions, with how many of them are views a Data API role can read (any
+# column) and how many are public functions or policies, and their names; (6-7) the objects inside it that P2 does not list (types and the like); (8-9) the
 # views in public that a Data API role can read, whatever they read; (10-11) the login event triggers that run at
-# every session start. Names have every non-printable character replaced; every name and operator is qualified, so
-# nothing here depends on the search path.
+# every session start. A dependent whose namespace the query does not resolve (a cast or an event trigger, for
+# example) counts as outside. Names have every non-printable character replaced; every name and operator is
+# qualified, so nothing here depends on the search path.
 IFS= read -r -d '' P2_EXTRA_SQL <<'SQL' || true
 WITH RECURSIVE
 k AS (
@@ -129,6 +130,7 @@ k AS (
          'pg_catalog.pg_constraint'::pg_catalog.regclass::pg_catalog.oid AS con, 'pg_catalog.pg_attrdef'::pg_catalog.regclass::pg_catalog.oid AS def,
          'pg_catalog.pg_trigger'::pg_catalog.regclass::pg_catalog.oid AS trg, 'pg_catalog.pg_policy'::pg_catalog.regclass::pg_catalog.oid AS pol,
          'pg_catalog.pg_namespace'::pg_catalog.regclass::pg_catalog.oid AS nsp, 'public'::pg_catalog.regnamespace::pg_catalog.oid AS pub,
+         'pg_catalog.pg_statistic_ext'::pg_catalog.regclass::pg_catalog.oid AS stx, 'pg_catalog.pg_operator'::pg_catalog.regclass::pg_catalog.oid AS opr,
          'pg_toast'::pg_catalog.regnamespace::pg_catalog.oid AS toast
 ),
 ns AS (SELECT n.oid FROM pg_catalog.pg_namespace n WHERE n.nspname OPERATOR(pg_catalog.=) 'pool_platform_private'),
@@ -144,7 +146,7 @@ hit(classid, objid, objsubid) AS (
   SELECT d.classid, d.objid, d.objsubid FROM hit h, k, pg_catalog.pg_depend d
   WHERE d.deptype OPERATOR(pg_catalog.<>) 'i'
     AND ((h.classid OPERATOR(pg_catalog.=) k.rwr AND d.refclassid OPERATOR(pg_catalog.=) k.cls
-          AND d.refobjid OPERATOR(pg_catalog.=) (SELECT r.ev_class FROM pg_catalog.pg_rewrite r WHERE r.oid OPERATOR(pg_catalog.=) h.objid))
+          AND d.refobjid OPERATOR(pg_catalog.=) (SELECT r.ev_class FROM pg_catalog.pg_rewrite r WHERE r.oid OPERATOR(pg_catalog.=) h.objid AND r.ev_type OPERATOR(pg_catalog.=) '1'))
       OR (h.classid OPERATOR(pg_catalog.=) k.prc AND d.refclassid OPERATOR(pg_catalog.=) k.prc AND d.refobjid OPERATOR(pg_catalog.=) h.objid))
 ),
 dep AS (
@@ -158,6 +160,8 @@ dep AS (
            WHEN h.classid OPERATOR(pg_catalog.=) k.def THEN (SELECT c.relnamespace FROM pg_catalog.pg_attrdef a, pg_catalog.pg_class c WHERE a.oid OPERATOR(pg_catalog.=) h.objid AND c.oid OPERATOR(pg_catalog.=) a.adrelid)
            WHEN h.classid OPERATOR(pg_catalog.=) k.trg THEN (SELECT c.relnamespace FROM pg_catalog.pg_trigger g, pg_catalog.pg_class c WHERE g.oid OPERATOR(pg_catalog.=) h.objid AND c.oid OPERATOR(pg_catalog.=) g.tgrelid)
            WHEN h.classid OPERATOR(pg_catalog.=) k.pol THEN (SELECT c.relnamespace FROM pg_catalog.pg_policy y, pg_catalog.pg_class c WHERE y.oid OPERATOR(pg_catalog.=) h.objid AND c.oid OPERATOR(pg_catalog.=) y.polrelid)
+           WHEN h.classid OPERATOR(pg_catalog.=) k.stx THEN (SELECT x.stxnamespace FROM pg_catalog.pg_statistic_ext x WHERE x.oid OPERATOR(pg_catalog.=) h.objid)
+           WHEN h.classid OPERATOR(pg_catalog.=) k.opr THEN (SELECT o.oprnamespace FROM pg_catalog.pg_operator o WHERE o.oid OPERATOR(pg_catalog.=) h.objid)
          END AS nsp_oid,
          COALESCE(h.classid OPERATOR(pg_catalog.=) k.rwr
            AND (SELECT (c.relkind OPERATOR(pg_catalog.=) 'v' OR c.relkind OPERATOR(pg_catalog.=) 'm')

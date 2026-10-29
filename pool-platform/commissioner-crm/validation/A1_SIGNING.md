@@ -13,10 +13,10 @@ The owner is also the operator: A1 runs from the owner's own Terminal, never fro
 | Object | SHA-256 | What it is |
 | --- | --- | --- |
 | `validation/A1_AUTHORIZATION.md` | `8de895da4d7f75eb5654497a41c6e7c0f888f64d65c76d2a711725d872331c12` | the authorization text, signed by the owner (unchanged) |
-| `validation/A1_RUNNER_ACK.txt` | `cccc8c1383d9ea650460424c075a28f9f0e0d6d20c52d1f151fe2841cb21b1df` | the supplement the owner signs: binds runner version 2 to the authorization |
-| `validation/a1_run.sh` (version 2) | `314ef9e4f0d0eeb264ce51cbc30f4f10a52be07179a76512da53820c2f3400b5` | the fail-closed runner; replaces version 1 (`d63654bc…`), which must not be run |
-| `validation/a1_run.test.sh` | `f38d62c109e32ae9e3f2459b5e82eaf93bca7dd7f64f5296989c75c231f0c09b` | its regression suite (1089 assertions, local only, never Neon) |
-| `validation/a1_preflight_mac.sh` | `36a5df0b8bceb45c54f6a9160bc30275377bd6043d3f561c1863beebfbcca4a8` | the Mac preflight: checks files, signatures and psql setup without connecting |
+| `validation/A1_RUNNER_ACK.txt` | `ae00a0e546809a8949cd31f0a480c8e94fa9473d902ad5b90ccf67bd2fcf489c` | the supplement the owner signs: binds runner version 2 to the authorization |
+| `validation/a1_run.sh` (version 2) | `661ac92eeebdfaf6dfed5ab4ca5c10ea9367ac543655590fcf4f5e1aca824d93` | the fail-closed runner; replaces version 1 (`d63654bc…`), which must not be run |
+| `validation/a1_run.test.sh` | `9c63f36c3b76b8129e6d6ad7b53858952a56ce2349566ec4bfffe45f77975d86` | its regression suite (1103 assertions, local only, never Neon) |
+| `validation/a1_preflight_mac.sh` | `5f5c95e1b7137ff5da9b56b0585caf86e5669ad3a6dccd747fd0ea24b16cb634` | the Mac preflight: checks files, signatures and psql setup without connecting |
 | `validation/a1_preflight_mac.test.sh` | `16f64d49c1ea54bc365fef9e4f04fd64a17f4288ae5f5572d6fc2a31a5930d41` | its regression suite (654 assertions, local only) |
 | `validation/P1_identity_helpers_004.sql` | `9ef14dea4ea0f0ff9270b06eb05339f7dfe114accf9c6264d7dd810a979666ae` | production helper check |
 | `validation/P2_private_schema_inventory.sql` | `234b81f89d328107ff86b0564c32e57f25f220c8ad8da053dc2cbf82731e39d1` | `pool_platform_private` inventory |
@@ -75,7 +75,7 @@ so it holds no password.
 
 A1 runs only after you send, as its own message:
 
-    Run A1 now. Authorization 8de895da… and runner acknowledgment cccc8c13… are signed; the preflight is READY.
+    Run A1 now. Authorization 8de895da… and runner acknowledgment ae00a0e5… are signed; the preflight is READY.
 
 Signing (Steps 2 and 3) and approving the run (Step 4) are deliberately separate acts. Neither alone starts A1.
 
@@ -86,7 +86,7 @@ your PATH). Its shape is:
 
     PP_SERVICE=… PP_REPO="$HOME/Documents/commissioner-crm-a1" \
     PP_OUT="$HOME/commissioner-crm-a1-evidence/run-$(date -u +%Y%m%dT%H%M%SZ)" \
-    PP_RUNNER_SHA256=314ef9e4f0d0eeb264ce51cbc30f4f10a52be07179a76512da53820c2f3400b5 \
+    PP_RUNNER_SHA256=661ac92eeebdfaf6dfed5ab4ca5c10ea9367ac543655590fcf4f5e1aca824d93 \
     bash "$HOME/Documents/commissioner-crm-a1/pool-platform/commissioner-crm/validation/a1_run.sh"
 
 The runner checks the authorization, itself and the five SQL files against their pinned SHA-256, shows the target

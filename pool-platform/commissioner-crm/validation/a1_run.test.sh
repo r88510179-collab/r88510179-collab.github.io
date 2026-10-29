@@ -625,7 +625,7 @@ OVERLOAD_BLOCK=$(sed -n "/^IFS= read -r -d '' OVERLOAD_SQL <<'SQL' || true\$/,/^
 EXTRA_BLOCK=$(sed -n "/^IFS= read -r -d '' P2_EXTRA_SQL <<'SQL' || true\$/,/^SQL\$/p" "$RUNNER" | sed '1d;$d')
 OB_N=$(printf '%s\n' "$OVERLOAD_BLOCK" | wc -l)
 blocks_ok(){ # the overload check ends in its refusal; the extra-row query ends in psql's row count
-  printf '%s\n' "$OVERLOAD_BLOCK" | grep -q 'AS a1_no_overloads,$' || return 1
+  printf '%s\n' "$OVERLOAD_BLOCK" | grep -q 'AS a1_no_overloads, pg_catalog.count(\*) AS a1_overload_count,$' || return 1
   printf '%s\n' "$OVERLOAD_BLOCK" | grep -qx '\\if :a1_no_overloads' || return 1
   [ "$(printf '%s\n' "$OVERLOAD_BLOCK" | sed -n '$p')" = '\endif' ] || return 1
   printf '%s\n' "$EXTRA_BLOCK" | grep -q "^SELECT 'A1-EXTRA',\$" || return 1
@@ -895,8 +895,8 @@ check 'psql-diagnostics-escape: the escape character never reaches the terminal'
 fakeproc guard-refusal 3 'neon-catalog-verify.sql: not the production endpoint, database and owner' "$UPTO_CV" guard_says neon-catalog-verify
 fakeproc search-path-refusal 3 'P1_identity_helpers_004.sql: the search path is not exactly pg_catalog, public' "$UPTO_P1" path_says P1_identity_helpers_004
 fakeproc not-read-only 3 'P2_private_schema_inventory.sql: the transaction is not read-only' "$UPTO_P2" ro_says P2_private_schema_inventory
-overload_says(){ printf "A1 STOP: public holds functions or operators that can take the place of pg_catalog ones in the five files: 'lower(name)'\n" > "$FIX/$1.stdout"; }
-fakeproc overload-refusal 3 "P3_crm_preconditions.sql: public holds functions or operators that can take the place of pg_catalog ones in the five files: 'lower(name)'" "$UPTO_P3" overload_says P3_crm_preconditions
+overload_says(){ printf "A1 STOP: public holds 1 function(s) or operator(s) that can take the place of pg_catalog ones in the five files: 'lower(name)'\n" > "$FIX/$1.stdout"; }
+fakeproc overload-refusal 3 "P3_crm_preconditions.sql: public holds 1 function(s) or operator(s) that can take the place of pg_catalog ones in the five files: 'lower(name)'" "$UPTO_P3" overload_says P3_crm_preconditions
 fakeproc interrupted-term 143 'the run ended unexpectedly with status 143' "$UPTO_P3" signal P3_crm_preconditions TERM
 check 'interrupted-term: the manifest records the STOP' manifest_has 'outcome STOP exit 143'
 check 'interrupted-term: sha256sums.txt verifies' sums_verify
@@ -1045,8 +1045,20 @@ real p2-view-through-function 4 "$STOP_P2_READ" "$O2" \
   'CREATE SCHEMA a1t_fn; CREATE FUNCTION a1t_fn.notes() RETURNS SETOF text LANGUAGE sql STABLE SECURITY DEFINER BEGIN ATOMIC SELECT note FROM pool_platform_private.private_note; END; CREATE VIEW public.a1t_via AS SELECT a1t_fn.notes() AS note; GRANT SELECT ON public.a1t_via TO anonymous' \
   'DROP SCHEMA a1t_fn CASCADE'
 check 'real-p2-view-through-function: the view is named in the evidence' grep -q 'rule _RETURN on view a1t_via' "$(P2OUT)"
+# A rule that writes into the schema is listed, but what a view over its table reads is that table, not the schema.
+real p2-write-rule-on-public-table 10 "$(p2_hold 1 1 0 0 0 0 1)" "$ALL_OUTS" \
+  'CREATE TABLE public.a1t_src(id int, note text); CREATE RULE a1t_copy AS ON INSERT TO public.a1t_src DO ALSO INSERT INTO pool_platform_private.private_note VALUES (NEW.id, NEW.note); CREATE VIEW public.a1t_src_view AS SELECT id FROM public.a1t_src; GRANT SELECT ON public.a1t_src_view TO anonymous' \
+  'DROP TABLE public.a1t_src CASCADE'
+check 'real-p2-write-rule-on-public-table: the rule is named in the evidence' grep -q 'rule a1t_copy on table a1t_src' "$(P2OUT)"
+check 'real-p2-write-rule-on-public-table: the readable view over the table is a public view, not a dependent' holds 2
 real p2-readable-matview 4 "$STOP_P2_READ" "$O2" \
   'CREATE MATERIALIZED VIEW public.a1t_mv AS SELECT id, note FROM pool_platform_private.private_note; GRANT SELECT ON public.a1t_mv TO anonymous' 'DROP MATERIALIZED VIEW public.a1t_mv'
+# Objects inside the schema that depend on its relations or functions are members, not outside dependents.
+real p2-statistics-inside 10 "$(p2_hold 1 1 1 0 0 0 0)" "$ALL_OUTS" \
+  'CREATE STATISTICS pool_platform_private.a1t_st ON id, note FROM pool_platform_private.private_note' 'DROP STATISTICS pool_platform_private.a1t_st'
+real p2-operator-inside 10 "$(p2_hold 1 2 1 0 0 0 0)" "$ALL_OUTS" \
+  'CREATE FUNCTION pool_platform_private.a1t_eq(int, int) RETURNS boolean LANGUAGE sql AS $$ SELECT $1 OPERATOR(pg_catalog.=) $2 $$; CREATE OPERATOR pool_platform_private.=== (LEFTARG = int, RIGHTARG = int, FUNCTION = pool_platform_private.a1t_eq)' \
+  'DROP OPERATOR pool_platform_private.=== (int, int); DROP FUNCTION pool_platform_private.a1t_eq(int, int)'
 # Round 2, m3: public code that depends on the schema, even where P2 sees no source text.
 real p2-public-function-sql-body 4 'P2_private_schema_inventory.sql: STOP: 1 public function(s) or polic(y/ies) depend on it' "$O2" \
   'CREATE FUNCTION public.a1t_count() RETURNS bigint LANGUAGE sql BEGIN ATOMIC SELECT count(*) FROM pool_platform_private.private_note; END' 'DROP FUNCTION public.a1t_count()'
@@ -1091,7 +1103,7 @@ check 'real-p2-hostile-login-trigger-name: the name is on one line, its line bre
 
 # Round 2, B1: a function or operator in public that a pinned file would call instead of the pg_catalog one stops
 # the run before any file; a twin with exactly the same signature is always hidden by pg_catalog and is not refused.
-STOP_OVERLOAD='P1_identity_helpers_004.sql: public holds functions or operators that can take the place of pg_catalog ones in the five files:'
+STOP_OVERLOAD='P1_identity_helpers_004.sql: public holds 1 function(s) or operator(s) that can take the place of pg_catalog ones in the five files:'
 only_the_refusal(){ [ "$(cat "$EV/out/P1_identity_helpers_004.tsv")" = "A1 STOP: ${STOP_OVERLOAD#*: } $1" ]; }
 real overload-has-schema-privilege 3 "$STOP_OVERLOAD 'has_schema_privilege(text,oid,text)'" "$O1" \
   "GRANT CREATE ON SCHEMA public TO anonymous; CREATE FUNCTION public.has_schema_privilege(text, oid, text) RETURNS boolean LANGUAGE sql AS 'SELECT true'; REVOKE EXECUTE ON FUNCTION public.has_schema_privilege(text, oid, text) FROM PUBLIC" \
