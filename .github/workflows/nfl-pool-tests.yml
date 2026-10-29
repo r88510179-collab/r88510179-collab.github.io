@@ -170,6 +170,22 @@ jobs:
           echo "All $passed/$EXPECTED_SUITE_COUNT NFL Pool suites passed."
           echo "All $passed/$EXPECTED_SUITE_COUNT NFL Pool suites passed." >> "$summary"
 
+  acceptance-script-static-check:
+    name: acceptance-script-syntax
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Verify read-only acceptance script parses
+        run: node --check nfl-pool/acceptance/score-reconcile.mjs
+
   sql-behavior-gate:
     # HDC-13: the incident-ruling write path (migration 004) exercised as the
     # Data API calls it, on a throwaway PostgreSQL 17.11 container (pinned by
