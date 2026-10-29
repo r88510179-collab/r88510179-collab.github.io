@@ -6,22 +6,26 @@ Supplement to validation/A1_AUTHORIZATION.md. It changes nothing in that file, w
   Authorization  pool-platform/commissioner-crm/validation/A1_AUTHORIZATION.md
                  SHA-256 8de895da4d7f75eb5654497a41c6e7c0f888f64d65c76d2a711725d872331c12 (owner-signed, unchanged)
   Runner         pool-platform/commissioner-crm/validation/a1_run.sh, version 2
-                 SHA-256 661ac92eeebdfaf6dfed5ab4ca5c10ea9367ac543655590fcf4f5e1aca824d93
+                 SHA-256 cc3f6a19bb9b966d52dfaef555865b47d623ee1453f3d03c9602a3564c691fb3
   Replaces       version 1, SHA-256 d63654bc4ccd91ae88bbf1641527b0827b0e13272916554fb837453db9c78557, which must not
                  be run: it did not stop on a missing or failing verdict, and its hash steps used GNU-only options.
   Tests          pool-platform/commissioner-crm/validation/a1_run.test.sh
-                 SHA-256 9c63f36c3b76b8129e6d6ad7b53858952a56ce2349566ec4bfffe45f77975d86
-                 1103 assertions, all passing, run locally with no connection to Neon: bash 5.2 and bash 3.2.57
-                 (the macOS /bin/bash version), mawk and BWK awk (the macOS awk), psql 16 and 18 clients, and a
-                 local PostgreSQL 18 server holding the Commercial V1 baseline schema.
+                 SHA-256 b8bdf7a4c53bb05a801770e59a2ad870df2c03df72f0cfe82f0bf7341bf8f7b8
+                 1192 assertions, all passing, run locally with no connection to Neon: bash 5.2 and bash 3.2.57
+                 (the macOS /bin/bash version), mawk and BWK awk 20231127 (macOS ships the same awk, version
+                 20200816, which was not run), psql 16 and 18 clients, and a local PostgreSQL 18 server holding the
+                 Commercial V1 baseline schema.
   Review         An independent reviewer rejected two earlier builds of version 2. Round 1: a line break or a tab
                  inside a P2 value could forge rows, and a search path that put a schema before pg_catalog could run
                  that schema's code before the read-only transaction and forge a verdict. Round 2: a function planted
                  in public, with a signature that fits a call better than pg_catalog's, could still forge a verdict
                  with the search path exactly pg_catalog, public; a view could expose the schema through a column
                  grant or a second view; and the preflight could print a password pasted into the service entry.
-                 This build fixes all of them. The verdict of round 3, on these exact bytes, is in A1_SIGNING.md
-                 ("The independent review"); read it before signing.
+                 Round 3 approved the next build with one required change: whoever owns the tables the identity
+                 audit reads could change what it counts without changing a row (a column retyped to a type with
+                 an implicit cast, or row security forced). This build makes that change and the round's
+                 recommended ones. The verdict of round 4, on these exact bytes, is in A1_SIGNING.md ("The
+                 independent review"); read it before signing.
 
   The SQL files the runner executes are section 3 of the authorization, unchanged; each is refused unless its
   SHA-256 is:
@@ -47,8 +51,8 @@ Supplement to validation/A1_AUTHORIZATION.md. It changes nothing in that file, w
   - The connection string itself pins host, port 5432, database, role, sslmode=verify-full and gssencmode=disable.
     The service entry is there for the password and the TLS root certificate; nothing else in it can change the host
     name TLS verifies, the database or the role. A search path it sets (through an options line) is a STOP whenever
-    it changes the effective path, and the preflight refuses an options line outright. PGHOST, PGOPTIONS and the
-    other variables that could redirect the connection or change the session are cleared.
+    it changes the effective path, and the preflight refuses an options line outright. Every PG variable but
+    PGSERVICEFILE, PGPASSFILE and PGSSLROOTCERT (the files the preflight checks) is cleared before psql runs.
   - Before BEGIN READ ONLY, after the guard, the effective search path (the schemas the server actually searches,
     as current_schemas reports them) must be exactly pg_catalog, public, checked with qualified names only;
     anything else is a STOP. The runner's own statements are qualified throughout.
@@ -57,6 +61,13 @@ Supplement to validation/A1_AUTHORIZATION.md. It changes nothing in that file, w
     as one there; anything else is a STOP that lists them. Such a function or operator could take the place of a
     built-in that a file calls without a schema name, and change its result. An exact twin is always hidden,
     because the search path puts pg_catalog first; pgcrypto's gen_random_uuid() is one.
+  - Inside the read-only transaction, before each file: the five tables whose rows P3 and the identity audit read
+    (neon_auth's "user", account and session; pool_platform_memberships and pool_platform_entries) must each be a
+    plain table, with no child table and no row security in force for this session, and every column those files
+    read must exist, not be generated, and have a built-in type and collation; anything else is a STOP that names
+    the table or the column. Otherwise whoever owns them could change what the audit counts without changing a row:
+    a column retyped to a type with an implicit cast, a view in a table's place, row security forced. The session
+    row also records whether this session's role can alter the Neon Auth tables (section 4b).
   - Every line of every output is checked. psql's own row count closes each file's output, so a value holding a line
     break (which would forge a row) is a STOP; every row must have exactly its file's number of fields, so a tab in a
     value is a STOP; a missing, duplicated, unknown or malformed row, a verdict (H99, X99, C99, I99) other than PASS,
@@ -69,9 +80,10 @@ Supplement to validation/A1_AUTHORIZATION.md. It changes nothing in that file, w
     relations, functions or types (views, materialized views, rules, SQL functions with a BEGIN ATOMIC body,
     defaults, constraints, triggers, policies, columns, indexes), directly or through views and materialized views
     that read it and functions that record a dependency on it; the schema's other members that P2 does not list,
-    such as types; every view in public that a Data API role can read, whatever it reads; and every enabled login
-    event trigger. A function whose body is a string (PL/pgSQL, or SQL written as a string) records no dependency:
-    only P2's own check of function bodies sees it, and that check covers functions in public.
+    such as types; every relation in public, other than the nine commercial tables, that a Data API role can read;
+    and every enabled login event trigger. A function whose body is a string (PL/pgSQL, or SQL written as a string)
+    records no dependency: only P2's own check of function bodies sees it, and that check covers functions in
+    public.
   - The server's view of TLS (pg_stat_ssl) is recorded, not required: TLS from the operator's machine ends at Neon's
     proxy, and sslmode=verify-full is what protects that hop.
   - It refuses to run without a terminal or in an AI-agent or CI shell, shows the target and both hashes, and goes on
@@ -95,15 +107,19 @@ Supplement to validation/A1_AUTHORIZATION.md. It changes nothing in that file, w
      a public function or a policy outside the schema that depends on it (the runner's query); a trigger outside it
      that calls its code; a view outside it that a Data API role can read, through any column, and that depends on
      it directly or through other views and functions. A HOLD for your reading: every other object outside it that
-     depends on it; its members that P2 does not list; every view in public that a Data API role can read (the
-     AUTH-C verifier checks tables only); every login event trigger. The schema's absence, which section 5 counts
-     toward PASS, is a HOLD too: the Data API listed the schema on 2026-10-28, so its absence needs your explanation.
+     depends on it; its members that P2 does not list; every relation in public, other than the nine commercial
+     tables, that a Data API role can read (the AUTH-C verifier checks only the nine); every login event trigger.
+     The schema's absence, which section 5 counts toward PASS, is a HOLD too: the Data API listed the schema on
+     2026-10-28, so its absence needs your explanation.
   b. Identity audit: more than four live sessions (I07) is a HOLD for you to account for the extra ones; I04 above
      zero while I08 shows V1 standing held by users with an account row is a HOLD for you to confirm that each such
      identity was recovered (section 5 makes an unrecovered one a STOP); non-synthetic I03 accounts are a HOLD for
-     you to classify.
+     you to classify. If this session's role can alter the Neon Auth tables (it owns them or belongs to their
+     owner), the audit is a HOLD for you to confirm who owns them and that they are unaltered: I05 and I06 then
+     rest on their columns being Neon Auth's own.
   c. An effective search path other than exactly pg_catalog, public is a STOP: the five files assume the default.
-     So is a function or operator in public that could stand in for a pg_catalog one (section 3).
+     So is a function or operator in public that could stand in for a pg_catalog one, and a table the identity
+     checks read that is not built as they assume (section 3).
   d. A HOLD lets the remaining read-only files run, so you review one complete record. Any STOP still ends the run
      at once, as section 5 says.
   e. Any diagnostic psql writes, a server warning for example, is a STOP, even if the file otherwise completed.
@@ -112,7 +128,12 @@ Supplement to validation/A1_AUTHORIZATION.md. It changes nothing in that file, w
 
   - Only functions and operators are checked for stand-ins: overloading lets one in public win over pg_catalog's.
     A name of another kind (a relation, a type, a collation) that exists in pg_catalog always resolves there first,
-    and a cast between built-in types needs a superuser to create.
+    and a cast between built-in types needs a superuser to create. The columns the identity checks read are held to
+    built-in types and collations (section 3).
+  - A1 checks how the identity tables are built, not which column carries which name: whoever can alter one could
+    swap two columns' names, or rename a new column into an old one's place, and the files would read the wrong
+    column. The run records whether its own role can alter the Neon Auth tables (section 4b); it owns the two
+    commercial tables, which feed only informational rows and the I04 and I08 HOLD.
   - A function outside public whose body is a string and names the schema is not detected, nor is code that builds
     the schema's name at run time.
   - Login event triggers are listed for you; code that an extension or the server itself runs when a session starts
@@ -128,7 +149,7 @@ Supplement to validation/A1_AUTHORIZATION.md. It changes nothing in that file, w
 6. Acknowledgment
 
   I have read this acknowledgment. I accept a1_run.sh with SHA-256
-      661ac92eeebdfaf6dfed5ab4ca5c10ea9367ac543655590fcf4f5e1aca824d93
+      cc3f6a19bb9b966d52dfaef555865b47d623ee1453f3d03c9602a3564c691fb3
   as the runner that section 2 of A1_AUTHORIZATION.md names, in place of version 1, with the stricter readings of
   section 4 and the limits of section 5. This does not authorize running A1: that still needs my separate "Run A1
   now" approval.

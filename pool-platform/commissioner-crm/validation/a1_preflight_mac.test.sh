@@ -308,6 +308,13 @@ run duplicate-host
 expect duplicate-host 1 "[STOP] no entry in $H/.pg_service.conf has host=$HOST"
 # What libpq rejects, the preflight refuses, without printing the line: a misspelt key, a line without =, a key with
 # a space, a line that is itself a password.
+# libpq stops at a line of 1022 characters or more, anywhere before the entry ends, and then rejects the file.
+reset_config; write_service "# $SECRET$(head -c $((1022 - 2 - ${#SECRET})) /dev/zero | tr '\0' x)"
+run long-line
+expect long-line 1 "[STOP] line 13 of $H/.pg_service.conf is too long for libpq (1022 characters or more), which then rejects the file: shorten it"
+reset_config; write_service "#$(head -c 1020 /dev/zero | tr '\0' x)"
+run line-just-short-enough
+expect line-just-short-enough 0 '[ok]   service entry [crm-a1-prod]'
 reset_config; write_service "sslrootcrt=$SECRET"
 run misspelt-key
 expect misspelt-key 1 '[STOP] the entry [crm-a1-prod] has 1 line(s), not shown, that are not key=value with a key this preflight knows'
@@ -413,9 +420,12 @@ expect passfile-key-empty 1 '[STOP] the entry [crm-a1-prod] has an empty passfil
 reset_config
 run pgpassword-set PGPASSWORD="$SECRET"
 expect pgpassword-set 1 '[STOP] PGPASSWORD is set in this shell (value not shown)'
-run pg-variables PGHOST="$SECRET.example" PGOPTIONS="-csearch_path=$SECRET" PGCONNECT_TIMEOUT=9 PGAPPNAME="$SECRET"
-expect pg-variables 0 '[note] this shell sets PGHOST PGOPTIONS (values not shown); the runner clears them' \
-  '[note] this shell also sets PGAPPNAME PGCONNECT_TIMEOUT (values not shown); psql uses them as they are'
+run pg-variables PGHOST="$SECRET.example" PGOPTIONS="-csearch_path=$SECRET" PGCONNECT_TIMEOUT=9 PGAPPNAME="$SECRET" PGSSLSNI=0
+expect pg-variables 0 '[note] this shell sets PGAPPNAME PGCONNECT_TIMEOUT PGHOST PGOPTIONS PGSSLSNI (values not shown); the runner clears them'
+# Names come from the shell, not from parsing values: a value with a line break and PG...= in it names nothing.
+run pg-variable-in-a-value "A1T_VALUE=x$(printf '\nPGLEAK%s=1' "$SECRET")"
+expect pg-variable-in-a-value 0
+check 'pg-variable-in-a-value: no note, no fragment of the value' bash -c "! grep -q 'PGLEAK' '$CASE/stdout'"
 
 echo '# the evidence directory'
 reset_config; mkdir -m 755 "$H/commissioner-crm-a1-evidence"

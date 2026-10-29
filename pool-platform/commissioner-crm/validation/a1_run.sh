@@ -19,12 +19,13 @@
 #   4. the operator types RUN A1 at the terminal;
 #   5. each file connects to the production host, port, database and role, pinned here, with sslmode=verify-full; is
 #      refused unless the guard of the authorization confirms that session, the search path is exactly pg_catalog,
-#      public, and public holds no function or operator that could take the place of a pg_catalog one; runs inside
-#      BEGIN READ ONLY; ... ROLLBACK;; and has every line of its output checked: the line count against psql's own row
-#      count, the verdict row, every required row, and the rules of the authorization's section 5 that the rows carry.
-#      P2's run also reads, read-only, what P2 cannot show: every object outside pool_platform_private that depends on
-#      it, the objects inside it that P2 does not list, the views in public a Data API role can read, and the login
-#      event triggers.
+#      public, public holds no function or operator that could take the place of a pg_catalog one, and the tables
+#      the identity checks read are built as those files assume; runs inside BEGIN READ ONLY; ... ROLLBACK;; and has
+#      every line of its output checked: the line count against psql's own row count, the verdict row, every required
+#      row, and the rules of the authorization's section 5 that the rows carry. P2's run also reads, read-only, what
+#      P2 cannot show: every object outside pool_platform_private that depends on it, the objects inside it that P2
+#      does not list, the relations in public (besides the nine commercial tables) a Data API role can read, and the
+#      login event triggers.
 #
 # The last line printed is the result, and the exit code matches it:
 #   10  HOLD  every required check passed and no STOP condition occurred; the listed items need the owner's written
@@ -47,9 +48,12 @@ umask 077
 export LC_ALL=C
 export PSQL_HISTORY=/dev/null
 unset CDPATH
-# The connection string pins the target; these could otherwise change the connection or the session.
-unset PGSERVICE PGHOST PGHOSTADDR PGPORT PGDATABASE PGUSER PGOPTIONS PGSSLMODE PGREQUIRESSL PGGSSENCMODE \
-      PGSSLNEGOTIATION PGTARGETSESSIONATTRS PGLOADBALANCEHOSTS PGCLIENTENCODING PGTZ PGDATESTYLE PGGEQO
+# The connection string pins the target. Of the PG variables only PGSERVICEFILE, PGPASSFILE and PGSSLROOTCERT, the
+# files the preflight checks, reach psql: any other could change the connection or the session.
+for pg_var in $(compgen -e); do
+  case $pg_var in PGSERVICEFILE|PGPASSFILE|PGSSLROOTCERT) ;; PG*) unset "$pg_var" ;; esac
+done
+unset pg_var
 
 readonly EXPECT_HOST='ep-still-recipe-b5g7680z.c-7.us-east-2.aws.neon.tech'
 readonly EXPECT_PORT=5432
@@ -114,14 +118,66 @@ FROM (
 \endif
 SQL
 
+# Before each file, inside its read-only transaction: the five tables whose rows P3 and the identity audit read must
+# be built as those files assume. Each must be a plain table with no child table (which would add rows) and no row
+# security in force for this session (which would hide rows); each column they read must exist and not be generated,
+# and have a built-in type and collation (a type of another schema can carry an implicit cast that changes what a
+# comparison or a filter sees, and a collation of another schema can change equality).
+IFS= read -r -d '' TABLES_SQL <<'SQL' || true
+SELECT pg_catalog.count(*) OPERATOR(pg_catalog.=) 0 AS a1_tables_ok,
+       COALESCE(pg_catalog.string_agg(p.problem, '; ' ORDER BY p.problem), '') AS a1_table_problems
+FROM (
+  SELECT pg_catalog.quote_ident(t.nsp) OPERATOR(pg_catalog.||) '.' OPERATOR(pg_catalog.||) pg_catalog.quote_ident(t.rel) OPERATOR(pg_catalog.||) CASE
+           WHEN c.oid IS NULL THEN ' is missing'
+           WHEN c.relkind OPERATOR(pg_catalog.<>) 'r' THEN ' is not a plain table'
+           WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent OPERATOR(pg_catalog.=) c.oid) THEN ' has child tables'
+           ELSE ': row security applies to this session' END AS problem
+  FROM (VALUES ('neon_auth', 'user'), ('neon_auth', 'account'), ('neon_auth', 'session'),
+               ('public', 'pool_platform_memberships'), ('public', 'pool_platform_entries')) AS t(nsp, rel)
+  LEFT JOIN pg_catalog.pg_namespace n ON n.nspname OPERATOR(pg_catalog.=) t.nsp
+  LEFT JOIN pg_catalog.pg_class c ON c.relnamespace OPERATOR(pg_catalog.=) n.oid AND c.relname OPERATOR(pg_catalog.=) t.rel
+  WHERE c.oid IS NULL OR c.relkind OPERATOR(pg_catalog.<>) 'r'
+     OR EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent OPERATOR(pg_catalog.=) c.oid)
+     OR pg_catalog.row_security_active(c.oid::pg_catalog.regclass)
+  UNION ALL
+  SELECT pg_catalog.quote_ident(t.nsp) OPERATOR(pg_catalog.||) '.' OPERATOR(pg_catalog.||) pg_catalog.quote_ident(t.rel) OPERATOR(pg_catalog.||) '.'
+           OPERATOR(pg_catalog.||) pg_catalog.quote_ident(t.col) OPERATOR(pg_catalog.||) CASE
+           WHEN a.attnum IS NULL THEN ' is missing'
+           WHEN a.attgenerated OPERATOR(pg_catalog.<>) '' THEN ' is generated'
+           WHEN y.typnamespace OPERATOR(pg_catalog.<>) 'pg_catalog'::pg_catalog.regnamespace::pg_catalog.oid THEN ' has a type that is not built in'
+           ELSE ' has a collation that is not built in' END
+  FROM (VALUES ('neon_auth', 'user', 'id'), ('neon_auth', 'user', 'emailVerified'), ('neon_auth', 'user', 'banned'),
+               ('neon_auth', 'user', 'email'), ('neon_auth', 'account', 'userId'), ('neon_auth', 'account', 'providerId'),
+               ('neon_auth', 'session', 'userId'), ('neon_auth', 'session', 'impersonatedBy'), ('neon_auth', 'session', 'expiresAt'),
+               ('public', 'pool_platform_memberships', 'auth_user_id'), ('public', 'pool_platform_memberships', 'role'),
+               ('public', 'pool_platform_entries', 'owner_auth_user_id')) AS t(nsp, rel, col)
+  JOIN pg_catalog.pg_namespace n ON n.nspname OPERATOR(pg_catalog.=) t.nsp
+  JOIN pg_catalog.pg_class c ON c.relnamespace OPERATOR(pg_catalog.=) n.oid AND c.relname OPERATOR(pg_catalog.=) t.rel
+  LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid OPERATOR(pg_catalog.=) c.oid AND a.attname OPERATOR(pg_catalog.=) t.col
+                                     AND a.attnum OPERATOR(pg_catalog.>) 0 AND NOT a.attisdropped
+  LEFT JOIN pg_catalog.pg_type y ON y.oid OPERATOR(pg_catalog.=) a.atttypid
+  LEFT JOIN pg_catalog.pg_collation o ON o.oid OPERATOR(pg_catalog.=) a.attcollation
+  WHERE a.attnum IS NULL OR a.attgenerated OPERATOR(pg_catalog.<>) ''
+     OR y.typnamespace OPERATOR(pg_catalog.<>) 'pg_catalog'::pg_catalog.regnamespace::pg_catalog.oid
+     OR a.attcollation OPERATOR(pg_catalog.<>) 0::pg_catalog.oid
+        AND o.collnamespace OPERATOR(pg_catalog.<>) 'pg_catalog'::pg_catalog.regnamespace::pg_catalog.oid
+) p \gset
+\if :a1_tables_ok
+\else
+\echo 'A1 STOP: the tables that P3 and the identity audit read are not built as those files assume:' :'a1_table_problems'
+\quit
+\endif
+SQL
+
 # After P2, in the same read-only transaction, one row of the runner's own over pg_catalog: (2-5) every object outside
 # pool_platform_private that depends on one of its relations, functions or types, directly or through views (their
 # SELECT rule, which is what they read) and functions, with how many of them are views a Data API role can read (any
-# column) and how many are public functions or policies, and their names; (6-7) the objects inside it that P2 does not list (types and the like); (8-9) the
-# views in public that a Data API role can read, whatever they read; (10-11) the login event triggers that run at
-# every session start. A dependent whose namespace the query does not resolve (a cast or an event trigger, for
-# example) counts as outside. Names have every non-printable character replaced; every name and operator is
-# qualified, so nothing here depends on the search path.
+# column) and how many are public functions or policies, and their names; (6-7) the objects inside it that P2 does
+# not list (types and the like); (8-9) the relations in public, other than the nine commercial tables the AUTH-C
+# verifier checks, that a Data API role can read; (10-11) the login event triggers that run at every session start.
+# A dependent whose namespace the query does not resolve (a cast or an event trigger, for example) counts as outside.
+# Names have every non-printable character replaced; every name and operator is qualified, so nothing here depends on
+# the search path.
 IFS= read -r -d '' P2_EXTRA_SQL <<'SQL' || true
 WITH RECURSIVE
 k AS (
@@ -187,10 +243,13 @@ members AS (
              AND COALESCE((SELECT c.relkind OPERATOR(pg_catalog.=) ANY (ARRAY['r', 'p', 'v', 'm', 'S', 'f']::pg_catalog."char"[])
                            FROM pg_catalog.pg_class c WHERE c.oid OPERATOR(pg_catalog.=) d.objid), false))
 ),
-public_views AS (
+public_reads AS (
   SELECT pg_catalog.regexp_replace(c.oid::pg_catalog.regclass::pg_catalog.text, '[^[:print:]]', '?', 'g') AS what
   FROM pg_catalog.pg_class c, k
-  WHERE c.relnamespace OPERATOR(pg_catalog.=) k.pub AND (c.relkind OPERATOR(pg_catalog.=) 'v' OR c.relkind OPERATOR(pg_catalog.=) 'm')
+  WHERE c.relnamespace OPERATOR(pg_catalog.=) k.pub AND c.relkind OPERATOR(pg_catalog.=) ANY (ARRAY['r', 'p', 'f', 'v', 'm']::pg_catalog."char"[])
+    AND c.relname OPERATOR(pg_catalog.<>) ALL (ARRAY['pool_platform_tenants', 'pool_platform_memberships', 'pool_platform_pools', 'pool_platform_seasons',
+                                                    'pool_platform_entries', 'pool_platform_weeks', 'pool_platform_submissions',
+                                                    'pool_platform_submission_audit', 'pool_platform_entry_invites']::pg_catalog.name[])
     AND (pg_catalog.has_schema_privilege('anonymous', c.relnamespace, 'USAGE') AND pg_catalog.has_any_column_privilege('anonymous', c.oid, 'SELECT')
          OR pg_catalog.has_schema_privilege('authenticated', c.relnamespace, 'USAGE') AND pg_catalog.has_any_column_privilege('authenticated', c.oid, 'SELECT'))
 ),
@@ -206,8 +265,8 @@ SELECT 'A1-EXTRA',
        COALESCE((SELECT pg_catalog.string_agg(outside.what, '; ' ORDER BY outside.what) FROM outside), ''),
        (SELECT pg_catalog.count(*) FROM members),
        COALESCE((SELECT pg_catalog.string_agg(members.what, '; ' ORDER BY members.what) FROM members), ''),
-       (SELECT pg_catalog.count(*) FROM public_views),
-       COALESCE((SELECT pg_catalog.string_agg(public_views.what, '; ' ORDER BY public_views.what) FROM public_views), ''),
+       (SELECT pg_catalog.count(*) FROM public_reads),
+       COALESCE((SELECT pg_catalog.string_agg(public_reads.what, '; ' ORDER BY public_reads.what) FROM public_reads), ''),
        (SELECT pg_catalog.count(*) FROM logins),
        COALESCE((SELECT pg_catalog.string_agg(logins.what, '; ' ORDER BY logins.what) FROM logins), '');
 \echo 'A1-ROWS' :ROW_COUNT
@@ -417,7 +476,8 @@ note "confirmed $(now)"
 
 # 5. Run each file behind the guard, read-only, and check every line. The guard runs first, then the search-path
 # check, both outside the transaction and so written with every function and operator qualified: nothing a schema
-# could shadow runs before BEGIN READ ONLY. Inside it, the runner's own statements are qualified as well.
+# could shadow runs before BEGIN READ ONLY. Inside it come the overload check and the table check, then the session
+# row and the file; the runner's own statements are qualified there as well.
 run_one(){ # file-name [extra psql lines, run after the file inside the same transaction]
   local name=$1 extra=${2:-} base=${1%.sql} rc=0
   local out="$PP_OUT/out/$base.tsv" err="$PP_OUT/out/$base.stderr"
@@ -445,7 +505,8 @@ SELECT pg_catalog.current_setting('transaction_read_only') OPERATOR(pg_catalog.=
 \quit
 \endif
 $OVERLOAD_SQL
-SELECT 'A1-SESSION', CURRENT_USER, pg_catalog.current_database(), :'HOST', pg_catalog.current_setting('transaction_read_only'), COALESCE((SELECT s.ssl::pg_catalog.text FROM pg_catalog.pg_stat_ssl s WHERE s.pid OPERATOR(pg_catalog.=) pg_catalog.pg_backend_pid()), 'unknown'), pg_catalog.regexp_replace(pg_catalog.current_setting('search_path'), '[^[:print:]]', '?', 'g');
+$TABLES_SQL
+SELECT 'A1-SESSION', CURRENT_USER, pg_catalog.current_database(), :'HOST', pg_catalog.current_setting('transaction_read_only'), COALESCE((SELECT s.ssl::pg_catalog.text FROM pg_catalog.pg_stat_ssl s WHERE s.pid OPERATOR(pg_catalog.=) pg_catalog.pg_backend_pid()), 'unknown'), pg_catalog.regexp_replace(pg_catalog.current_setting('search_path'), '[^[:print:]]', '?', 'g'), COALESCE((SELECT pg_catalog.bool_or(pg_catalog.pg_has_role(CURRENT_USER, c.relowner, 'MEMBER')) FROM pg_catalog.pg_class c, pg_catalog.pg_namespace n WHERE n.oid OPERATOR(pg_catalog.=) c.relnamespace AND n.nspname OPERATOR(pg_catalog.=) 'neon_auth' AND c.relname OPERATOR(pg_catalog.=) ANY (ARRAY['user', 'account', 'session']::pg_catalog.name[])), false)::pg_catalog.text;
 \i '$PP_OUT/src/$name'
 \echo 'A1-ROWS' :ROW_COUNT
 $extra
@@ -464,9 +525,10 @@ SQL
   fi
 }
 
-# The session row comes first: the production role, database and host in a read-only transaction, and the server's
-# view of TLS (recorded, not required: on Neon, TLS from this machine ends at Neon's proxy, and verify-full is what
-# protects that hop). The last line is psql's own row count for the file, so a value holding a line break shows up as
+# The session row comes first: the production role, database and host in a read-only transaction, the server's view
+# of TLS (recorded, not required: on Neon, TLS from this machine ends at Neon's proxy, and verify-full is what protects
+# that hop), the search path setting, and whether this role can alter the Neon Auth tables (true is a HOLD for the
+# identity audit). The last line is psql's own row count for the file, so a value holding a line break shows up as
 # extra lines. Every line between them: exactly six fields, a known check id seen once, the required flag the file
 # defines for it, an ok flag of t, f or empty; then the verdict row PASS and every required row ok. Prints one
 # status: OK, or MALFORMED, VERDICT or REQUIRED with the reason.
@@ -479,7 +541,7 @@ BEGIN {
 status != "" { next }
 rows >= 0 { status = "MALFORMED: the output continues after the row count"; next }
 NR == 1 {
-  if (!(NF == 7 && $1 == "A1-SESSION" && $2 == role && $3 == db && $4 == host && $5 == "on" && ($6 == "true" || $6 == "false")))
+  if (!(NF == 8 && $1 == "A1-SESSION" && $2 == role && $3 == db && $4 == host && $5 == "on" && ($6 == "true" || $6 == "false") && ($8 == "true" || $8 == "false")))
     status = "MALFORMED: the session row is missing or does not show the production host, database and owner in a read-only transaction"
   next
 }
@@ -511,6 +573,7 @@ END {
 
 field(){ awk -F"$TAB" -v id="$2" '$1 == id { print $5 }' "$1"; } # output-file check-id -> actual
 server_ssl(){ awk -F"$TAB" 'NR == 1 { print $6 }' "$1"; }       # output-file -> the session row's TLS flag
+neon_auth_alterable(){ awk -F"$TAB" 'NR == 1 { print $8 }' "$1"; } # output-file -> can this role alter the Neon Auth tables
 
 evaluate_checks(){ # file name, verdict id, expected ids, required ids
   local name=$1 verdict=$2 ids=$3 req=$4 out="$PP_OUT/out/${1%.sql}.tsv" status
@@ -521,7 +584,7 @@ evaluate_checks(){ # file name, verdict id, expected ids, required ids
     C99) rule_catalog "$out" ;;
     I99) rule_identity_audit "$out" ;;
   esac
-  note "session $name server_ssl=$(server_ssl "$out")"
+  note "session $name server_ssl=$(server_ssl "$out") neon_auth_alterable=$(neon_auth_alterable "$out")"
   note "result $name $verdict PASS, every required check ok"
   printf '%s: %s PASS, every required check ok\n' "$name" "$verdict"
 }
@@ -565,6 +628,7 @@ rule_identity_audit(){ # section 5 for the identity audit, beyond its required r
   [ "$#" -eq 3 ] || stop 4 "I03 is malformed"
   other=$3
   [ "$other" -eq 0 ] || hold "I03: $other non-synthetic unverified user(s) hold a password or OAuth account; the owner classifies each"
+  [ "$(neon_auth_alterable "$out")" = false ] || hold "identity audit: this session's role can alter the Neon Auth tables (it owns them or belongs to their owner), so I05 and I06 assume their columns are Neon Auth's own; the owner confirms who owns them and that they are unaltered"
 }
 
 # P2 is an inventory, never an automatic PASS. Its rows have exactly five fields (kind, name, owner, detail, oid), so
@@ -572,14 +636,14 @@ rule_identity_audit(){ # section 5 for the identity audit, beyond its required r
 # STOP: a Data API role can use or create objects in the schema, reviewed public code names it or depends on it (a
 # public function or a policy), a trigger outside it runs its code, or a view outside it that a Data API role can read
 # depends on it; or the output is malformed. HOLD: everything else, the schema's absence included (the Data API listed
-# it on 2026-10-28), for the owner's reading; and, from the extra row, readable views in public and login triggers.
+# it on 2026-10-28), for the owner's reading; and, from the extra row, readable relations in public and login triggers.
 INVENTORY_AWK='
 BEGIN { FS = "\t"; status = ""; why = ""; schema = 0; rel = 0; fn = 0; fk = 0; view = 0; trig = 0; prov = 0; hint = ""
-        rows = -1; outside = -1; readable = 0; code = 0; members = 0; pubviews = 0; logins = 0; done = 0 }
+        rows = -1; outside = -1; readable = 0; code = 0; members = 0; pubreads = 0; logins = 0; done = 0 }
 status != "" { next }
 done { status = "MALFORMED: the output continues after the extra row"; next }
 NR == 1 {
-  if (!(NF == 7 && $1 == "A1-SESSION" && $2 == role && $3 == db && $4 == host && $5 == "on" && ($6 == "true" || $6 == "false")))
+  if (!(NF == 8 && $1 == "A1-SESSION" && $2 == role && $3 == db && $4 == host && $5 == "on" && ($6 == "true" || $6 == "false") && ($8 == "true" || $8 == "false")))
     status = "MALFORMED: the session row is missing or does not show the production host, database and owner in a read-only transaction"
   next
 }
@@ -600,7 +664,7 @@ rows >= 0 {
   if (!(NF == 11 && $1 == "A1-EXTRA" && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ && $6 ~ /^[0-9]+$/ && $8 ~ /^[0-9]+$/ && $10 ~ /^[0-9]+$/)) {
     status = "MALFORMED: the extra row is missing or malformed"; next
   }
-  outside = $2 + 0; readable = $3 + 0; code = $4 + 0; members = $6 + 0; pubviews = $8 + 0; logins = $10 + 0
+  outside = $2 + 0; readable = $3 + 0; code = $4 + 0; members = $6 + 0; pubreads = $8 + 0; logins = $10 + 0
   next
 }
 {
@@ -634,29 +698,29 @@ END {
   if (status == "" && readable > 0) why = why "; " readable " view(s) outside the schema that a Data API role can read depend on it"
   if (status == "" && code > 0) why = why "; " code " public function(s) or polic(y/ies) depend on it"
   if (status == "" && why != "") status = "STOP: " substr(why, 3)
-  if (status == "" && schema == 0) status = "HOLD absent " rows " " pubviews " " logins
-  if (status == "") status = "HOLD present " rows " " rel " " fn " " members " " fk " " view " " trig " " outside " " pubviews " " logins
+  if (status == "" && schema == 0) status = "HOLD absent " rows " " pubreads " " logins
+  if (status == "") status = "HOLD present " rows " " rel " " fn " " members " " fk " " view " " trig " " outside " " pubreads " " logins
   print status
 }'
 
 evaluate_inventory(){ # file name
-  local name=$1 out="$PP_OUT/out/${1%.sql}.tsv" status rows pubviews logins
+  local name=$1 out="$PP_OUT/out/${1%.sql}.tsv" status rows pubreads logins
   status=$(awk -v host="$EXPECT_HOST" -v db="$EXPECT_DB" -v role="$EXPECT_ROLE" "$INVENTORY_AWK" "$out") || stop 4 "$name: its output could not be read"
   case $status in
     'HOLD absent '*)
       set -- ${status#HOLD absent }
-      rows=$1 pubviews=$2 logins=$3
+      rows=$1 pubreads=$2 logins=$3
       hold "P2: pool_platform_private is absent, although the Data API listed it on 2026-10-28; the owner confirms why" ;;
     'HOLD present '*)
       set -- ${status#HOLD present }
-      rows=$1 pubviews=$9 logins=${10}
+      rows=$1 pubreads=$9 logins=${10}
       hold "P2: pool_platform_private holds $2 relation(s), $3 function(s) and $4 other object(s); $5 foreign key(s) and $6 view dependency(ies) involve it, $7 trigger(s) on its own relations call its code, and $8 object(s) outside it depend on it, directly or through views and functions; the owner explains every one from the window record" ;;
     *)
       stop 4 "$name: $status" ;;
   esac
-  [ "$pubviews" -eq 0 ] || hold "public: $pubviews view(s) that a Data API role can read (named in the P2 evidence); the AUTH-C verifier checks tables only, so the owner confirms what each exposes"
+  [ "$pubreads" -eq 0 ] || hold "public: $pubreads relation(s) other than the nine commercial tables that a Data API role can read (named in the P2 evidence); the AUTH-C verifier checks only the nine, so the owner confirms what each exposes"
   [ "$logins" -eq 0 ] || hold "server: $logins login event trigger(s) run code at every session start, this run's included (named in the P2 evidence); the owner explains each"
-  note "session $name server_ssl=$(server_ssl "$out")"
+  note "session $name server_ssl=$(server_ssl "$out") neon_auth_alterable=$(neon_auth_alterable "$out")"
   note "result $name HOLD, $rows inventory rows and the runner's catalog row kept whole in out/${name%.sql}.tsv"
   printf '%s: HOLD, %s inventory rows and the runner'"'"'s catalog row kept whole for the owner\n' "$name" "$rows"
 }

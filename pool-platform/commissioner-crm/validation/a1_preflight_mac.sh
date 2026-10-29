@@ -22,8 +22,8 @@ BRANCH='ccr-321cd6b3-fu8f1j'
 HOST='ep-still-recipe-b5g7680z.c-7.us-east-2.aws.neon.tech'
 POOLER_HOST='ep-still-recipe-b5g7680z-pooler.c-7.us-east-2.aws.neon.tech'
 AUTHC='2c6e2a805fa816638808cb2d96d430ee177453e6'
-RUNNER_SHA256='661ac92eeebdfaf6dfed5ab4ca5c10ea9367ac543655590fcf4f5e1aca824d93'
-ACK_SHA256='ae00a0e546809a8949cd31f0a480c8e94fa9473d902ad5b90ccf67bd2fcf489c'
+RUNNER_SHA256='cc3f6a19bb9b966d52dfaef555865b47d623ee1453f3d03c9602a3564c691fb3'
+ACK_SHA256='dfd86c70193ba5fe74cd739af534059fc384cc533f40eb439d8b07abbe6a1ab9'
 OLD_RUNNER_SHA256='d63654bc4ccd91ae88bbf1641527b0827b0e13272916554fb837453db9c78557'
 
 TAB=$(printf '\t')
@@ -178,12 +178,13 @@ service_checks(){
     *) stop 'PGSERVICEFILE is not an absolute path (not shown): psql would look for it in the directory A1 runs from'; return ;;
   esac
   if [ ! -f "$SERVICE_FILE" ] || [ ! -r "$SERVICE_FILE" ]; then stop "$SERVICE_DESC does not exist or cannot be read"; return; fi
-  # As libpq reads the file: a section's name runs from [ to the first ]; only the first section of a name counts,
-  # and within it the first value of a key; one line that is not key=value with a known key makes libpq reject the
-  # whole entry. The values stay here: the lines this prints carry tags, counts and key names, and the two paths
+  # As libpq reads the file: a line of 1022 characters or more is an error; a section's name runs from [ to the
+  # first ]; only the first section of a name counts, and within it the first value of a key; one line that is not
+  # key=value with a known key makes libpq reject the whole entry. The values stay here: the lines this prints carry tags, counts and key names, and the two paths
   # this script must check.
   ENTRY=$(awk -v host="$HOST" -v pooler="$POOLER_HOST" -v known="$KEYS_OK$KEYS_REFUSED" '
     BEGIN { nk = split(known, kl, " "); for (i = 1; i <= nk; i++) isknown[kl[i]] = 1 }
+    length($0) >= 1022 && !long { long = NR }
     { line = $0; sub(/^[ \t\r\f\v]+/, "", line); sub(/[ \t\r\f\v]+$/, "", line) }
     line == "" || substr(line, 1, 1) == "#" { next }
     substr(line, 1, 1) == "[" {
@@ -209,6 +210,7 @@ service_checks(){
         if (val[s, "host"] == pooler) pooled++
         if (val[s, "host"] == host) { hits++; pick = s }
       }
+      if (long) printf "LONG\t%d\n", long
       printf "COUNTS\t%d\t%d\t%d\n", hits, pooled, dups
       if (hits != 1) exit
       if (pick !~ /^[A-Za-z0-9._-]+$/) { print "BADNAME"; exit }
@@ -227,6 +229,10 @@ service_checks(){
         else if (key == "password") print "PASSWORD\t" (v == "" ? "empty" : (v ~ /^[ \t\f\v]/ ? "leading-space" : "set"))
       }
     }' "$SERVICE_FILE" 2>/dev/null) || ENTRY=''
+  if tagged LONG; then
+    stop "line $(tagval LONG) of $SERVICE_DESC is too long for libpq (1022 characters or more), which then rejects the file: shorten it"
+    return
+  fi
   set -- $(tagval COUNTS)
   hits=${1:-0} pooled=${2:-0} dups=${3:-0}
   if [ "$hits" -eq 0 ]; then
@@ -337,17 +343,13 @@ service_checks(){
 }
 service_checks
 [ -z "${PGPASSWORD:-}" ] || stop 'PGPASSWORD is set in this shell (value not shown): run unset PGPASSWORD; A1 takes the password from the password file'
-# The runner clears exactly these; any other PG variable reaches psql as it is.
-CLEARED=' PGSERVICE PGHOST PGHOSTADDR PGPORT PGDATABASE PGUSER PGOPTIONS PGSSLMODE PGREQUIRESSL PGGSSENCMODE PGSSLNEGOTIATION PGTARGETSESSIONATTRS PGLOADBALANCEHOSTS PGCLIENTENCODING PGTZ PGDATESTYLE PGGEQO '
-cleared='' kept=''
-for var in $(env | sed -n 's/^\(PG[A-Z0-9_]*\)=.*/\1/p' | sort); do
-  case $CLEARED in
-    *" $var "*) cleared="$cleared$var " ;;
-    *) case $var in PGPASSWORD|PGSERVICEFILE|PGPASSFILE|PGSSLROOTCERT) ;; *) kept="$kept$var " ;; esac ;;
-  esac
+# The runner clears every PG variable but PGSERVICEFILE, PGPASSFILE and PGSSLROOTCERT, which the checks above read.
+# Names come from the shell itself, never from parsing values.
+cleared=''
+for var in $(compgen -e | sort); do
+  case $var in PGPASSWORD|PGSERVICEFILE|PGPASSFILE|PGSSLROOTCERT) ;; PG*) cleared="$cleared$var " ;; esac
 done
 [ -z "$cleared" ] || note "this shell sets $cleared(values not shown); the runner clears them"
-[ -z "$kept" ] || note "this shell also sets $kept(values not shown); psql uses them as they are"
 
 # 7. The evidence directory: private, local, outside every git repository and the synced folders.
 up=$EVIDENCE

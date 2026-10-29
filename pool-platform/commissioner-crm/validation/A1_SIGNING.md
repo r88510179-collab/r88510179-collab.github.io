@@ -13,11 +13,11 @@ The owner is also the operator: A1 runs from the owner's own Terminal, never fro
 | Object | SHA-256 | What it is |
 | --- | --- | --- |
 | `validation/A1_AUTHORIZATION.md` | `8de895da4d7f75eb5654497a41c6e7c0f888f64d65c76d2a711725d872331c12` | the authorization text, signed by the owner (unchanged) |
-| `validation/A1_RUNNER_ACK.txt` | `ae00a0e546809a8949cd31f0a480c8e94fa9473d902ad5b90ccf67bd2fcf489c` | the supplement the owner signs: binds runner version 2 to the authorization |
-| `validation/a1_run.sh` (version 2) | `661ac92eeebdfaf6dfed5ab4ca5c10ea9367ac543655590fcf4f5e1aca824d93` | the fail-closed runner; replaces version 1 (`d63654bc…`), which must not be run |
-| `validation/a1_run.test.sh` | `9c63f36c3b76b8129e6d6ad7b53858952a56ce2349566ec4bfffe45f77975d86` | its regression suite (1103 assertions, local only, never Neon) |
-| `validation/a1_preflight_mac.sh` | `5f5c95e1b7137ff5da9b56b0585caf86e5669ad3a6dccd747fd0ea24b16cb634` | the Mac preflight: checks files, signatures and psql setup without connecting |
-| `validation/a1_preflight_mac.test.sh` | `16f64d49c1ea54bc365fef9e4f04fd64a17f4288ae5f5572d6fc2a31a5930d41` | its regression suite (654 assertions, local only) |
+| `validation/A1_RUNNER_ACK.txt` | `dfd86c70193ba5fe74cd739af534059fc384cc533f40eb439d8b07abbe6a1ab9` | the supplement the owner signs: binds runner version 2 to the authorization |
+| `validation/a1_run.sh` (version 2) | `cc3f6a19bb9b966d52dfaef555865b47d623ee1453f3d03c9602a3564c691fb3` | the fail-closed runner; replaces version 1 (`d63654bc…`), which must not be run |
+| `validation/a1_run.test.sh` | `b8bdf7a4c53bb05a801770e59a2ad870df2c03df72f0cfe82f0bf7341bf8f7b8` | its regression suite (1192 assertions, local only, never Neon) |
+| `validation/a1_preflight_mac.sh` | `78a8bbc12c0c434bf65d6f5a8629344bd61170cd23f1d16b094bbcfa193ba181` | the Mac preflight: checks files, signatures and psql setup without connecting |
+| `validation/a1_preflight_mac.test.sh` | `d2d4668ec926b879e097cd499d3bdf1e79b33a1371ea0fa58c363c7b69002705` | its regression suite (677 assertions, local only) |
 | `validation/P1_identity_helpers_004.sql` | `9ef14dea4ea0f0ff9270b06eb05339f7dfe114accf9c6264d7dd810a979666ae` | production helper check |
 | `validation/P2_private_schema_inventory.sql` | `234b81f89d328107ff86b0564c32e57f25f220c8ad8da053dc2cbf82731e39d1` | `pool_platform_private` inventory |
 | `validation/P3_crm_preconditions.sql` | `f652ecad1d7adcc1f474d1b0af9753e7a8aec1e14567d03cb350c1312cd2333d` | CRM preconditions |
@@ -36,7 +36,7 @@ the chain cryptographic: `A1_RUNNER_ACK.txt`. Read its section 4 before signing.
 
 ## The independent review
 
-Round 3 of the independent review has not reported yet. Do not sign the acknowledgment before this section
+Round 4 of the independent review has not reported yet. Do not sign the acknowledgment before this section
 records its verdict.
 
 ## Step 1: update the checkout and run the preflight
@@ -74,7 +74,7 @@ so it holds no password.
 
 A1 runs only after you send, as its own message:
 
-    Run A1 now. Authorization 8de895da… and runner acknowledgment ae00a0e5… are signed; the preflight is READY.
+    Run A1 now. Authorization 8de895da… and runner acknowledgment dfd86c70… are signed; the preflight is READY.
 
 Signing (Steps 2 and 3) and approving the run (Step 4) are deliberately separate acts. Neither alone starts A1.
 
@@ -85,25 +85,27 @@ your PATH). Its shape is:
 
     PP_SERVICE=… PP_REPO="$HOME/Documents/commissioner-crm-a1" \
     PP_OUT="$HOME/commissioner-crm-a1-evidence/run-$(date -u +%Y%m%dT%H%M%SZ)" \
-    PP_RUNNER_SHA256=661ac92eeebdfaf6dfed5ab4ca5c10ea9367ac543655590fcf4f5e1aca824d93 \
+    PP_RUNNER_SHA256=cc3f6a19bb9b966d52dfaef555865b47d623ee1453f3d03c9602a3564c691fb3 \
     bash "$HOME/Documents/commissioner-crm-a1/pool-platform/commissioner-crm/validation/a1_run.sh"
 
 The runner checks the authorization, itself and the five SQL files against their pinned SHA-256, shows the target
 and the hashes, and waits for you to type `RUN A1`. For each file it connects to
 `ep-still-recipe-b5g7680z.c-7.us-east-2.aws.neon.tech`, port 5432, `neondb`, `neondb_owner` (pinned in its own
 connection string, with `sslmode=verify-full`); quits unless the guard confirms that session, the effective search
-path is exactly `pg_catalog, public`, and `public` holds no function or operator that could stand in for a
-`pg_catalog` one; runs the file inside `BEGIN READ ONLY; … ROLLBACK;`; and checks every line. P2's run adds one row
-of the runner's own: what depends on `pool_platform_private` from outside it (directly or through views and
-functions), its members that P2 does not list, the views in `public` a Data API role can read, and the login event
-triggers. The last line is the result:
+path is exactly `pg_catalog, public`, `public` holds no function or operator that could stand in for a `pg_catalog`
+one, and the five tables the identity checks read are built as those files assume; runs the file inside
+`BEGIN READ ONLY; … ROLLBACK;`; and checks every line. P2's run adds one row of the runner's own: what depends on
+`pool_platform_private` from outside it (directly or through views and functions), its members that P2 does not
+list, the relations in `public` other than the nine commercial tables that a Data API role can read, and the login
+event triggers. The last line is the result:
 
 - `A1 RESULT: HOLD (exit 10)`: every verdict and required row passed and no STOP condition occurred; the listed items
   need your written reading. This is the best result the runner gives, because P2 is never an automatic PASS.
 - `A1 RESULT: STOP (exit 2, 3 or 4)`: before any connection (2), at a connection (3) or on a check (4). The run ended
   at the first STOP; the reason is printed, and `manifest.txt` records it. A search path other than the default, a
-  function or operator in `public` that could stand in for a `pg_catalog` one, a server warning, or a line break or
-  tab inside a value is a STOP too (acknowledgment, sections 3 and 4).
+  function or operator in `public` that could stand in for a `pg_catalog` one, an identity table not built as the
+  files assume, a server warning, or a line break or tab inside a value is a STOP too (acknowledgment, sections 3
+  and 4).
 
 If psql cannot be used, the Neon SQL Editor remains the authorization's fallback (same files, same order, each in its
 own `BEGIN READ ONLY; … ROLLBACK;`, hashes and guard values checked by hand), but the runner's row checks then have to

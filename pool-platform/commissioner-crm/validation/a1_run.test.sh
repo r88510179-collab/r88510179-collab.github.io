@@ -456,7 +456,7 @@ check 'real-baseline: no diagnostics from psql' [ -z "$(cat "$EV"/out/*.stderr)"
 check 'real-baseline: the manifest records the runner hash' manifest_has "a1_runner_sha256 $TEST_RUNNER_SHA"
 check 'real-baseline: the staged runner copy has that hash' manifest_has "source a1_run.sh $TEST_RUNNER_SHA"
 check 'real-baseline: the manifest records the authorization hash' manifest_has 'source A1_AUTHORIZATION.md 8de895da4d7f75eb5654497a41c6e7c0f888f64d65c76d2a711725d872331c12'
-check 'real-baseline: the manifest records the server-side TLS flag of each session' bash -c "[ \"\$(grep -c '^session .* server_ssl=true\$' '$EV/manifest.txt')\" -eq 5 ]"
+check 'real-baseline: the manifest records, for each session, the TLS flag and that the role cannot alter the Neon Auth tables' bash -c "[ \"\$(grep -c '^session .* server_ssl=true neon_auth_alterable=false\$' '$EV/manifest.txt')\" -eq 5 ]"
 check 'real-baseline: the manifest records the outcome' manifest_has 'outcome HOLD exit 10'
 check 'real-baseline: sha256sums.txt verifies with sha256sum and shasum' sums_verify
 check 'real-baseline: sha256sums.txt covers the manifest, 7 sources and 10 outputs' [ "$(wc -l < "$EV/sha256sums.txt")" -eq 18 ]
@@ -615,7 +615,8 @@ check 'answer-eof: psql never started' no_psql
 echo '# output checks: the runner itself, fake psql'
 run_case fake-baseline "$RUNNER" 'RUN A1' PGHOST=evil.example PGHOSTADDR=203.0.113.9 PGPORT=1 PGDATABASE=postgres PGUSER=postgres \
   PGOPTIONS=-csearch_path=evil PGSSLMODE=disable PGREQUIRESSL=0 PGGSSENCMODE=require PGSERVICE=evil PGTARGETSESSIONATTRS=any \
-  PGCLIENTENCODING=LATIN1 PGTZ=UTC PGDATESTYLE=ISO CDPATH=/
+  PGCLIENTENCODING=LATIN1 PGTZ=UTC PGDATESTYLE=ISO CDPATH=/ PGSSLSNI=0 PGSSLCERTMODE=require PGREQUIREAUTH=none PGAPPNAME=a1t \
+  PGCONNECT_TIMEOUT=1 PGPASSWORD=a1t-not-a-password PGSYSCONFDIR=/nonexistent PGKRBSRVNAME=a1t
 expect fake-baseline 10 "$P2_HOLD"
 check 'fake-baseline: every file ran once, in order' files_run "$ALL_FILES"
 check 'fake-baseline: the manifest records the runner hash' manifest_has "a1_runner_sha256 $RUNNER_SHA"
@@ -623,15 +624,20 @@ check 'fake-baseline: the staged runner copy is byte-identical' cmp -s "$RUNNER"
 check 'fake-baseline: sha256sums.txt verifies' sums_verify
 OVERLOAD_BLOCK=$(sed -n "/^IFS= read -r -d '' OVERLOAD_SQL <<'SQL' || true\$/,/^SQL\$/p" "$RUNNER" | sed '1d;$d')
 EXTRA_BLOCK=$(sed -n "/^IFS= read -r -d '' P2_EXTRA_SQL <<'SQL' || true\$/,/^SQL\$/p" "$RUNNER" | sed '1d;$d')
+TABLES_BLOCK=$(sed -n "/^IFS= read -r -d '' TABLES_SQL <<'SQL' || true\$/,/^SQL\$/p" "$RUNNER" | sed '1d;$d')
 OB_N=$(printf '%s\n' "$OVERLOAD_BLOCK" | wc -l)
+TB_N=$(printf '%s\n' "$TABLES_BLOCK" | wc -l)
 blocks_ok(){ # the overload check ends in its refusal; the extra-row query ends in psql's row count
   printf '%s\n' "$OVERLOAD_BLOCK" | grep -q 'AS a1_no_overloads, pg_catalog.count(\*) AS a1_overload_count,$' || return 1
   printf '%s\n' "$OVERLOAD_BLOCK" | grep -qx '\\if :a1_no_overloads' || return 1
   [ "$(printf '%s\n' "$OVERLOAD_BLOCK" | sed -n '$p')" = '\endif' ] || return 1
   printf '%s\n' "$EXTRA_BLOCK" | grep -q "^SELECT 'A1-EXTRA',\$" || return 1
-  [ "$(printf '%s\n' "$EXTRA_BLOCK" | sed -n '$p')" = "\\echo 'A1-ROWS' :ROW_COUNT" ]
+  [ "$(printf '%s\n' "$EXTRA_BLOCK" | sed -n '$p')" = "\\echo 'A1-ROWS' :ROW_COUNT" ] || return 1
+  printf '%s\n' "$TABLES_BLOCK" | grep -q '^SELECT pg_catalog.count(\*) OPERATOR(pg_catalog.=) 0 AS a1_tables_ok,$' || return 1
+  printf '%s\n' "$TABLES_BLOCK" | grep -qx '\\if :a1_tables_ok' || return 1
+  [ "$(printf '%s\n' "$TABLES_BLOCK" | sed -n '$p')" = '\endif' ]
 }
-check 'the runner holds the overload check and the extra-row query' blocks_ok
+check 'the runner holds the overload check, the table check and the extra-row query' blocks_ok
 script_ok(){ # every script the runner sent, line by line
   local s n=1 a f at
   for f in $ALL_FILES; do
@@ -646,7 +652,9 @@ script_ok(){ # every script the runner sent, line by line
     [ "$(sed -n 16p "$s")" = "SELECT pg_catalog.current_setting('transaction_read_only') OPERATOR(pg_catalog.=) 'on' AS a1_read_only \\gset" ] || return 1
     [ "$(sed -n 17,21p "$s" | tr '\n' '|')" = "\\if :a1_read_only|\\else|\\echo 'A1 STOP: the transaction is not read-only'|\\quit|\\endif|" ] || return 1
     [ "$(sed -n "22,$((21 + OB_N))p" "$s")" = "$OVERLOAD_BLOCK" ] || return 1
-    at=$((22 + OB_N))
+    [ "$(sed -n "$((22 + OB_N))p" "$s")" = '' ] || return 1
+    [ "$(sed -n "$((23 + OB_N)),$((22 + OB_N + TB_N))p" "$s")" = "$TABLES_BLOCK" ] || return 1
+    at=$((23 + OB_N + TB_N))
     [ "$(sed -n "${at}p" "$s")" = '' ] || return 1
     sed -n "$((at + 1))p" "$s" | grep -q "^SELECT 'A1-SESSION', CURRENT_USER, pg_catalog.current_database(), :'HOST', " || return 1
     [ "$(sed -n "$((at + 2))p" "$s")" = "\\i '$EV/src/$f'" ] || return 1
@@ -662,15 +670,16 @@ script_ok(){ # every script the runner sent, line by line
     n=$((n + 1))
   done
 }
-check 'fake-baseline: each script is the guard, the search-path check, BEGIN READ ONLY, the overload check, the file and ROLLBACK, with no setting change' script_ok
-env_ok(){ # psql saw none of the connection or session variables the test set, and the runner's own settings
+check 'fake-baseline: each script is the guard, the search-path check, BEGIN READ ONLY, the overload and table checks, the file and ROLLBACK, with no setting change' script_ok
+env_ok(){ # psql saw no PG variable but PGSERVICEFILE, PGPASSFILE and PGSSLROOTCERT, no CDPATH, and the runner's settings
   local e
   for e in "$CASE"/fake/env.*; do
-    ! grep -qE '^(PGHOST|PGHOSTADDR|PGPORT|PGDATABASE|PGUSER|PGOPTIONS|PGSSLMODE|PGREQUIRESSL|PGGSSENCMODE|PGSERVICE|PGTARGETSESSIONATTRS|PGCLIENTENCODING|PGTZ|PGDATESTYLE|CDPATH)=' "$e" || return 1
+    ! grep -E '^(PG[A-Za-z0-9_]*|CDPATH)=' "$e" | grep -qvE '^(PGSERVICEFILE|PGPASSFILE|PGSSLROOTCERT)=' || return 1
+    grep -q '^PGSERVICEFILE=' "$e" && grep -q '^PGPASSFILE=' "$e" || return 1
     grep -qx 'LC_ALL=C' "$e" && grep -qx 'PSQL_HISTORY=/dev/null' "$e" || return 1
   done
 }
-check 'fake-baseline: psql ran with LC_ALL=C, PSQL_HISTORY=/dev/null, and none of the PG variables or CDPATH set around it' env_ok
+check 'fake-baseline: psql ran with LC_ALL=C, PSQL_HISTORY=/dev/null, PGSERVICEFILE and PGPASSFILE, and no other PG variable or CDPATH' env_ok
 CWD="$HERE"
 run_case relative-invocation ./a1_run.sh 'RUN A1' PP_RUNNER_SHA256="$RUNNER_SHA"
 expect 'invoked as ./a1_run.sh from its own directory' 10 "$P2_HOLD"
@@ -774,8 +783,18 @@ fake session-other-role 4 'MALFORMED: the session row is missing' "$UPTO_CV" "$C
 fake session-other-db 4 'MALFORMED: the session row is missing' "$ALL_FILES" "$IA" 'NR == 1 { $3 = "postgres" } 1'
 fake session-row-second 4 'MALFORMED: the session row is missing' "$UPTO_P1" "$P1" 'NR == 1 { s = $0; next } NR == 2 { print; print s; next } 1'
 fake p2-session-no-tls-flag 4 'MALFORMED: the session row is missing' "$UPTO_P2" "$P2" 'NR == 1 { $6 = "unknown" } 1'
+fake session-neon-auth-flag-bad 4 'MALFORMED: the session row is missing' "$UPTO_P1" "$P1" 'NR == 1 { $8 = "maybe" } 1'
+fake p2-session-seven-fields 4 'MALFORMED: the session row is missing' "$UPTO_P2" "$P2" 'NR == 1 { print $1, $2, $3, $4, $5, $6, $7; next } 1'
+fake p2-session-neon-auth-flag-bad 4 'MALFORMED: the session row is missing' "$UPTO_P2" "$P2" 'NR == 1 { $8 = "maybe" } 1'
+fake audit-neon-auth-alterable 10 "identity audit: this session's role can alter the Neon Auth tables (it owns them or belongs to their owner), so I05 and I06 assume their columns are Neon Auth's own; the owner confirms who owns them and that they are unaltered" \
+  "$ALL_FILES" "$IA" 'NR == 1 { $8 = "true" } 1'
+check 'audit-neon-auth-alterable: two HOLD items' holds 2
+check 'audit-neon-auth-alterable: recorded in the manifest' manifest_has "session $IA server_ssl=true neon_auth_alterable=true"
+fake p1-neon-auth-alterable 10 "$P2_HOLD" "$ALL_FILES" "$P1" 'NR == 1 { $8 = "true" } 1'
+check 'p1-neon-auth-alterable: recorded, and only the identity audit holds on it' holds 1
+check 'p1-neon-auth-alterable: recorded in the manifest' manifest_has "session $P1 server_ssl=true neon_auth_alterable=true"
 fake session-server-ssl-false 10 "$P2_HOLD" "$ALL_FILES" "$P1" 'NR == 1 { $6 = "false" } 1'
-check 'session-server-ssl-false: recorded in the manifest, not required' manifest_has "session $P1 server_ssl=false"
+check 'session-server-ssl-false: recorded in the manifest, not required' manifest_has "session $P1 server_ssl=false neon_auth_alterable=false"
 # The row count: psql's own count for the file, last; a value holding a line break makes the lines outnumber it.
 rawfake rows-missing 4 'MALFORMED: the row count is missing' "$UPTO_P1" "$P1" '!/^A1-ROWS /'
 rawfake rows-off-by-one 4 'MALFORMED: 8 lines for 9 rows: a value holds a line break' "$UPTO_P1" "$P1" '/^A1-ROWS / { print "A1-ROWS 9"; next } 1'
@@ -830,7 +849,7 @@ fake p2-extra-both 4 'STOP: 2 view(s) outside the schema that a Data API role ca
   '$1 == "A1-EXTRA" { $2 = 3; $3 = 2; $4 = 1; $5 = "a; b; c" } 1'
 fake p2-extra-held 10 "$(p2_hold 1 1 0 0 0 0 3)" "$ALL_FILES" "$P2" '$1 == "A1-EXTRA" { $2 = 3; $5 = "a; b; c" } 1'
 fake p2-extra-members 10 "$(p2_hold 1 1 2 0 0 0 0)" "$ALL_FILES" "$P2" '$1 == "A1-EXTRA" { $6 = 2; $7 = "type x; type y" } 1'
-fake p2-extra-public-views 10 'public: 1 view(s) that a Data API role can read (named in the P2 evidence); the AUTH-C verifier checks tables only, so the owner confirms what each exposes' \
+fake p2-extra-public-views 10 'public: 1 relation(s) other than the nine commercial tables that a Data API role can read (named in the P2 evidence); the AUTH-C verifier checks only the nine, so the owner confirms what each exposes' \
   "$ALL_FILES" "$P2" '$1 == "A1-EXTRA" { $8 = 1; $9 = "a1t_entries" } 1'
 check 'p2-extra-public-views: two HOLD items' holds 2
 check 'p2-extra-public-views: the P2 HOLD as well' said "$P2_HOLD"
@@ -840,7 +859,7 @@ check 'p2-extra-logins: two HOLD items' holds 2
 fake p2-absent-public-views-logins 10 "$P2_ABSENT" "$ALL_FILES" "$P2" \
   '$1 == "schema" || $1 == "relation" || $1 == "function" { next } $1 == "provenance hint" { $4 = "schema absent (schema_oid=none, newest_commercial_fn_oid=1)" } $1 == "A1-EXTRA" { $8 = 1; $9 = "v"; $10 = 2; $11 = "a; b" } 1'
 check 'p2-absent-public-views-logins: three HOLD items' holds 3
-check 'p2-absent-public-views-logins: the public views' said 'public: 1 view(s) that a Data API role can read'
+check 'p2-absent-public-views-logins: the public relations' said 'public: 1 relation(s) other than the nine commercial tables that a Data API role can read'
 check 'p2-absent-public-views-logins: the login triggers' said 'server: 2 login event trigger(s) run code at every session start'
 fake p2-absent-with-dependents 4 'MALFORMED: the extra row lists objects of an absent schema' "$UPTO_P2" "$P2" '$1 == "schema" || $1 == "relation" || $1 == "function" { next } $1 == "provenance hint" { $4 = "schema absent (schema_oid=none, newest_commercial_fn_oid=1)" } $1 == "A1-EXTRA" { $2 = 1; $5 = "x" } 1'
 fake p2-absent-with-members 4 'MALFORMED: the extra row lists objects of an absent schema' "$UPTO_P2" "$P2" '$1 == "schema" || $1 == "relation" || $1 == "function" { next } $1 == "provenance hint" { $4 = "schema absent (schema_oid=none, newest_commercial_fn_oid=1)" } $1 == "A1-EXTRA" { $6 = 1; $7 = "x" } 1'
@@ -896,6 +915,8 @@ fakeproc guard-refusal 3 'neon-catalog-verify.sql: not the production endpoint, 
 fakeproc search-path-refusal 3 'P1_identity_helpers_004.sql: the search path is not exactly pg_catalog, public' "$UPTO_P1" path_says P1_identity_helpers_004
 fakeproc not-read-only 3 'P2_private_schema_inventory.sql: the transaction is not read-only' "$UPTO_P2" ro_says P2_private_schema_inventory
 overload_says(){ printf "A1 STOP: public holds 1 function(s) or operator(s) that can take the place of pg_catalog ones in the five files: 'lower(name)'\n" > "$FIX/$1.stdout"; }
+tables_says(){ printf "A1 STOP: the tables that P3 and the identity audit read are not built as those files assume: 'neon_auth.session: row security applies to this session'\n" > "$FIX/$1.stdout"; }
+fakeproc tables-refusal 3 "neon-identity-audit.sql: the tables that P3 and the identity audit read are not built as those files assume: 'neon_auth.session: row security applies to this session'" "$ALL_FILES" tables_says neon-identity-audit
 fakeproc overload-refusal 3 "P3_crm_preconditions.sql: public holds 1 function(s) or operator(s) that can take the place of pg_catalog ones in the five files: 'lower(name)'" "$UPTO_P3" overload_says P3_crm_preconditions
 fakeproc interrupted-term 143 'the run ended unexpectedly with status 143' "$UPTO_P3" signal P3_crm_preconditions TERM
 check 'interrupted-term: the manifest records the STOP' manifest_has 'outcome STOP exit 143'
@@ -1072,7 +1093,7 @@ real p2-private-type-used-outside 10 "$(p2_hold 1 1 1 0 0 0 1)" "$ALL_OUTS" \
   'DROP TABLE public.a1t_typed; DROP TYPE pool_platform_private.a1t_kind'
 check 'real-p2-private-type-used-outside: the type is named in the evidence' grep -q 'type pool_platform_private.a1t_kind' "$(P2OUT)"
 check 'real-p2-private-type-used-outside: so is the column that uses it' grep -q 'column k of table a1t_typed' "$(P2OUT)"
-real p2-readable-public-view-elsewhere 10 'public: 1 view(s) that a Data API role can read (named in the P2 evidence); the AUTH-C verifier checks tables only, so the owner confirms what each exposes' "$ALL_OUTS" \
+real p2-readable-public-view-elsewhere 10 'public: 1 relation(s) other than the nine commercial tables that a Data API role can read (named in the P2 evidence); the AUTH-C verifier checks only the nine, so the owner confirms what each exposes' "$ALL_OUTS" \
   'CREATE VIEW public.a1t_entries AS SELECT * FROM public.pool_platform_entries; GRANT SELECT ON public.a1t_entries TO anonymous' 'DROP VIEW public.a1t_entries'
 check 'real-p2-readable-public-view-elsewhere: two HOLD items' holds 2
 check 'real-p2-readable-public-view-elsewhere: the view is named in the evidence' grep -q 'a1t_entries' "$(P2OUT)"
@@ -1092,7 +1113,7 @@ real p2-hostile-member-name 10 "$(p2_hold 1 1 1 0 0 0 0)" "$ALL_OUTS" \
   "DO \$\$ BEGIN EXECUTE format('CREATE TYPE pool_platform_private.%I AS ENUM (''a'')', $HOSTILE); END \$\$" \
   "DO \$\$ BEGIN EXECUTE format('DROP TYPE pool_platform_private.%I', $HOSTILE); END \$\$"
 check 'real-p2-hostile-member-name: the name is on one line, its line break and tab replaced' on_one_line
-real p2-hostile-public-view-name 10 'public: 1 view(s) that a Data API role can read' "$ALL_OUTS" \
+real p2-hostile-public-view-name 10 'public: 1 relation(s) other than the nine commercial tables that a Data API role can read' "$ALL_OUTS" \
   "DO \$\$ BEGIN EXECUTE format('CREATE VIEW public.%I AS SELECT 1 AS one', $HOSTILE); EXECUTE format('GRANT SELECT ON public.%I TO anonymous', $HOSTILE); END \$\$" \
   "DO \$\$ BEGIN EXECUTE format('DROP VIEW public.%I', $HOSTILE); END \$\$"
 check 'real-p2-hostile-public-view-name: the name is on one line, its line break and tab replaced' on_one_line
@@ -1134,6 +1155,60 @@ run_case real-search-path-setting-with-tab "$TEST_RUNNER" 'RUN A1' PATH="$REAL_P
 admin -d postgres -c 'ALTER ROLE neondb_owner IN DATABASE neondb RESET search_path' > /dev/null
 expect real-search-path-setting-with-tab 10 "$P2_HOLD"
 check 'real-search-path-setting-with-tab: the session row shows the setting with its tab replaced' grep -qF 'public, "a1t?x"' "$EV/out/P1_identity_helpers_004.tsv"
+
+# Round 3 gaps: a login trigger that gives the session a temporary schema (searched first for relations) stops the
+# run at the search-path check; an operator in public that is an exact twin of a pg_catalog one is hidden by it.
+real search-path-temporary-schema 3 'P1_identity_helpers_004.sql: the search path is not exactly pg_catalog, public' "$O1" \
+  'CREATE SCHEMA a1t_ev; CREATE FUNCTION a1t_ev.make_temp() RETURNS event_trigger LANGUAGE plpgsql AS $$BEGIN CREATE TEMP TABLE IF NOT EXISTS a1t_tmp(x int); END$$; CREATE EVENT TRIGGER a1t_temp ON login EXECUTE FUNCTION a1t_ev.make_temp()' \
+  'DROP EVENT TRIGGER a1t_temp; DROP SCHEMA a1t_ev CASCADE' admin
+real overload-identical-twin-operator 10 "$P2_HOLD" "$ALL_OUTS" \
+  "CREATE FUNCTION public.a1t_texteq(text, text) RETURNS boolean LANGUAGE sql IMMUTABLE AS 'SELECT \$1 OPERATOR(pg_catalog.=) \$2'; REVOKE EXECUTE ON FUNCTION public.a1t_texteq(text, text) FROM PUBLIC; CREATE OPERATOR public.= (LEFTARG = text, RIGHTARG = text, FUNCTION = public.a1t_texteq)" \
+  'DROP OPERATOR public.= (text, text); DROP FUNCTION public.a1t_texteq(text, text)'
+check 'real-overload-identical-twin-operator: hidden by pg_catalog, so only the P2 HOLD' holds 1
+# Round 3, F1: the tables P3 and the identity audit read must be built as those files assume. Each route the review
+# found, and the ones next to it, stops the run before any file.
+STOP_TABLES='P1_identity_helpers_004.sql: the tables that P3 and the identity audit read are not built as those files assume:'
+UNVERIFIED_SESSION="INSERT INTO neon_auth.session(\"expiresAt\",token,\"updatedAt\",\"userId\") SELECT now() + interval '1 day','a1t-x',now(),id FROM neon_auth.\"user\" WHERE name='X'"
+real tables-enum-with-implicit-cast 3 "$STOP_TABLES 'neon_auth.\"user\".\"emailVerified\" has a type that is not built in'" "$O1" \
+  "BEGIN; $UNVERIFIED_SESSION; CREATE TYPE public.a1t_flag AS ENUM ('t', 'f'); CREATE FUNCTION public.a1t_flag_bool(public.a1t_flag) RETURNS boolean LANGUAGE sql IMMUTABLE AS 'SELECT true'; CREATE CAST (public.a1t_flag AS boolean) WITH FUNCTION public.a1t_flag_bool(public.a1t_flag) AS IMPLICIT; ALTER TABLE neon_auth.\"user\" ALTER COLUMN \"emailVerified\" TYPE public.a1t_flag USING (CASE WHEN \"emailVerified\" THEN 't' ELSE 'f' END)::public.a1t_flag; COMMIT;" \
+  "BEGIN; ALTER TABLE neon_auth.\"user\" ALTER COLUMN \"emailVerified\" TYPE boolean USING (\"emailVerified\"::text = 't'); DROP CAST (public.a1t_flag AS boolean); DROP FUNCTION public.a1t_flag_bool(public.a1t_flag); DROP TYPE public.a1t_flag; DELETE FROM neon_auth.session WHERE token='a1t-x'; COMMIT;" admin
+real tables-domain-on-commercial-column 3 "$STOP_TABLES 'public.pool_platform_memberships.role has a type that is not built in'" "$O1" \
+  'CREATE DOMAIN public.a1t_role AS text; ALTER TABLE public.pool_platform_memberships ALTER COLUMN role TYPE public.a1t_role' \
+  'ALTER TABLE public.pool_platform_memberships ALTER COLUMN role TYPE text; DROP DOMAIN public.a1t_role'
+real tables-forced-row-security 3 "$STOP_TABLES 'public.pool_platform_memberships: row security applies to this session'" "$O1" \
+  'ALTER TABLE public.pool_platform_memberships FORCE ROW LEVEL SECURITY' 'ALTER TABLE public.pool_platform_memberships NO FORCE ROW LEVEL SECURITY'
+real tables-row-security-on-neon-auth 3 "$STOP_TABLES 'neon_auth.session: row security applies to this session'" "$O1" \
+  'ALTER TABLE neon_auth.session ENABLE ROW LEVEL SECURITY' 'ALTER TABLE neon_auth.session DISABLE ROW LEVEL SECURITY' admin
+real tables-child-table 3 "$STOP_TABLES 'public.pool_platform_entries has child tables'" "$O1" \
+  'CREATE TABLE public.a1t_child () INHERITS (public.pool_platform_entries)' 'DROP TABLE public.a1t_child'
+real tables-view-in-place-of-a-table 3 "$STOP_TABLES 'neon_auth.session is not a plain table'" "$O1" \
+  'ALTER TABLE neon_auth.session RENAME TO a1t_session_real; CREATE VIEW neon_auth.session AS SELECT * FROM neon_auth.a1t_session_real WHERE false; GRANT SELECT ON neon_auth.session TO neondb_owner' \
+  'DROP VIEW neon_auth.session; ALTER TABLE neon_auth.a1t_session_real RENAME TO session' admin
+real tables-generated-column 3 "$STOP_TABLES 'neon_auth.session.\"impersonatedBy\" is generated'" "$O1" \
+  'ALTER TABLE neon_auth.session DROP COLUMN "impersonatedBy"; ALTER TABLE neon_auth.session ADD COLUMN "impersonatedBy" text GENERATED ALWAYS AS (NULL::text) VIRTUAL' \
+  'ALTER TABLE neon_auth.session DROP COLUMN "impersonatedBy"; ALTER TABLE neon_auth.session ADD COLUMN "impersonatedBy" text' admin
+real tables-missing-column 3 "$STOP_TABLES 'neon_auth.session.\"expiresAt\" is missing'" "$O1" \
+  'ALTER TABLE neon_auth.session RENAME COLUMN "expiresAt" TO a1t_expires' 'ALTER TABLE neon_auth.session RENAME COLUMN a1t_expires TO "expiresAt"' admin
+# Any collation of another schema is refused (one that is not deterministic could change equality); this cluster is
+# SQL_ASCII, which ICU refuses, so the planted collation is a copy of C.
+real tables-collation-of-another-schema 3 "$STOP_TABLES 'neon_auth.\"user\".email has a collation that is not built in'" "$O1" \
+  'CREATE COLLATION public.a1t_c FROM "C"; ALTER TABLE neon_auth."user" ALTER COLUMN email TYPE text COLLATE public.a1t_c' \
+  'ALTER TABLE neon_auth."user" ALTER COLUMN email TYPE text COLLATE "default"; DROP COLLATION public.a1t_c' admin
+# Who can alter the Neon Auth tables is not visible in their rows: when this session's role can, the audit holds.
+real neon-auth-alterable 10 "identity audit: this session's role can alter the Neon Auth tables (it owns them or belongs to their owner), so I05 and I06 assume their columns are Neon Auth's own" "$ALL_OUTS" \
+  'ALTER TABLE neon_auth."user" OWNER TO neondb_owner' 'ALTER TABLE neon_auth."user" OWNER TO postgres; GRANT SELECT ON neon_auth."user" TO neondb_owner' admin
+check 'real-neon-auth-alterable: two HOLD items' holds 2
+check 'real-neon-auth-alterable: recorded for each session in the manifest' bash -c "[ \"\$(grep -c 'neon_auth_alterable=true\$' '$EV/manifest.txt')\" -eq 5 ]"
+# Round 3, N2: a table in public, other than the nine, that a Data API role can read.
+real readable-public-table 10 'public: 1 relation(s) other than the nine commercial tables that a Data API role can read (named in the P2 evidence)' "$ALL_OUTS" \
+  'CREATE TABLE public.a1t_open(id int); GRANT SELECT ON public.a1t_open TO anonymous' 'DROP TABLE public.a1t_open'
+check 'real-readable-public-table: two HOLD items' holds 2
+check 'real-readable-public-table: the table is named in the evidence' grep -q 'a1t_open' "$EV/out/P2_private_schema_inventory.tsv"
+# Round 3, F2: every PG variable but the three files reaches psql cleared, those that would break the connection too.
+run_case real-pg-variables-cleared "$TEST_RUNNER" 'RUN A1' PATH="$REAL_PATH" PGSSLCERTMODE=require PGREQUIREAUTH=none PGSSLSNI=0 \
+  PGAPPNAME=a1t PGSYSCONFDIR=/nonexistent PGCONNECT_TIMEOUT=1 PGPASSWORD=a1t-not-the-password
+expect 'PG variables that would change or break the connection are cleared' 10 "$P2_HOLD"
+check 'real-pg-variables-cleared: every connection was neondb_owner on neondb over TLS' only_owner_sessions
 
 # B3: a hostile search path. A schema placed before pg_catalog shadows current_database(), which then writes; version
 # 1's unqualified guard runs it (shown first, as a control), version 2's qualified guard does not, and the search-path
