@@ -116,11 +116,11 @@ SQL
 
 # After P2, in the same read-only transaction, one row of the runner's own over pg_catalog: (2-5) every object outside
 # pool_platform_private that depends on one of its relations, functions or types, directly or through views and
-# functions outside it, with how many of them are views a Data API role can read (any column) and how many are
-# public functions or policies, and their names; (6-7) the objects inside it that P2 does not list (types and the
-# like); (8-9) the views in public that a Data API role can read, whatever they read; (10-11) the login event triggers
-# that run at every session start. Names have every non-printable character replaced; every name and operator is
-# qualified, so nothing here depends on the search path.
+# functions, with how many of them are views a Data API role can read (any column) and how many are public functions
+# or policies, and their names; (6-7) the objects inside it that P2 does not list (types and the like); (8-9) the
+# views in public that a Data API role can read, whatever they read; (10-11) the login event triggers that run at
+# every session start. Names have every non-printable character replaced; every name and operator is qualified, so
+# nothing here depends on the search path.
 IFS= read -r -d '' P2_EXTRA_SQL <<'SQL' || true
 WITH RECURSIVE
 k AS (
@@ -212,6 +212,7 @@ SQL
 MANIFEST=''
 HOLDS=''
 SHA_TOOL=''
+OUTCOME=''
 DONE=0
 
 now(){ date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -233,7 +234,10 @@ sha256_of(){ # file -> 64 lowercase hex characters, or failure; read from stdin 
 finalize(){ # outcome exit-code; fails if any evidence file cannot be hashed
   [ -n "$MANIFEST" ] || return 0
   note "finished $(now)"
-  note "outcome $1 exit $2"
+  if [ -n "$OUTCOME" ]; then note "outcome $1 exit $2 (the outcome $OUTCOME above did not complete)"
+  else note "outcome $1 exit $2"
+  fi
+  OUTCOME="$1 exit $2"
   local f h ok=0
   : > "$PP_OUT/sha256sums.txt"
   for f in "$PP_OUT"/manifest.txt "$PP_OUT"/src/* "$PP_OUT"/out/*; do

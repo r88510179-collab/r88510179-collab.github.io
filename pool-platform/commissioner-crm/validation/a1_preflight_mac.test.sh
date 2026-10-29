@@ -60,11 +60,16 @@ rm "$H/.ssh/crm_a1_signing_ed25519"
 cp "$KIT/A1_AUTHORIZATION.md.sig" "$WORK/auth.sig"
 cp "$H/.ssh/crm_a1_signing_ed25519.pub" "$WORK/pub.backup"
 cp "$KIT/A1_RUNNER_ACK.txt.sig" "$WORK/ack.sig"
-: > "$WORK/cert.pem"
+# Every path the entry or the environment names contains the planted secret, so a printed path fails the invariant.
+SECRETDIR="$WORK/dir-$SECRET"
+CERT="$SECRETDIR/cert.pem"
+MISSING_CERT="$SECRETDIR/missing.pem"
+mkdir -p "$SECRETDIR"
+: > "$CERT"
 write_service(){ # extra lines for the production entry
   {
     printf '# psql service file\n[other]\nhost=localhost\ndbname=postgres\n\n'
-    printf '[crm-a1-prod]\nhost=%s\nport=5432\ndbname=neondb\nuser=neondb_owner\nsslmode=verify-full\nsslrootcert=%s\n' "$HOST" "$WORK/cert.pem"
+    printf '[crm-a1-prod]\nhost=%s\nport=5432\ndbname=neondb\nuser=neondb_owner\nsslmode=verify-full\nsslrootcert=%s\n' "$HOST" "$CERT"
     printf '%s\n' "$@"
   } > "$H/.pg_service.conf"
 }
@@ -235,37 +240,39 @@ run no-checkout
 mv "$H/Documents/commissioner-crm-a1.moved" "$CO"
 expect no-checkout 1 "[STOP] there is no git checkout at $CO"
 
-echo '# the service entry'
+echo '# the service entry: nothing from it is printed'
 svc(){ # the whole service file, one argument per line
   printf '%s\n' "$@" > "$H/.pg_service.conf"
   chmod 600 "$H/.pg_service.conf"
 }
 PROD="host=$HOST"
+BASE=(dbname=neondb user=neondb_owner "sslrootcert=$CERT")
 reset_config; rm "$H/.pg_service.conf"
 run no-service-file
-expect no-service-file 1 "[STOP] there is no psql service file at $H/.pg_service.conf"
-reset_config; svc '[crm-a1-prod]' "host=ep-still-recipe-b5g7680z-pooler.c-7.us-east-2.aws.neon.tech" dbname=neondb user=neondb_owner "sslrootcert=$WORK/cert.pem"
+expect no-service-file 1 "[STOP] $H/.pg_service.conf does not exist or cannot be read"
+reset_config; svc '[crm-a1-prod]' "host=ep-still-recipe-b5g7680z-pooler.c-7.us-east-2.aws.neon.tech" "${BASE[@]}"
 run pooler
-expect pooler 1 '[STOP] the service entry in' 'uses the pooler host; A1 needs the direct host'
+expect pooler 1 "[STOP] the entry for this endpoint in $H/.pg_service.conf uses the pooler host; A1 needs one with the direct host $HOST"
 reset_config; svc '[elsewhere]' host=localhost dbname=neondb
 run no-entry
 expect no-entry 1 "[STOP] no entry in $H/.pg_service.conf has host=$HOST"
-reset_config; svc '[a]' "$PROD" dbname=neondb user=neondb_owner "sslrootcert=$WORK/cert.pem" '[b]' "$PROD" dbname=neondb user=neondb_owner "sslrootcert=$WORK/cert.pem"
+reset_config; svc "[a-$SECRET]" "$PROD" "${BASE[@]}" "[b-$SECRET]" "$PROD" "${BASE[@]}"
 run two-entries
-expect two-entries 1 "[STOP] more than one entry in $H/.pg_service.conf has host=$HOST (a b ): keep one"
-reset_config; write_service 'hostaddr=203.0.113.7'
-run hostaddr
-expect hostaddr 1 '[STOP] the entry [crm-a1-prod] sets hostaddr'
-# The runner pins the port, database and role, so other values in the entry are noted, not refused.
-reset_config; svc '[crm-a1-prod]' "$PROD" port=6543 dbname=neondb user=neondb_owner "sslrootcert=$WORK/cert.pem"
-run port
-expect port 0 '[note] the entry has port=6543; the runner connects with port=5432 regardless'
-reset_config; svc '[crm-a1-prod]' "$PROD" dbname=postgres user=neondb_owner "sslrootcert=$WORK/cert.pem"
-run dbname
-expect dbname 0 '[note] the entry has dbname=postgres; the runner connects with dbname=neondb regardless'
-reset_config; svc '[crm-a1-prod]' "$PROD" dbname=neondb user=authenticator "sslrootcert=$WORK/cert.pem"
-run user
-expect user 0 '[note] the entry has user=authenticator; the runner connects with user=neondb_owner regardless'
+expect two-entries 1 "[STOP] 2 entries in $H/.pg_service.conf have host=$HOST: keep only the one for A1"
+reset_config; svc "[crm $SECRET]" "$PROD" "${BASE[@]}"
+run entry-name
+expect entry-name 1 "[STOP] the entry with host=$HOST has a name (not shown) that is not only letters, digits, dot, underscore and hyphen"
+# The runner pins host, port, database, role and TLS mode, so other values there are noted, never printed. A whole
+# connection string pasted as the database is the reviewer's case: it carries the password.
+reset_config; svc '[crm-a1-prod]' "$PROD" "port=$SECRET" "dbname=postgresql://neondb_owner:$SECRET@$HOST/neondb" "user=$SECRET" "sslmode=$SECRET" "sslrootcert=$CERT"
+run pinned-values-differ
+expect pinned-values-differ 0 "[note] the entry's port is not 5432 (value not shown); the runner connects with port=5432 regardless" \
+  "[note] the entry's dbname is not neondb (value not shown); the runner connects with dbname=neondb regardless" \
+  "[note] the entry's user is not neondb_owner (value not shown); the runner connects with user=neondb_owner regardless" \
+  "[note] the entry's sslmode is not verify-full (value not shown); the runner connects with sslmode=verify-full regardless"
+reset_config; svc '[crm-a1-prod]' "$PROD" "${BASE[@]}"
+run pinned-values-absent
+expect pinned-values-absent 0 '[ok]   port=5432' '[ok]   dbname=neondb' '[ok]   user=neondb_owner' '[ok]   sslmode=verify-full'
 reset_config; svc '[crm-a1-prod]' "$PROD" dbname=neondb user=neondb_owner
 run no-rootcert
 expect no-rootcert 1 'has no sslrootcert, and' 'add the line sslrootcert=/etc/ssl/cert.pem'
@@ -274,68 +281,139 @@ run default-rootcert
 expect default-rootcert 0 "[ok]   no sslrootcert in the entry; $H/.postgresql/root.crt will be used" "[ok]   port=5432"
 reset_config; svc '[crm-a1-prod]' "$PROD" dbname=neondb user=neondb_owner sslrootcert=system
 run rootcert-system-16 FAKE_PSQL_VERSION=16.4
-expect rootcert-system-16 0 '[ok]   sslrootcert=system (the macOS trust store), from the entry [crm-a1-prod]'
+expect rootcert-system-16 0 "[ok]   the entry's sslrootcert is system (the macOS trust store)"
 run rootcert-system-15 FAKE_PSQL_VERSION=15.8
-expect rootcert-system-15 1 '[STOP] sslrootcert=system needs psql 16 or later'
+expect rootcert-system-15 1 "[STOP] the entry's sslrootcert is system, which needs psql 16 or later: use sslrootcert=/etc/ssl/cert.pem"
 reset_config; svc '[crm-a1-prod]' "$PROD" dbname=neondb user=neondb_owner
-run rootcert-from-environment PGSSLROOTCERT="$WORK/cert.pem"
-expect rootcert-from-environment 0 "[ok]   sslrootcert=$WORK/cert.pem, from PGSSLROOTCERT"
-run rootcert-environment-missing PGSSLROOTCERT="$WORK/missing.pem"
-expect rootcert-environment-missing 1 "[STOP] PGSSLROOTCERT has sslrootcert=$WORK/missing.pem, which does not exist"
-reset_config; svc '[crm-a1-prod]' "$PROD" dbname=neondb user=neondb_owner 'sslrootcert=~/cert.pem'
+run rootcert-from-environment PGSSLROOTCERT="$CERT"
+expect rootcert-from-environment 0 '[ok]   the root certificate file that PGSSLROOTCERT names exists (path not shown)'
+run rootcert-environment-missing PGSSLROOTCERT="$MISSING_CERT"
+expect rootcert-environment-missing 1 '[STOP] the root certificate file that PGSSLROOTCERT names does not exist or cannot be read (path not shown)'
+run rootcert-environment-relative PGSSLROOTCERT="certs-$SECRET/cert.pem"
+expect rootcert-environment-relative 1 '[STOP] PGSSLROOTCERT is not an absolute path (not shown)'
+reset_config; svc '[crm-a1-prod]' "$PROD" dbname=neondb user=neondb_owner "sslrootcert=~/$SECRET.pem"
 run rootcert-tilde
-expect rootcert-tilde 1 'write the full path, libpq does not expand ~'
-reset_config; svc '[crm-a1-prod]' "$PROD" dbname=neondb user=neondb_owner "sslrootcert=$WORK/missing.pem"
+expect rootcert-tilde 1 "[STOP] the entry's sslrootcert is not an absolute path (not shown): write the full path; libpq expands neither ~"
+reset_config; svc '[crm-a1-prod]' "$PROD" dbname=neondb user=neondb_owner "sslrootcert=$MISSING_CERT"
 run rootcert-missing
-expect rootcert-missing 1 "[STOP] the entry [crm-a1-prod] has sslrootcert=$WORK/missing.pem, which does not exist"
-reset_config; write_service 'sslmode=require'
+expect rootcert-missing 1 "[STOP] the root certificate file that the entry's sslrootcert names does not exist or cannot be read (path not shown)"
+reset_config; svc '[crm-a1-prod]' "$PROD" dbname=neondb user=neondb_owner 'sslrootcert='
+run rootcert-empty
+expect rootcert-empty 1 "[STOP] the entry's sslrootcert is empty: name the root certificate file"
+reset_config; write_service "sslmode=$SECRET"
 run duplicate-key
-expect duplicate-key 1 '[STOP] the entry [crm-a1-prod] gives sslmode more than once: keep one line for each'
-reset_config; svc '[crm-a1-prod]' "host=evil.example" "$PROD" dbname=neondb user=neondb_owner "sslrootcert=$WORK/cert.pem"
+expect duplicate-key 1 '[STOP] the entry [crm-a1-prod] sets sslmode more than once: keep one line for each'
+reset_config; svc '[crm-a1-prod]' "host=evil.example" "$PROD" "${BASE[@]}"
 run duplicate-host
 expect duplicate-host 1 "[STOP] no entry in $H/.pg_service.conf has host=$HOST"
-reset_config; svc '[crm-a1-prod]' "$PROD" dbname=neondb user=neondb_owner "sslrootcert=$WORK/cert.pem" sslmode=require
-run sslmode-require-only
-expect sslmode-require-only 0 '[note] the entry has sslmode=require; the runner uses sslmode=verify-full regardless'
-reset_config; svc '[crm a1]' "$PROD" dbname=neondb user=neondb_owner "sslrootcert=$WORK/cert.pem"
-run entry-name
-expect entry-name 1 '[STOP] the entry name [crm a1] may use only letters, digits, dot, underscore and hyphen'
-reset_config; write_service 'sslcompression verify'
-run odd-line
-expect odd-line 1 '[STOP] the entry [crm-a1-prod] has a line that is not key=value without spaces'
-reset_config; write_service "application_name=$SECRET" "options=-c statement_timeout=$SECRET"
-run other-keys
-expect other-keys 0 '[note] the entry also sets: application_name options'
+# What libpq rejects, the preflight refuses, without printing the line: a misspelt key, a line without =, a key with
+# a space, a line that is itself a password.
+reset_config; write_service "sslrootcrt=$SECRET"
+run misspelt-key
+expect misspelt-key 1 '[STOP] the entry [crm-a1-prod] has 1 line(s), not shown, that are not key=value with a key this preflight knows'
+reset_config; write_service "$SECRET" "$SECRET=1" "user = $SECRET" 'sslcompression verify'
+run unknown-lines
+expect unknown-lines 1 '[STOP] the entry [crm-a1-prod] has 4 line(s), not shown, that are not key=value with a key this preflight knows'
+# Keys libpq knows but A1 refuses, each with its reason; the value is never printed.
+for refused in "hostaddr=203.0.113.7|it sends the connection to an address instead of the host name" \
+               "options=-c search_path=x$SECRET|it can change the session, its search path for example, which the runner refuses" \
+               "replication=database|it opens a replication connection, which cannot run the checks" \
+               "sslsni=0|Neon routes the connection by its TLS server name, which libpq sends by default" \
+               "sslkeylogfile=/tmp/keys-$SECRET|it writes the session's TLS keys to a file" \
+               "service=other-$SECRET|libpq does not allow it inside an entry" \
+               "requiressl=1|libpq 18 rejects it, and the runner sets sslmode=verify-full" \
+               "sslpassword=$SECRET|A1 does not use it" \
+               "target_session_attrs=read-only|A1 does not use it"; do
+  line=${refused%%|*} key=${line%%=*}
+  reset_config; write_service "$line"
+  run "refused-$key"
+  expect "refused-$key" 1 "[STOP] the entry [crm-a1-prod] sets $key: remove that line (${refused#*|})"
+done
+reset_config; write_service "application_name=$SECRET" channel_binding=require "connect_timeout=1$SECRET" keepalives=1
+run allowed-extra-keys
+expect allowed-extra-keys 0 '[note] the entry also sets application_name channel_binding connect_timeout keepalives (values not shown)'
+# libpq's reading of the file: [ to the first ] names a section, the first section of a name counts, lines before
+# the first section and blank or comment lines are ignored, and CR LF line ends are fine.
+reset_config; svc "$PROD" "password=$SECRET" '[crm-a1-prod] # A1' '  # comment' '' "  $PROD" "${BASE[@]}"
+run section-reading
+expect section-reading 0 '[ok]   service entry [crm-a1-prod]'
+reset_config; svc '[crm-a1-prod]' "$PROD" "${BASE[@]}" '[crm-a1-prod]' "password=$SECRET"
+run later-duplicate-section
+expect later-duplicate-section 0 '[note] a later section is also named [crm-a1-prod]; libpq reads only this first one' 'has 1 line(s) for this host'
+reset_config; svc '[crm-a1-prod]' dbname=neondb '[crm-a1-prod]' "$PROD" "${BASE[@]}"
+run host-only-in-duplicate
+expect host-only-in-duplicate 1 "[STOP] no entry in $H/.pg_service.conf has host=$HOST" \
+  '[note] 1 section name(s) appear there more than once; libpq reads only the first section of each name'
+reset_config; printf '[crm-a1-prod]\r\nhost=%s\r\ndbname=neondb\r\nuser=neondb_owner\r\nsslrootcert=%s\r\n' "$HOST" "$CERT" > "$H/.pg_service.conf"
+run crlf
+expect crlf 0 '[ok]   service entry [crm-a1-prod]' "[ok]   the root certificate file that the entry's sslrootcert names exists (path not shown)"
+reset_config
+run service-file-environment PGSERVICEFILE="$H/.pg_service.conf"
+expect service-file-environment 0 "[ok]   service entry [crm-a1-prod] in the service file that PGSERVICEFILE names has host=$HOST"
+mv "$H/.pg_service.conf" "$SECRETDIR/service.conf"
+run service-file-environment-secret-path PGSERVICEFILE="$SECRETDIR/service.conf"
+expect service-file-environment-secret-path 0 '[ok]   service entry [crm-a1-prod] in the service file that PGSERVICEFILE names'
+mv "$SECRETDIR/service.conf" "$H/.pg_service.conf"
+run service-file-relative PGSERVICEFILE="dir-$SECRET/service.conf"
+expect service-file-relative 1 '[STOP] PGSERVICEFILE is not an absolute path (not shown)'
+run service-file-environment-missing PGSERVICEFILE="$SECRETDIR/none.conf"
+expect service-file-environment-missing 1 '[STOP] the service file that PGSERVICEFILE names does not exist or cannot be read'
 
-echo '# the password source'
+echo '# the password source: nothing from it is printed'
 reset_config; write_service "password=$SECRET"; chmod 644 "$H/.pg_service.conf"; rm "$H/.pgpass"
 run service-password-readable
 expect service-password-readable 1 '[note] the entry [crm-a1-prod] holds a password (not shown)' "chmod 600 \"$H/.pg_service.conf\""
 reset_config; write_service "password=$SECRET"; chmod 600 "$H/.pg_service.conf"; rm "$H/.pgpass"
 run service-password-private
 expect service-password-private 0 '[note] the entry [crm-a1-prod] holds a password (not shown)'
+cp "$H/.pg_service.conf" "$SECRETDIR/service.conf"; chmod 644 "$SECRETDIR/service.conf"
+run service-password-environment-readable PGSERVICEFILE="$SECRETDIR/service.conf"
+expect service-password-environment-readable 1 '[STOP] the entry holds a password, so make the service file private: run chmod 600 on the file that PGSERVICEFILE names'
+rm "$SECRETDIR/service.conf"
+reset_config; write_service "password= $SECRET"; rm "$H/.pgpass"
+run service-password-leading-space
+expect service-password-leading-space 1 '[STOP] the password in the entry [crm-a1-prod] (not shown) starts with a space or tab, which libpq keeps'
+reset_config; write_service 'password='
+run service-password-empty
+expect service-password-empty 0 '[note] the entry [crm-a1-prod] has an empty password line, so libpq takes the password from the password file' \
+  "[ok]   $H/.pgpass is private and has 1 line(s)"
 reset_config; chmod 644 "$H/.pgpass"
 run pgpass-readable
 expect pgpass-readable 1 "[STOP] $H/.pgpass is readable by others, so libpq ignores it: chmod 600 \"$H/.pgpass\""
 reset_config; rm "$H/.pgpass"
 run pgpass-missing
-expect pgpass-missing 1 "[STOP] there is no password file at $H/.pgpass"
+expect pgpass-missing 1 "[STOP] there is no password file at $H/.pgpass: create it with one line that starts with $HOST:5432:neondb:neondb_owner: and continues with the password, then run chmod 600 \"$H/.pgpass\""
 reset_config; write_pgpass "localhost:5432:neondb:neondb_owner:$SECRET" "$HOST:5432:postgres:neondb_owner:$SECRET"
 run pgpass-no-line
-expect pgpass-no-line 1 "has no line for this connection: add one that starts with $HOST:5432:neondb:neondb_owner: and continues with the password"
+expect pgpass-no-line 1 "[STOP] $H/.pgpass has no line for this connection: add one that starts with $HOST:5432:neondb:neondb_owner: and continues with the password"
 reset_config; write_pgpass "# a comment $SECRET" "*:*:*:*:$SECRET" "$HOST:5432:neondb:neondb_owner:$SECRET"
 run pgpass-two-lines
 expect pgpass-two-lines 0 'has 2 line(s) for this host' '[note] libpq uses the first of those lines'
-reset_config; mv "$H/.pgpass" "$H/elsewhere.pgpass"
-run pgpassfile-env PGPASSFILE="$H/elsewhere.pgpass"
-expect pgpassfile-env 0 "[ok]   $H/elsewhere.pgpass is private and has 1 line(s)"
-reset_config; mv "$H/.pgpass" "$H/elsewhere.pgpass"; write_service "passfile=$H/elsewhere.pgpass"
+reset_config; mv "$H/.pgpass" "$SECRETDIR/elsewhere.pgpass"
+run pgpassfile-environment PGPASSFILE="$SECRETDIR/elsewhere.pgpass"
+expect pgpassfile-environment 0 '[ok]   the password file that PGPASSFILE names is private and has 1 line(s)'
+chmod 644 "$SECRETDIR/elsewhere.pgpass"
+run pgpassfile-environment-readable PGPASSFILE="$SECRETDIR/elsewhere.pgpass"
+expect pgpassfile-environment-readable 1 '[STOP] the password file that PGPASSFILE names is readable by others, so libpq ignores it: run chmod 600 on it'
+run pgpassfile-environment-relative PGPASSFILE="dir-$SECRET/elsewhere.pgpass"
+expect pgpassfile-environment-relative 1 '[STOP] the password file that PGPASSFILE names is not an absolute path (not shown)'
+run pgpassfile-environment-missing PGPASSFILE="$SECRETDIR/none.pgpass"
+expect pgpassfile-environment-missing 1 '[STOP] the password file that PGPASSFILE names does not exist or cannot be read'
+rm -f "$SECRETDIR/elsewhere.pgpass"
+reset_config; mv "$H/.pgpass" "$SECRETDIR/elsewhere.pgpass"; write_service "passfile=$SECRETDIR/elsewhere.pgpass"
 run passfile-key
-expect passfile-key 0 "[ok]   $H/elsewhere.pgpass is private and has 1 line(s)"
+expect passfile-key 0 "[ok]   the password file that the entry's passfile names is private and has 1 line(s)"
+rm -f "$SECRETDIR/elsewhere.pgpass"
+reset_config; write_service "passfile=dir-$SECRET/elsewhere.pgpass"
+run passfile-key-relative
+expect passfile-key-relative 1 "[STOP] the password file that the entry's passfile names is not an absolute path (not shown)"
+reset_config; write_service 'passfile='
+run passfile-key-empty
+expect passfile-key-empty 1 '[STOP] the entry [crm-a1-prod] has an empty passfile line: remove it, or name the password file'
 reset_config
 run pgpassword-set PGPASSWORD="$SECRET"
 expect pgpassword-set 1 '[STOP] PGPASSWORD is set in this shell (value not shown)'
-run pg-variables PGHOST=elsewhere.example PGOPTIONS=-csearch_path=x PGCONNECT_TIMEOUT=9 PGAPPNAME=a1
+run pg-variables PGHOST="$SECRET.example" PGOPTIONS="-csearch_path=$SECRET" PGCONNECT_TIMEOUT=9 PGAPPNAME="$SECRET"
 expect pg-variables 0 '[note] this shell sets PGHOST PGOPTIONS (values not shown); the runner clears them' \
   '[note] this shell also sets PGAPPNAME PGCONNECT_TIMEOUT (values not shown); psql uses them as they are'
 

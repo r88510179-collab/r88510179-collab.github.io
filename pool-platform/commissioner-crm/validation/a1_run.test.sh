@@ -305,6 +305,23 @@ bindir nopsql none $RUNNER_TOOLS shasum
 bindir nogit "$FAKEBIN/psql" $(without git) shasum
 bindir noawk "$FAKEBIN/psql" $(without awk) shasum
 bindir notr "$FAKEBIN/psql" $(without tr) shasum
+cat > "$WORK/fake-shasum" <<'FAKE'
+#!/bin/bash
+# shasum stand-in: hashes stdin as shasum -a 256 does, but fails on the manifest once it records the HOLD outcome.
+t=$(/usr/bin/mktemp) || exit 1
+/bin/cat > "$t"
+if /bin/grep -qx 'outcome HOLD exit 10' "$t"; then /bin/rm -f "$t"; exit 1; fi
+/usr/bin/sha256sum < "$t"
+rc=$?
+/bin/rm -f "$t"
+exit "$rc"
+FAKE
+printf '#!/bin/bash\necho "ls: cannot open directory: Permission denied" >&2\nexit 2\n' > "$WORK/fake-ls"
+chmod 755 "$WORK/fake-shasum" "$WORK/fake-ls"
+bindir unhashable "$FAKEBIN/psql" $RUNNER_TOOLS
+ln -s "$WORK/fake-shasum" "$WORK/bin-unhashable/shasum"
+bindir lsfails "$FAKEBIN/psql" $(without ls) shasum
+ln -s "$WORK/fake-ls" "$WORK/bin-lsfails/ls"
 FAKE_PATH="$AWKBIN:$FAKEBIN:/usr/bin:/bin"
 REAL_PATH="$AWKBIN:$PGBIN:/usr/bin:/bin"
 
@@ -415,10 +432,12 @@ ALL_FILES="$P1 $P2 $P3 $CV $IA "
 ALL_OUTS='P1_identity_helpers_004.tsv P2_private_schema_inventory.tsv P3_crm_preconditions.tsv neon-catalog-verify.tsv neon-identity-audit.tsv '
 FIX_BASE="$WORK/fix/none"
 mkdir -p "$FIX_BASE"
-p2_hold(){ # relations functions foreign-keys views triggers outside-dependents: the P2 HOLD line
-  printf 'P2: pool_platform_private holds %s relation(s) and %s function(s); %s foreign key(s) and %s view dependency(ies) involve it, %s trigger(s) on its own relations call its code, and %s object(s) outside it depend on it' "$@"
+p2_hold(){ # relations functions other-objects foreign-keys views triggers outside-dependents: the P2 HOLD line
+  printf 'P2: pool_platform_private holds %s relation(s), %s function(s) and %s other object(s); %s foreign key(s) and %s view dependency(ies) involve it, %s trigger(s) on its own relations call its code, and %s object(s) outside it depend on it, directly or through views and functions' "$@"
 }
-P2_HOLD=$(p2_hold 1 1 0 0 0 0)
+P2_HOLD=$(p2_hold 1 1 0 0 0 0 0)
+P2_ABSENT='P2: pool_platform_private is absent, although the Data API listed it on 2026-10-28; the owner confirms why'
+EXTRA_ZERO="A1-EXTRA${TABC}0${TABC}0${TABC}0${TABC}${TABC}0${TABC}${TABC}0${TABC}${TABC}0${TABC}"
 
 # --- 1. the baseline, for real, through the test copy -----------------------------------------------------------------
 echo '# real server, test copy: the baseline'
@@ -430,7 +449,7 @@ for pair in "$P1 H99" "$P3 X99" "$CV C99" "$IA I99"; do
   set -- $pair
   check "real-baseline: $1 $2 PASS" said "$1: $2 PASS, every required check ok"
 done
-check "real-baseline: $P2 kept whole for the owner" said "$P2: HOLD, 4 inventory rows and the dependents row kept whole for the owner"
+check "real-baseline: $P2 kept whole for the owner" said "$P2: HOLD, 4 inventory rows and the runner's catalog row kept whole for the owner"
 check 'real-baseline: exactly one HOLD item (P2)' holds 1
 check 'real-baseline: all five outputs kept' outs "$ALL_OUTS"
 check 'real-baseline: no diagnostics from psql' [ -z "$(cat "$EV"/out/*.stderr)" ]
@@ -450,7 +469,10 @@ check 'real-baseline: the server ran BEGIN READ ONLY five times' [ "$(grep -c 'n
 check 'real-baseline: the server ran ROLLBACK five times' [ "$(grep -c 'neondb_owner@neondb LOG:  statement: ROLLBACK;' <<<"$BASELINE_LOG")" -eq 5 ]
 check 'real-baseline: the server saw no COMMIT, SET or write' bash -c "! grep -iE 'statement: *(COMMIT|END|SET |RESET|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|GRANT|REVOKE|TRUNCATE)' <<<\"\$1\"" _ "$BASELINE_LOG"
 check 'real-baseline: every connection was neondb_owner on neondb over TLS' only_owner_sessions
-check 'real-baseline: the dependents row is in the P2 output' grep -qx "A1-P2-DEPENDENTS${TABC}0${TABC}0${TABC}" "$EV/out/P2_private_schema_inventory.tsv"
+check 'real-baseline: the extra row, all zero, is in the P2 output' grep -qx "$EXTRA_ZERO" "$EV/out/P2_private_schema_inventory.tsv"
+check 'real-baseline: P2 ends with its row count, the extra row and its row count' \
+  [ "$(tail -n 3 "$EV/out/P2_private_schema_inventory.tsv" | tr '\t\n' '|#')" = "A1-ROWS 4#${EXTRA_ZERO//$TABC/|}#A1-ROWS 1#" ]
+check 'real-baseline: the overload check found nothing in public (pgcrypto included)' [ ! -s "$EV/out/P1_identity_helpers_004.stderr" ]
 # The recorded rows become the fake psql's fixtures, with the production host in the session row.
 mkdir -p "$WORK/fix/base"
 for f in "$EV"/out/*.tsv; do
@@ -538,6 +560,16 @@ pre out-documents-other-case 2 'PP_OUT is inside a folder that may be synced' PP
 check 'out-documents-other-case: the directory it created is removed' [ ! -e "$THOME/DOCUMENTS/a1-evidence" ]
 pre out-icloud 2 'PP_OUT is inside a folder that may be synced' PP_OUT="$WORK/icloud/a1-evidence"
 check 'out-icloud: the directory it created is removed' [ ! -e "$WORK/icloud/a1-evidence" ]
+# A leading //, which pwd -P keeps, changes no path comparison.
+pre out-documents-double-slash 2 'PP_OUT is inside a folder that may be synced' PP_OUT="/$THOME/Documents/a1-evidence"
+check 'out-documents-double-slash: the directory it created is removed' [ ! -e "$THOME/Documents/a1-evidence" ]
+pre home-double-slash 2 'PP_OUT is inside a folder that may be synced' HOME="/$THOME" PP_OUT="$THOME/Documents/a1-evidence"
+check 'home-double-slash: the directory it created is removed' [ ! -e "$THOME/Documents/a1-evidence" ]
+pre repo-double-slash 2 'PP_OUT is inside the repository' PP_REPO="/$CLONE" PP_OUT="$CLONE/evidence"
+check 'repo-double-slash: the directory it created is removed' [ ! -e "$CLONE/evidence" ]
+mkdir -p "$WORK/ev/ls-fails"
+pre ls-fails 2 'cannot list PP_OUT' PATH="$WORK/bin-lsfails" PP_OUT="$WORK/ev/ls-fails"
+check 'ls-fails: the existing directory is kept' [ -d "$WORK/ev/ls-fails" ]
 tamper(){ # name file: change one byte of a kit file in the tamper clone, run, restore
   local name=$1 file=$2
   printf ' ' >> "$TCLONE/$KIT/$file"
@@ -589,9 +621,19 @@ check 'fake-baseline: every file ran once, in order' files_run "$ALL_FILES"
 check 'fake-baseline: the manifest records the runner hash' manifest_has "a1_runner_sha256 $RUNNER_SHA"
 check 'fake-baseline: the staged runner copy is byte-identical' cmp -s "$RUNNER" "$EV/src/a1_run.sh"
 check 'fake-baseline: sha256sums.txt verifies' sums_verify
-DEPENDENTS_BLOCK=$(sed -n "/^IFS= read -r -d '' P2_DEPENDENTS_SQL <<'SQL' || true\$/,/^SQL\$/p" "$RUNNER" | sed '1d;$d')
+OVERLOAD_BLOCK=$(sed -n "/^IFS= read -r -d '' OVERLOAD_SQL <<'SQL' || true\$/,/^SQL\$/p" "$RUNNER" | sed '1d;$d')
+EXTRA_BLOCK=$(sed -n "/^IFS= read -r -d '' P2_EXTRA_SQL <<'SQL' || true\$/,/^SQL\$/p" "$RUNNER" | sed '1d;$d')
+OB_N=$(printf '%s\n' "$OVERLOAD_BLOCK" | wc -l)
+blocks_ok(){ # the overload check ends in its refusal; the extra-row query ends in psql's row count
+  printf '%s\n' "$OVERLOAD_BLOCK" | grep -q 'AS a1_no_overloads,$' || return 1
+  printf '%s\n' "$OVERLOAD_BLOCK" | grep -qx '\\if :a1_no_overloads' || return 1
+  [ "$(printf '%s\n' "$OVERLOAD_BLOCK" | sed -n '$p')" = '\endif' ] || return 1
+  printf '%s\n' "$EXTRA_BLOCK" | grep -q "^SELECT 'A1-EXTRA',\$" || return 1
+  [ "$(printf '%s\n' "$EXTRA_BLOCK" | sed -n '$p')" = "\\echo 'A1-ROWS' :ROW_COUNT" ]
+}
+check 'the runner holds the overload check and the extra-row query' blocks_ok
 script_ok(){ # every script the runner sent, line by line
-  local s n=1 a f
+  local s n=1 a f at
   for f in $ALL_FILES; do
     s="$CASE/fake/stdin.$n"
     a="$CASE/fake/args.$n"
@@ -603,21 +645,24 @@ script_ok(){ # every script the runner sent, line by line
     [ "$(sed -n 15p "$s")" = 'BEGIN READ ONLY;' ] || return 1
     [ "$(sed -n 16p "$s")" = "SELECT pg_catalog.current_setting('transaction_read_only') OPERATOR(pg_catalog.=) 'on' AS a1_read_only \\gset" ] || return 1
     [ "$(sed -n 17,21p "$s" | tr '\n' '|')" = "\\if :a1_read_only|\\else|\\echo 'A1 STOP: the transaction is not read-only'|\\quit|\\endif|" ] || return 1
-    sed -n 22p "$s" | grep -q "^SELECT 'A1-SESSION', CURRENT_USER, pg_catalog.current_database(), :'HOST', " || return 1
-    [ "$(sed -n 23p "$s")" = "\\i '$EV/src/$f'" ] || return 1
-    [ "$(sed -n 24p "$s")" = "\\echo 'A1-ROWS' :ROW_COUNT" ] || return 1
+    [ "$(sed -n "22,$((21 + OB_N))p" "$s")" = "$OVERLOAD_BLOCK" ] || return 1
+    at=$((22 + OB_N))
+    [ "$(sed -n "${at}p" "$s")" = '' ] || return 1
+    sed -n "$((at + 1))p" "$s" | grep -q "^SELECT 'A1-SESSION', CURRENT_USER, pg_catalog.current_database(), :'HOST', " || return 1
+    [ "$(sed -n "$((at + 2))p" "$s")" = "\\i '$EV/src/$f'" ] || return 1
+    [ "$(sed -n "$((at + 3))p" "$s")" = "\\echo 'A1-ROWS' :ROW_COUNT" ] || return 1
     if [ "$f" = "$P2" ]; then
-      [ "$(sed -n '25,$p' "$s" | sed '$d' | sed '$d')" = "$DEPENDENTS_BLOCK" ] || return 1
+      [ "$(sed -n "$((at + 4)),\$p" "$s" | sed '$d' | sed '$d')" = "$EXTRA_BLOCK" ] || return 1
     else
-      [ "$(sed -n '25p' "$s")" = '' ] && [ "$(wc -l < "$s")" -eq 26 ] || return 1
+      [ "$(sed -n "$((at + 4))p" "$s")" = '' ] && [ "$(wc -l < "$s")" -eq "$((at + 5))" ] || return 1
     fi
     [ "$(tail -n 1 "$s")" = 'ROLLBACK;' ] || return 1
-    ! sed -n 1,24p "$s" | grep -qiE '^[[:space:]]*(SET|RESET|COMMIT|END|ABORT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|GRANT|REVOKE)\b' || return 1
+    ! sed -n "1,$((at + 3))p" "$s" | grep -qiE '^[[:space:]]*(SET|RESET|COMMIT|END|ABORT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|GRANT|REVOKE)\b' || return 1
     [ "$(tr '\n' ' ' < "$a")" = "service=a1test host=$PROD_HOST port=5432 dbname=neondb user=neondb_owner sslmode=verify-full gssencmode=disable -X -w -q -A -t -F $(printf '\t') -v ON_ERROR_STOP=1 " ] || return 1
     n=$((n + 1))
   done
 }
-check 'fake-baseline: each script is the guard, the search-path check, BEGIN READ ONLY, the file and ROLLBACK, with no setting change' script_ok
+check 'fake-baseline: each script is the guard, the search-path check, BEGIN READ ONLY, the overload check, the file and ROLLBACK, with no setting change' script_ok
 env_ok(){ # psql saw none of the connection or session variables the test set, and the runner's own settings
   local e
   for e in "$CASE"/fake/env.*; do
@@ -652,6 +697,14 @@ for tool in shasum sha256sum openssl; do
 done
 run_case fake-restricted-path "$RUNNER" 'RUN A1' PATH="$WORK/bin-full-fake"
 expect 'only the listed tools on PATH' 10 "$P2_HOLD"
+run_case out-double-slash "$RUNNER" 'RUN A1' PP_OUT="/$WORK/ev/double-slash"
+expect 'a leading // in an evidence path that is fine' 10 "$P2_HOLD"
+run_case unhashable-evidence "$RUNNER" 'RUN A1' PATH="$WORK/bin-unhashable"
+expect 'an evidence file that cannot be hashed turns the HOLD into a STOP' 1 'the run ended unexpectedly with status 1'
+check 'unhashable-evidence: the HOLD items were shown first' said "$P2_HOLD"
+check 'unhashable-evidence: sha256sums.txt marks the manifest unhashable' grep -qx 'unhashable  manifest.txt' "$EV/sha256sums.txt"
+check 'unhashable-evidence: the last outcome in the manifest is the STOP, which says it replaces the HOLD' \
+  [ "$(grep '^outcome ' "$EV/manifest.txt" | tail -n 1)" = 'outcome STOP exit 1 (the outcome HOLD exit 10 above did not complete)' ]
 
 fix_new(){ rm -rf "$WORK/fix/$1"; cp -a "$FIX_BASE" "$WORK/fix/$1"; FIX="$WORK/fix/$1"; }
 fix_raw(){ # file awk-program: rewrite one fixture's lines (tab-separated) exactly as the program prints them
@@ -663,7 +716,7 @@ fix_edit(){ # file awk-program: as fix_raw, then the row counts set to match the
   local f="$FIX/${1%.sql}.stdout"
   fix_raw "$1" "$2"
   if [ "$1" = "$P2" ]; then
-    awk -F'\t' '/^A1-ROWS / { next } $1 == "A1-P2-DEPENDENTS" { dep[++d] = $0; next } { line[++k] = $0 }
+    awk -F'\t' '/^A1-ROWS / { next } $1 == "A1-EXTRA" { dep[++d] = $0; next } { line[++k] = $0 }
       END { for (i = 1; i <= k; i++) print line[i]; if (k > 0) print "A1-ROWS " (k - 1)
             for (j = 1; j <= d; j++) print dep[j]; if (k > 0) print "A1-ROWS 1" }' "$f" > "$f.new"
   else
@@ -759,21 +812,46 @@ fake p2-usage-behind-spoofing-comment 4 'STOP: a Data API role can use or create
 fake p2-named-by 4 'STOP: reviewed public code names the schema (function pool_platform_peek)' "$UPTO_P2" "$P2" '1; END { print "dependency", "named by reviewed public object", "", "function pool_platform_peek", "" }'
 fake p2-trigger-outside 4 'STOP: a trigger outside the schema runs its code (on pool_platform_entries calls pool_platform_private.audit())' "$UPTO_P2" "$P2" \
   '1; END { print "dependency", "trigger t_audit", "", "on pool_platform_entries calls pool_platform_private.audit()", "" }'
-fake p2-trigger-inside 10 "$(p2_hold 1 1 0 0 1 0)" "$ALL_FILES" "$P2" \
+fake p2-trigger-inside 10 "$(p2_hold 1 1 0 0 0 1 0)" "$ALL_FILES" "$P2" \
   '1; END { print "dependency", "trigger t_note", "", "on pool_platform_private.private_note calls pool_platform_private.private_helper()", "" }'
-fake p2-fk-view 10 "$(p2_hold 1 1 2 1 0 0)" "$ALL_FILES" "$P2" \
+fake p2-fk-view 10 "$(p2_hold 1 1 0 2 1 0 0)" "$ALL_FILES" "$P2" \
   '1; END { print "dependency", "foreign key a", "", "from x to y", ""; print "dependency", "foreign key b", "", "from y to z", ""; print "dependency", "view v", "", "reads public.pool_platform_pools", "" }'
-fake p2-absent 10 'P2: pool_platform_private is absent, although the Data API listed it on 2026-10-28, and 0 object(s) outside it depend on it' "$ALL_FILES" "$P2" \
+fake p2-absent 10 "$P2_ABSENT" "$ALL_FILES" "$P2" \
   '$1 == "schema" || $1 == "relation" || $1 == "function" { next } $1 == "provenance hint" { $4 = "schema absent (schema_oid=none, newest_commercial_fn_oid=1)" } 1'
 fake p2-absent-named-by 4 'STOP: reviewed public code names the schema' "$UPTO_P2" "$P2" \
   '$1 == "schema" || $1 == "relation" || $1 == "function" { next } $1 == "provenance hint" { $4 = "schema absent (schema_oid=none, newest_commercial_fn_oid=1)" } 1; END { print "dependency", "named by reviewed public object", "", "policy p on pool_platform_pools", "" }'
-fake p2-dependents-readable-view 4 'STOP: 1 view(s) outside the schema that a Data API role can read depend on it' "$UPTO_P2" "$P2" \
-  '$1 == "A1-P2-DEPENDENTS" { $2 = 2; $3 = 1; $4 = "rule _RETURN on view peek; default value for column id of table t" } 1'
-fake p2-dependents-held 10 "$(p2_hold 1 1 0 0 0 3)" "$ALL_FILES" "$P2" '$1 == "A1-P2-DEPENDENTS" { $2 = 3; $4 = "a; b; c" } 1'
-fake p2-dependents-missing 4 'MALFORMED: the dependents row is missing or malformed' "$UPTO_P2" "$P2" '$1 != "A1-P2-DEPENDENTS"'
-fake p2-dependents-twice 4 'MALFORMED: more than one dependents row' "$UPTO_P2" "$P2" '1; $1 == "A1-P2-DEPENDENTS" { print }'
-fake p2-dependents-malformed 4 'MALFORMED: the dependents row is missing or malformed' "$UPTO_P2" "$P2" '$1 == "A1-P2-DEPENDENTS" { $3 = "x" } 1'
-fake p2-dependents-extra-field 4 'MALFORMED: the dependents row is missing or malformed' "$UPTO_P2" "$P2" '$1 == "A1-P2-DEPENDENTS" { $0 = $0 "\textra" } 1'
+# The runner's extra row (11 fields): outside dependents, readable views and public code among them, their names;
+# the schema's other members; readable public views; login event triggers.
+fake p2-extra-readable-view 4 'STOP: 1 view(s) outside the schema that a Data API role can read depend on it' "$UPTO_P2" "$P2" \
+  '$1 == "A1-EXTRA" { $2 = 2; $3 = 1; $5 = "rule _RETURN on view peek; default value for column id of table t" } 1'
+fake p2-extra-public-code 4 'STOP: 1 public function(s) or polic(y/ies) depend on it' "$UPTO_P2" "$P2" \
+  '$1 == "A1-EXTRA" { $2 = 1; $4 = 1; $5 = "function a1t_count()" } 1'
+fake p2-extra-both 4 'STOP: 2 view(s) outside the schema that a Data API role can read depend on it; 1 public function(s) or polic(y/ies) depend on it' "$UPTO_P2" "$P2" \
+  '$1 == "A1-EXTRA" { $2 = 3; $3 = 2; $4 = 1; $5 = "a; b; c" } 1'
+fake p2-extra-held 10 "$(p2_hold 1 1 0 0 0 0 3)" "$ALL_FILES" "$P2" '$1 == "A1-EXTRA" { $2 = 3; $5 = "a; b; c" } 1'
+fake p2-extra-members 10 "$(p2_hold 1 1 2 0 0 0 0)" "$ALL_FILES" "$P2" '$1 == "A1-EXTRA" { $6 = 2; $7 = "type x; type y" } 1'
+fake p2-extra-public-views 10 'public: 1 view(s) that a Data API role can read (named in the P2 evidence); the AUTH-C verifier checks tables only, so the owner confirms what each exposes' \
+  "$ALL_FILES" "$P2" '$1 == "A1-EXTRA" { $8 = 1; $9 = "a1t_entries" } 1'
+check 'p2-extra-public-views: two HOLD items' holds 2
+check 'p2-extra-public-views: the P2 HOLD as well' said "$P2_HOLD"
+fake p2-extra-logins 10 "server: 1 login event trigger(s) run code at every session start, this run's included (named in the P2 evidence); the owner explains each" \
+  "$ALL_FILES" "$P2" '$1 == "A1-EXTRA" { $10 = 1; $11 = "a1t_login" } 1'
+check 'p2-extra-logins: two HOLD items' holds 2
+fake p2-absent-public-views-logins 10 "$P2_ABSENT" "$ALL_FILES" "$P2" \
+  '$1 == "schema" || $1 == "relation" || $1 == "function" { next } $1 == "provenance hint" { $4 = "schema absent (schema_oid=none, newest_commercial_fn_oid=1)" } $1 == "A1-EXTRA" { $8 = 1; $9 = "v"; $10 = 2; $11 = "a; b" } 1'
+check 'p2-absent-public-views-logins: three HOLD items' holds 3
+check 'p2-absent-public-views-logins: the public views' said 'public: 1 view(s) that a Data API role can read'
+check 'p2-absent-public-views-logins: the login triggers' said 'server: 2 login event trigger(s) run code at every session start'
+fake p2-absent-with-dependents 4 'MALFORMED: the extra row lists objects of an absent schema' "$UPTO_P2" "$P2" '$1 == "schema" || $1 == "relation" || $1 == "function" { next } $1 == "provenance hint" { $4 = "schema absent (schema_oid=none, newest_commercial_fn_oid=1)" } $1 == "A1-EXTRA" { $2 = 1; $5 = "x" } 1'
+fake p2-absent-with-members 4 'MALFORMED: the extra row lists objects of an absent schema' "$UPTO_P2" "$P2" '$1 == "schema" || $1 == "relation" || $1 == "function" { next } $1 == "provenance hint" { $4 = "schema absent (schema_oid=none, newest_commercial_fn_oid=1)" } $1 == "A1-EXTRA" { $6 = 1; $7 = "x" } 1'
+fake p2-extra-missing 4 'MALFORMED: the extra row is missing or malformed' "$UPTO_P2" "$P2" '$1 != "A1-EXTRA"'
+fake p2-extra-twice 4 'MALFORMED: more than one extra row' "$UPTO_P2" "$P2" '1; $1 == "A1-EXTRA" { print }'
+for field in 2 3 4 6 8 10; do
+  fake "p2-extra-field-$field-not-a-count" 4 'MALFORMED: the extra row is missing or malformed' "$UPTO_P2" "$P2" "\$1 == \"A1-EXTRA\" { \$$field = \"1x\" } 1"
+done
+fake p2-extra-extra-field 4 'MALFORMED: the extra row is missing or malformed' "$UPTO_P2" "$P2" '$1 == "A1-EXTRA" { $0 = $0 "\textra" } 1'
+fake p2-extra-short 4 'MALFORMED: the extra row is missing or malformed' "$UPTO_P2" "$P2" '$1 == "A1-EXTRA" { print $1, $2, $3, $4, $5, $6, $7, $8, $9, $10; next } 1'
+rawfake p2-extra-renamed 4 'MALFORMED: the extra row is missing or malformed' "$UPTO_P2" "$P2" '$1 == "A1-EXTRA" { $1 = "A1-EXTRAS" } 1'
 fake p2-unknown-kind 4 'MALFORMED: an unknown row kind' "$UPTO_P2" "$P2" '1; END { print "grant", "x", "", "y", "" }'
 fake p2-unknown-dependency 4 'MALFORMED: an unknown dependency row' "$UPTO_P2" "$P2" '1; END { print "dependency", "sequence s", "", "y", "" }'
 fake p2-two-provenance 4 'MALFORMED: expected one provenance row, found 2' "$UPTO_P2" "$P2" '1; $1 == "provenance hint" { print }'
@@ -788,8 +866,8 @@ fake p2-tab-in-value 4 'has 6 fields, not 5' "$UPTO_P2" "$P2" '$1 == "relation" 
 fake p2-empty 4 'MALFORMED: the output is empty' "$UPTO_P2" "$P2" '0'
 fake p2-blank-line 4 'has 0 fields, not 5' "$UPTO_P2" "$P2" '$1 == "relation" { print; print ""; next } 1'
 rawfake p2-line-break-in-value 4 'MALFORMED: 5 lines for 4 rows: a value holds a line break' "$UPTO_P2" "$P2" '$1 == "relation" { print "relation", "x", "neondb_owner", "kind=r", ""; print "relation", "decoy", "neondb_owner", "kind=r", "1"; next } 1'
-rawfake p2-after-end 4 'MALFORMED: the output continues after the dependents row' "$UPTO_P2" "$P2" '1; END { print "relation", "late", "neondb_owner", "kind=r", "1" }'
-rawfake p2-no-final-count 4 'MALFORMED: the output ends before the dependents row and its row count' "$UPTO_P2" "$P2" '{ line[NR] = $0 } END { for (i = 1; i < NR; i++) print line[i] }'
+rawfake p2-after-end 4 'MALFORMED: the output continues after the extra row' "$UPTO_P2" "$P2" '1; END { print "relation", "late", "neondb_owner", "kind=r", "1" }'
+rawfake p2-no-final-count 4 'MALFORMED: the output ends before the extra row and its row count' "$UPTO_P2" "$P2" '{ line[NR] = $0 } END { for (i = 1; i < NR; i++) print line[i] }'
 # The process side: psql's exit code, its diagnostics, the guard's message, an interruption.
 fakeproc(){ # name code text files-run setup-function file-base
   local name=$1 code=$2 text=$3 files=$4
@@ -817,6 +895,8 @@ check 'psql-diagnostics-escape: the escape character never reaches the terminal'
 fakeproc guard-refusal 3 'neon-catalog-verify.sql: not the production endpoint, database and owner' "$UPTO_CV" guard_says neon-catalog-verify
 fakeproc search-path-refusal 3 'P1_identity_helpers_004.sql: the search path is not exactly pg_catalog, public' "$UPTO_P1" path_says P1_identity_helpers_004
 fakeproc not-read-only 3 'P2_private_schema_inventory.sql: the transaction is not read-only' "$UPTO_P2" ro_says P2_private_schema_inventory
+overload_says(){ printf "A1 STOP: public holds functions or operators that can take the place of pg_catalog ones in the five files: 'lower(name)'\n" > "$FIX/$1.stdout"; }
+fakeproc overload-refusal 3 "P3_crm_preconditions.sql: public holds functions or operators that can take the place of pg_catalog ones in the five files: 'lower(name)'" "$UPTO_P3" overload_says P3_crm_preconditions
 fakeproc interrupted-term 143 'the run ended unexpectedly with status 143' "$UPTO_P3" signal P3_crm_preconditions TERM
 check 'interrupted-term: the manifest records the STOP' manifest_has 'outcome STOP exit 143'
 check 'interrupted-term: sha256sums.txt verifies' sums_verify
@@ -934,22 +1014,114 @@ real p2-trigger-name-with-tabs 4 'P2_private_schema_inventory.sql: MALFORMED: li
   "CREATE FUNCTION pool_platform_private.a1t_trg() RETURNS trigger LANGUAGE plpgsql AS \$\$BEGIN RETURN NEW; END\$\$; CREATE TABLE public.a1t_public(id int); DO \$\$ BEGIN EXECUTE format('CREATE TRIGGER %I BEFORE INSERT ON public.a1t_public FOR EACH ROW EXECUTE FUNCTION pool_platform_private.a1t_trg()', 't' || chr(9) || 'x' || chr(9) || 'on pool_platform_private.private_note'); END \$\$" \
   'DROP TABLE public.a1t_public; DROP FUNCTION pool_platform_private.a1t_trg()'
 check 'real-p2-trigger-name-with-tabs: refused for its field count' said 'fields, not 5'
-real p2-trigger-inside 10 "$(p2_hold 1 2 0 0 1 0)" "$ALL_OUTS" \
+real p2-trigger-inside 10 "$(p2_hold 1 2 0 0 0 1 0)" "$ALL_OUTS" \
   'CREATE FUNCTION pool_platform_private.a1t_trg() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NEW; END$$; CREATE TRIGGER a1t_t BEFORE INSERT ON pool_platform_private.private_note FOR EACH ROW EXECUTE FUNCTION pool_platform_private.a1t_trg()' \
   'DROP TRIGGER a1t_t ON pool_platform_private.private_note; DROP FUNCTION pool_platform_private.a1t_trg()'
-real p2-foreign-key-in 10 "$(p2_hold 1 1 1 0 0 1)" "$ALL_OUTS" \
+real p2-foreign-key-in 10 "$(p2_hold 1 1 0 1 0 0 1)" "$ALL_OUTS" \
   'CREATE TABLE public.a1t_ref(id int REFERENCES pool_platform_private.private_note(id))' 'DROP TABLE public.a1t_ref'
-real p2-absent 10 'P2: pool_platform_private is absent, although the Data API listed it on 2026-10-28, and 0 object(s) outside it depend on it' "$ALL_OUTS" \
+real p2-absent 10 "$P2_ABSENT" "$ALL_OUTS" \
   'ALTER SCHEMA pool_platform_private RENAME TO a1t_renamed' 'ALTER SCHEMA a1t_renamed RENAME TO pool_platform_private'
 # What P2's own rows cannot show: objects outside the schema that depend on it.
 real p2-readable-public-view 4 'P2_private_schema_inventory.sql: STOP: 1 view(s) outside the schema that a Data API role can read depend on it' "$O2" \
   'CREATE VIEW public.a1t_peek AS SELECT id, note FROM pool_platform_private.private_note; GRANT SELECT ON public.a1t_peek TO authenticated' 'DROP VIEW public.a1t_peek'
 check 'real-p2-readable-public-view: the view is named in the evidence' grep -q 'rule _RETURN on view a1t_peek' "$EV/out/P2_private_schema_inventory.tsv"
-real p2-unreadable-public-view 10 "$(p2_hold 1 1 0 0 0 1)" "$ALL_OUTS" \
+real p2-unreadable-public-view 10 "$(p2_hold 1 1 0 0 0 0 1)" "$ALL_OUTS" \
   'CREATE VIEW public.a1t_peek AS SELECT id, note FROM pool_platform_private.private_note' 'DROP VIEW public.a1t_peek'
-real p2-default-calls-private-code 10 "$(p2_hold 1 1 0 0 0 1)" "$ALL_OUTS" \
+real p2-default-calls-private-code 10 "$(p2_hold 1 1 0 0 0 0 1)" "$ALL_OUTS" \
   'CREATE TABLE public.a1t_def(id int DEFAULT pool_platform_private.private_helper())' 'DROP TABLE public.a1t_def'
 check 'real-p2-default-calls-private-code: the default is named in the evidence' grep -q 'default value for column id of table a1t_def' "$EV/out/P2_private_schema_inventory.tsv"
+P2OUT(){ printf '%s' "$EV/out/P2_private_schema_inventory.tsv"; }
+# Round 2, M1: a view a Data API role can read, through a column grant, a chain of views, a function outside the
+# schema, or as a materialized view.
+STOP_P2_READ='P2_private_schema_inventory.sql: STOP: 1 view(s) outside the schema that a Data API role can read depend on it'
+real p2-column-grant-view 4 "$STOP_P2_READ" "$O2" \
+  'CREATE VIEW public.a1t_peek AS SELECT id, note FROM pool_platform_private.private_note; GRANT SELECT (note) ON public.a1t_peek TO anonymous' 'DROP VIEW public.a1t_peek'
+real p2-two-view-chain 4 "$STOP_P2_READ" "$O2" \
+  'CREATE VIEW public.a1t_inner AS SELECT id, note FROM pool_platform_private.private_note; CREATE VIEW public.a1t_outer AS SELECT * FROM public.a1t_inner; GRANT SELECT ON public.a1t_outer TO authenticated' \
+  'DROP VIEW public.a1t_outer; DROP VIEW public.a1t_inner'
+check 'real-p2-two-view-chain: the outer view is named in the evidence' grep -q 'rule _RETURN on view a1t_outer' "$(P2OUT)"
+check 'real-p2-two-view-chain: so is the inner one' grep -q 'rule _RETURN on view a1t_inner' "$(P2OUT)"
+real p2-view-through-function 4 "$STOP_P2_READ" "$O2" \
+  'CREATE SCHEMA a1t_fn; CREATE FUNCTION a1t_fn.notes() RETURNS SETOF text LANGUAGE sql STABLE SECURITY DEFINER BEGIN ATOMIC SELECT note FROM pool_platform_private.private_note; END; CREATE VIEW public.a1t_via AS SELECT a1t_fn.notes() AS note; GRANT SELECT ON public.a1t_via TO anonymous' \
+  'DROP SCHEMA a1t_fn CASCADE'
+check 'real-p2-view-through-function: the view is named in the evidence' grep -q 'rule _RETURN on view a1t_via' "$(P2OUT)"
+real p2-readable-matview 4 "$STOP_P2_READ" "$O2" \
+  'CREATE MATERIALIZED VIEW public.a1t_mv AS SELECT id, note FROM pool_platform_private.private_note; GRANT SELECT ON public.a1t_mv TO anonymous' 'DROP MATERIALIZED VIEW public.a1t_mv'
+# Round 2, m3: public code that depends on the schema, even where P2 sees no source text.
+real p2-public-function-sql-body 4 'P2_private_schema_inventory.sql: STOP: 1 public function(s) or polic(y/ies) depend on it' "$O2" \
+  'CREATE FUNCTION public.a1t_count() RETURNS bigint LANGUAGE sql BEGIN ATOMIC SELECT count(*) FROM pool_platform_private.private_note; END' 'DROP FUNCTION public.a1t_count()'
+check 'real-p2-public-function-sql-body: P2 itself does not see it (the body has no source text)' bash -c "! grep -q 'named by reviewed public object' '$(P2OUT)'"
+real p2-policy-uses-private-code 4 'STOP: reviewed public code names the schema (policy a1t_p on a1t_pol); 1 public function(s) or polic(y/ies) depend on it' "$O2" \
+  'CREATE TABLE public.a1t_pol(id int); ALTER TABLE public.a1t_pol ENABLE ROW LEVEL SECURITY; CREATE POLICY a1t_p ON public.a1t_pol USING (pool_platform_private.private_helper() = 1)' \
+  'DROP TABLE public.a1t_pol'
+# Round 2, NITs: the schema's other members, the views in public a Data API role can read, login event triggers.
+real p2-private-type-used-outside 10 "$(p2_hold 1 1 1 0 0 0 1)" "$ALL_OUTS" \
+  "CREATE TYPE pool_platform_private.a1t_kind AS ENUM ('a', 'b'); CREATE TABLE public.a1t_typed(k pool_platform_private.a1t_kind)" \
+  'DROP TABLE public.a1t_typed; DROP TYPE pool_platform_private.a1t_kind'
+check 'real-p2-private-type-used-outside: the type is named in the evidence' grep -q 'type pool_platform_private.a1t_kind' "$(P2OUT)"
+check 'real-p2-private-type-used-outside: so is the column that uses it' grep -q 'column k of table a1t_typed' "$(P2OUT)"
+real p2-readable-public-view-elsewhere 10 'public: 1 view(s) that a Data API role can read (named in the P2 evidence); the AUTH-C verifier checks tables only, so the owner confirms what each exposes' "$ALL_OUTS" \
+  'CREATE VIEW public.a1t_entries AS SELECT * FROM public.pool_platform_entries; GRANT SELECT ON public.a1t_entries TO anonymous' 'DROP VIEW public.a1t_entries'
+check 'real-p2-readable-public-view-elsewhere: two HOLD items' holds 2
+check 'real-p2-readable-public-view-elsewhere: the view is named in the evidence' grep -q 'a1t_entries' "$(P2OUT)"
+real p2-login-event-trigger 10 "server: 1 login event trigger(s) run code at every session start, this run's included (named in the P2 evidence); the owner explains each" "$ALL_OUTS" \
+  'CREATE SCHEMA a1t_ev; CREATE FUNCTION a1t_ev.on_login() RETURNS event_trigger LANGUAGE plpgsql AS $$BEGIN PERFORM 1; END$$; CREATE EVENT TRIGGER a1t_login ON login EXECUTE FUNCTION a1t_ev.on_login()' \
+  'DROP EVENT TRIGGER a1t_login; DROP SCHEMA a1t_ev CASCADE' admin
+check 'real-p2-login-event-trigger: two HOLD items' holds 2
+check 'real-p2-login-event-trigger: the trigger is named in the evidence' grep -q 'a1t_login' "$(P2OUT)"
+# Every name the runner's own queries print reaches the evidence on one line, non-printable characters replaced.
+HOSTILE="'a1t' || chr(10) || 'A1-ROWS 9' || chr(9) || 'x'"
+on_one_line(){ grep -qF 'a1t?A1-ROWS 9?x' "$(P2OUT)"; }
+real p2-hostile-dependent-name 10 "$(p2_hold 1 1 0 0 0 0 1)" "$ALL_OUTS" \
+  "DO \$\$ BEGIN EXECUTE format('CREATE VIEW public.%I AS SELECT id FROM pool_platform_private.private_note', $HOSTILE); END \$\$" \
+  "DO \$\$ BEGIN EXECUTE format('DROP VIEW public.%I', $HOSTILE); END \$\$"
+check 'real-p2-hostile-dependent-name: the name is on one line, its line break and tab replaced' on_one_line
+real p2-hostile-member-name 10 "$(p2_hold 1 1 1 0 0 0 0)" "$ALL_OUTS" \
+  "DO \$\$ BEGIN EXECUTE format('CREATE TYPE pool_platform_private.%I AS ENUM (''a'')', $HOSTILE); END \$\$" \
+  "DO \$\$ BEGIN EXECUTE format('DROP TYPE pool_platform_private.%I', $HOSTILE); END \$\$"
+check 'real-p2-hostile-member-name: the name is on one line, its line break and tab replaced' on_one_line
+real p2-hostile-public-view-name 10 'public: 1 view(s) that a Data API role can read' "$ALL_OUTS" \
+  "DO \$\$ BEGIN EXECUTE format('CREATE VIEW public.%I AS SELECT 1 AS one', $HOSTILE); EXECUTE format('GRANT SELECT ON public.%I TO anonymous', $HOSTILE); END \$\$" \
+  "DO \$\$ BEGIN EXECUTE format('DROP VIEW public.%I', $HOSTILE); END \$\$"
+check 'real-p2-hostile-public-view-name: the name is on one line, its line break and tab replaced' on_one_line
+real p2-hostile-login-trigger-name 10 'server: 1 login event trigger(s) run code at every session start' "$ALL_OUTS" \
+  "CREATE SCHEMA a1t_ev; CREATE FUNCTION a1t_ev.on_login() RETURNS event_trigger LANGUAGE plpgsql AS \$\$BEGIN PERFORM 1; END\$\$; DO \$\$ BEGIN EXECUTE format('CREATE EVENT TRIGGER %I ON login EXECUTE FUNCTION a1t_ev.on_login()', $HOSTILE); END \$\$" \
+  "DO \$\$ BEGIN EXECUTE format('DROP EVENT TRIGGER %I', $HOSTILE); END \$\$; DROP SCHEMA a1t_ev CASCADE" admin
+check 'real-p2-hostile-login-trigger-name: the name is on one line, its line break and tab replaced' on_one_line
+
+# Round 2, B1: a function or operator in public that a pinned file would call instead of the pg_catalog one stops
+# the run before any file; a twin with exactly the same signature is always hidden by pg_catalog and is not refused.
+STOP_OVERLOAD='P1_identity_helpers_004.sql: public holds functions or operators that can take the place of pg_catalog ones in the five files:'
+only_the_refusal(){ [ "$(cat "$EV/out/P1_identity_helpers_004.tsv")" = "A1 STOP: ${STOP_OVERLOAD#*: } $1" ]; }
+real overload-has-schema-privilege 3 "$STOP_OVERLOAD 'has_schema_privilege(text,oid,text)'" "$O1" \
+  "GRANT CREATE ON SCHEMA public TO anonymous; CREATE FUNCTION public.has_schema_privilege(text, oid, text) RETURNS boolean LANGUAGE sql AS 'SELECT true'; REVOKE EXECUTE ON FUNCTION public.has_schema_privilege(text, oid, text) FROM PUBLIC" \
+  'DROP FUNCTION public.has_schema_privilege(text, oid, text); REVOKE CREATE ON SCHEMA public FROM anonymous'
+check 'real-overload-has-schema-privilege: no file ran' only_the_refusal "'has_schema_privilege(text,oid,text)'"
+real overload-convert-to 3 "$STOP_OVERLOAD 'convert_to(text,text)'" "$O1" \
+  "CREATE FUNCTION public.convert_to(text, text) RETURNS bytea LANGUAGE sql AS 'SELECT NULL::bytea'" 'DROP FUNCTION public.convert_to(text, text)'
+check 'real-overload-convert-to: no file ran' only_the_refusal "'convert_to(text,text)'"
+real overload-operator 3 "$STOP_OVERLOAD '=(name,character varying)'" "$O1" \
+  "CREATE FUNCTION public.a1t_eq(name, varchar) RETURNS boolean LANGUAGE sql AS 'SELECT true'; CREATE OPERATOR public.= (LEFTARG = name, RIGHTARG = varchar, FUNCTION = public.a1t_eq)" \
+  'DROP OPERATOR public.= (name, varchar); DROP FUNCTION public.a1t_eq(name, varchar)'
+real overload-default-argument 3 "$STOP_OVERLOAD 'public.substr(text,integer,integer)'" "$O1" \
+  "CREATE FUNCTION public.substr(text, integer, integer DEFAULT 3) RETURNS text LANGUAGE sql AS 'SELECT ''x'''" 'DROP FUNCTION public.substr(text, integer, integer)'
+# A line break in a listed name would cut the refusal short; replaced, the whole name is shown.
+NL_DOMAIN=$(printf 'public."a1t\nx"')
+real overload-hostile-name 3 "$STOP_OVERLOAD 'lower(\"a1t?x\")'" "$O1" \
+  "CREATE DOMAIN $NL_DOMAIN AS text; CREATE FUNCTION public.lower($NL_DOMAIN) RETURNS text LANGUAGE sql AS 'SELECT ''x'''" \
+  "DROP FUNCTION public.lower($NL_DOMAIN); DROP DOMAIN $NL_DOMAIN"
+real overload-identical-twin 10 "$P2_HOLD" "$ALL_OUTS" \
+  "CREATE FUNCTION public.lower(text) RETURNS text LANGUAGE sql AS 'SELECT ''x'''; REVOKE EXECUTE ON FUNCTION public.lower(text) FROM PUBLIC" 'DROP FUNCTION public.lower(text)'
+check 'real-overload-identical-twin: hidden by pg_catalog, so only the P2 HOLD' holds 1
+# A search path setting holding a tab, in a schema that does not exist (so the effective path stays pg_catalog,
+# public): the session row reports it with the tab replaced.
+admin -d postgres > /dev/null <<'SQL'
+DO $$ BEGIN EXECUTE 'ALTER ROLE neondb_owner IN DATABASE neondb SET search_path = "$user", public, ' || pg_catalog.quote_ident('a1t' || chr(9) || 'x'); END $$;
+SQL
+run_case real-search-path-setting-with-tab "$TEST_RUNNER" 'RUN A1' PATH="$REAL_PATH"
+admin -d postgres -c 'ALTER ROLE neondb_owner IN DATABASE neondb RESET search_path' > /dev/null
+expect real-search-path-setting-with-tab 10 "$P2_HOLD"
+check 'real-search-path-setting-with-tab: the session row shows the setting with its tab replaced' grep -qF 'public, "a1t?x"' "$EV/out/P1_identity_helpers_004.tsv"
 
 # B3: a hostile search path. A schema placed before pg_catalog shadows current_database(), which then writes; version
 # 1's unqualified guard runs it (shown first, as a control), version 2's qualified guard does not, and the search-path

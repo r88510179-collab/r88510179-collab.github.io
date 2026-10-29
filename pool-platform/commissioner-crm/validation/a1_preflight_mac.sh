@@ -1,9 +1,9 @@
 #!/bin/bash
 # A1 preflight for the owner's Mac. It checks, without connecting to anything, that the A1 files, the two detached
 # signatures and the psql configuration are ready, and then prints the exact A1 command to use after the separate
-# "Run A1 now" approval. It reads the psql service and password files only to check their shape: it never prints a
-# password, a key or a connection string, never opens the private signing key, and changes nothing. Run it yourself,
-# in Terminal:
+# "Run A1 now" approval. It reads the psql service and password files only to check them, and prints no value from
+# either (only key names, counts and whether each value is what A1 needs); it never prints a password, a key or a
+# connection string, never opens the private signing key, and changes nothing. Run it yourself, in Terminal:
 #
 #   bash "$HOME/Documents/commissioner-crm-a1/pool-platform/commissioner-crm/validation/a1_preflight_mac.sh"
 #
@@ -22,10 +22,11 @@ BRANCH='ccr-321cd6b3-fu8f1j'
 HOST='ep-still-recipe-b5g7680z.c-7.us-east-2.aws.neon.tech'
 POOLER_HOST='ep-still-recipe-b5g7680z-pooler.c-7.us-east-2.aws.neon.tech'
 AUTHC='2c6e2a805fa816638808cb2d96d430ee177453e6'
-RUNNER_SHA256='675bc5a9e0115a02c0e308a07e8f4d849b4a5d03ba2977841315d7b3441b51c2'
-ACK_SHA256='5f97d777a13a59802c1e8a220f13553ff40c49359cb7893e04ab1c383468773c'
+RUNNER_SHA256='314ef9e4f0d0eeb264ce51cbc30f4f10a52be07179a76512da53820c2f3400b5'
+ACK_SHA256='cccc8c1383d9ea650460424c075a28f9f0e0d6d20c52d1f151fe2841cb21b1df'
 OLD_RUNNER_SHA256='d63654bc4ccd91ae88bbf1641527b0827b0e13272916554fb837453db9c78557'
 
+TAB=$(printf '\t')
 problems=0
 ok(){ printf '[ok]   %s\n' "$*"; }
 note(){ printf '[note] %s\n' "$*"; }
@@ -142,122 +143,199 @@ else
   [ -z "$PSQL_DIR_PREFIX" ] || note "psql is not on PATH; the A1 command below puts ${PSQL%/psql} first"
 fi
 
-# 5. The service entry for the production host: names and non-secret values only.
-SERVICE_FILE=${PGSERVICEFILE:-$HOME/.pg_service.conf}
+# 5. The service entry for the production host. Nothing read from the service file or the password file is printed:
+# only key names from the two lists below, counts, and whether each value is what A1 needs, since a value can be
+# anything, a password pasted into the wrong line included. PGSERVICEFILE, PGPASSFILE and PGSSLROOTCERT are not
+# printed either.
+# The keys the entry may set. libpq 14 and later know each one; the runner's connection string overrides host, port,
+# dbname, user, sslmode and gssencmode, and the others only tune the connection.
+KEYS_OK=' host port dbname user sslmode gssencmode sslrootcert password passfile channel_binding connect_timeout application_name fallback_application_name keepalives keepalives_idle keepalives_interval keepalives_count tcp_user_timeout '
+# The other libpq keys, refused: A1 needs none of them, and several change or break its connection.
+KEYS_REFUSED=' service hostaddr options replication sslsni sslkeylogfile requiressl sslnegotiation sslcompression sslcert sslkey sslpassword sslcertmode sslcrl sslcrldir requirepeer ssl_min_protocol_version ssl_max_protocol_version min_protocol_version max_protocol_version require_auth krbsrvname gsslib gssdelegation target_session_attrs load_balance_hosts client_encoding scram_client_key scram_server_key oauth_issuer oauth_client_id oauth_client_secret oauth_scope '
+refusal(){ # refused key -> why
+  case $1 in
+    service) printf 'libpq does not allow it inside an entry' ;;
+    hostaddr) printf 'it sends the connection to an address instead of the host name' ;;
+    options) printf 'it can change the session, its search path for example, which the runner refuses' ;;
+    replication) printf 'it opens a replication connection, which cannot run the checks' ;;
+    sslsni) printf 'Neon routes the connection by its TLS server name, which libpq sends by default' ;;
+    sslkeylogfile) printf "it writes the session's TLS keys to a file" ;;
+    requiressl) printf 'libpq 18 rejects it, and the runner sets sslmode=verify-full' ;;
+    *) printf 'A1 does not use it' ;;
+  esac
+}
+if [ -n "${PGSERVICEFILE:-}" ]; then SERVICE_FILE=$PGSERVICEFILE; SERVICE_DESC='the service file that PGSERVICEFILE names'
+else SERVICE_FILE="$HOME/.pg_service.conf"; SERVICE_DESC=$SERVICE_FILE
+fi
 SERVICE=''
-if [ ! -f "$SERVICE_FILE" ]; then
-  stop "there is no psql service file at $SERVICE_FILE"
-else
-  # One line per finding; a password value is never printed, only that a password key is present. As in libpq, the
-  # first value of a key counts; a key given twice is reported.
-  entries=$(awk -v host="$HOST" -v pooler="$POOLER_HOST" '
-    { line = $0; sub(/\r$/, "", line); sub(/^[ \t]+/, "", line); sub(/[ \t]+$/, "", line) }
+ENTRY=''
+tagged(){ printf '%s\n' "$ENTRY" | awk -F'\t' -v t="$1" '$1 == t { f = 1 } END { exit !f }'; }
+tagval(){ printf '%s\n' "$ENTRY" | awk -F'\t' -v t="$1" '$1 == t { print substr($0, length(t) + 2); exit }'; }
+service_checks(){
+  local hits pooled dups bad twice key extra='' rootcert rootdesc passfile passdesc matches
+  case $SERVICE_FILE in
+    /*) ;;
+    *) stop 'PGSERVICEFILE is not an absolute path (not shown): psql would look for it in the directory A1 runs from'; return ;;
+  esac
+  if [ ! -f "$SERVICE_FILE" ] || [ ! -r "$SERVICE_FILE" ]; then stop "$SERVICE_DESC does not exist or cannot be read"; return; fi
+  # As libpq reads the file: a section's name runs from [ to the first ]; only the first section of a name counts,
+  # and within it the first value of a key; one line that is not key=value with a known key makes libpq reject the
+  # whole entry. The values stay here: the lines this prints carry tags, counts and key names, and the two paths
+  # this script must check.
+  ENTRY=$(awk -v host="$HOST" -v pooler="$POOLER_HOST" -v known="$KEYS_OK$KEYS_REFUSED" '
+    BEGIN { nk = split(known, kl, " "); for (i = 1; i <= nk; i++) isknown[kl[i]] = 1 }
+    { line = $0; sub(/^[ \t\r\f\v]+/, "", line); sub(/[ \t\r\f\v]+$/, "", line) }
     line == "" || substr(line, 1, 1) == "#" { next }
-    line ~ /^\[.*\]$/ { sec = substr(line, 2, length(line) - 2); order[++n] = sec; next }
+    substr(line, 1, 1) == "[" {
+      insec = 0
+      e = index(line, "]")
+      if (e <= 2) next
+      sec = substr(line, 2, e - 2)
+      if (sec in seen) { dup[sec] = 1; dups++; next }
+      seen[sec] = 1; order[++n] = sec; insec = 1
+      next
+    }
+    !insec { next }
     {
       eq = index(line, "=")
-      if (eq == 0) { odd[sec] = 1; next }
-      key = substr(line, 1, eq - 1)
-      if (key ~ /[ \t]/) { odd[sec] = 1; next }
-      if ((sec, key) in val) { twice[sec] = twice[sec] " " key; next }
+      key = eq ? substr(line, 1, eq - 1) : ""
+      if (!(key in isknown)) { bad[sec]++; next }
+      if ((sec, key) in val) { if (!((sec, key) in rep)) { rep[sec, key] = 1; twice[sec] = twice[sec] " " key }; next }
       val[sec, key] = substr(line, eq + 1); keys[sec] = keys[sec] " " key
     }
     END {
       for (i = 1; i <= n; i++) {
         s = order[i]
-        if (val[s, "host"] == pooler) { print "POOLER\t" s; continue }
-        if (val[s, "host"] != host) continue
-        print "SECTION\t" s
-        if (odd[s]) print "ODD\t" s
-        if (twice[s] != "") print "TWICE\t" s "\t" substr(twice[s], 2)
-        k = split(keys[s], list, " ")
-        for (j = 1; j <= k; j++) {
-          key = list[j]
-          if (key == "password") print "PASSWORD\t" s
-          else if (key ~ /^(host|hostaddr|port|dbname|user|sslmode|sslrootcert|passfile)$/) print "VALUE\t" s "\t" key "\t" val[s, key]
-          else print "OTHER\t" s "\t" key
-        }
+        if (val[s, "host"] == pooler) pooled++
+        if (val[s, "host"] == host) { hits++; pick = s }
       }
-    }' "$SERVICE_FILE")
-  sections=$(printf '%s\n' "$entries" | awk -F'\t' '$1 == "SECTION" { print $2 }')
-  count=$(printf '%s\n' "$sections" | grep -c . || true)
-  if [ "$count" -eq 0 ]; then
-    if printf '%s\n' "$entries" | grep -q '^POOLER'; then
-      stop "the service entry in $SERVICE_FILE uses the pooler host; A1 needs the direct host $HOST"
-    else
-      stop "no entry in $SERVICE_FILE has host=$HOST"
+      printf "COUNTS\t%d\t%d\t%d\n", hits, pooled, dups
+      if (hits != 1) exit
+      if (pick !~ /^[A-Za-z0-9._-]+$/) { print "BADNAME"; exit }
+      s = pick
+      print "SECTION\t" s
+      printf "BAD\t%d\n", bad[s]
+      if (s in dup) print "DUPNAME"
+      if (twice[s] != "") print "TWICE\t" substr(twice[s], 2)
+      k = split(keys[s], list, " ")
+      for (j = 1; j <= k; j++) {
+        key = list[j]; v = val[s, key]
+        print "KEY\t" key
+        if (key == "port" && v != "5432" || key == "dbname" && v != "neondb" || key == "user" && v != "neondb_owner" || key == "sslmode" && v != "verify-full") print "DIFFERS\t" key
+        else if (key == "sslrootcert") print "ROOTCERT\t" v
+        else if (key == "passfile") print "PASSFILE\t" v
+        else if (key == "password") print "PASSWORD\t" (v == "" ? "empty" : (v ~ /^[ \t\f\v]/ ? "leading-space" : "set"))
+      }
+    }' "$SERVICE_FILE" 2>/dev/null) || ENTRY=''
+  set -- $(tagval COUNTS)
+  hits=${1:-0} pooled=${2:-0} dups=${3:-0}
+  if [ "$hits" -eq 0 ]; then
+    if [ "$pooled" -gt 0 ]; then stop "the entry for this endpoint in $SERVICE_DESC uses the pooler host; A1 needs one with the direct host $HOST"
+    else stop "no entry in $SERVICE_DESC has host=$HOST"
     fi
-  elif [ "$count" -gt 1 ]; then
-    stop "more than one entry in $SERVICE_FILE has host=$HOST ($(printf '%s\n' "$sections" | tr '\n' ' ')): keep one"
+    [ "$dups" -eq 0 ] || note "$dups section name(s) appear there more than once; libpq reads only the first section of each name"
+    return
+  fi
+  if [ "$hits" -gt 1 ]; then stop "$hits entries in $SERVICE_DESC have host=$HOST: keep only the one for A1"; return; fi
+  if tagged BADNAME; then
+    stop "the entry with host=$HOST has a name (not shown) that is not only letters, digits, dot, underscore and hyphen, which the runner requires: rename it"
+    return
+  fi
+  SERVICE=$(tagval SECTION)
+  ok "service entry [$SERVICE] in $SERVICE_DESC has host=$HOST"
+  ! tagged DUPNAME || note "a later section is also named [$SERVICE]; libpq reads only this first one"
+  bad=$(tagval BAD)
+  [ "${bad:-0}" -eq 0 ] || stop "the entry [$SERVICE] has $bad line(s), not shown, that are not key=value with a key this preflight knows; libpq rejects the whole entry for a misspelt key, so correct or remove them"
+  twice=$(tagval TWICE)
+  [ -z "$twice" ] || stop "the entry [$SERVICE] sets $twice more than once: keep one line for each"
+  for key in $(printf '%s\n' "$ENTRY" | awk -F'\t' '$1 == "KEY" { print $2 }'); do
+    case $KEYS_REFUSED in
+      *" $key "*) stop "the entry [$SERVICE] sets $key: remove that line ($(refusal "$key"))" ;;
+      *) case $key in host|port|dbname|user|sslmode|sslrootcert|password|passfile) ;; *) extra="$extra$key " ;; esac ;;
+    esac
+  done
+  # The runner pins the port, database, role and TLS mode in its connection string; the entry's values only matter here.
+  for pin in port:5432 dbname:neondb user:neondb_owner sslmode:verify-full; do
+    key=${pin%%:*}
+    if printf '%s\n' "$ENTRY" | grep -qx "DIFFERS$TAB$key"; then
+      note "the entry's $key is not ${pin#*:} (value not shown); the runner connects with $key=${pin#*:} regardless"
+    else ok "$key=${pin#*:}"
+    fi
+  done
+  [ -z "$extra" ] || note "the entry also sets ${extra}(values not shown)"
+  # libpq takes the root certificate from the entry, else from PGSSLROOTCERT, else from ~/.postgresql/root.crt.
+  if tagged ROOTCERT; then rootcert=$(tagval ROOTCERT); rootdesc="the entry's sslrootcert"
+  elif [ -n "${PGSSLROOTCERT:-}" ]; then rootcert=$PGSSLROOTCERT; rootdesc='PGSSLROOTCERT'
+  else rootcert=''; rootdesc=''
+  fi
+  if [ -z "$rootdesc" ]; then
+    if [ -f "$HOME/.postgresql/root.crt" ]; then ok "no sslrootcert in the entry; $HOME/.postgresql/root.crt will be used"
+    else stop "the entry [$SERVICE] has no sslrootcert, and $HOME/.postgresql/root.crt does not exist: add the line sslrootcert=/etc/ssl/cert.pem"
+    fi
   else
-    SERVICE=$sections
-    get(){ printf '%s\n' "$entries" | awk -F'\t' -v s="$SERVICE" -v k="$1" '$1 == "VALUE" && $2 == s && $3 == k { print $4 }'; }
-    has(){ printf '%s\n' "$entries" | awk -F'\t' -v s="$SERVICE" -v t="$1" '$1 == t && $2 == s { f = 1 } END { exit !f }'; }
-    case $SERVICE in *[!A-Za-z0-9._-]*) stop "the entry name [$SERVICE] may use only letters, digits, dot, underscore and hyphen (the runner refuses others)" ;; esac
-    ok "service entry [$SERVICE] in $SERVICE_FILE has host=$HOST"
-    ! has ODD || stop "the entry [$SERVICE] has a line that is not key=value without spaces"
-    twice=$(printf '%s\n' "$entries" | awk -F'\t' -v s="$SERVICE" '$1 == "TWICE" && $2 == s { print $3 }')
-    [ -z "$twice" ] || stop "the entry [$SERVICE] gives $twice more than once: keep one line for each"
-    [ -z "$(get hostaddr)" ] || stop "the entry [$SERVICE] sets hostaddr: remove it, so the connection goes to the host by its name"
-    # The runner pins the port, database and role in its connection string; the entry's values only matter here.
-    for pin in port:5432 dbname:neondb user:neondb_owner; do
-      value=$(get "${pin%%:*}")
-      if [ -z "$value" ] || [ "$value" = "${pin#*:}" ]; then ok "${pin%%:*}=${pin#*:}"
-      else note "the entry has ${pin%%:*}=$value; the runner connects with ${pin%%:*}=${pin#*:} regardless"
-      fi
-    done
-    sslmode=$(get sslmode)
-    if [ "$sslmode" = verify-full ]; then ok 'sslmode=verify-full'
-    else note "the entry has sslmode=${sslmode:-(none)}; the runner uses sslmode=verify-full regardless"
-    fi
-    # libpq takes the root certificate from the entry, else from PGSSLROOTCERT, else from ~/.postgresql/root.crt.
-    rootcert=$(get sslrootcert)
-    rootsrc="the entry [$SERVICE]"
-    if [ -z "$rootcert" ] && [ -n "${PGSSLROOTCERT:-}" ]; then rootcert=$PGSSLROOTCERT; rootsrc='PGSSLROOTCERT'; fi
     case $rootcert in
       system)
-        if [ "$PSQL_MAJOR" -ge 16 ]; then ok "sslrootcert=system (the macOS trust store), from $rootsrc"
-        else stop 'sslrootcert=system needs psql 16 or later: use sslrootcert=/etc/ssl/cert.pem'
+        if [ "$PSQL_MAJOR" -ge 16 ]; then ok "$rootdesc is system (the macOS trust store)"
+        else stop "$rootdesc is system, which needs psql 16 or later: use sslrootcert=/etc/ssl/cert.pem"
         fi ;;
-      '')
-        if [ -f "$HOME/.postgresql/root.crt" ]; then ok "no sslrootcert in the entry; $HOME/.postgresql/root.crt will be used"
-        else stop "the entry [$SERVICE] has no sslrootcert, and $HOME/.postgresql/root.crt does not exist: add the line sslrootcert=/etc/ssl/cert.pem"
+      '') stop "$rootdesc is empty: name the root certificate file, for example sslrootcert=/etc/ssl/cert.pem" ;;
+      /*)
+        if [ -f "$rootcert" ] && [ -r "$rootcert" ]; then ok "the root certificate file that $rootdesc names exists (path not shown)"
+        else stop "the root certificate file that $rootdesc names does not exist or cannot be read (path not shown)"
         fi ;;
-      '~'*) stop "$rootsrc has sslrootcert=$rootcert: write the full path, libpq does not expand ~" ;;
-      *)
-        if [ -f "$rootcert" ]; then ok "sslrootcert=$rootcert, from $rootsrc"
-        else stop "$rootsrc has sslrootcert=$rootcert, which does not exist"
-        fi ;;
+      *) stop "$rootdesc is not an absolute path (not shown): write the full path; libpq expands neither ~ nor a path relative to your home" ;;
     esac
-    others=$(printf '%s\n' "$entries" | awk -F'\t' -v s="$SERVICE" '$1 == "OTHER" && $2 == s { printf "%s ", $3 }')
-    [ -z "$others" ] || note "the entry also sets: $others"
+  fi
 
-    # 6. The password source, never printed: the entry itself, or the password file with exactly this entry's line.
-    if has PASSWORD; then
+  # 6. The password source, never printed: the entry itself, or the password file with exactly this entry's line.
+  case $(tagval PASSWORD) in
+    set)
       note "the entry [$SERVICE] holds a password (not shown)"
-      [ "$(mode_private "$SERVICE_FILE")" = '------' ] || stop "the entry holds a password, so make $SERVICE_FILE private: chmod 600 \"$SERVICE_FILE\""
-    else
-      passfile=$(get passfile)
-      [ -n "$passfile" ] || passfile=${PGPASSFILE:-$HOME/.pgpass}
-      if [ ! -f "$passfile" ]; then
-        stop "there is no password file at $passfile"
-      elif [ "$(mode_private "$passfile")" != '------' ]; then
-        stop "$passfile is readable by others, so libpq ignores it: chmod 600 \"$passfile\""
-      else
-        matches=$(awk -F: -v h="$HOST" -v p=5432 '
-          /^[ \t]*#/ { next }
-          NF >= 5 && ($1 == h || $1 == "*") && ($2 == p || $2 == "*") && ($3 == "neondb" || $3 == "*") && ($4 == "neondb_owner" || $4 == "*") { c++ }
-          END { print c + 0 }' "$passfile")
-        if [ "$matches" -ge 1 ]; then
-          ok "$passfile is private and has $matches line(s) for this host, port, database and role (passwords not shown)"
-          [ "$matches" -eq 1 ] || note 'libpq uses the first of those lines'
-        else
-          stop "$passfile has no line for this connection: add one that starts with $HOST:5432:neondb:neondb_owner: and continues with the password"
+      if [ "$(mode_private "$SERVICE_FILE")" != '------' ]; then
+        if [ -n "${PGSERVICEFILE:-}" ]; then stop 'the entry holds a password, so make the service file private: run chmod 600 on the file that PGSERVICEFILE names'
+        else stop "the entry holds a password, so make $SERVICE_FILE private: chmod 600 \"$SERVICE_FILE\""
         fi
       fi
-    fi
+      return ;;
+    leading-space)
+      stop "the password in the entry [$SERVICE] (not shown) starts with a space or tab, which libpq keeps as part of it: remove that space"
+      return ;;
+    empty) note "the entry [$SERVICE] has an empty password line, so libpq takes the password from the password file" ;;
+  esac
+  if tagged PASSFILE; then passfile=$(tagval PASSFILE); passdesc="the password file that the entry's passfile names"
+  elif [ -n "${PGPASSFILE:-}" ]; then passfile=$PGPASSFILE; passdesc='the password file that PGPASSFILE names'
+  else passfile="$HOME/.pgpass"; passdesc=$passfile
   fi
-fi
+  case $passfile in
+    '') stop "the entry [$SERVICE] has an empty passfile line: remove it, or name the password file"; return ;;
+    /*) ;;
+    *) stop "$passdesc is not an absolute path (not shown): psql would look for it in the directory A1 runs from"; return ;;
+  esac
+  if [ ! -f "$passfile" ] || [ ! -r "$passfile" ]; then
+    if [ "$passdesc" = "$passfile" ]; then stop "there is no password file at $passfile: create it with one line that starts with $HOST:5432:neondb:neondb_owner: and continues with the password, then run chmod 600 \"$passfile\""
+    else stop "$passdesc does not exist or cannot be read"
+    fi
+    return
+  fi
+  if [ "$(mode_private "$passfile")" != '------' ]; then
+    if [ "$passdesc" = "$passfile" ]; then stop "$passfile is readable by others, so libpq ignores it: chmod 600 \"$passfile\""
+    else stop "$passdesc is readable by others, so libpq ignores it: run chmod 600 on it"
+    fi
+    return
+  fi
+  matches=$(awk -F: -v h="$HOST" -v p=5432 '
+    /^[ \t]*#/ { next }
+    NF >= 5 && ($1 == h || $1 == "*") && ($2 == p || $2 == "*") && ($3 == "neondb" || $3 == "*") && ($4 == "neondb_owner" || $4 == "*") { c++ }
+    END { print c + 0 }' "$passfile" 2>/dev/null) || matches=0
+  case $matches in ''|*[!0-9]*) matches=0 ;; esac
+  if [ "$matches" -ge 1 ]; then
+    ok "$passdesc is private and has $matches line(s) for this host, port, database and role (passwords not shown)"
+    [ "$matches" -eq 1 ] || note 'libpq uses the first of those lines'
+  else
+    stop "$passdesc has no line for this connection: add one that starts with $HOST:5432:neondb:neondb_owner: and continues with the password"
+  fi
+}
+service_checks
 [ -z "${PGPASSWORD:-}" ] || stop 'PGPASSWORD is set in this shell (value not shown): run unset PGPASSWORD; A1 takes the password from the password file'
 # The runner clears exactly these; any other PG variable reaches psql as it is.
 CLEARED=' PGSERVICE PGHOST PGHOSTADDR PGPORT PGDATABASE PGUSER PGOPTIONS PGSSLMODE PGREQUIRESSL PGGSSENCMODE PGSSLNEGOTIATION PGTARGETSESSIONATTRS PGLOADBALANCEHOSTS PGCLIENTENCODING PGTZ PGDATESTYLE PGGEQO '
