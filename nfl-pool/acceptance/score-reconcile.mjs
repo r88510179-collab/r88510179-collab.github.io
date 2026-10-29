@@ -39,8 +39,9 @@ function matchup(e){
   return out;
 }
 function completed(e){
+  // Any source-level finality is a candidate: missing/contradictory competition finality is itself a failure.
   return e?.status?.type?.completed===true
-    && competition(e)?.status?.type?.completed===true;
+    || competition(e)?.status?.type?.completed===true;
 }
 function view(e){
   const c=competition(e);
@@ -108,6 +109,10 @@ for(let week=start;week<=end;week++){
       // Compare final results separately from in-progress data to avoid clock-skew false failures.
       if(completed(e)){
         weekFinals++;finals++;
+        if(e?.status?.type?.completed!==true||competition(e)?.status?.type?.completed!==true){
+          console.error('FAIL week '+week+' contradictory finality evidence '+id);
+          weekFail++;
+        }
         if(JSON.stringify(view(e))!==JSON.stringify(view(actual))){
           console.error('FAIL week '+week+' final mismatch for '+id);
           weekFail++;
