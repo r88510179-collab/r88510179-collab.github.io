@@ -36,8 +36,33 @@ the chain cryptographic: `A1_RUNNER_ACK.txt`. Read its section 4 before signing.
 
 ## The independent review
 
-Round 5 of the independent review has not reported yet. Do not sign the acknowledgment before this section
-records its verdict.
+Round 5 of the independent review **approved** runner `958edad5…`, its suite, preflight `af207822…`, its suite and
+`A1_RUNNER_ACK.txt` (`25c3ce54…`), all at commit `3af026a`, with no blocking, major or minor finding. The reviewer
+is the same as in rounds 1 to 4: a separate agent given the code, the authorization and the owner's seven
+requirements, with no network and no Neon.
+
+- Every requirement MET, with line evidence. Both suites were re-run (1211 and 693 assertions, bash 5.2 with mawk
+  and bash 3.2.57 with BWK awk, all passing), and the mutation check was confirmed (61 single-fix removals, 60
+  caught; the survivor is equivalent). For each new test, a copy with its guard removed made the test fail.
+- G1 is closed: `"expiresAt"` as `timestamp` or as `date`, with the session's time zone shifted through A1's own
+  role (Etc/GMT-14, or about seven days), is STOP 3 at the first file; as `timestamptz`, a live unverified session
+  still gives STOP 4 on `I05`.
+- The new condition raises no error, leaves nothing unqualified, and accepts no type that reads through the time
+  zone (a precision such as `timestamptz(3)` passes). It stops production only if production's `"expiresAt"` is not
+  `timestamp with time zone`, which is the intended STOP.
+- A runner without `compgen` stops with STOP 2 before it creates anything (reproduced on both bash versions).
+
+Three notes, none of which needs a change before signing:
+
+1. The `compgen` STOP has no test of its own; the reviewer checked it by hand, as above.
+2. Ownership of `neon_auth.session` alone has no test of its own (`"user"` and `account` have); the reviewer checked
+   it by hand: the run gives the ownership HOLD.
+3. A `BASH_ENV` file or an exported bash function in the operator's own shell runs inside the runner before its
+   first line. That is within the acknowledgment's boundary that the owner runs A1 from the owner's own Terminal;
+   macOS's default shell, zsh, sets neither unless configured to.
+
+Rounds 1 and 2 rejected earlier builds; rounds 3 and 4 approved with one required change each, and both were made
+(acknowledgment section 1; the reconciliation's Part 5, sections 29 to 35).
 
 ## Step 1: update the checkout and run the preflight
 

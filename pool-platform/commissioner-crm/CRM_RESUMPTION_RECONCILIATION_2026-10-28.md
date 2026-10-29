@@ -656,3 +656,211 @@ the whole path to real authenticated CRM testing; none of it writes to productio
 No SQL on any Neon branch; no connector change; no snapshot or branch created, restored or deleted; no credential,
 password or key read, exported, rotated or changed; no production change; PR #19 and its branch unchanged. The
 operations history and snapshot metadata were read through Neon's read-only management API only.
+
+# Part 5: A1 runner version 2, repaired locally (Option B, 2026-10-29)
+
+The owner chose Option B: repair the runner locally, test it, have it independently reviewed and document it. Same
+rules as before, and narrower: nothing ran on Neon, nothing in the cloud connected to production, Neon was not
+changed, and A1 has not run. `A1_AUTHORIZATION.md` (`8de895da…`) and the five SQL files are unchanged (re-hashed).
+The owner's detached signature and private key stay on the owner's Mac; this session has neither.
+
+## 28. Why version 1 could not be run
+
+- It printed each verdict row (`grep … || echo "…: no … row (STOP)"`) and carried on: a missing `H99`, `X99`, `C99` or
+  `I99`, a `FINDINGS` or `STOP` verdict, or a required row false under the verdict did not stop it, and it still
+  exited 0. P2 was only counted.
+- Its hash checks used GNU coreutils options (`sha256sum --check --quiet --strict`), and its own hash was recorded
+  only through GNU `realpath --relative-to`, whose fallback could repeat lines in `sha256sums.txt`.
+- It did not hash-check the authorization text, did not check that the evidence directory was new, private and
+  outside the repository, left TLS to the service entry, and had no terminal or agent-shell boundary.
+- Its guard called `current_database()` and `=` unqualified, outside the read-only transaction (found in review).
+
+## 29. Independent review, round 1: version 2 at `8350ba4a…` rejected
+
+An independent reviewer (a separate agent given the code, the authorization and the owner's seven requirements, not
+the author's conclusions; no network, no Neon) reproduced three blocking defects on a local server:
+
+| Finding | What it allowed | Fix |
+| --- | --- | --- |
+| B1 | a line break inside a P2 value (a schema comment) forged a whole row, hiding `USAGE` for `authenticated`: HOLD instead of STOP | psql's own `:ROW_COUNT` closes every file's output; lines must equal rows |
+| B2 | tabs inside a trigger name forged P2's detail field, so a trigger on a public table passed as internal | every P2 row must have exactly five fields |
+| B3 | a role-level search path putting a planted schema before `pg_catalog` let the unqualified guard run a function that wrote (5 rows committed), or forged `C15` | the guard and every runner statement use `pg_catalog`-qualified names; the effective search path must be exactly `pg_catalog, public` before `BEGIN READ ONLY` |
+
+And: M1, the server's `pg_stat_ssl` flag was required although TLS ends at Neon's proxy (now recorded, not
+required; `verify-full` protects the client hop); M2, test gaps found by mutation (removing `LC_ALL`,
+`PSQL_HISTORY`, the `unset PG…` line or the HUP/INT traps passed the suite); m1, macOS paths compared with case; m2,
+evidence accepted inside another repository; m3, only `sslmode` was pinned (the connection string now pins host,
+port 5432, database, role, `sslmode=verify-full` and `gssencmode=disable`); m4, HOLD wording; and nits (`CDPATH`, a
+failed listing, a failed evidence hash after the result, raw database text on the terminal, the row count in the
+HOLD line). Outside the runner: a public view over `pool_platform_private` appeared in none of the five outputs.
+Version 2 now runs one query of its own inside P2's read-only transaction, over `pg_catalog` only, listing every
+object outside the schema that depends on it; a Data API-readable view among them is a STOP, any other a HOLD.
+
+## 30. Independent review, round 2: version 2 at `675bc5a9…` rejected
+
+The same reviewer confirmed every round-1 finding closed, then reproduced two new blocking defects and several
+smaller ones:
+
+| Finding | What it allowed | Fix |
+| --- | --- | --- |
+| B1 | the five files call built-ins without schema names; a function planted in `public` whose signature fits a call better than `pg_catalog`'s (`has_schema_privilege(text,oid,text)`, `convert_to(text,text)`) forged `C15` and `H01`: HOLD instead of STOP, with the search path exactly `pg_catalog, public` | inside the read-only transaction, before each file, `public` may hold no function or operator that shares its name with a `pg_catalog` one unless its signature is identical (an exact twin is always hidden by `pg_catalog`); anything else is STOP 3, with the names listed |
+| B2 (preflight) | the preflight echoed the service entry's `port`, `dbname` and `user` when they differed from the pinned values; a connection string pasted in as `dbname` printed its password into output the procedure sends to the session | no value read from the service or password file, nor from `PGSERVICEFILE`, `PGPASSFILE` or `PGSSLROOTCERT`, is printed: only key names, counts, and whether each value is what A1 needs |
+| M1 | a view over the schema that a Data API role could read through a column grant, or through a second view, was not counted as readable: HOLD instead of STOP | readability by `has_any_column_privilege`; dependents followed through views and through functions that record their dependencies |
+| M2 | no test for B1, B2, M1, m2 or m3; three mutants passed the suite (an unhashable evidence file ignored, `DONE` set before `finalize`, a failed `ls -A` tolerated; sanitization removed; the type branch dropped and materialized views not counted as readable) | a test for each, and a mutation check of every fix (§32) |
+| m1 (preflight) | READY with a misspelt key, `sslsni=0` or an `options` line, each of which makes psql or the runner stop at the connection | the entry is read as libpq reads it; a line libpq would reject, and every key that would change or break A1's connection, is a STOP |
+| m2 | a leading `//` in `PP_OUT`, which `pwd -P` keeps, got past the synced-folder check | a leading `//` is read as `/` in every path comparison |
+| m3 | a public function whose `BEGIN ATOMIC` body reads the schema has no source text for P2 to match: HOLD | a public function, or a policy outside the schema, that depends on it is a STOP |
+| m4 | statements in the acknowledgment and the procedure not true as written (the dependents listed, the path comparison, the search path, the readable-view and public-code STOPs, "A1 cannot rule it out", the round-1 summary, "it holds no secret") | rewritten; the review verdict moved out of the signed text into `A1_SIGNING.md`, so no pinned file changes after the review |
+
+Nits, all taken: the pinned P2 does not list types (the runner's row now lists the schema's other members); a failed
+`finalize` on the HOLD path left two outcomes in the manifest (the second now says which one it replaces); login
+event triggers are listed (HOLD); and every view in `public` that a Data API role can read is listed (HOLD), since
+the AUTH-C verifier checks tables only. `PGAPPNAME` and the like were still passed to psql (round 3 found that some
+of them could still break the connection, §33).
+
+## 31. What version 2 does, by requirement
+
+| # | Requirement | Version 2 | Tests (in `a1_run.test.sh`) |
+| --- | --- | --- | --- |
+| 1 | STOP, nonzero, on a missing, malformed or non-PASS verdict; enforce every required check | every line checked: the session row; psql's row count last; exactly six fields; a known id, once; the required flag the file defines (pinned in the runner); ok `t`, `f` or empty; the verdict row `PASS`/`t`; every required row `t`; rows carrying sections 1 and 5 (`H07`, `C01` PostgreSQL 18, `C20`, `C21`, `I07`). Exit 4 at once | missing, failing, renamed and lowercase verdicts for all four; required rows false or NULL under PASS; flipped flags; duplicates, unknown ids, field counts, blank lines, empty output, bad session rows, row counts missing, wrong, unreadable, forged or followed by more; real failures of P1, P3, the verifier and the audit |
+| 2 | P2 separately: inventory kept whole, HOLD or STOP, never PASS | P2's rows kept whole, exactly five fields, closed by the row count; then the runner's own row (eleven fields, its own row count). STOP: `USAGE` or `CREATE` for a Data API role; reviewed public code naming the schema; a public function or a policy outside it that depends on it; a trigger outside it; a view outside it that a Data API role can read through any column and that depends on it, directly or through views and functions. HOLD: everything else, absence included, every relation in `public` other than the nine commercial tables that a Data API role can read, and every login event trigger | real: `USAGE` and `CREATE` (granted, to `PUBLIC`, behind a spoofing comment, behind a line break), named-by, triggers outside, inside and with tabs in the name, foreign keys, absence, readable and unreadable public views, a column grant, a chain of views, a view through a function outside the schema, a materialized view, a write rule on a public table (listed, not followed), a `BEGIN ATOMIC` public function, a policy, a private type used outside, statistics and an operator inside the schema (members, not outside), a readable view over a commercial table, a readable table in `public`, a login event trigger, and a name with a line break and a tab in each list; every malformed shape of both rows through the fake psql |
+| 3 | macOS-compatible SHA-256, pins not weakened | `shasum -a 256`, else `sha256sum`, else `openssl dgst -sha256`, on stdin; exactly 64 lowercase hex, equal to the pin | each tool alone; none; one-byte changes to the authorization and each kit file; symlinked or missing kit file; no AUTH-C commit; a wrong AUTH-C pin |
+| 4 | the runner's own hash, reliably | `PP_RUNNER_SHA256` must equal it; one block, parsed before it runs; manifest; staged copy re-hashed; `sha256sums.txt` over everything, and an evidence file that cannot be hashed turns the HOLD into a STOP | unset, uppercase, short, wrong; byte-identical copy; `./a1_run.sh`, through `CDPATH` and a symlinked directory; a symlinked runner refused; a `shasum` that fails on the finished manifest |
+| 5 | host/database/role guard, READ ONLY, ROLLBACK, redaction, operator-only | the guard's three values unchanged, now qualified; host, port, database, role, `verify-full` and `gssencmode=disable` pinned in the connection string; the effective search path; `BEGIN READ ONLY` asserted; the overload check; the check of the five tables the identity checks read, and the Neon Auth ownership HOLD; `ROLLBACK`; every PG variable but the three files, and `CDPATH`, cleared; terminal, `RUN A1`, agent and CI refusal; non-printable database text replaced | the exact script and arguments sent; psql's environment; the server's log (five `BEGIN READ ONLY`, five `ROLLBACK`, no `COMMIT`, `SET` or write, all TLS, all `neondb_owner` on `neondb`); a whole-database `pg_dump` identical before and after; the extracted guard refusing another database, role and host; service entries naming another host, database, role or port, `sslmode=disable` and `gssencmode=require`, all overridden; hostile search paths (version 1's guard shown writing, version 2's not); planted overloads (`has_schema_privilege`, `convert_to`, an operator `=`, a default argument, a name with a line break) refused before any file, and an exact twin of `lower(text)` hidden and accepted; each route of the table check (an enum with an implicit cast, a domain, forced and enabled row security, a child table, a view in a table's place, a generated column, a missing column, a collation of another schema, `"expiresAt"` without a time zone, the `neon_auth` schema missing), row security that BYPASSRLS skips (no STOP), and the ownership HOLD (through ownership, and through a SET-only membership); PG variables that would break the connection; a search path setting with a tab; wrong CA, the unmodified runner refused by TLS, closed port, no or wrong password; escape sequences; the password nowhere |
+| 6 | fail-closed regression tests | `a1_run.test.sh`, 1211 assertions, all passing | see §32 |
+
+Exit codes: `10` HOLD; `2` STOP before any connection; `3` STOP at a connection; `4` STOP on a check; any other
+nonzero code (an interruption included) is a STOP and still ends with the `A1 RESULT: STOP` line.
+
+## 32. Test evidence
+
+`a1_run.test.sh` (`20b6eca2e40823b21a662420e898d8db865a03ccb8abfb1079616b55e0156069`) re-executes itself in a Linux
+network namespace that holds only loopback, starts a throwaway PostgreSQL 18.6 with TLS from a test CA, applies the
+Commercial V1 baseline (001 at `48e0ac4e`, AUTH-C 002, 003, AUTH-C 004) on a stub of Neon Auth, and drives the
+runner through a pseudo-terminal. The unmodified runner is used for everything before a connection, for every
+output check through a fake psql that prints recorded rows, and against the local server (which its pinned
+production name cannot match); a copy that differs in exactly one line (the expected host, `a1-guard-test.invalid`)
+makes the real connections.
+
+| Run | Result |
+| --- | --- |
+| bash 5.2.21, mawk 1.3.4, psql 16.15 and 18.6 clients | 1211 passed, 0 failed |
+| bash 3.2.57 (the macOS `/bin/bash` version, built from GNU source with its signature checked), BWK awk 20231127 (`original-awk`; macOS ships this awk at version 20200816, not run here) | 1211 passed, 0 failed |
+| mutation check: 61 copies of the runner, each with one fix of review rounds 1 to 4 removed (the mutants that passed the suite in round 2 included), each run through the whole suite | 60 caught and 1 survivor, the equivalent mutant (`clean()` removed from `hold()`: every HOLD message is runner text plus numbers already checked to be digits, so no output can differ); run on build `958edad5…`, each mutant through the whole suite |
+| `a1_preflight_mac.test.sh` (`ffbd05255b52e6171795197a825ac297169ec0da94debc446c31eba4c9134cc1`), both of the above | 693 passed, 0 failed, each |
+
+Not exercised here, and so first exercised by A1 itself: macOS's own `sed`, `grep`, `date` and `ls` (the runner uses
+only POSIX features of each; GNU versions ran), a Homebrew or Postgres.app psql, Neon's TLS chain and SNI routing, and
+the real production catalog.
+
+## 33. Independent review, round 3: version 2 at `661ac92e…` approved with changes
+
+The reviewer re-ran every earlier reproduction (all closed), agreed with the mutation check (45 of 46 caught; the
+survivor is equivalent), and approved with one required change and four recommended ones:
+
+| Finding | What it allowed | Fix |
+| --- | --- | --- |
+| F1 (required) | whoever owns the tables the identity audit reads could change its counts without changing a row: `"emailVerified"` retyped to an enum with an implicit cast to boolean forged the required `I05` (HOLD instead of STOP); `memberships.auth_user_id` retyped, or row security forced on the commercial tables, removed the `I04` and `I08` HOLD | before each file, inside its read-only transaction, the five tables P3 and the audit read must be plain tables with no child table and no row security in force for the session, and every column they read must exist, not be generated, and have a built-in type and collation; anything else is STOP 3, naming the table or column. The session row records whether the session's role can alter the Neon Auth tables; if it can, the audit is a HOLD for the owner |
+| F2 | READY from the preflight with `PGSSLSNI=0`, `PGSSLCERTMODE`, `PGREQUIREAUTH` or another PG variable the runner passed on, or with a service-file line of 1022 characters or more, each of which makes the connection fail | the runner clears every PG variable but `PGSERVICEFILE`, `PGPASSFILE` and `PGSSLROOTCERT`; the preflight refuses such a line |
+| N1 | the catalog can change while A1 runs (REPEATABLE READ is no fix, the reviewer agreed) | stated as a limit in the acknowledgment, §5 |
+| N2 | a table in `public`, other than the nine, that a Data API role can read appeared in no output | the runner's P2 row lists every such relation (HOLD) |
+| N3, N4, N5 | three statements not true as written: every connection variable cleared; the preflight refuses what libpq rejects; BWK awk 20231127 as the macOS awk (macOS ships 20200816) | now true (F2), and the awk stated as it is |
+
+Beyond the review: an owner of an identity table could also swap two columns' names, which the runner does not
+detect (column order or key membership would expose some such renames, not all). The acknowledgment (§5) states
+this, and the run records whether its own role can alter the Neon Auth tables.
+
+## 34. Independent review, round 4: version 2 at `cc3f6a19…` approved with changes
+
+The reviewer re-ran its round-3 reproductions against the new build, all closed: the enum `"emailVerified"`, the
+retyped `auth_user_id`, forced row security and a view standing in for `neon_auth.session` each gave STOP 3;
+`PGSSLSNI=0`, `PGSSLCERTMODE=require` and `PGREQUIREAUTH=none` were cleared; an 1100-character service-file line
+was a preflight STOP. It agreed with the mutation check (58 of 59 caught; the survivor is equivalent), reproduced
+the rename limit the acknowledgment states (§5), and approved with one required change:
+
+| Finding | What it allowed | Fix |
+| --- | --- | --- |
+| G1 (required) | the table check accepted any built-in type for `neon_auth.session."expiresAt"`. As `timestamp` without time zone (or `date`), the audit's `"expiresAt" > now()` reads through the session's time zone, which A1's own role can set (`ALTER ROLE … SET timezone`): with the column retyped and `Etc/GMT-14` set, a live unverified session ten hours from expiry vanished from `I05` (HOLD instead of STOP) | `"expiresAt"` must be `timestamp with time zone`; anything else is STOP 3, naming the column |
+| N1 | a shell whose `compgen` failed would have cleared no PG variable, silently | a failed `compgen -e` is STOP 2 |
+| N2 | §33 said no catalog check could tell a rename from the reviewed definition; column order, key membership and `atthasmissing` would expose many | reworded |
+| N3 | §32's mutation row described rounds 1 and 2 only | now rounds 1 to 4 |
+| N4 | the preflight's long-line message said libpq then rejects the file, but libpq never reads the lines after the chosen entry | reworded; the preflight is stricter there |
+| N5 | the reviewer's own round-3 threshold was one character off | nothing to change: libpq 18.6 accepts 1021 characters and a line feed and rejects 1022, as the preflight does |
+
+The tests it found missing were added: G1 itself; a SET-only membership in the owner of `neon_auth.account` (the
+ownership HOLD, which a check of `USAGE` instead of `MEMBER` would miss; ownership of `neon_auth.session` alone is
+still untested, §35); BYPASSRLS with row security enabled on `neon_auth.session` (no STOP); the `neon_auth` schema
+missing (STOP 3 naming the three tables, no psql error); and, in the preflight, a line ending in a carriage return
+and a long line after the entry.
+
+## 35. Independent review, round 5: version 2 at `958edad5…` approved
+
+Round 5 of the independent review **approved** runner `958edad5…`, its suite, preflight `af207822…`, its suite and
+`A1_RUNNER_ACK.txt` (`25c3ce54…`), all at commit `3af026a`, with no blocking, major or minor finding. The reviewer
+is the same as in rounds 1 to 4: a separate agent given the code, the authorization and the owner's seven
+requirements, with no network and no Neon.
+
+- Every requirement MET, with line evidence. Both suites were re-run (1211 and 693 assertions, bash 5.2 with mawk
+  and bash 3.2.57 with BWK awk, all passing), and the mutation check was confirmed (61 single-fix removals, 60
+  caught; the survivor is equivalent). For each new test, a copy with its guard removed made the test fail.
+- G1 is closed: `"expiresAt"` as `timestamp` or as `date`, with the session's time zone shifted through A1's own
+  role (Etc/GMT-14, or about seven days), is STOP 3 at the first file; as `timestamptz`, a live unverified session
+  still gives STOP 4 on `I05`.
+- The new condition raises no error, leaves nothing unqualified, and accepts no type that reads through the time
+  zone (a precision such as `timestamptz(3)` passes). It stops production only if production's `"expiresAt"` is not
+  `timestamp with time zone`, which is the intended STOP.
+- A runner without `compgen` stops with STOP 2 before it creates anything (reproduced on both bash versions).
+
+Three notes, none of which needs a change before signing:
+
+1. The `compgen` STOP has no test of its own; the reviewer checked it by hand, as above.
+2. Ownership of `neon_auth.session` alone has no test of its own (`"user"` and `account` have); the reviewer checked
+   it by hand: the run gives the ownership HOLD.
+3. A `BASH_ENV` file or an exported bash function in the operator's own shell runs inside the runner before its
+   first line. That is within the acknowledgment's boundary that the owner runs A1 from the owner's own Terminal;
+   macOS's default shell, zsh, sets neither unless configured to.
+
+Rounds 1 and 2 rejected earlier builds; rounds 3 and 4 approved with one required change each, and both were made
+(acknowledgment section 1; the reconciliation's Part 5, sections 29 to 35).
+
+## 36. The supplemental acknowledgment, and the smallest valid procedure
+
+The authorization names the runner by path and pins only the SQL, so its signature still verifies; but the owner
+reviewed version 1 as part of the signed package, and version 2 is different code acting under that authority, with
+one query of its own. The owner's signature must cover the new bytes, and re-signing the authorization would mean a
+new text. So version 2 needs one supplemental signed text, `A1_RUNNER_ACK.txt`
+(`25c3ce544c68bf60dbf93dcce01388ec49372a5266ea18dff4cd08876da0fd03`). It pins the runner
+(`958edad58daeab10df66e7a836e5db6ebc3650fb7b293cf2e98725d452da6bee`) and the test suite, restates what stays
+unchanged, lists what version 2 adds and where it reads the authorization more strictly, and states what A1 still
+cannot establish. The smallest valid procedure, in `A1_SIGNING.md`:
+
+1. `git pull --ff-only` the Mac checkout, run `a1_preflight_mac.sh` (one `[TODO]`: the acknowledgment is unsigned);
+2. read the acknowledgment and the round-5 verdict in `A1_SIGNING.md`, then sign the acknowledgment with
+   `ssh-keygen -Y sign -n file` and the key that signed the authorization;
+3. run the preflight again until it prints `PREFLIGHT RESULT: READY`, and send that output (it prints no value from the
+   service or password file, so it holds no password);
+4. the separate "Run A1 now" approval; then the printed command, from the owner's own Terminal.
+
+## 37. The Mac preflight
+
+`a1_preflight_mac.sh` (`af2078228e48ecd8e6fabb6b178449f46063b6eae1ed3709ad578082837ded12`) uses the owner's
+actual paths (`$HOME/Documents/commissioner-crm-a1`, `$HOME/.ssh/crm_a1_signing_ed25519.pub`,
+`$HOME/commissioner-crm-a1-evidence`) and contains no placeholder. It opens no network connection, never opens the
+private key, and prints no value read from the service or password file, nor from `PGSERVICEFILE`, `PGPASSFILE` or
+`PGSSLROOTCERT`: only key names from its own lists, counts, and whether each value is what A1 needs (its tests put
+a planted secret into every value and path it reads, a whole connection string pasted in as the database
+included, and check that the secret appears nowhere). It refuses to run outside macOS, without a terminal or in an
+agent or CI shell; checks every pinned hash and both signatures; finds the single service entry for the production
+host, reading the file as libpq does, and refuses what libpq would reject or what would change or break A1's
+connection (a misspelt key, a line without `=`, `service`, `hostaddr`, `options`, `replication`, `sslsni`,
+`sslkeylogfile` and the other keys A1 does not use, and a line of 1022 characters or more anywhere in the file,
+which libpq refuses when it reaches one); checks the root certificate, the password source and the permissions
+(port, database, role and `sslmode` are noted without their values, since the runner pins them); checks that the
+evidence directory is private and outside every git repository; and on READY prints the exact A1 command.
+
+## 38. What this part did not do
+
+No SQL on any Neon branch; no connection to production or to Neon from this session; no Neon setting, branch,
+snapshot or credential touched; no password or key read; `A1_AUTHORIZATION.md` and the five SQL files unchanged; A1
+not run; PR #19 and its branch unchanged; nothing merged or deployed. For the tests only, PostgreSQL 18 (PGDG
+packages), a bash 3.2.57 build and `original-awk` were installed in this disposable container.
