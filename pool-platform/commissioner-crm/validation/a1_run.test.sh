@@ -1,0 +1,811 @@
+#!/usr/bin/env bash
+# Fail-closed regression tests for a1_run.sh, the A1 runner. Linux only, as root, on a disposable machine. It never
+# reaches Neon or any other remote host: it re-executes itself in a new network namespace that has only the loopback
+# interface, starts a throwaway local PostgreSQL 18 with TLS from a test CA, and drives the runner through a
+# pseudo-terminal, since the runner asks for RUN A1 at the terminal.
+#
+#   bash pool-platform/commissioner-crm/validation/a1_run.test.sh
+#
+# Two forms of the runner are exercised:
+#   - the runner itself, unmodified: every check before a connection, and every check on the output through a fake
+#     psql that prints recorded rows and connects nowhere;
+#   - a test copy that differs from it in exactly one line, the expected host (a1-guard-test.invalid, a name that
+#     cannot resolve), for real connections to the local server: TLS, the guard, the read-only wrapper and the five SQL
+#     files, unchanged, against the Commercial V1 baseline (001 at 48e0ac4e, AUTH-C 002, 003, AUTH-C 004) on a stub of
+#     Neon Auth. The unmodified runner is also pointed at that server, to show its guard refuses it.
+#
+# Options (environment): A1_TEST_PGBIN, the PostgreSQL 18 server and psql (default /usr/lib/postgresql/18/bin);
+# A1_TEST_BASH, the bash that runs the runner (for example a bash 3.2 build, the version of macOS /bin/bash);
+# A1_TEST_AWK, an awk to run as awk (for example original-awk, the BWK awk macOS ships); A1_TEST_KEEP=1 keeps the
+# work directory. Every psql client found under /usr/lib/postgresql/*/bin also runs the baseline.
+set -euo pipefail
+export LC_ALL=C
+# The suite's own git commands read no global or system configuration (no commit signing, hooks or aliases).
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+
+[ "$(uname -s)" = Linux ] || { echo 'a1_run.test.sh runs on Linux only' >&2; exit 2; }
+[ "$(id -u)" -eq 0 ] || { echo 'a1_run.test.sh needs root (unshare, runuser)' >&2; exit 2; }
+if [ "${A1_TEST_NETNS:-}" != 1 ]; then
+  exec unshare --net -- env A1_TEST_NETNS=1 bash "$0" "$@"
+fi
+ip link set lo up
+if ip -o link show | awk -F': ' '{print $2}' | grep -qv '^lo$' || [ -n "$(ip route show)" ]; then
+  echo 'the test network namespace has more than loopback: refusing to run' >&2
+  exit 2
+fi
+
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+REPO=$(git -C "$HERE" rev-parse --show-toplevel)
+RUNNER="$HERE/a1_run.sh"
+PGBIN=${A1_TEST_PGBIN:-/usr/lib/postgresql/18/bin}
+TBASH=${A1_TEST_BASH:-/bin/bash}
+PROD_HOST='ep-still-recipe-b5g7680z.c-7.us-east-2.aws.neon.tech'
+TEST_HOST='a1-guard-test.invalid'
+AUTHC=2c6e2a805fa816638808cb2d96d430ee177453e6
+BASE=48e0ac4e0d6a4cd745cdd4ed2a67fc56ef53cb60
+PORT=54329
+CLOSED_PORT=54330
+KIT=pool-platform/commissioner-crm/validation
+for tool in "$PGBIN/postgres" "$PGBIN/psql" "$TBASH" /usr/bin/python3 /usr/bin/openssl /usr/bin/setsid /usr/sbin/runuser /usr/bin/shasum /usr/bin/sha256sum; do
+  [ -x "$tool" ] || { echo "missing $tool" >&2; exit 2; }
+done
+"$PGBIN/postgres" --version | grep -q ' 18\.' || { echo "$PGBIN/postgres is not PostgreSQL 18" >&2; exit 2; }
+
+WORK=$(mktemp -d /var/tmp/a1-runner-test.XXXXXX)
+PGDIR=$(mktemp -d /var/lib/postgresql/a1t.XXXXXX)
+chown postgres "$PGDIR"
+cleanup(){
+  runuser -u postgres -- "$PGBIN/pg_ctl" -D "$PGDIR/data" -m immediate stop > /dev/null 2>&1 || true
+  if [ "${A1_TEST_KEEP:-}" = 1 ]; then echo "kept $WORK and $PGDIR"; else rm -rf "$WORK" "$PGDIR"; fi
+}
+trap cleanup EXIT
+REPO_STATUS_BEFORE=$(git -C "$REPO" status --porcelain=v1 --untracked-files=all)
+
+PASSED=0
+FAILED=0
+FAILS=''
+ok(){ PASSED=$((PASSED + 1)); printf 'ok   %s\n' "$1"; }
+bad(){ FAILED=$((FAILED + 1)); FAILS="$FAILS
+  $1"; printf 'FAIL %s\n' "$1"; }
+check(){ local d=$1; shift; if "$@"; then ok "$d"; else bad "$d"; fi; }
+sha(){ sha256sum < "$1" | awk '{print $1}'; }
+
+# --- the runner under test and its one-line test copy ----------------------------------------------------------------
+RUNNER_SHA=$(sha "$RUNNER")
+mkdir -p "$WORK/runner" "$WORK/pinrunner"
+sed "s/^readonly EXPECT_HOST='$PROD_HOST'\$/readonly EXPECT_HOST='$TEST_HOST'/" "$RUNNER" > "$WORK/runner/a1_run.sh"
+TEST_RUNNER="$WORK/runner/a1_run.sh"
+TEST_RUNNER_SHA=$(sha "$TEST_RUNNER")
+diff_is(){ # file-a file-b old-line new-line: the two files differ in exactly that one line
+  local d
+  d=$(diff "$1" "$2" | grep '^[<>]' || true)
+  [ "$d" = "< $3
+> $4" ]
+}
+check 'the test copy differs from the runner only in the expected host' \
+  diff_is "$RUNNER" "$TEST_RUNNER" "readonly EXPECT_HOST='$PROD_HOST'" "readonly EXPECT_HOST='$TEST_HOST'"
+# A copy whose pin for the identity audit is wrong: the AUTH-C files are checked like the others.
+AUDIT_PIN=d512b94f8281fd201bcecb3efae3eb39fda2ab372b921d8f4a224bec012dca61
+ZERO_PIN=0000000000000000000000000000000000000000000000000000000000000000
+sed "s/^       $AUDIT_PIN)\$/       $ZERO_PIN)/" "$RUNNER" > "$WORK/pinrunner/a1_run.sh"
+PIN_RUNNER="$WORK/pinrunner/a1_run.sh"
+check 'the pin copy differs from the runner only in the identity-audit pin' \
+  diff_is "$RUNNER" "$PIN_RUNNER" "       $AUDIT_PIN)" "       $ZERO_PIN)"
+
+# --- repository checkouts the runner reads (it never writes to them) ------------------------------------------------
+CLONE="$WORK/repo"
+git clone -q --shared "$REPO" "$CLONE"
+git -C "$CLONE" checkout -q "$(git -C "$REPO" rev-parse HEAD)"
+git -C "$CLONE" cat-file -e "$AUTHC^{commit}"
+TCLONE="$WORK/repo-tamper"
+git clone -q --shared "$REPO" "$TCLONE"
+git -C "$TCLONE" checkout -q "$(git -C "$REPO" rev-parse HEAD)"
+NOAUTHC="$WORK/repo-no-authc"
+mkdir -p "$NOAUTHC/$KIT"
+cp "$CLONE/$KIT"/A1_AUTHORIZATION.md "$CLONE/$KIT"/P[123]_*.sql "$NOAUTHC/$KIT/"
+git -C "$NOAUTHC" init -q
+git -C "$NOAUTHC" add -A
+git -C "$NOAUTHC" -c user.name=a1-test -c user.email=a1-test@example.invalid commit -q -m 'kit only'
+CLONE_STATUS_BEFORE=$(git -C "$CLONE" status --porcelain=v1 --untracked-files=all)
+
+# --- TLS: a test CA, a server certificate for the two test names, and an unrelated CA ---------------------------------
+TLS="$WORK/tls"
+mkdir -p "$TLS"
+(
+  cd "$TLS"
+  openssl req -x509 -newkey rsa:2048 -nodes -keyout ca.key -out ca.crt -days 2 -subj '/CN=A1 test CA' 2>/dev/null
+  openssl req -newkey rsa:2048 -nodes -keyout server.key -out server.csr -subj "/CN=$TEST_HOST" 2>/dev/null
+  printf 'subjectAltName=DNS:%s,DNS:other-host.invalid\n' "$TEST_HOST" > san.ext
+  openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -days 2 -extfile san.ext 2>/dev/null
+  openssl req -x509 -newkey rsa:2048 -nodes -keyout wrong-ca.key -out wrong-ca.crt -days 2 -subj '/CN=A1 wrong CA' 2>/dev/null
+)
+install -o postgres -m 600 "$TLS/server.key" "$PGDIR/server.key"
+install -o postgres -m 644 "$TLS/server.crt" "$PGDIR/server.crt"
+
+# --- the throwaway server: TCP on loopback with TLS only, plus a socket for the test's own administration -----------
+PW="a1-test-only-$(openssl rand -hex 12)"
+runuser -u postgres -- "$PGBIN/initdb" -D "$PGDIR/data" --auth=trust > "$WORK/initdb.log" 2>&1
+mkdir -p "$PGDIR/sock"
+chown postgres "$PGDIR/sock"
+cat > "$PGDIR/data/pg_hba.conf" <<HBA
+local   all  postgres                 peer
+hostssl all  all       127.0.0.1/32   scram-sha-256
+HBA
+cat >> "$PGDIR/data/postgresql.conf" <<CONF
+listen_addresses = '127.0.0.1'
+port = $PORT
+unix_socket_directories = '$PGDIR/sock'
+ssl = on
+ssl_cert_file = '$PGDIR/server.crt'
+ssl_key_file = '$PGDIR/server.key'
+log_statement = 'all'
+log_connections = on
+log_line_prefix = '%m [%p] %u@%d '
+CONF
+chown postgres "$PGDIR/data/pg_hba.conf" "$PGDIR/data/postgresql.conf"
+runuser -u postgres -- "$PGBIN/pg_ctl" -D "$PGDIR/data" -l "$PGDIR/server.log" -w start > /dev/null
+admin(){ runuser -u postgres -- "$PGBIN/psql" -h "$PGDIR/sock" -p "$PORT" -X -q -v ON_ERROR_STOP=1 "$@"; }
+owner(){ PGPASSWORD="$PW" "$PGBIN/psql" "host=127.0.0.1 port=$PORT dbname=neondb user=neondb_owner sslmode=require" -X -q -v ON_ERROR_STOP=1 "$@"; }
+
+admin -d postgres -v pw="$PW" > /dev/null <<'SQL'
+CREATE ROLE authenticated NOLOGIN;
+CREATE ROLE anonymous NOLOGIN;
+CREATE ROLE neondb_owner LOGIN NOSUPERUSER CREATEDB PASSWORD :'pw';
+CREATE ROLE other_login LOGIN NOSUPERUSER PASSWORD :'pw';
+GRANT authenticated TO neondb_owner;
+CREATE DATABASE neondb OWNER neondb_owner;
+CREATE DATABASE otherdb OWNER neondb_owner;
+SQL
+# Neon Auth stood in for as in the AUTH-C integration test (pool-platform/migration-integration.test.mjs).
+admin -d neondb > /dev/null <<'SQL'
+CREATE EXTENSION pgcrypto SCHEMA public;
+CREATE SCHEMA neon_auth;
+CREATE TABLE neon_auth."user" (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY NOT NULL, name text NOT NULL, email text NOT NULL,
+  "emailVerified" boolean NOT NULL, image text, "createdAt" timestamptz DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  "updatedAt" timestamptz DEFAULT CURRENT_TIMESTAMP NOT NULL, role text, banned boolean, "banReason" text,
+  "banExpires" timestamptz, CONSTRAINT user_email_key UNIQUE (email));
+CREATE TABLE neon_auth.account (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY NOT NULL, "accountId" text NOT NULL, "providerId" text NOT NULL,
+  "userId" uuid NOT NULL REFERENCES neon_auth."user"(id) ON DELETE CASCADE, "accessToken" text, "refreshToken" text,
+  "idToken" text, "accessTokenExpiresAt" timestamptz, "refreshTokenExpiresAt" timestamptz, scope text, password text,
+  "createdAt" timestamptz DEFAULT CURRENT_TIMESTAMP NOT NULL, "updatedAt" timestamptz NOT NULL);
+CREATE TABLE neon_auth.session (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY NOT NULL, "expiresAt" timestamptz NOT NULL, token text NOT NULL,
+  "createdAt" timestamptz DEFAULT CURRENT_TIMESTAMP NOT NULL, "updatedAt" timestamptz NOT NULL, "ipAddress" text,
+  "userAgent" text, "userId" uuid NOT NULL REFERENCES neon_auth."user"(id) ON DELETE CASCADE, "impersonatedBy" text,
+  "activeOrganizationId" text, CONSTRAINT session_token_key UNIQUE (token));
+CREATE SCHEMA auth;
+CREATE FUNCTION auth.user_id() RETURNS text LANGUAGE sql STABLE
+AS $$ SELECT NULLIF(current_setting('pp_test.user_id', true), '') $$;
+CREATE FUNCTION auth.session() RETURNS jsonb LANGUAGE sql STABLE
+AS $$ SELECT COALESCE(NULLIF(current_setting('pp_test.session', true), '')::jsonb, 'null'::jsonb) $$;
+GRANT USAGE ON SCHEMA auth TO PUBLIC;
+GRANT USAGE ON SCHEMA neon_auth TO neondb_owner;
+GRANT SELECT ON neon_auth."user", neon_auth.account, neon_auth.session TO neondb_owner;
+-- The window's live sessions: D one, E two, A one, all verified users without an account row; and one synthetic,
+-- unverified live-harness identity with a password account and no session.
+INSERT INTO neon_auth."user"(name,email,"emailVerified") VALUES
+  ('D','d.window@example.test',true),('E','e.window@example.test',true),('A','a.window@example.test',true),
+  ('X','pp-cv1-r1-x.player@example.com',false);
+INSERT INTO neon_auth.session("expiresAt",token,"updatedAt","userId")
+  SELECT now() + interval '7 days', gen_random_uuid()::text, now(), u.id
+  FROM neon_auth."user" u CROSS JOIN generate_series(1,2) g
+  WHERE u.name IN ('D','E','A') AND (g = 1 OR u.name = 'E');
+INSERT INTO neon_auth.account("accountId","providerId","userId",password,"updatedAt")
+  SELECT id::text,'credential',id,'a1-test-password-hash',now() FROM neon_auth."user" WHERE name='X';
+SQL
+for m in "$BASE:pool-platform/migrations/001_foundation.sql" "$AUTHC:pool-platform/migrations/002_identity_submission_rls.sql" \
+         "$BASE:pool-platform/migrations/003_submit_entry_authorization_order.sql" "$AUTHC:pool-platform/migrations/004_identity_pre_registration_hardening.sql"; do
+  git -C "$REPO" show "$m" | owner -1 > /dev/null 2>> "$WORK/setup.log"
+done
+# pool_platform_private as the Data API listed it: present, reachable by no Data API role.
+owner > /dev/null <<'SQL'
+CREATE SCHEMA pool_platform_private;
+CREATE TABLE pool_platform_private.private_note(id int PRIMARY KEY, note text);
+CREATE FUNCTION pool_platform_private.private_helper() RETURNS int LANGUAGE sql AS 'SELECT 1';
+SQL
+
+# --- client configuration: service entries, password files, a home directory ------------------------------------------
+service(){ # name host port dbname user rootcert [extra]
+  printf '[%s]\nhost=%s\nhostaddr=127.0.0.1\nport=%s\ndbname=%s\nuser=%s\nsslrootcert=%s\n%s\n' "$@"
+}
+{
+  service a1test        "$TEST_HOST"          "$PORT"        neondb  neondb_owner "$TLS/ca.crt" ''
+  service a1test_nossl  "$TEST_HOST"          "$PORT"        neondb  neondb_owner "$TLS/ca.crt" 'sslmode=disable'
+  service a1test_other  other-host.invalid    "$PORT"        neondb  neondb_owner "$TLS/ca.crt" ''
+  service a1test_db     "$TEST_HOST"          "$PORT"        otherdb neondb_owner "$TLS/ca.crt" ''
+  service a1test_role   "$TEST_HOST"          "$PORT"        neondb  other_login  "$TLS/ca.crt" ''
+  service a1test_badca  "$TEST_HOST"          "$PORT"        neondb  neondb_owner "$TLS/wrong-ca.crt" ''
+  service a1test_name   nomatch.invalid       "$PORT"        neondb  neondb_owner "$TLS/ca.crt" ''
+  service a1test_closed "$TEST_HOST"          "$CLOSED_PORT" neondb  neondb_owner "$TLS/ca.crt" ''
+} > "$WORK/pg_service.conf"
+{
+  printf '%s:%s:neondb:neondb_owner:%s\n' "$TEST_HOST" "$PORT" "$PW"
+  printf '%s:%s:otherdb:neondb_owner:%s\n' "$TEST_HOST" "$PORT" "$PW"
+  printf '%s:%s:neondb:other_login:%s\n' "$TEST_HOST" "$PORT" "$PW"
+  printf 'other-host.invalid:%s:neondb:neondb_owner:%s\n' "$PORT" "$PW"
+  printf 'nomatch.invalid:%s:neondb:neondb_owner:%s\n' "$PORT" "$PW"
+} > "$WORK/pgpass"
+printf '%s:%s:neondb:neondb_owner:wrong-%s\n' "$TEST_HOST" "$PORT" "$PW" > "$WORK/pgpass-wrong"
+: > "$WORK/pgpass-empty"
+chmod 600 "$WORK/pgpass" "$WORK/pgpass-wrong" "$WORK/pgpass-empty"
+THOME="$WORK/home"
+mkdir -p "$THOME/Documents" "$THOME/Library/Mobile Documents/com~apple~CloudDocs"
+ln -s "$THOME/Library/Mobile Documents/com~apple~CloudDocs" "$WORK/icloud"
+HOME_LIST_BEFORE=$(cd "$THOME" && find . | sort)
+
+# --- tools: the awk under test, the fake psql, restricted PATHs -------------------------------------------------------
+AWKBIN="$WORK/awkbin"
+mkdir -p "$AWKBIN"
+if [ -n "${A1_TEST_AWK:-}" ]; then ln -s "$(command -v "$A1_TEST_AWK")" "$AWKBIN/awk"; fi
+FAKEBIN="$WORK/fakebin"
+mkdir -p "$FAKEBIN"
+cat > "$FAKEBIN/psql" <<'FAKE'
+#!/bin/bash
+# Fake psql: connects nowhere. Records its arguments and the script the runner sends, then prints the recorded rows
+# for the file the script names, from $FAKE_FIX/<file>.stdout, .stderr and .rc.
+set -u
+if [ "${1:-}" = --version ]; then echo 'psql (PostgreSQL) 18.6 (a1 test fake)'; exit 0; fi
+log=${FAKE_LOG:?}
+fix=${FAKE_FIX:?}
+/bin/mkdir -p "$log"
+n=1
+while [ -e "$log/args.$n" ]; do n=$((n + 1)); done
+printf '%s\n' "$@" > "$log/args.$n"
+/bin/cat > "$log/stdin.$n"
+file=''
+while IFS= read -r line; do
+  case $line in "\\i '"*) file=${line##*/}; file=${file%\'} ;; esac
+done < "$log/stdin.$n"
+printf '%s\n' "$file" >> "$log/files"
+base=${file%.sql}
+if [ -f "$fix/$base.stdout" ]; then /bin/cat "$fix/$base.stdout"; fi
+if [ -f "$fix/$base.stderr" ]; then /bin/cat "$fix/$base.stderr" >&2; fi
+if [ -f "$fix/$base.kill" ]; then kill -TERM "$PPID"; fi
+rc=0
+if [ -f "$fix/$base.rc" ]; then rc=$(/bin/cat "$fix/$base.rc"); fi
+exit "$rc"
+FAKE
+chmod 755 "$FAKEBIN/psql"
+RUNNER_TOOLS='git awk sed grep date cp mkdir chmod head wc ls dirname basename rmdir'
+bindir(){ # name psql-source tool...: a directory holding exactly these tools
+  local d="$WORK/bin-$1" src=$2 t p
+  shift 2
+  mkdir -p "$d"
+  [ "$src" = none ] || ln -s "$src" "$d/psql"
+  for t in "$@"; do
+    if [ "$t" = awk ] && [ -e "$AWKBIN/awk" ]; then p="$AWKBIN/awk"; else p=$(command -v "$t"); fi
+    ln -s "$p" "$d/$t"
+  done
+}
+bindir full-fake "$FAKEBIN/psql" $RUNNER_TOOLS shasum sha256sum openssl
+bindir full-real "$PGBIN/psql" $RUNNER_TOOLS shasum sha256sum openssl
+bindir shasum "$FAKEBIN/psql" $RUNNER_TOOLS shasum
+bindir sha256sum "$FAKEBIN/psql" $RUNNER_TOOLS sha256sum
+bindir openssl "$FAKEBIN/psql" $RUNNER_TOOLS openssl
+bindir nosha "$FAKEBIN/psql" $RUNNER_TOOLS
+bindir nopsql none $RUNNER_TOOLS shasum
+bindir nogit "$FAKEBIN/psql" $(printf '%s\n' $RUNNER_TOOLS | grep -v '^git$') shasum
+bindir noawk "$FAKEBIN/psql" $(printf '%s\n' $RUNNER_TOOLS | grep -v '^awk$') shasum
+FAKE_PATH="$AWKBIN:$FAKEBIN:/usr/bin:/bin"
+REAL_PATH="$AWKBIN:$PGBIN:/usr/bin:/bin"
+
+# The pseudo-terminal driver: runs the command with stdout and stderr in files and answers the runner's prompt.
+cat > "$WORK/tty_run.py" <<'PY'
+import os, select, signal, sys, time
+answer, out_path, err_path, tty_path, cwd = sys.argv[1:6]
+cmd = sys.argv[6:]
+pid, fd = os.forkpty()
+if pid == 0:
+    try:
+        if cwd != '-':
+            os.chdir(cwd)
+        out = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        err = os.open(err_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.dup2(out, 1)
+        os.dup2(err, 2)
+        os.execv(cmd[0], cmd)
+    finally:
+        os._exit(127)
+transcript, answered, status = b'', False, None
+deadline = time.monotonic() + 300
+while status is None:
+    if time.monotonic() > deadline:
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+        transcript += b'\n[tty_run: timeout]\n'
+        status = 124 << 8
+        break
+    ready, _, _ = select.select([fd], [], [], 0.2)
+    if ready:
+        try:
+            data = os.read(fd, 4096)
+        except OSError:
+            data = b''
+        if data:
+            transcript += data
+            if not answered and b'Type RUN A1' in transcript:
+                answered = True
+                os.write(fd, b'\x04' if answer == '__EOF__' else answer.encode() + b'\n')
+            continue
+    done, st = os.waitpid(pid, os.WNOHANG)
+    if done:
+        status = st
+with open(tty_path, 'wb') as f:
+    f.write(transcript)
+code = os.waitstatus_to_exitcode(status)
+sys.exit(code if code >= 0 else 128 - code)
+PY
+
+# --- running one case ------------------------------------------------------------------------------------------------
+# run_case NAME RUNNER ANSWER [VAR=value | -VAR]...: runs RUNNER with a minimal environment on a fresh evidence
+# directory, through a pseudo-terminal that answers ANSWER (__EOF__ sends end-of-file), or with no terminal at all
+# when ANSWER is NOTTY. Sets CASE (its record), EV (its evidence directory) and RC.
+CWD='-'
+run_case(){
+  local name=$1 runner=$2 answer=$3 a k rsha=''
+  shift 3
+  case $runner in /*) rsha=$(sha "$runner") ;; esac
+  CASE="$WORK/cases/$name"
+  EV="$WORK/ev/$name"
+  mkdir -p "$CASE" "$WORK/ev"
+  declare -A E=([PATH]="$FAKE_PATH" [HOME]="$THOME" [PGSERVICEFILE]="$WORK/pg_service.conf" [PGPASSFILE]="$WORK/pgpass"
+                [PP_SERVICE]=a1test [PP_REPO]="$CLONE" [PP_OUT]="$EV" [PP_RUNNER_SHA256]="$rsha"
+                [FAKE_FIX]="$FIX_BASE" [FAKE_LOG]="$CASE/fake")
+  for a in "$@"; do
+    case $a in -*) unset "E[${a#-}]" ;; *=*) E[${a%%=*}]=${a#*=} ;; esac
+  done
+  local -a envl=()
+  for k in "${!E[@]}"; do envl+=("$k=${E[$k]}"); done
+  RC=0
+  if [ "$answer" = NOTTY ]; then
+    setsid -w env -i "${envl[@]}" "$TBASH" "$runner" > "$CASE/stdout" 2> "$CASE/stderr" < /dev/null || RC=$?
+    : > "$CASE/tty"
+  else
+    env -i "${envl[@]}" /usr/bin/python3 -I "$WORK/tty_run.py" "$answer" "$CASE/stdout" "$CASE/stderr" "$CASE/tty" "$CWD" \
+      "$TBASH" "$runner" || RC=$?
+  fi
+}
+last_line(){ [ "$(tail -n 1 "$CASE/stdout")" = "$1" ]; }
+said(){ grep -qF -- "$1" "$CASE/stdout" "$CASE/stderr"; }
+not_said(){ ! grep -qF -- "$1" "$CASE/stdout" "$CASE/stderr" "$CASE/tty"; }
+files_run(){ [ "$(cat "$CASE/fake/files" 2>/dev/null | tr '\n' ' ')" = "$1" ]; }
+no_psql(){ [ ! -e "$CASE/fake/files" ]; }
+outs(){ [ "$(cd "$EV/out" 2>/dev/null && ls *.tsv 2>/dev/null | tr '\n' ' ')" = "$1" ]; }
+manifest_has(){ grep -qxF -- "$1" "$EV/manifest.txt"; }
+sums_verify(){ (cd "$EV" && sha256sum --check --quiet --strict sha256sums.txt && shasum -a 256 --check --quiet sha256sums.txt); }
+# expect NAME CODE TEXT: the result line and code are CODE's, and the output says TEXT.
+expect(){
+  local name=$1 code=$2 text=$3 result
+  case $code in 10) result='A1 RESULT: HOLD (exit 10)' ;; *) result="A1 RESULT: STOP (exit $code)" ;; esac
+  check "$name: exit $code" [ "$RC" -eq "$code" ]
+  check "$name: last line is the result" last_line "$result"
+  check "$name: says: $text" said "$text"
+}
+P1=P1_identity_helpers_004.sql P2=P2_private_schema_inventory.sql P3=P3_crm_preconditions.sql
+CV=neon-catalog-verify.sql IA=neon-identity-audit.sql
+ALL_FILES="$P1 $P2 $P3 $CV $IA "
+ALL_OUTS='P1_identity_helpers_004.tsv P2_private_schema_inventory.tsv P3_crm_preconditions.tsv neon-catalog-verify.tsv neon-identity-audit.tsv '
+FIX_BASE="$WORK/fix/none"
+mkdir -p "$FIX_BASE"
+P2_HOLD='P2: pool_platform_private holds 1 relation(s) and 1 function(s), with 0 foreign key(s), 0 view dependency(ies) and 0 trigger(s) inside it'
+
+# --- 1. the baseline, for real, through the test copy -----------------------------------------------------------------
+echo '# real server, test copy: the baseline'
+LOG_START=$(wc -c < "$PGDIR/server.log")
+run_case real-baseline "$TEST_RUNNER" 'RUN A1' PATH="$REAL_PATH"
+LOG_RUN=$(tail -c +"$((LOG_START + 1))" "$PGDIR/server.log")
+expect real-baseline 10 "$P2_HOLD"
+for pair in "$P1 H99" "$P3 X99" "$CV C99" "$IA I99"; do
+  set -- $pair
+  check "real-baseline: $1 $2 PASS" said "$1: $2 PASS, every required check ok"
+done
+check "real-baseline: $P2 kept whole for the owner" said "$P2: HOLD, 4 inventory rows kept whole for the owner"
+check 'real-baseline: exactly one HOLD item (P2)' [ "$(grep -c '^  - ' "$CASE/stdout")" -eq 1 ]
+check 'real-baseline: all five outputs kept' outs "$ALL_OUTS"
+check 'real-baseline: no diagnostics from psql' [ -z "$(cat "$EV"/out/*.stderr)" ]
+check 'real-baseline: the manifest records the runner hash' manifest_has "a1_runner_sha256 $TEST_RUNNER_SHA"
+check 'real-baseline: the staged runner copy has that hash' manifest_has "source a1_run.sh $TEST_RUNNER_SHA"
+check 'real-baseline: the manifest records the authorization hash' manifest_has 'source A1_AUTHORIZATION.md 8de895da4d7f75eb5654497a41c6e7c0f888f64d65c76d2a711725d872331c12'
+check 'real-baseline: the manifest records the outcome' manifest_has 'outcome HOLD exit 10'
+check 'real-baseline: sha256sums.txt verifies with sha256sum and shasum' sums_verify
+check 'real-baseline: sha256sums.txt covers the manifest, 7 sources and 10 outputs' [ "$(wc -l < "$EV/sha256sums.txt")" -eq 18 ]
+check 'real-baseline: the evidence directory is private' [ "$(stat -c %a "$EV")" = 700 ]
+check 'real-baseline: every evidence file is private' [ -z "$(find "$EV" -type f ! -perm 600)" ]
+check 'real-baseline: the password appears nowhere in the evidence' bash -c "! grep -rqF -- '$PW' '$EV'"
+check 'real-baseline: the password appears nowhere in the output' not_said "$PW"
+check 'real-baseline: the server ran BEGIN READ ONLY five times' [ "$(grep -c 'neondb_owner@neondb LOG:  statement: BEGIN READ ONLY;' <<<"$LOG_RUN")" -eq 5 ]
+check 'real-baseline: the server ran ROLLBACK five times' [ "$(grep -c 'neondb_owner@neondb LOG:  statement: ROLLBACK;' <<<"$LOG_RUN")" -eq 5 ]
+check 'real-baseline: the server saw no COMMIT, SET or write' bash -c "! grep -iE 'statement: *(COMMIT|END|SET |RESET|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|GRANT|REVOKE|TRUNCATE)' <<<\"\$1\"" _ "$LOG_RUN"
+check 'real-baseline: every connection used TLS' bash -c "[ \"\$(grep -c 'connection authorized: user=neondb_owner database=neondb.*SSL enabled' <<<\"\$1\")\" -eq 5 ]" _ "$LOG_RUN"
+# The recorded rows become the fake psql's fixtures, with the production host in the session row.
+mkdir -p "$WORK/fix/base"
+for f in "$EV"/out/*.tsv; do
+  awk -F'\t' -v OFS='\t' -v h="$PROD_HOST" 'NR == 1 { $4 = h } 1' "$f" > "$WORK/fix/base/$(basename "${f%.tsv}").stdout"
+done
+FIX_BASE="$WORK/fix/base"
+REAL_BASELINE_EV="$EV"
+
+for pbin in /usr/lib/postgresql/*/bin; do
+  [ -x "$pbin/psql" ] || continue
+  v=$("$pbin/psql" --version | awk '{print $3}')
+  run_case "real-psql-$v" "$TEST_RUNNER" 'RUN A1' PATH="$AWKBIN:$pbin:/usr/bin:/bin"
+  expect "real baseline with psql $v" 10 "$P2_HOLD"
+  check "real baseline with psql $v: the same rows" bash -c "for f in '$REAL_BASELINE_EV'/out/*.tsv; do cmp -s \"\$f\" '$EV'/out/\$(basename \"\$f\") || exit 1; done"
+done
+run_case real-restricted-path "$TEST_RUNNER" 'RUN A1' PATH="$WORK/bin-full-real"
+expect 'real baseline with only the listed tools on PATH' 10 "$P2_HOLD"
+run_case real-sslmode-disable "$TEST_RUNNER" 'RUN A1' PATH="$REAL_PATH" PP_SERVICE=a1test_nossl
+expect 'a service entry asking for sslmode=disable still gets verify-full' 10 "$P2_HOLD"
+
+# --- 2. before any connection: the unmodified runner ------------------------------------------------------------------
+echo '# before any connection: the runner itself'
+pre(){ # name code text [run_case args]: a STOP before any connection, with no psql started
+  local name=$1 code=$2 text=$3
+  shift 3
+  run_case "$name" "$RUNNER" 'RUN A1' "$@"
+  expect "$name" "$code" "$text"
+  check "$name: psql never started" no_psql
+}
+pre agent-claudecode 2 'because CLAUDECODE is set' CLAUDECODE=1
+check 'agent-claudecode: no evidence directory created' [ ! -e "$EV" ]
+pre agent-entrypoint 2 'because CLAUDE_CODE_ENTRYPOINT is set' CLAUDE_CODE_ENTRYPOINT=cli
+pre agent-remote 2 'because CLAUDE_CODE_REMOTE is set' CLAUDE_CODE_REMOTE=true
+pre ci 2 'because CI is set' CI=true
+pre github-actions 2 'because GITHUB_ACTIONS is set' GITHUB_ACTIONS=true
+pre missing-psql 2 'the required tool psql is not on PATH' PATH="$WORK/bin-nopsql"
+pre missing-git 2 'the required tool git is not on PATH' PATH="$WORK/bin-nogit"
+pre missing-awk 2 'the required tool awk is not on PATH' PATH="$WORK/bin-noawk"
+pre missing-sha256 2 'no SHA-256 tool' PATH="$WORK/bin-nosha"
+pre service-unset 2 'PP_SERVICE is not set' -PP_SERVICE
+pre service-bad 2 'PP_SERVICE may contain only' 'PP_SERVICE=a1test host=elsewhere'
+pre repo-unset 2 'PP_REPO must be an absolute path' -PP_REPO
+pre repo-relative 2 'PP_REPO must be an absolute path' PP_REPO=repo
+pre repo-not-git 2 'PP_REPO is not a git checkout' PP_REPO="$WORK/tls"
+pre out-unset 2 'PP_OUT must be an absolute path' -PP_OUT
+pre out-relative 2 'PP_OUT must be an absolute path' PP_OUT=evidence
+pre out-space 2 'PP_OUT must be an absolute path' "PP_OUT=$WORK/ev/with space"
+pre hash-unset 2 'PP_RUNNER_SHA256 must be the approved' -PP_RUNNER_SHA256
+pre hash-upper 2 'PP_RUNNER_SHA256 must be the approved' PP_RUNNER_SHA256="$(printf '%s' "$RUNNER_SHA" | tr a-f A-F)"
+pre hash-short 2 'PP_RUNNER_SHA256 must be the approved' PP_RUNNER_SHA256="${RUNNER_SHA%?}"
+pre hash-wrong 2 "this runner's SHA-256 is $RUNNER_SHA, not the approved $TEST_RUNNER_SHA" PP_RUNNER_SHA256="$TEST_RUNNER_SHA"
+pre out-in-repo 2 'PP_OUT is inside the repository' PP_OUT="$CLONE/evidence"
+check 'out-in-repo: the directory it created is removed' [ ! -e "$CLONE/evidence" ]
+ln -s "$CLONE" "$WORK/repo-link"
+pre out-in-repo-symlink 2 'PP_OUT is inside the repository' PP_OUT="$WORK/repo-link/evidence"
+check 'out-in-repo-symlink: the directory it created is removed' [ ! -e "$CLONE/evidence" ]
+mkdir -p "$WORK/ev/not-empty"
+echo keep > "$WORK/ev/not-empty/existing"
+pre out-not-empty 2 'PP_OUT is not empty' PP_OUT="$WORK/ev/not-empty"
+check 'out-not-empty: the existing file is untouched' [ "$(cat "$WORK/ev/not-empty/existing")" = keep ]
+mkdir -p "$WORK/ev/real-empty"
+ln -s "$WORK/ev/real-empty" "$WORK/ev/link-to-empty"
+pre out-symlink 2 'PP_OUT exists and is not a plain directory' PP_OUT="$WORK/ev/link-to-empty"
+echo file > "$WORK/ev/a-file"
+pre out-file 2 'PP_OUT exists and is not a plain directory' PP_OUT="$WORK/ev/a-file"
+pre out-documents 2 'PP_OUT is inside a folder that may be synced' PP_OUT="$THOME/Documents/a1-evidence"
+check 'out-documents: the directory it created is removed' [ ! -e "$THOME/Documents/a1-evidence" ]
+pre out-icloud 2 'PP_OUT is inside a folder that may be synced' PP_OUT="$WORK/icloud/a1-evidence"
+check 'out-icloud: the directory it created is removed' [ ! -e "$WORK/icloud/a1-evidence" ]
+tamper(){ # name file: change one byte of a kit file in the tamper clone, run, restore
+  local name=$1 file=$2
+  printf ' ' >> "$TCLONE/$KIT/$file"
+  pre "$name" 2 "$file does not match its pinned SHA-256" PP_REPO="$TCLONE"
+  git -C "$TCLONE" checkout -q -- "$KIT/$file"
+}
+tamper tamper-authorization A1_AUTHORIZATION.md
+check 'tamper-authorization: the manifest records the STOP' manifest_has 'outcome STOP exit 2'
+tamper tamper-p1 "$P1"
+tamper tamper-p2 "$P2"
+tamper tamper-p3 "$P3"
+cp "$TCLONE/$KIT/$P3" "$WORK/p3-copy.sql"
+rm "$TCLONE/$KIT/$P3"
+ln -s "$WORK/p3-copy.sql" "$TCLONE/$KIT/$P3"
+pre kit-symlink 2 'missing, or not a regular file' PP_REPO="$TCLONE"
+git -C "$TCLONE" checkout -q -- "$KIT/$P3"
+rm "$TCLONE/$KIT/$P1"
+pre kit-missing 2 'missing, or not a regular file' PP_REPO="$TCLONE"
+git -C "$TCLONE" checkout -q -- "$KIT/$P1"
+check 'the tamper clone is restored' [ -z "$(git -C "$TCLONE" status --porcelain)" ]
+pre no-authc 2 "the AUTH-C commit $AUTHC is not in PP_REPO" PP_REPO="$NOAUTHC"
+run_case pin-authc "$PIN_RUNNER" 'RUN A1'
+expect pin-authc 2 "neon-identity-audit.sql does not match its pinned SHA-256: expected $ZERO_PIN, found $AUDIT_PIN"
+check 'pin-authc: psql never started' no_psql
+ln -s "$RUNNER" "$WORK/runner-link.sh"
+run_case runner-symlink "$WORK/runner-link.sh" 'RUN A1'
+expect runner-symlink 2 'missing, or not a regular file'
+check 'runner-symlink: psql never started' no_psql
+run_case no-tty "$RUNNER" NOTTY
+expect no-tty 2 'no terminal: run A1 yourself from a terminal window'
+check 'no-tty: psql never started' no_psql
+check 'no-tty: the manifest records the STOP' manifest_has 'outcome STOP exit 2'
+run_case wrong-answer "$RUNNER" 'run a1'
+expect wrong-answer 2 'not confirmed at the terminal'
+check 'wrong-answer: psql never started' no_psql
+run_case answer-with-space "$RUNNER" 'RUN A1 '
+expect answer-with-space 2 'not confirmed at the terminal'
+run_case answer-eof "$RUNNER" __EOF__
+expect answer-eof 2 'not confirmed at the terminal'
+check 'answer-eof: psql never started' no_psql
+
+# --- 3. every output check, through the fake psql: the unmodified runner ----------------------------------------------
+echo '# output checks: the runner itself, fake psql'
+run_case fake-baseline "$RUNNER" 'RUN A1'
+expect fake-baseline 10 "$P2_HOLD"
+check 'fake-baseline: every file ran once, in order' files_run "$ALL_FILES"
+check 'fake-baseline: the manifest records the runner hash' manifest_has "a1_runner_sha256 $RUNNER_SHA"
+check 'fake-baseline: the staged runner copy is byte-identical' cmp -s "$RUNNER" "$EV/src/a1_run.sh"
+check 'fake-baseline: sha256sums.txt verifies' sums_verify
+script_ok(){ # every script the runner sent: guard first, then BEGIN READ ONLY, the read-only check, the file, ROLLBACK
+  local s n=1 expect_i
+  for f in $ALL_FILES; do
+    s="$CASE/fake/stdin.$n"
+    expect_i="\\i '$EV/src/$f'"
+    [ "$(sed -n 3p "$s")" = "SELECT :'HOST' = '$PROD_HOST' AND current_database() = 'neondb' AND current_user = 'neondb_owner' AS on_production \\gset" ] || return 1
+    [ "$(sed -n 4,8p "$s" | tr '\n' '|')" = "\\if :on_production|\\else|\\echo 'A1 STOP: not the production endpoint, database and owner'|\\quit|\\endif|" ] || return 1
+    [ "$(sed -n 9p "$s")" = 'BEGIN READ ONLY;' ] || return 1
+    [ "$(grep -nxF -- "$expect_i" "$s" | cut -d: -f1)" = 17 ] || return 1
+    [ "$(tail -n 1 "$s")" = 'ROLLBACK;' ] || return 1
+    [ "$(wc -l < "$s")" -eq 18 ] || return 1
+    ! grep -qiE '^[[:space:]]*(SET|RESET|COMMIT|END|ABORT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|GRANT|REVOKE)\b' "$s" || return 1
+    [ "$(tr '\n' ' ' < "$CASE/fake/args.$n")" = "service=a1test sslmode=verify-full -X -w -q -A -t -F $(printf '\t') -v ON_ERROR_STOP=1 " ] || return 1
+    n=$((n + 1))
+  done
+}
+check 'fake-baseline: each script is the guard, BEGIN READ ONLY, the file and ROLLBACK, with no setting change' script_ok
+CWD="$HERE"
+run_case relative-invocation ./a1_run.sh 'RUN A1' PP_RUNNER_SHA256="$RUNNER_SHA"
+CWD='-'
+expect 'invoked as ./a1_run.sh from its own directory' 10 "$P2_HOLD"
+check 'relative-invocation: the manifest records the real path' manifest_has "a1_runner_path $RUNNER"
+ln -s "$HERE" "$WORK/kit-link"
+run_case symlinked-directory "$WORK/kit-link/a1_run.sh" 'RUN A1'
+expect 'invoked through a symlinked directory' 10 "$P2_HOLD"
+check 'symlinked-directory: the manifest records the real path' manifest_has "a1_runner_path $RUNNER"
+mkdir -m 755 "$WORK/ev/existing-empty"
+run_case existing-empty "$RUNNER" 'RUN A1' PP_OUT="$WORK/ev/existing-empty"
+expect 'an existing empty evidence directory is used' 10 "$P2_HOLD"
+check 'existing-empty: it is made private' [ "$(stat -c %a "$WORK/ev/existing-empty")" = 700 ]
+for tool in shasum sha256sum openssl; do
+  run_case "only-$tool" "$RUNNER" 'RUN A1' PATH="$WORK/bin-$tool"
+  expect "only $tool available" 10 "$P2_HOLD"
+  check "only-$tool: the manifest names the tool" manifest_has "sha256_tool $tool"
+  check "only-$tool: sha256sums.txt verifies" sums_verify
+done
+run_case fake-restricted-path "$RUNNER" 'RUN A1' PATH="$WORK/bin-full-fake"
+expect 'only the listed tools on PATH' 10 "$P2_HOLD"
+
+fix_new(){ rm -rf "$WORK/fix/$1"; cp -a "$FIX_BASE" "$WORK/fix/$1"; FIX="$WORK/fix/$1"; }
+fix_edit(){ # file awk-program: rewrite one fixture's rows (tab-separated)
+  local f="$FIX/${1%.sql}.stdout"
+  awk -F'\t' -v OFS='\t' "$2" "$f" > "$f.new"
+  mv "$f.new" "$f"
+}
+# fake NAME CODE TEXT FILES-RUN FILE AWK [FILE AWK]...: change the fixtures, run, expect.
+fake(){
+  local name=$1 code=$2 text=$3 files=$4
+  shift 4
+  fix_new "$name"
+  while [ "$#" -ge 2 ]; do fix_edit "$1" "$2"; shift 2; done
+  run_case "$name" "$RUNNER" 'RUN A1' FAKE_FIX="$FIX"
+  expect "$name" "$code" "$text"
+  check "$name: files run: $files" files_run "$files"
+}
+UPTO_P1="$P1 " UPTO_P2="$P1 $P2 " UPTO_P3="$P1 $P2 $P3 " UPTO_CV="$P1 $P2 $P3 $CV "
+fake missing-h99 4 'check H99 is missing' "$UPTO_P1" "$P1" '$1 != "H99"'
+fake missing-x99 4 'check X99 is missing' "$UPTO_P3" "$P3" '$1 != "X99"'
+fake missing-c99 4 'check C99 is missing' "$UPTO_CV" "$CV" '$1 != "C99"'
+fake missing-i99 4 'check I99 is missing' "$ALL_FILES" "$IA" '$1 != "I99"'
+fake missing-h03 4 'check H03 is missing' "$UPTO_P1" "$P1" '$1 != "H03"'
+fake findings-h99 4 'VERDICT: H99 is not PASS: FINDINGS: H01' "$UPTO_P1" "$P1" '$1 == "H99" { $5 = "FINDINGS: H01"; $6 = "f" } $1 == "H01" { $6 = "f" } 1'
+fake findings-x99 4 'VERDICT: X99 is not PASS: FINDINGS: X04' "$UPTO_P3" "$P3" '$1 == "X99" { $5 = "FINDINGS: X04"; $6 = "f" } $1 == "X04" { $6 = "f" } 1'
+fake findings-c99 4 'VERDICT: C99 is not PASS: FINDINGS: C13' "$UPTO_CV" "$CV" '$1 == "C99" { $5 = "FINDINGS: C13"; $6 = "f" } $1 == "C13" { $6 = "f" } 1'
+fake stop-i99 4 'VERDICT: I99 is not PASS: STOP: I05' "$ALL_FILES" "$IA" '$1 == "I99" { $5 = "STOP: I05"; $6 = "f" } $1 == "I05" { $6 = "f" } 1'
+fake verdict-ok-false 4 'VERDICT: H99 is not PASS: PASS' "$UPTO_P1" "$P1" '$1 == "H99" { $6 = "f" } 1'
+fake verdict-ok-null 4 'VERDICT: X99 is not PASS: PASS' "$UPTO_P3" "$P3" '$1 == "X99" { $6 = "" } 1'
+fake verdict-lowercase 4 'VERDICT: C99 is not PASS: pass' "$UPTO_CV" "$CV" '$1 == "C99" { $5 = "pass" } 1'
+fake verdict-renamed 4 'VERDICT: I99 is not PASS' "$ALL_FILES" "$IA" '$1 == "I99" { $2 = "summary" } 1'
+fake required-false-under-pass 4 'REQUIRED: required checks not ok: H03' "$UPTO_P1" "$P1" '$1 == "H03" { $6 = "f" } 1'
+fake required-null-under-pass 4 'REQUIRED: required checks not ok: X06' "$UPTO_P3" "$P3" '$1 == "X06" { $6 = "" } 1'
+fake required-two-false 4 'REQUIRED: required checks not ok: C05 C26' "$UPTO_CV" "$CV" '$1 == "C05" || $1 == "C26" { $6 = "f" } 1'
+fake required-i06-false 4 'REQUIRED: required checks not ok: I06' "$ALL_FILES" "$IA" '$1 == "I06" { $6 = "f" } 1'
+fake required-flag-flipped 4 'MALFORMED: check H01 has required=f, not t' "$UPTO_P1" "$P1" '$1 == "H01" { $3 = "f" } 1'
+fake informational-made-required 4 'MALFORMED: check X05 has required=t, not f' "$UPTO_P3" "$P3" '$1 == "X05" { $3 = "t"; $6 = "t" } 1'
+fake c21-as-on-postgresql-16 4 'MALFORMED: check C21 has required=f, not t' "$UPTO_CV" "$CV" '$1 == "C21" { $3 = "f"; $6 = "" } 1'
+fake ok-flag-bad 4 'MALFORMED: check H02 has an ok flag that is not t, f or empty' "$UPTO_P1" "$P1" '$1 == "H02" { $6 = "true" } 1'
+fake required-flag-bad 4 'MALFORMED: check H02 has required=true, not t' "$UPTO_P1" "$P1" '$1 == "H02" { $3 = "true" } 1'
+fake duplicate-row 4 'MALFORMED: check H02 appears twice' "$UPTO_P1" "$P1" '1; $1 == "H02" { print }'
+fake unknown-id 4 'MALFORMED: unexpected check id on line' "$UPTO_P3" "$P3" '1; $1 == "X06" { $1 = "X07"; print }'
+fake five-fields 4 'has 5 fields, not 6' "$UPTO_P1" "$P1" '$1 == "H04" { print $1, $2, $3, $4, $5; next } 1'
+fake seven-fields 4 'has 7 fields, not 6' "$UPTO_CV" "$CV" '$1 == "C10" { print $0, "extra"; next } 1'
+fake blank-line 4 'has 0 fields, not 6' "$UPTO_P1" "$P1" '1; $1 == "H01" { print "" }'
+fake empty-output 4 'MALFORMED: the output is empty' "$UPTO_P1" "$P1" '0'
+fake no-session-row 4 'MALFORMED: the session row is missing' "$UPTO_P1" "$P1" 'NR > 1'
+fake session-no-tls 4 'MALFORMED: the session row is missing' "$UPTO_P1" "$P1" 'NR == 1 { $6 = "false" } 1'
+fake session-not-read-only 4 'MALFORMED: the session row is missing' "$UPTO_P3" "$P3" 'NR == 1 { $5 = "off" } 1'
+fake session-other-host 4 'MALFORMED: the session row is missing' "$UPTO_P1" "$P1" 'NR == 1 { $4 = "ep-other.c-7.us-east-2.aws.neon.tech" } 1'
+fake session-other-role 4 'MALFORMED: the session row is missing' "$UPTO_CV" "$CV" 'NR == 1 { $2 = "authenticated" } 1'
+fake session-other-db 4 'MALFORMED: the session row is missing' "$ALL_FILES" "$IA" 'NR == 1 { $3 = "postgres" } 1'
+fake session-row-second 4 'MALFORMED: the session row is missing' "$UPTO_P1" "$P1" 'NR == 1 { s = $0; next } NR == 2 { print; print s; next } 1'
+fake p2-session-no-tls 4 'MALFORMED: the session row is missing' "$UPTO_P2" "$P2" 'NR == 1 { $6 = "unknown" } 1'
+fake h07-not-owner 4 'P1 H07: the session role is not the commercial table owner: neondb_owner owner=false' "$UPTO_P1" "$P1" '$1 == "H07" { $5 = "neondb_owner owner=false" } 1'
+fake c01-postgresql-17 4 'C01: the server is not PostgreSQL 18 (server_version_num 170006)' "$UPTO_CV" "$CV" '$1 == "C01" { sub(/server_version_num [0-9]+/, "server_version_num 170006", $5) } 1'
+fake c01-malformed 4 'C01 is malformed' "$UPTO_CV" "$CV" '$1 == "C01" { $5 = "PostgreSQL 18.6" } 1'
+fake c20-other-owner 4 'C20: the commercial tables are not owned by neondb_owner alone' "$UPTO_CV" "$CV" '$1 == "C20" { $5 = "pool_platform_owner super=false" } 1'
+fake c20-superuser 4 'C20: the commercial tables are not owned by neondb_owner alone' "$UPTO_CV" "$CV" '$1 == "C20" { $5 = "neondb_owner super=true" } 1'
+fake i07-five 10 'I07: 5 live sessions, more than the four window sessions' "$ALL_FILES" "$IA" '$1 == "I07" { $5 = "total=5; of verified users with no account=5; impersonated=0" } 1'
+fake i07-impersonated 4 'I07: 1 live session(s) are impersonated' "$ALL_FILES" "$IA" '$1 == "I07" { $5 = "total=4; of verified users with no account=4; impersonated=1" } 1'
+fake i07-orphan 4 'I07: 1 live session(s) do not belong to a verified user without an account row' "$ALL_FILES" "$IA" '$1 == "I07" { $5 = "total=4; of verified users with no account=3; impersonated=0" } 1'
+fake i07-malformed 4 'I07 is malformed' "$ALL_FILES" "$IA" '$1 == "I07" { $5 = "total=4" } 1'
+fake i04-malformed 4 'I04 is malformed' "$ALL_FILES" "$IA" '$1 == "I04" { $5 = "one" } 1'
+fake i08-malformed 4 'I08 is malformed' "$ALL_FILES" "$IA" '$1 == "I08" { $5 = "memberships=0" } 1'
+fake i03-malformed 4 'I03 is malformed' "$ALL_FILES" "$IA" '$1 == "I03" { $5 = "1" } 1'
+fake i04-with-standing 10 'I04 and I08: 1 verified user(s) hold a password or OAuth account, and users with an account row hold 2 membership(s) and 0 entr(y/ies)' "$ALL_FILES" \
+  "$IA" '$1 == "I04" { $5 = "1" } $1 == "I08" { $5 = "memberships=2; entries owned=0" } 1'
+fake i04-without-standing 10 "$P2_HOLD" "$ALL_FILES" "$IA" '$1 == "I04" { $5 = "1" } 1'
+check 'i04-without-standing: only the P2 HOLD' [ "$(grep -c '^  - ' "$CASE/stdout")" -eq 1 ]
+fake i08-standing-no-i04 10 "$P2_HOLD" "$ALL_FILES" "$IA" '$1 == "I08" { $5 = "memberships=0; entries owned=3" } 1'
+check 'i08-standing-no-i04: only the P2 HOLD' [ "$(grep -c '^  - ' "$CASE/stdout")" -eq 1 ]
+fake i03-other 10 'I03: 2 non-synthetic unverified user(s) hold a password or OAuth account' "$ALL_FILES" \
+  "$IA" '$1 == "I03" { $5 = "3 (synthetic pp-cv1-*@example.com: 1; other: 2)" } 1'
+fake p2-usage 4 'STOP: a Data API role can use or create objects in the schema' "$UPTO_P2" "$P2" '$1 == "schema" { sub(/usage: anonymous=false authenticated=false/, "usage: anonymous=false authenticated=true", $4) } 1'
+fake p2-create 4 'STOP: a Data API role can use or create objects in the schema' "$UPTO_P2" "$P2" '$1 == "schema" { sub(/create: anonymous=false authenticated=false$/, "create: anonymous=true authenticated=false", $4) } 1'
+fake p2-usage-behind-spoofing-comment 4 'STOP: a Data API role can use or create objects in the schema' "$UPTO_P2" "$P2" \
+  '$1 == "schema" { sub(/; usage: anonymous=false authenticated=false; create: anonymous=false authenticated=false$/, "; usage: anonymous=false authenticated=false; create: anonymous=false authenticated=false; usage: anonymous=false authenticated=true; create: anonymous=false authenticated=false", $4) } 1'
+fake p2-named-by 4 'STOP: reviewed public code names the schema (function pool_platform_peek)' "$UPTO_P2" "$P2" '1; END { print "dependency", "named by reviewed public object", "", "function pool_platform_peek", "" }'
+fake p2-trigger-outside 4 'STOP: a trigger outside the schema runs its code (on pool_platform_entries calls pool_platform_private.audit())' "$UPTO_P2" "$P2" \
+  '1; END { print "dependency", "trigger t_audit", "", "on pool_platform_entries calls pool_platform_private.audit()", "" }'
+fake p2-trigger-inside 10 'with 0 foreign key(s), 0 view dependency(ies) and 1 trigger(s) inside it' "$ALL_FILES" "$P2" \
+  '1; END { print "dependency", "trigger t_note", "", "on pool_platform_private.private_note calls pool_platform_private.private_helper()", "" }'
+fake p2-fk-view 10 'with 2 foreign key(s), 1 view dependency(ies) and 0 trigger(s) inside it' "$ALL_FILES" "$P2" \
+  '1; END { print "dependency", "foreign key a", "", "from x to y", ""; print "dependency", "foreign key b", "", "from y to z", ""; print "dependency", "view v", "", "reads public.pool_platform_pools", "" }'
+fake p2-absent 10 'P2: pool_platform_private is absent, although the Data API listed it on 2026-10-28' "$ALL_FILES" "$P2" \
+  '$1 == "schema" || $1 == "relation" || $1 == "function" { next } $1 == "provenance hint" { $4 = "schema absent (schema_oid=none, newest_commercial_fn_oid=1)" } 1'
+fake p2-absent-named-by 4 'STOP: reviewed public code names the schema' "$UPTO_P2" "$P2" \
+  '$1 == "schema" || $1 == "relation" || $1 == "function" { next } $1 == "provenance hint" { $4 = "schema absent (schema_oid=none, newest_commercial_fn_oid=1)" } 1; END { print "dependency", "named by reviewed public object", "", "policy p on pool_platform_pools", "" }'
+fake p2-unknown-kind 4 'MALFORMED: an unknown row kind' "$UPTO_P2" "$P2" '1; END { print "grant", "x", "", "y", "" }'
+fake p2-unknown-dependency 4 'MALFORMED: an unknown dependency row' "$UPTO_P2" "$P2" '1; END { print "dependency", "sequence s", "", "y", "" }'
+fake p2-two-provenance 4 'MALFORMED: expected one provenance row, found 2' "$UPTO_P2" "$P2" '1; $1 == "provenance hint" { print }'
+fake p2-no-provenance 4 'MALFORMED: expected one provenance row, found 0' "$UPTO_P2" "$P2" '$1 != "provenance hint"'
+fake p2-two-schemas 4 'MALFORMED: more than one schema row' "$UPTO_P2" "$P2" '1; $1 == "schema" { print }'
+fake p2-other-schema 4 'MALFORMED: a schema row for another schema' "$UPTO_P2" "$P2" '$1 == "schema" { $2 = "pool_platform_privat" } 1'
+fake p2-objects-without-schema 4 'MALFORMED: objects listed without a schema row' "$UPTO_P2" "$P2" '$1 != "schema"'
+fake p2-schema-and-absence 4 'MALFORMED: a schema row and an absence note' "$UPTO_P2" "$P2" '$1 == "provenance hint" { $4 = "schema absent" } 1'
+fake p2-no-oid 4 'does not end in an oid' "$UPTO_P2" "$P2" '$1 == "relation" { $5 = "x" } 1'
+fake p2-short-line 4 'has 3 fields, not at least 5' "$UPTO_P2" "$P2" '1; END { print "relation", "x", "y" }'
+fake p2-empty 4 'MALFORMED: the output is empty' "$UPTO_P2" "$P2" '0'
+fake p2-blank-line 4 'has 0 fields, not at least 5' "$UPTO_P2" "$P2" '1; END { print "" }'
+# The process side: psql's exit code, its diagnostics, the guard's message, an interruption.
+fakeproc(){ # name code text files-run file-base what
+  local name=$1 code=$2 text=$3 files=$4 base=$5
+  shift 5
+  fix_new "$name"
+  "$@"
+  run_case "$name" "$RUNNER" 'RUN A1' FAKE_FIX="$FIX"
+  expect "$name" "$code" "$text"
+  check "$name: files run: $files" files_run "$files"
+}
+psql_fails(){ echo 2 > "$FIX/$1.rc"; echo 'psql: error: connection to server failed: Connection refused' > "$FIX/$1.stderr"; : > "$FIX/$1.stdout"; }
+sql_error(){ echo 3 > "$FIX/$1.rc"; echo 'psql:/x.sql:1: ERROR:  permission denied for table session' > "$FIX/$1.stderr"; head -n 1 "$FIX_BASE/$1.stdout" > "$FIX/$1.stdout"; }
+noise(){ echo 'WARNING:  database "neondb" has a collation version mismatch' > "$FIX/$1.stderr"; }
+guard_says(){ printf 'A1 STOP: not the production endpoint, database and owner\n' > "$FIX/$1.stdout"; }
+ro_says(){ printf 'A1 STOP: the transaction is not read-only\n' > "$FIX/$1.stdout"; }
+interrupt(){ : > "$FIX/$1.kill"; }
+fakeproc psql-connection-error 3 'P1_identity_helpers_004.sql: psql exited 2' "$UPTO_P1" P1_identity_helpers_004 psql_fails P1_identity_helpers_004
+check 'psql-connection-error: shows psql diagnostics' said 'psql: psql: error: connection to server failed'
+fakeproc psql-sql-error 3 'neon-identity-audit.sql: psql exited 3' "$ALL_FILES" neon-identity-audit sql_error neon-identity-audit
+fakeproc psql-diagnostics 4 'P3_crm_preconditions.sql: psql wrote unexpected diagnostics' "$UPTO_P3" P3_crm_preconditions noise P3_crm_preconditions
+fakeproc guard-refusal 3 'neon-catalog-verify.sql: not the production endpoint, database and owner' "$UPTO_CV" neon-catalog-verify guard_says neon-catalog-verify
+fakeproc not-read-only 3 'P2_private_schema_inventory.sql: the transaction is not read-only' "$UPTO_P2" P2_private_schema_inventory ro_says P2_private_schema_inventory
+fakeproc interrupted 143 'the run ended unexpectedly with status 143' "$UPTO_P3" P3_crm_preconditions interrupt P3_crm_preconditions
+check 'interrupted: the manifest records the STOP' manifest_has 'outcome STOP exit 143'
+check 'interrupted: sha256sums.txt verifies' sums_verify
+
+# --- 4. real connections: the guard, TLS, authentication, through the test copy -------------------------------------
+echo '# real server: connections and the guard'
+conn(){ # name code text service [run_case args]
+  local name=$1 code=$2 text=$3 svc=$4
+  shift 4
+  run_case "$name" "$TEST_RUNNER" 'RUN A1' PATH="$REAL_PATH" PP_SERVICE="$svc" "$@"
+  expect "$name" "$code" "$text"
+  check "$name: no file ran past the first connection" outs 'P1_identity_helpers_004.tsv '
+  check "$name: the password appears nowhere" not_said "$PW"
+}
+conn wrong-host 3 'P1_identity_helpers_004.sql: not the production endpoint, database and owner' a1test_other
+conn wrong-database 3 'P1_identity_helpers_004.sql: not the production endpoint, database and owner' a1test_db
+conn wrong-role 3 'P1_identity_helpers_004.sql: not the production endpoint, database and owner' a1test_role
+conn wrong-ca 3 'psql exited 2: a connection, TLS, authentication or SQL error' a1test_badca
+check 'wrong-ca: the TLS failure is shown' said 'certificate verify failed'
+conn name-not-in-certificate 3 'psql exited 2: a connection, TLS, authentication or SQL error' a1test_name
+check 'name-not-in-certificate: the name mismatch is shown' said 'does not match host name'
+conn closed-port 3 'psql exited 2: a connection, TLS, authentication or SQL error' a1test_closed
+conn no-password 3 'psql exited 2: a connection, TLS, authentication or SQL error' a1test PGPASSFILE="$WORK/pgpass-empty"
+conn wrong-password 3 'psql exited 2: a connection, TLS, authentication or SQL error' a1test PGPASSFILE="$WORK/pgpass-wrong"
+check 'wrong-password: the wrong password appears nowhere' not_said "wrong-$PW"
+conn unknown-service 3 'psql exited 2: a connection, TLS, authentication or SQL error' a1test_missing
+run_case real-runner-local-server "$RUNNER" 'RUN A1' PATH="$REAL_PATH"
+expect 'the unmodified runner refuses the local server' 3 'P1_identity_helpers_004.sql: not the production endpoint, database and owner'
+check 'real-runner-local-server: no file ran past the guard' outs 'P1_identity_helpers_004.tsv '
+only_guard_line(){ [ "$(cat "$EV/out/P1_identity_helpers_004.tsv")" = 'A1 STOP: not the production endpoint, database and owner' ]; }
+check 'real-runner-local-server: the guard printed its refusal and nothing else' only_guard_line
+
+# --- 5. real findings: each changes the local baseline, runs, and restores it -----------------------------------------
+echo '# real server: findings'
+real(){ # name code text outs-expected setup-sql restore-sql [admin|owner]
+  local name=real-$1 code=$2 text=$3 want=$4 setup=$5 restore=$6 who=${7:-owner}
+  if [ "$who" = admin ]; then admin -d neondb -c "$setup" > /dev/null; else owner -c "$setup" > /dev/null; fi
+  run_case "$name" "$TEST_RUNNER" 'RUN A1' PATH="$REAL_PATH"
+  if [ "$who" = admin ]; then admin -d neondb -c "$restore" > /dev/null; else owner -c "$restore" > /dev/null; fi
+  expect "$name" "$code" "$text"
+  check "$name: outputs: $want" outs "$want"
+}
+O1='P1_identity_helpers_004.tsv ' O2='P1_identity_helpers_004.tsv P2_private_schema_inventory.tsv '
+O3="${O2}P3_crm_preconditions.tsv " O4="${O3}neon-catalog-verify.tsv "
+real p1-helper-not-definer 4 'P1_identity_helpers_004.sql: VERDICT: H99 is not PASS: FINDINGS: H02' "$O1" \
+  'ALTER FUNCTION public.pool_platform_current_user_id() SECURITY INVOKER' 'ALTER FUNCTION public.pool_platform_current_user_id() SECURITY DEFINER'
+real p1-helper-body 4 'P1_identity_helpers_004.sql: VERDICT: H99 is not PASS: FINDINGS: H01' "$O1" \
+  "BEGIN; CREATE TABLE a1t_saved AS SELECT pg_get_functiondef('public.pool_platform_current_user_email()'::regprocedure) AS ddl; CREATE OR REPLACE FUNCTION public.pool_platform_current_user_email() RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, neon_auth, pg_temp AS \$\$ SELECT NULL::text \$\$; COMMIT;" \
+  "DO \$\$ BEGIN EXECUTE (SELECT ddl FROM a1t_saved); END \$\$; DROP TABLE a1t_saved;"
+real p3-crm-table-exists 4 'P3_crm_preconditions.sql: VERDICT: X99 is not PASS: FINDINGS: X01' "$O3" \
+  'CREATE TABLE public.pool_platform_staff_grants(id int)' 'DROP TABLE public.pool_platform_staff_grants'
+real catalog-grant 4 'neon-catalog-verify.sql: VERDICT: C99 is not PASS: FINDINGS: C13, C14, C22' "$O4" \
+  'GRANT INSERT ON public.pool_platform_pools TO authenticated' 'REVOKE INSERT ON public.pool_platform_pools FROM authenticated'
+real audit-unverified-session 4 'neon-identity-audit.sql: VERDICT: I99 is not PASS: STOP: I05, I06' "$ALL_OUTS" \
+  "INSERT INTO neon_auth.session(\"expiresAt\",token,\"updatedAt\",\"userId\") SELECT now() + interval '1 day','a1t-x',now(),id FROM neon_auth.\"user\" WHERE name='X'" \
+  "DELETE FROM neon_auth.session WHERE token='a1t-x'" admin
+real audit-fifth-session 10 'I07: 5 live sessions, more than the four window sessions (D, E, A)' "$ALL_OUTS" \
+  "INSERT INTO neon_auth.session(\"expiresAt\",token,\"updatedAt\",\"userId\") SELECT now() + interval '1 day','a1t-d2',now(),id FROM neon_auth.\"user\" WHERE name='D'" \
+  "DELETE FROM neon_auth.session WHERE token='a1t-d2'" admin
+real audit-impersonated 4 'I07: 1 live session(s) are impersonated' "$ALL_OUTS" \
+  "UPDATE neon_auth.session SET \"impersonatedBy\"='a1t-admin' WHERE \"userId\"=(SELECT id FROM neon_auth.\"user\" WHERE name='A')" \
+  "UPDATE neon_auth.session SET \"impersonatedBy\"=NULL WHERE \"impersonatedBy\"='a1t-admin'" admin
+real audit-contested-with-standing 10 'I04 and I08: 1 verified user(s) hold a password or OAuth account, and users with an account row hold 1 membership(s) and 0 entr(y/ies)' "$ALL_OUTS" \
+  "BEGIN; INSERT INTO neon_auth.\"user\"(name,email,\"emailVerified\") VALUES ('C','contested@example.test',true); INSERT INTO neon_auth.account(\"accountId\",\"providerId\",\"userId\",\"updatedAt\") SELECT id::text,'google',id,now() FROM neon_auth.\"user\" WHERE name='C'; INSERT INTO public.pool_platform_tenants(slug,display_name) VALUES ('a1-test-tenant','A1 test'); INSERT INTO public.pool_platform_memberships(tenant_id,auth_user_id,role) SELECT t.id,u.id::text,'owner' FROM public.pool_platform_tenants t, neon_auth.\"user\" u WHERE t.slug='a1-test-tenant' AND u.name='C'; COMMIT;" \
+  "BEGIN; DELETE FROM public.pool_platform_tenants WHERE slug='a1-test-tenant'; DELETE FROM neon_auth.\"user\" WHERE name='C'; COMMIT;" admin
+real audit-contested-without-standing 10 "$P2_HOLD" "$ALL_OUTS" \
+  "BEGIN; INSERT INTO neon_auth.\"user\"(name,email,\"emailVerified\") VALUES ('C','contested@example.test',true); INSERT INTO neon_auth.account(\"accountId\",\"providerId\",\"userId\",\"updatedAt\") SELECT id::text,'google',id,now() FROM neon_auth.\"user\" WHERE name='C'; COMMIT;" \
+  "DELETE FROM neon_auth.\"user\" WHERE name='C'" admin
+check 'audit-contested-without-standing: only the P2 HOLD' [ "$(grep -c '^  - ' "$CASE/stdout")" -eq 1 ]
+real audit-pre-registration 10 'I03: 1 non-synthetic unverified user(s) hold a password or OAuth account' "$ALL_OUTS" \
+  "BEGIN; INSERT INTO neon_auth.\"user\"(name,email,\"emailVerified\") VALUES ('S','squatter@example.test',false); INSERT INTO neon_auth.account(\"accountId\",\"providerId\",\"userId\",password,\"updatedAt\") SELECT id::text,'credential',id,'x',now() FROM neon_auth.\"user\" WHERE name='S'; COMMIT;" \
+  "DELETE FROM neon_auth.\"user\" WHERE name='S'" admin
+ACL_RESET="UPDATE pg_catalog.pg_namespace SET nspacl = NULL WHERE nspname = 'pool_platform_private'"
+real p2-usage-granted 4 'P2_private_schema_inventory.sql: STOP: a Data API role can use or create objects in the schema' "$O2" \
+  'GRANT USAGE ON SCHEMA pool_platform_private TO authenticated' "REVOKE USAGE ON SCHEMA pool_platform_private FROM authenticated; $ACL_RESET" admin
+real p2-usage-to-public 4 'P2_private_schema_inventory.sql: STOP: a Data API role can use or create objects in the schema' "$O2" \
+  'GRANT USAGE ON SCHEMA pool_platform_private TO PUBLIC' "REVOKE USAGE ON SCHEMA pool_platform_private FROM PUBLIC; $ACL_RESET" admin
+real p2-create-granted 4 'P2_private_schema_inventory.sql: STOP: a Data API role can use or create objects in the schema' "$O2" \
+  'GRANT CREATE ON SCHEMA pool_platform_private TO anonymous' "REVOKE CREATE ON SCHEMA pool_platform_private FROM anonymous; $ACL_RESET" admin
+real p2-usage-behind-spoofing-comment 4 'P2_private_schema_inventory.sql: STOP: a Data API role can use or create objects in the schema' "$O2" \
+  "COMMENT ON SCHEMA pool_platform_private IS 'x; usage: anonymous=false authenticated=false; create: anonymous=false authenticated=false'; GRANT USAGE ON SCHEMA pool_platform_private TO authenticated" \
+  "COMMENT ON SCHEMA pool_platform_private IS NULL; REVOKE USAGE ON SCHEMA pool_platform_private FROM authenticated; $ACL_RESET" admin
+real p2-spoofing-comment-alone 10 "$P2_HOLD" "$ALL_OUTS" \
+  "COMMENT ON SCHEMA pool_platform_private IS 'usage: anonymous=true authenticated=true; create: anonymous=true authenticated=true'" \
+  'COMMENT ON SCHEMA pool_platform_private IS NULL' admin
+real p2-named-by-public-function 4 'STOP: reviewed public code names the schema (function a1t_peek)' "$O2" \
+  'CREATE FUNCTION public.a1t_peek() RETURNS bigint LANGUAGE sql AS $$ SELECT count(*) FROM pool_platform_private.private_note $$' 'DROP FUNCTION public.a1t_peek()'
+real p2-trigger-on-public-table 4 'STOP: a trigger outside the schema runs its code (on a1t_public calls pool_platform_private.a1t_trg)' "$O2" \
+  'CREATE FUNCTION pool_platform_private.a1t_trg() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NEW; END$$; CREATE TABLE public.a1t_public(id int); CREATE TRIGGER a1t_t BEFORE INSERT ON public.a1t_public FOR EACH ROW EXECUTE FUNCTION pool_platform_private.a1t_trg()' \
+  'DROP TABLE public.a1t_public; DROP FUNCTION pool_platform_private.a1t_trg()'
+real p2-trigger-inside 10 'holds 1 relation(s) and 2 function(s), with 0 foreign key(s), 0 view dependency(ies) and 1 trigger(s) inside it' "$ALL_OUTS" \
+  'CREATE FUNCTION pool_platform_private.a1t_trg() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NEW; END$$; CREATE TRIGGER a1t_t BEFORE INSERT ON pool_platform_private.private_note FOR EACH ROW EXECUTE FUNCTION pool_platform_private.a1t_trg()' \
+  'DROP TRIGGER a1t_t ON pool_platform_private.private_note; DROP FUNCTION pool_platform_private.a1t_trg()'
+real p2-foreign-key-in 10 'with 1 foreign key(s), 0 view dependency(ies) and 0 trigger(s) inside it' "$ALL_OUTS" \
+  'CREATE TABLE public.a1t_ref(id int REFERENCES pool_platform_private.private_note(id))' 'DROP TABLE public.a1t_ref'
+real p2-absent 10 'P2: pool_platform_private is absent, although the Data API listed it on 2026-10-28' "$ALL_OUTS" \
+  'ALTER SCHEMA pool_platform_private RENAME TO a1t_renamed' 'ALTER SCHEMA a1t_renamed RENAME TO pool_platform_private'
+run_case real-baseline-again "$TEST_RUNNER" 'RUN A1' PATH="$REAL_PATH"
+expect 'the baseline is back after every change' 10 "$P2_HOLD"
+check 'real-baseline-again: the same rows as the first baseline' bash -c \
+  "for f in '$REAL_BASELINE_EV'/out/*.tsv; do cmp -s \"\$f\" '$EV'/out/\$(basename \"\$f\") || exit 1; done"
+
+# --- 6. nothing outside the evidence directories changed ---------------------------------------------------------------
+echo '# side effects'
+check 'the repository is unchanged' [ "$(git -C "$REPO" status --porcelain=v1 --untracked-files=all)" = "$REPO_STATUS_BEFORE" ]
+check 'the checkout the runner read is unchanged' [ "$(git -C "$CLONE" status --porcelain=v1 --untracked-files=all)" = "$CLONE_STATUS_BEFORE" ]
+check 'the home directory is unchanged (no history or other file written)' [ "$(cd "$THOME" && find . | sort)" = "$HOME_LIST_BEFORE" ]
+
+printf '\n%s passed, %s failed (runner %s, bash %s, awk %s)\n' "$PASSED" "$FAILED" "$RUNNER_SHA" \
+  "$("$TBASH" -c 'echo $BASH_VERSION')" "${A1_TEST_AWK:-$(readlink -f "$(command -v awk)")}"
+if [ "$FAILED" -ne 0 ]; then printf 'failed:%s\n' "$FAILS"; exit 1; fi

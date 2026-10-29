@@ -4,10 +4,21 @@ Four single-statement, read-only SQL files that establish the accepted post-AUTH
 CRM migration is applied anywhere, and record the legacy validation branch before it is retired. None of them has
 been executed. Each is one `SELECT`; each runs unchanged in psql, the Neon SQL Editor or one HTTP SQL call, and
 each can be wrapped in `BEGIN READ ONLY; ... ROLLBACK;`. `src/migrations-contract.test.mjs` does not cover these
-files; the single-statement and no-write properties are visible on inspection. `A1_AUTHORIZATION.md` is the exact
-text the production run (A1) needs the owner to sign, with the pinned hashes and PASS conditions, and `a1_run.sh`
-is the operator's fail-closed runner for it (hash check, host/database/role guard, read-only wrapper, outputs and
-fingerprints in a private directory).
+files; the single-statement and no-write properties are visible on inspection.
+
+The production run of P1, P2, P3 and the two AUTH-C files is A1:
+
+| File | Role |
+| --- | --- |
+| `A1_AUTHORIZATION.md` | the exact text the owner signed: target, controls, files and hashes, PASS and STOP conditions (unchanged) |
+| `A1_RUNNER_ACK.txt` | the supplement the owner signs to accept runner version 2, and where it reads the authorization more strictly |
+| `A1_SIGNING.md` | the owner's procedure: update the Mac checkout, preflight, sign the acknowledgment, approve, run |
+| `a1_run.sh` | the operator's fail-closed runner, version 2: hash pins, guard, read-only wrapper, every row checked, HOLD or STOP |
+| `a1_run.test.sh` | its regression suite: Linux, root, a network namespace with only loopback, a throwaway local PostgreSQL 18 |
+| `a1_preflight_mac.sh` | the owner's Mac preflight: hashes, signatures, psql service entry and password file, without connecting |
+| `a1_preflight_mac.test.sh` | its regression suite: a fake macOS home, a throwaway key, a fake psql that only reports its version |
+
+Neither test suite connects to Neon or any other remote host; run them on a disposable Linux machine as root.
 
 | File | Target | Reads | Verdict row | Expected |
 | --- | --- | --- | --- | --- |

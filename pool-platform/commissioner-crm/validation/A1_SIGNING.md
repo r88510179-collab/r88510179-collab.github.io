@@ -1,107 +1,106 @@
 # A1 signing and execution procedure (for the owner's personal review)
 
 This file is the procedure around `A1_AUTHORIZATION.md`. It changes nothing in that file, so the reviewed text keeps
-its hash. **A1 does not run until (1) the owner signs the authorization, (2) the signature and hashes are validated,
-and (3) the owner gives a separate "run A1 now" approval.** Preparing this is not running it.
+its hash and the owner's detached signature over it stays valid. **A1 does not run until (1) the authorization is
+signed, (2) the runner acknowledgment `A1_RUNNER_ACK.txt` is signed, (3) the Mac preflight reports READY, and (4) the
+owner gives a separate "Run A1 now" approval.** Preparing this is not running it.
 
-## The frozen objects (verified from the committed tree at `2882c7d`)
+The owner's checkout is `$HOME/Documents/commissioner-crm-a1` on the owner's Mac; every command below uses that path.
+The owner is also the operator: A1 runs from the owner's own Terminal, never from an AI session or a cloud machine.
+
+## The frozen objects
 
 | Object | SHA-256 | What it is |
 | --- | --- | --- |
-| `validation/A1_AUTHORIZATION.md` | `8de895da4d7f75eb5654497a41c6e7c0f888f64d65c76d2a711725d872331c12` | the authorization text you reviewed |
-| `validation/a1_run.sh` | `d63654bc4ccd91ae88bbf1641527b0827b0e13272916554fb837453db9c78557` | the fail-closed runner |
+| `validation/A1_AUTHORIZATION.md` | `8de895da4d7f75eb5654497a41c6e7c0f888f64d65c76d2a711725d872331c12` | the authorization text, signed by the owner (unchanged) |
+| `validation/A1_RUNNER_ACK.txt` | `4d326045c6f3ce07bc7b946c4fb46c55edf262d6b0cdc40d771fda9f337b8f3b` | the supplement the owner signs: binds runner version 2 to the authorization |
+| `validation/a1_run.sh` (version 2) | `8350ba4ac3514e36f19b8ca6670d2df960a961dba850528c3c28cf26b0278049` | the fail-closed runner; replaces version 1 (`d63654bc…`), which must not be run |
+| `validation/a1_run.test.sh` | `ba2ccd4a85d296231bfac88179635f6b4b2fec74aaf8372d07e2b35d778eb232` | its regression suite (713 assertions, local only, never Neon) |
+| `validation/a1_preflight_mac.sh` | `fa754c76fda8268d2811e12cb4cc1ba88ec341eea3cd6dc93bb57b7a598be3be` | the Mac preflight: checks files, signatures and psql setup without connecting |
+| `validation/a1_preflight_mac.test.sh` | `9ebd0ff32e4919af1e528a12401d57fbff5b2b9a2293a9810ae637cc21fc61dd` | its regression suite (420 assertions, local only) |
 | `validation/P1_identity_helpers_004.sql` | `9ef14dea4ea0f0ff9270b06eb05339f7dfe114accf9c6264d7dd810a979666ae` | production helper check |
 | `validation/P2_private_schema_inventory.sql` | `234b81f89d328107ff86b0564c32e57f25f220c8ad8da053dc2cbf82731e39d1` | `pool_platform_private` inventory |
 | `validation/P3_crm_preconditions.sql` | `f652ecad1d7adcc1f474d1b0af9753e7a8aec1e14567d03cb350c1312cd2333d` | CRM preconditions |
 | `neon-catalog-verify.sql` @ `2c6e2a80` | `40b20416909c0ca2c26e2e682cb4ad2c5ef0b87fc257ca79d259dce55a0e9b43` | AUTH-C catalog verifier |
 | `neon-identity-audit.sql` @ `2c6e2a80` | `d512b94f8281fd201bcecb3efae3eb39fda2ab372b921d8f4a224bec012dca61` | AUTH-C identity audit |
 
-Every value above was recomputed from the git objects in this session and equals the value pinned inside
-`A1_AUTHORIZATION.md`. The `a1_run.sh` runner carries the same five SQL hashes and refuses any file that differs.
+## Why a supplemental acknowledgment, and why it is the smallest valid step
 
-## Step 1 — confirm the reviewed text on your own machine
+The signed authorization names the runner by its path only (section 2) and pins the five SQL files, not the runner.
+Its signature therefore still verifies, and the SQL that A1 runs is unchanged. But the package you reviewed and
+signed against included runner version 1 (`d63654bc…`), and version 2 is different code that will act on production
+under your authority. Your signature has to cover the exact runner bytes again. Re-signing the authorization would
+need a new text and a new review; an approval in chat would not bind the bytes. One short signed text that pins the
+new runner hash and states where version 2 reads the authorization more strictly is the smallest step that keeps
+the chain cryptographic: `A1_RUNNER_ACK.txt`. Read its section 4 before signing.
 
-On a checkout of `ccr-321cd6b3-fu8f1j` at `2882c7d` (or later, as long as these files are unchanged):
+## Step 1: update the checkout and run the preflight
 
-    cd <repo>/pool-platform/commissioner-crm
-    sha256sum validation/A1_AUTHORIZATION.md validation/a1_run.sh \
-              validation/P1_identity_helpers_004.sql \
-              validation/P2_private_schema_inventory.sql \
-              validation/P3_crm_preconditions.sql
-    git -C <repo> show 2c6e2a80:pool-platform/validation/neon-catalog-verify.sql | sha256sum
-    git -C <repo> show 2c6e2a80:pool-platform/validation/neon-identity-audit.sql | sha256sum
+    git -C "$HOME/Documents/commissioner-crm-a1" pull --ff-only origin ccr-321cd6b3-fu8f1j
+    bash "$HOME/Documents/commissioner-crm-a1/pool-platform/commissioner-crm/validation/a1_preflight_mac.sh"
 
-Each must equal the table above. If any differs, stop: the package was altered after review.
+The preflight never connects to anything, never opens your private key, and never prints a password, a key or a
+connection string. It checks every hash in the table above (except its own and the two test suites'), verifies
+`A1_AUTHORIZATION.md.sig` against your public key `$HOME/.ssh/crm_a1_signing_ed25519.pub` as principal
+`crm-a1-owner`, finds the one entry in your psql service file whose host is the production host, and checks its
+database, role, port, TLS root certificate, your password file's permissions and matching line (by count only), and
+the evidence directory `$HOME/commissioner-crm-a1-evidence`. Each problem is a `[STOP]` or `[TODO]` line with the
+exact fix. When everything else is in place, its first run reports exactly one `[TODO]`: the acknowledgment is not
+signed yet.
 
-## Step 2 — sign the authorization (choose one; the cryptographic form is preferred)
+## Step 2: sign the acknowledgment (once)
 
-**2a. Detached cryptographic signature (preferred: verifiable, and it does not change the file).**
-Sign the reviewed authorization with a key you hold. The trust anchor is your key; nothing in this session can
-produce or verify it for you.
+Read `A1_RUNNER_ACK.txt`, then sign it with the key that signed the authorization. The preflight prints this command
+with your paths filled in:
 
-SSH key (same key family GitHub uses for signing):
+    ssh-keygen -Y sign -f "$HOME/.ssh/crm_a1_signing_ed25519" -n file \
+      "$HOME/Documents/commissioner-crm-a1/pool-platform/commissioner-crm/validation/A1_RUNNER_ACK.txt"
 
-    ssh-keygen -Y sign -f ~/.ssh/id_ed25519 -n file validation/A1_AUTHORIZATION.md
-    # writes validation/A1_AUTHORIZATION.md.sig
+It writes `A1_RUNNER_ACK.txt.sig` beside the file. Keep it there, with `A1_AUTHORIZATION.md.sig`; neither is secret.
 
-GPG key:
+## Step 3: run the preflight again
 
-    gpg --armor --detach-sign --output validation/A1_AUTHORIZATION.md.asc validation/A1_AUTHORIZATION.md
+It must end with `PREFLIGHT RESULT: READY`, both signatures shown as `Good "file" signature for crm-a1-owner`, and the
+exact A1 command printed. Send that output to the session: it holds no secret.
 
-Keep the `.sig`/`.asc` beside the file. Do not commit your private key or passphrase.
+## Step 4: the separate execution approval
 
-**2b. Countersignature in the file (simpler; the signed hash is the reviewed hash).**
-Fill the signature block at the end of `A1_AUTHORIZATION.md` with your name and the UTC time, and write the
-**reviewed** hash `8de895da4d7f75eb5654497a41c6e7c0f888f64d65c76d2a711725d872331c12` on the "Signed-text SHA-256"
-line. That hash is of the text as reviewed, before the block is filled, so record it rather than re-hashing the
-edited file. Commit the filled file on the session branch.
+A1 runs only after you send, as its own message:
 
-## Step 3 — validate the signed copy (before any execution)
+    Run A1 now. Authorization 8de895da… and runner acknowledgment 4d326045… are signed; the preflight is READY.
 
-- 2a: `ssh-keygen -Y verify` against your `allowed_signers`, or `gpg --verify validation/A1_AUTHORIZATION.md.asc`,
-  returns a good signature from your key over a file whose hash is `8de895da…`.
-- 2b: the committed file's signature block names you and a UTC time, and the "Signed-text SHA-256" line reads
-  `8de895da…`.
+Signing (Steps 2 and 3) and approving the run (Step 4) are deliberately separate acts. Neither alone starts A1.
 
-## Step 4 — the separate execution approval (second key)
+## Step 5: run it, read-only, exactly as the preflight printed
 
-A1 runs only after you send, in this session or to the operator, a message to the effect of:
+The preflight prints the command with your service entry's name (and a `PATH=` prefix only if psql is not already on
+your PATH). Its shape is:
 
-    Run A1 now. Authorization 8de895da… is signed and validated.
-    Owner: <name>   UTC: <time>
+    PP_SERVICE=… PP_REPO="$HOME/Documents/commissioner-crm-a1" \
+    PP_OUT="$HOME/commissioner-crm-a1-evidence/run-$(date -u +%Y%m%dT%H%M%SZ)" \
+    PP_RUNNER_SHA256=8350ba4ac3514e36f19b8ca6670d2df960a961dba850528c3c28cf26b0278049 \
+    bash "$HOME/Documents/commissioner-crm-a1/pool-platform/commissioner-crm/validation/a1_run.sh"
 
-Signing (Step 2) and approving the run (Step 4) are deliberately two acts. Neither alone starts A1.
+The runner checks the authorization, itself and the five SQL files against their pinned SHA-256, shows the target
+and the hashes, and waits for you to type `RUN A1`. For each file it connects with `sslmode=verify-full`, quits
+unless the session is `ep-still-recipe-b5g7680z.c-7.us-east-2.aws.neon.tech` / `neondb` / `neondb_owner`, runs the
+file inside `BEGIN READ ONLY; … ROLLBACK;`, and checks every row. The last line is the result:
 
-## Step 5 — the operator runs it (read-only), exactly this
+- `A1 RESULT: HOLD (exit 10)`: every verdict and required row passed and no STOP condition occurred; the listed items
+  need your written reading. This is the best result the runner gives, because P2 is never an automatic PASS.
+- `A1 RESULT: STOP (exit 2, 3 or 4)`: before any connection (2), at a connection (3) or on a check (4). The run ended
+  at the first STOP; the reason is printed, and `manifest.txt` records it.
 
-On the operator's machine, with the production `service=` entry held only there, after Steps 1–4:
+If psql cannot be used, the Neon SQL Editor remains the authorization's fallback (same files, same order, each in its
+own `BEGIN READ ONLY; … ROLLBACK;`, hashes and guard values checked by hand), but the runner's row checks then have to
+be done by hand too, so prefer the runner.
 
-    # one-time: make sure the AUTH-C commit is present for the two files staged from it
-    git -C <repo> fetch origin 2c6e2a805fa816638808cb2d96d430ee177453e6
+## Step 6: review, then share only the verdicts
 
-    # confirm the runner itself is the reviewed one
-    sha256sum <repo>/pool-platform/commissioner-crm/validation/a1_run.sh
-    # expect d63654bc4ccd91ae88bbf1641527b0827b0e13272916554fb837453db9c78557
-
-    PP_SERVICE=<production service entry, this machine only> \
-    PP_OUT=<private dir outside any repo or synced folder> \
-    PP_REPO=<repo> \
-    bash <repo>/pool-platform/commissioner-crm/validation/a1_run.sh
-
-The runner stages the five files, refuses any whose SHA-256 is not the pinned one, and for each file opens a
-connection that it aborts unless `:HOST = ep-still-recipe-b5g7680z.c-7.us-east-2.aws.neon.tech`,
-`current_database() = neondb` and `current_user = neondb_owner`, then runs the file inside `BEGIN READ ONLY; …
-ROLLBACK;` with `ON_ERROR_STOP`. It prints the verdict rows (`H99`, `X99`, `C99`, `I99`) and P2's row count, writes
-the full rows to `PP_OUT/out/`, and fingerprints sources and outputs into `PP_OUT/sha256sums.txt`. Any error or
-guard refusal is an `A1 STOP` and ends the run.
-
-If psql is not available, the Neon SQL Editor is the fallback: run the same five files in the same order, each in
-its own `BEGIN READ ONLY; … ROLLBACK;`, after checking the three guard values by hand, and paste the rows into the
-record.
-
-## Step 6 — review outputs for redaction, then share only the verdicts
-
-The `PP_OUT/out/` files hold the rows. By construction they carry no id, email, token, key, password or connection
-string, but P2's comment and ACL strings and the `actual` strings of C and X rows may name roles and function
-signatures. Review before sharing, then report `H99`, `X99`, `C99`, `I99` and the P2 inventory (§5 of the
-reconciliation doc has the expected-vs-finding split). Raw outputs stay in the private directory.
+The evidence directory holds `manifest.txt` (the runner's hash, every source hash, each result, the outcome),
+`sha256sums.txt`, `src/` (the exact files run) and `out/` (every row). By construction the rows carry no id, email,
+token, key, password or connection string, but P2's comment and ACL strings and the `actual` strings of C and X rows
+may name roles and function signatures: review before sharing. Then send the result line, the per-file lines and the
+HOLD items. For a HOLD, A1 becomes PASS when you record, in writing, your reading of each HOLD item (for P2, every
+row of `out/P2_private_schema_inventory.tsv`, explained from the window record). Raw outputs stay in the private
+directory.
