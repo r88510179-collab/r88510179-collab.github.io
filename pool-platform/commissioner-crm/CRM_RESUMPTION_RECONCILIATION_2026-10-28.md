@@ -548,3 +548,111 @@ keeps its own approval. No step above writes to production.
 No SQL on any Neon branch; no connector change (the owner makes it); no branch created or deleted; no credential,
 password or key read, exported, rotated or changed; no production change; PR #19 and its branch unchanged. The
 disposable local cluster used for the P2 parse check was deleted again afterwards.
+
+---
+
+# Part 4: A1 signing readiness, snapshot custody, A2 scope proof (2026-10-29)
+
+Same rules; nothing ran on Neon. This part finalizes the A1 signing procedure, folds the production snapshot into
+the credential-custody inventory, and pins the Neon tool-scope facts that A2 will be checked against.
+
+## 22. A1 package verified against the committed tree
+
+Every file A1 names was re-hashed from the git objects at `2882c7d` and equals the value pinned inside
+`A1_AUTHORIZATION.md` (`8de895da…`), and `a1_run.sh` (`d63654bc…`) carries the same five SQL hashes:
+
+| File | SHA-256 |
+| --- | --- |
+| P1_identity_helpers_004.sql | `9ef14dea4ea0f0ff9270b06eb05339f7dfe114accf9c6264d7dd810a979666ae` |
+| P2_private_schema_inventory.sql | `234b81f89d328107ff86b0564c32e57f25f220c8ad8da053dc2cbf82731e39d1` |
+| P3_crm_preconditions.sql | `f652ecad1d7adcc1f474d1b0af9753e7a8aec1e14567d03cb350c1312cd2333d` |
+| neon-catalog-verify.sql @ 2c6e2a80 | `40b20416909c0ca2c26e2e682cb4ad2c5ef0b87fc257ca79d259dce55a0e9b43` |
+| neon-identity-audit.sql @ 2c6e2a80 | `d512b94f8281fd201bcecb3efae3eb39fda2ab372b921d8f4a224bec012dca61` |
+
+`A1_SIGNING.md` is the owner-facing signing and execution procedure. It does not alter `A1_AUTHORIZATION.md`, so
+the reviewed hash stands. **Signing anchor:** this session is scoped to one repository, so GitHub's public-key
+endpoints (`r88510179-collab.keys`, `.gpg`, the user API) return 403 and cannot be read here. The signature is
+therefore anchored to a key the owner holds on their own machine (SSH `ssh-keygen -Y` or GPG detached signature),
+or a countersignature in the file whose signed hash is the reviewed `8de895da…`. Nothing in this session can
+produce or verify the owner's key, which is correct.
+
+## 23. Production snapshot in the credential-custody inventory
+
+| Field | Value | Evidence |
+| --- | --- | --- |
+| Snapshot | `snap-gentle-thunder-b5ir7gg3`, name `commercial-v1-owner-recovery-2026-10-28` | `list_snapshots` |
+| Source | branch `production` (`br-hidden-darkness-b55g0j83`) | `list_snapshots` |
+| Created | 2026-10-28T16:28:28Z, manual, `full_size` 33,415,168 bytes (production's logical size) | `list_snapshots`, `list_operations` |
+| Internal storage | the manual snapshot is backed by an archived internal timeline `br-winter-glitter-b50skh1u` (`create_branch` + `timeline_archive` at 16:28:28Z); it is hidden storage, not a usable branch, and does not appear in `list_branches` | `list_operations` |
+| Owner / access | the Neon account `org-dawn-leaf-10280035` (free plan, one member, org admin); reachable only by whoever holds that account | `list_organizations`, `list_project_members` |
+| Expiration | none; manual snapshots never expire unless given one, and no backup schedule is set (`get_snapshot_schedule` empty) | `get_snapshot_schedule`, Neon docs |
+| Free-plan limit | 1 manual snapshot on the free plan; this is it, so another manual snapshot cannot be taken until this is deleted or the plan upgraded | Neon docs |
+| Restore risk | it holds a copy of production's data as of 16:28:28Z, including `neon_auth` sessions and signing keys; restoring it creates a NEW branch (new id) and, if finalized, swaps production's computes onto it. That is a production-affecting operation and falls under the hardening plan's "Restores and new branches" rule: it needs its own reviewed security assessment first | Neon docs, `PRE_REGISTRATION_HARDENING.md` |
+
+Not read: no snapshot contents, no `neon_auth` row, no key. **Not deleted**, per instruction. Note for custody:
+restoring this snapshot would reintroduce the pre-revocation session and key state the October window cleared, so
+it carries the same authorization-state risk as the legacy branch and must not be restored without that assessment.
+
+The full operations history (250 operations, 2026-10-09 to 2026-10-29) was read: no `restore` or
+`reset_from_parent` ever; the only `delete_timeline` events are the P0 child (2026-10-09) and four short-lived
+internal branches created and deleted the same day on 2026-10-20 to 2026-10-23 (automated daily-probe branches,
+none persisting); the legacy branch has only compute start/suspend since 2026-10-28, all from this session's
+metadata reads, with `written_data_bytes` still 0.
+
+## 24. A2 scope, proven by category, and the authenticated check that must follow
+
+The read-only, project-scoped tool list was enumerated per category (not just the flat list):
+
+| Category | Read-only tools | SQL-executing? |
+| --- | --- | --- |
+| querying | `run_sql`, `inspect_database`, `explain_sql_statement`, `list_slow_queries` | yes: `run_sql` only (`run_sql_transaction` is dropped in read-only mode) |
+| schema | `compare_database_schema`, `describe_table_schema`, `get_database_tables` | no |
+| branches / endpoints / snapshots / data_api / neon_auth / observability / projects / storage / realtime / functions / docs | listing and `get_*` only | no |
+
+Total 49 tools; none of `get_connection_string`, `create_*`, `delete_*`, `reset_*`, `rotate_*`, `update_*`,
+`provision_*`, `list_projects`, `list_organizations`, `search`, `fetch`. The only way a scoped read-only session
+touches SQL is `run_sql`, which the server runs inside a `READ ONLY` transaction (documented). If the owner wants
+the connector unable to run even read SQL, dropping the `querying` category leaves 29 pure-metadata tools; but A5
+needs `run_sql` on the child, so the connector keeps `querying` and production stays out of reach by the
+operator-path rule, not by removing the tool.
+
+**This public list is not proof of the authenticated grant.** After the owner reconnects, the next session must run
+the V1–V5 probes (Part 3 §17) against the live connection and record them: the actual tool set it holds, a refused
+cross-project call, `transaction_read_only = on`, a refused `CREATE TEMP TABLE` (SQLSTATE 25006) on the legacy
+branch only, and the SQL role's residual table reach. Only those recorded results, not the catalog endpoint, make
+A2 done.
+
+## 25. A1 has not run; the PASS conditions it is waiting to produce
+
+A1 is prepared and **not executed**: it requires the owner's signature on `8de895da…` and a separate run approval,
+both withheld here. So `H99`, `X99`, `C99`, `I99` and the P2 inventory have **no actual values yet** and none are
+invented. The expected results, against which the operator will read the real output:
+
+| Output | Expected PASS | Would be a finding / STOP |
+| --- | --- | --- |
+| P1 `H99` | PASS: the three identity helpers at 004's hardened fingerprints, SECURITY DEFINER, pinned search_path, `authenticated` executes only `current_user_id()`, `auth.session()` jsonb and `neon_auth.account."userId"` reachable | any helper `PRE-HARDENING`/`MISSING`/`UNREVIEWED`: 004 is not actually in force as recorded |
+| P3 `X99` | PASS: no CRM object on production yet; the seven RPC bodies at their baseline fingerprints | any CRM object already present, or an RPC body not at baseline |
+| AUTH-C `C99` | PASS (PostgreSQL 18; `C21` PASS, `C23` recorded) | any required C row false: the catalog diverged from the reviewed contract |
+| AUTH-C `I99` | PASS, `I05=0`, `I06=0`, `I07` at most the four window sessions of verified no-account users | a live session of an unverified or account-holding user; an `I04` identity with V1 standing not recovered |
+| P2 inventory | every `pool_platform_private` object explained from the window record; no reviewed public function or policy names the schema; no Data API role has USAGE | an unexplained object, a dependency from reviewed code, or Data API reach into the schema |
+
+Report format when it runs: the verdict rows and the P2 rows, expected-vs-finding, per `A1_SIGNING.md` §6.
+
+## 26. Smallest next actions for A2 and A3
+
+- **A2 (no writes):** owner removes the current connector and re-adds Neon as `?readonly=true&projectId=fancy-brook-65396623`;
+  a fresh session records V1–V5 (the `CREATE TEMP TABLE` probe V4, the only write attempted, must fail on the
+  legacy branch and needs the owner's one-time OK). The standing admin connector is used for nothing until replaced.
+- **A3 (one write, separately approved):** capture `L1` and the 19-row `008` on the legacy branch read-only through
+  the operator path, write the K1-style record (branch id, parent, parent LSN `0/2E95158` at 2026-10-23 18:12:37Z,
+  endpoint host, Auth base URL), confirm the Stage B workstream agrees this closes its blocker 2, then delete
+  `br-orange-forest-b5nyu8ov` on the owner's written approval and record K4. The snapshot is left as is.
+
+A1 → A2 → A3 → A4 (new child) → A5 (CRM migrations on the child) → A6 (OTP identities and the signed-in matrix) is
+the whole path to real authenticated CRM testing; none of it writes to production except A1's read-only reads.
+
+## 27. What this part did not do
+
+No SQL on any Neon branch; no connector change; no snapshot or branch created, restored or deleted; no credential,
+password or key read, exported, rotated or changed; no production change; PR #19 and its branch unchanged. The
+operations history and snapshot metadata were read through Neon's read-only management API only.
