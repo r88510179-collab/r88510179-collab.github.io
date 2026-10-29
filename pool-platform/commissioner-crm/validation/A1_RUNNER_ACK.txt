@@ -6,12 +6,12 @@ Supplement to validation/A1_AUTHORIZATION.md. It changes nothing in that file, w
   Authorization  pool-platform/commissioner-crm/validation/A1_AUTHORIZATION.md
                  SHA-256 8de895da4d7f75eb5654497a41c6e7c0f888f64d65c76d2a711725d872331c12 (owner-signed, unchanged)
   Runner         pool-platform/commissioner-crm/validation/a1_run.sh, version 2
-                 SHA-256 cc3f6a19bb9b966d52dfaef555865b47d623ee1453f3d03c9602a3564c691fb3
+                 SHA-256 958edad58daeab10df66e7a836e5db6ebc3650fb7b293cf2e98725d452da6bee
   Replaces       version 1, SHA-256 d63654bc4ccd91ae88bbf1641527b0827b0e13272916554fb837453db9c78557, which must not
                  be run: it did not stop on a missing or failing verdict, and its hash steps used GNU-only options.
   Tests          pool-platform/commissioner-crm/validation/a1_run.test.sh
-                 SHA-256 b8bdf7a4c53bb05a801770e59a2ad870df2c03df72f0cfe82f0bf7341bf8f7b8
-                 1192 assertions, all passing, run locally with no connection to Neon: bash 5.2 and bash 3.2.57
+                 SHA-256 20b6eca2e40823b21a662420e898d8db865a03ccb8abfb1079616b55e0156069
+                 1211 assertions, all passing, run locally with no connection to Neon: bash 5.2 and bash 3.2.57
                  (the macOS /bin/bash version), mawk and BWK awk 20231127 (macOS ships the same awk, version
                  20200816, which was not run), psql 16 and 18 clients, and a local PostgreSQL 18 server holding the
                  Commercial V1 baseline schema.
@@ -23,9 +23,10 @@ Supplement to validation/A1_AUTHORIZATION.md. It changes nothing in that file, w
                  grant or a second view; and the preflight could print a password pasted into the service entry.
                  Round 3 approved the next build with one required change: whoever owns the tables the identity
                  audit reads could change what it counts without changing a row (a column retyped to a type with
-                 an implicit cast, or row security forced). This build makes that change and the round's
-                 recommended ones. The verdict of round 4, on these exact bytes, is in A1_SIGNING.md ("The
-                 independent review"); read it before signing.
+                 an implicit cast, or row security forced). Round 4 approved the build after it with one more:
+                 "expiresAt" must be timestamp with time zone. This build makes both, and the rounds' recommended
+                 changes. The verdict of round 5, on these exact bytes, is in A1_SIGNING.md ("The independent
+                 review"); read it before signing.
 
   The SQL files the runner executes are section 3 of the authorization, unchanged; each is refused unless its
   SHA-256 is:
@@ -63,11 +64,13 @@ Supplement to validation/A1_AUTHORIZATION.md. It changes nothing in that file, w
     because the search path puts pg_catalog first; pgcrypto's gen_random_uuid() is one.
   - Inside the read-only transaction, before each file: the five tables whose rows P3 and the identity audit read
     (neon_auth's "user", account and session; pool_platform_memberships and pool_platform_entries) must each be a
-    plain table, with no child table and no row security in force for this session, and every column those files
-    read must exist, not be generated, and have a built-in type and collation; anything else is a STOP that names
-    the table or the column. Otherwise whoever owns them could change what the audit counts without changing a row:
-    a column retyped to a type with an implicit cast, a view in a table's place, row security forced. The session
-    row also records whether this session's role can alter the Neon Auth tables (section 4b).
+    plain table, with no child table and no row security in force for this session; every column those files read
+    must exist, not be generated, and have a built-in type and collation; and "expiresAt" must be timestamp with
+    time zone (compared with now(), a timestamp without one reads through the session's time zone, which A1's own
+    role can set). Anything else is a STOP that names the table or the column. Otherwise whoever owns them could
+    change what the audit counts without changing a row: a column retyped to a type with an implicit cast, a view
+    in a table's place, row security forced. The session row also records whether this session's role can alter
+    the Neon Auth tables (section 4b).
   - Every line of every output is checked. psql's own row count closes each file's output, so a value holding a line
     break (which would forge a row) is a STOP; every row must have exactly its file's number of fields, so a tab in a
     value is a STOP; a missing, duplicated, unknown or malformed row, a verdict (H99, X99, C99, I99) other than PASS,
@@ -149,7 +152,7 @@ Supplement to validation/A1_AUTHORIZATION.md. It changes nothing in that file, w
 6. Acknowledgment
 
   I have read this acknowledgment. I accept a1_run.sh with SHA-256
-      cc3f6a19bb9b966d52dfaef555865b47d623ee1453f3d03c9602a3564c691fb3
+      958edad58daeab10df66e7a836e5db6ebc3650fb7b293cf2e98725d452da6bee
   as the runner that section 2 of A1_AUTHORIZATION.md names, in place of version 1, with the stricter readings of
   section 4 and the limits of section 5. This does not authorize running A1: that still needs my separate "Run A1
   now" approval.

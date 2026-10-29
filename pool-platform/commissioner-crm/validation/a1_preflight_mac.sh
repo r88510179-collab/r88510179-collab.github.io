@@ -22,8 +22,8 @@ BRANCH='ccr-321cd6b3-fu8f1j'
 HOST='ep-still-recipe-b5g7680z.c-7.us-east-2.aws.neon.tech'
 POOLER_HOST='ep-still-recipe-b5g7680z-pooler.c-7.us-east-2.aws.neon.tech'
 AUTHC='2c6e2a805fa816638808cb2d96d430ee177453e6'
-RUNNER_SHA256='cc3f6a19bb9b966d52dfaef555865b47d623ee1453f3d03c9602a3564c691fb3'
-ACK_SHA256='dfd86c70193ba5fe74cd739af534059fc384cc533f40eb439d8b07abbe6a1ab9'
+RUNNER_SHA256='958edad58daeab10df66e7a836e5db6ebc3650fb7b293cf2e98725d452da6bee'
+ACK_SHA256='25c3ce544c68bf60dbf93dcce01388ec49372a5266ea18dff4cd08876da0fd03'
 OLD_RUNNER_SHA256='d63654bc4ccd91ae88bbf1641527b0827b0e13272916554fb837453db9c78557'
 
 TAB=$(printf '\t')
@@ -230,7 +230,7 @@ service_checks(){
       }
     }' "$SERVICE_FILE" 2>/dev/null) || ENTRY=''
   if tagged LONG; then
-    stop "line $(tagval LONG) of $SERVICE_DESC is too long for libpq (1022 characters or more), which then rejects the file: shorten it"
+    stop "line $(tagval LONG) of $SERVICE_DESC has 1022 characters or more, more than libpq reads in a line: shorten it"
     return
   fi
   set -- $(tagval COUNTS)

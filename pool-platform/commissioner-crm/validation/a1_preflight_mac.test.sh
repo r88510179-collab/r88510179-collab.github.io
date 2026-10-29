@@ -311,10 +311,18 @@ expect duplicate-host 1 "[STOP] no entry in $H/.pg_service.conf has host=$HOST"
 # libpq stops at a line of 1022 characters or more, anywhere before the entry ends, and then rejects the file.
 reset_config; write_service "# $SECRET$(head -c $((1022 - 2 - ${#SECRET})) /dev/zero | tr '\0' x)"
 run long-line
-expect long-line 1 "[STOP] line 13 of $H/.pg_service.conf is too long for libpq (1022 characters or more), which then rejects the file: shorten it"
+expect long-line 1 "[STOP] line 13 of $H/.pg_service.conf has 1022 characters or more, more than libpq reads in a line: shorten it"
 reset_config; write_service "#$(head -c 1020 /dev/zero | tr '\0' x)"
 run line-just-short-enough
 expect line-just-short-enough 0 '[ok]   service entry [crm-a1-prod]'
+# A carriage return counts toward the limit, as it does for libpq; a long line after the entry is refused as well,
+# which is stricter than libpq, which never reads it.
+reset_config; write_service "#$(head -c 1020 /dev/zero | tr '\0' x)$(printf '\r')"
+run line-with-crlf-too-long
+expect line-with-crlf-too-long 1 "[STOP] line 13 of $H/.pg_service.conf has 1022 characters or more"
+reset_config; write_service '[after-the-entry]' "#$(head -c 1100 /dev/zero | tr '\0' x)"
+run long-line-after-the-entry
+expect long-line-after-the-entry 1 "[STOP] line 14 of $H/.pg_service.conf has 1022 characters or more"
 reset_config; write_service "sslrootcrt=$SECRET"
 run misspelt-key
 expect misspelt-key 1 '[STOP] the entry [crm-a1-prod] has 1 line(s), not shown, that are not key=value with a key this preflight knows'

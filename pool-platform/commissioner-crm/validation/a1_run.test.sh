@@ -1194,6 +1194,25 @@ real tables-missing-column 3 "$STOP_TABLES 'neon_auth.session.\"expiresAt\" is m
 real tables-collation-of-another-schema 3 "$STOP_TABLES 'neon_auth.\"user\".email has a collation that is not built in'" "$O1" \
   'CREATE COLLATION public.a1t_c FROM "C"; ALTER TABLE neon_auth."user" ALTER COLUMN email TYPE text COLLATE public.a1t_c' \
   'ALTER TABLE neon_auth."user" ALTER COLUMN email TYPE text COLLATE "default"; DROP COLLATION public.a1t_c' admin
+# Round 4, G1: "expiresAt" without a time zone reads through the session's, which A1's own role can set; an
+# unverified session ten hours from expiry would then look expired. The type is refused.
+real tables-expires-without-time-zone 3 "$STOP_TABLES 'neon_auth.session.\"expiresAt\" is not timestamp with time zone'" "$O1" \
+  "BEGIN; INSERT INTO neon_auth.session(\"expiresAt\",token,\"updatedAt\",\"userId\") SELECT now() + interval '10 hours','a1t-x',now(),id FROM neon_auth.\"user\" WHERE name='X'; ALTER TABLE neon_auth.session ALTER COLUMN \"expiresAt\" TYPE timestamp; ALTER ROLE neondb_owner IN DATABASE neondb SET timezone = 'Etc/GMT-14'; COMMIT;" \
+  "BEGIN; ALTER ROLE neondb_owner IN DATABASE neondb RESET timezone; ALTER TABLE neon_auth.session ALTER COLUMN \"expiresAt\" TYPE timestamptz; DELETE FROM neon_auth.session WHERE token='a1t-x'; COMMIT;" admin
+# Round 4: a SET-only membership in the owner of another Neon Auth table still lets this role alter it.
+real neon-auth-alterable-through-set-membership 10 "identity audit: this session's role can alter the Neon Auth tables" "$ALL_OUTS" \
+  'CREATE ROLE a1t_auth_owner NOLOGIN; ALTER TABLE neon_auth.account OWNER TO a1t_auth_owner; GRANT a1t_auth_owner TO neondb_owner WITH INHERIT FALSE, SET TRUE' \
+  'REVOKE a1t_auth_owner FROM neondb_owner; ALTER TABLE neon_auth.account OWNER TO postgres; GRANT SELECT ON neon_auth.account TO neondb_owner; DROP ROLE a1t_auth_owner' admin
+check 'real-neon-auth-alterable-through-set-membership: two HOLD items' holds 2
+# Round 4: row security on a Neon Auth table does not apply to a role with BYPASSRLS, so it is no STOP.
+real neon-auth-row-security-bypassed 10 "$P2_HOLD" "$ALL_OUTS" \
+  'ALTER ROLE neondb_owner BYPASSRLS; ALTER TABLE neon_auth.session ENABLE ROW LEVEL SECURITY' \
+  'ALTER TABLE neon_auth.session DISABLE ROW LEVEL SECURITY; ALTER ROLE neondb_owner NOBYPASSRLS' admin
+check 'real-neon-auth-row-security-bypassed: only the P2 HOLD' holds 1
+# Round 4: without the neon_auth schema, every Neon Auth table is reported missing, and nothing raises an error.
+real tables-no-neon-auth-schema 3 "$STOP_TABLES 'neon_auth.\"user\" is missing; neon_auth.account is missing; neon_auth.session is missing'" "$O1" \
+  'ALTER SCHEMA neon_auth RENAME TO a1t_neon_auth' 'ALTER SCHEMA a1t_neon_auth RENAME TO neon_auth' admin
+check 'real-tables-no-neon-auth-schema: psql wrote no error' [ ! -s "$EV/out/P1_identity_helpers_004.stderr" ]
 # Who can alter the Neon Auth tables is not visible in their rows: when this session's role can, the audit holds.
 real neon-auth-alterable 10 "identity audit: this session's role can alter the Neon Auth tables (it owns them or belongs to their owner), so I05 and I06 assume their columns are Neon Auth's own" "$ALL_OUTS" \
   'ALTER TABLE neon_auth."user" OWNER TO neondb_owner' 'ALTER TABLE neon_auth."user" OWNER TO postgres; GRANT SELECT ON neon_auth."user" TO neondb_owner' admin

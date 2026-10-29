@@ -50,10 +50,11 @@ export PSQL_HISTORY=/dev/null
 unset CDPATH
 # The connection string pins the target. Of the PG variables only PGSERVICEFILE, PGPASSFILE and PGSSLROOTCERT, the
 # files the preflight checks, reach psql: any other could change the connection or the session.
-for pg_var in $(compgen -e); do
+pg_names=$(compgen -e) || { printf 'A1 STOP: this shell cannot list its environment\n' >&2; printf 'A1 RESULT: STOP (exit 2)\n'; exit 2; }
+for pg_var in $pg_names; do
   case $pg_var in PGSERVICEFILE|PGPASSFILE|PGSSLROOTCERT) ;; PG*) unset "$pg_var" ;; esac
 done
-unset pg_var
+unset pg_var pg_names
 
 readonly EXPECT_HOST='ep-still-recipe-b5g7680z.c-7.us-east-2.aws.neon.tech'
 readonly EXPECT_PORT=5432
@@ -122,7 +123,9 @@ SQL
 # be built as those files assume. Each must be a plain table with no child table (which would add rows) and no row
 # security in force for this session (which would hide rows); each column they read must exist and not be generated,
 # and have a built-in type and collation (a type of another schema can carry an implicit cast that changes what a
-# comparison or a filter sees, and a collation of another schema can change equality).
+# comparison or a filter sees, and a collation of another schema can change equality). "expiresAt" must be timestamp
+# with time zone: compared with now(), a timestamp without one, or a date, reads through the session's time zone,
+# which A1's own role can set.
 IFS= read -r -d '' TABLES_SQL <<'SQL' || true
 SELECT pg_catalog.count(*) OPERATOR(pg_catalog.=) 0 AS a1_tables_ok,
        COALESCE(pg_catalog.string_agg(p.problem, '; ' ORDER BY p.problem), '') AS a1_table_problems
@@ -145,12 +148,14 @@ FROM (
            WHEN a.attnum IS NULL THEN ' is missing'
            WHEN a.attgenerated OPERATOR(pg_catalog.<>) '' THEN ' is generated'
            WHEN y.typnamespace OPERATOR(pg_catalog.<>) 'pg_catalog'::pg_catalog.regnamespace::pg_catalog.oid THEN ' has a type that is not built in'
+           WHEN a.atttypid OPERATOR(pg_catalog.<>) COALESCE(t.typ::pg_catalog.oid, a.atttypid) THEN ' is not ' OPERATOR(pg_catalog.||) pg_catalog.format_type(t.typ::pg_catalog.oid, NULL)
            ELSE ' has a collation that is not built in' END
-  FROM (VALUES ('neon_auth', 'user', 'id'), ('neon_auth', 'user', 'emailVerified'), ('neon_auth', 'user', 'banned'),
-               ('neon_auth', 'user', 'email'), ('neon_auth', 'account', 'userId'), ('neon_auth', 'account', 'providerId'),
-               ('neon_auth', 'session', 'userId'), ('neon_auth', 'session', 'impersonatedBy'), ('neon_auth', 'session', 'expiresAt'),
-               ('public', 'pool_platform_memberships', 'auth_user_id'), ('public', 'pool_platform_memberships', 'role'),
-               ('public', 'pool_platform_entries', 'owner_auth_user_id')) AS t(nsp, rel, col)
+  FROM (VALUES ('neon_auth', 'user', 'id', NULL::pg_catalog.regtype), ('neon_auth', 'user', 'emailVerified', NULL), ('neon_auth', 'user', 'banned', NULL),
+               ('neon_auth', 'user', 'email', NULL), ('neon_auth', 'account', 'userId', NULL), ('neon_auth', 'account', 'providerId', NULL),
+               ('neon_auth', 'session', 'userId', NULL), ('neon_auth', 'session', 'impersonatedBy', NULL),
+               ('neon_auth', 'session', 'expiresAt', 'pg_catalog.timestamptz'::pg_catalog.regtype),
+               ('public', 'pool_platform_memberships', 'auth_user_id', NULL), ('public', 'pool_platform_memberships', 'role', NULL),
+               ('public', 'pool_platform_entries', 'owner_auth_user_id', NULL)) AS t(nsp, rel, col, typ)
   JOIN pg_catalog.pg_namespace n ON n.nspname OPERATOR(pg_catalog.=) t.nsp
   JOIN pg_catalog.pg_class c ON c.relnamespace OPERATOR(pg_catalog.=) n.oid AND c.relname OPERATOR(pg_catalog.=) t.rel
   LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid OPERATOR(pg_catalog.=) c.oid AND a.attname OPERATOR(pg_catalog.=) t.col
@@ -159,6 +164,7 @@ FROM (
   LEFT JOIN pg_catalog.pg_collation o ON o.oid OPERATOR(pg_catalog.=) a.attcollation
   WHERE a.attnum IS NULL OR a.attgenerated OPERATOR(pg_catalog.<>) ''
      OR y.typnamespace OPERATOR(pg_catalog.<>) 'pg_catalog'::pg_catalog.regnamespace::pg_catalog.oid
+     OR a.atttypid OPERATOR(pg_catalog.<>) COALESCE(t.typ::pg_catalog.oid, a.atttypid)
      OR a.attcollation OPERATOR(pg_catalog.<>) 0::pg_catalog.oid
         AND o.collnamespace OPERATOR(pg_catalog.<>) 'pg_catalog'::pg_catalog.regnamespace::pg_catalog.oid
 ) p \gset
