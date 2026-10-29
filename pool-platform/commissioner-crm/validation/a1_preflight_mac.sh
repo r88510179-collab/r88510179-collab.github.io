@@ -22,8 +22,8 @@ BRANCH='ccr-321cd6b3-fu8f1j'
 HOST='ep-still-recipe-b5g7680z.c-7.us-east-2.aws.neon.tech'
 POOLER_HOST='ep-still-recipe-b5g7680z-pooler.c-7.us-east-2.aws.neon.tech'
 AUTHC='2c6e2a805fa816638808cb2d96d430ee177453e6'
-RUNNER_SHA256='8350ba4ac3514e36f19b8ca6670d2df960a961dba850528c3c28cf26b0278049'
-ACK_SHA256='4d326045c6f3ce07bc7b946c4fb46c55edf262d6b0cdc40d771fda9f337b8f3b'
+RUNNER_SHA256='675bc5a9e0115a02c0e308a07e8f4d849b4a5d03ba2977841315d7b3441b51c2'
+ACK_SHA256='5f97d777a13a59802c1e8a220f13553ff40c49359cb7893e04ab1c383468773c'
 OLD_RUNNER_SHA256='d63654bc4ccd91ae88bbf1641527b0827b0e13272916554fb837453db9c78557'
 
 problems=0
@@ -42,7 +42,7 @@ for marker in CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_REMOTE CI GITHUB_ACT
 done
 [ -t 0 ] || { printf 'Run this yourself in a Terminal window.\n'; exit 2; }
 ok "macOS $(sw_vers -productVersion 2>/dev/null || printf 'version unknown'), bash $BASH_VERSION, in a terminal"
-for tool in shasum ssh-keygen awk sed grep ls mktemp head; do
+for tool in shasum ssh-keygen awk sed grep ls mktemp head cut tr sort env rm dirname; do
   command -v "$tool" >/dev/null 2>&1 || stop "the tool $tool is missing"
 done
 git --version >/dev/null 2>&1 || stop 'git does not work: install the Xcode Command Line Tools with: xcode-select --install'
@@ -199,28 +199,34 @@ else
     twice=$(printf '%s\n' "$entries" | awk -F'\t' -v s="$SERVICE" '$1 == "TWICE" && $2 == s { print $3 }')
     [ -z "$twice" ] || stop "the entry [$SERVICE] gives $twice more than once: keep one line for each"
     [ -z "$(get hostaddr)" ] || stop "the entry [$SERVICE] sets hostaddr: remove it, so the connection goes to the host by its name"
-    port=$(get port)
-    case ${port:-5432} in 5432) ok "port ${port:-5432 (default)}" ;; *) stop "the entry [$SERVICE] has port=$port; Neon uses 5432" ;; esac
-    [ "$(get dbname)" = neondb ] && ok 'dbname=neondb' || stop "the entry [$SERVICE] must have dbname=neondb (it has \"$(get dbname)\")"
-    [ "$(get user)" = neondb_owner ] && ok 'user=neondb_owner' || stop "the entry [$SERVICE] must have user=neondb_owner (it has \"$(get user)\")"
+    # The runner pins the port, database and role in its connection string; the entry's values only matter here.
+    for pin in port:5432 dbname:neondb user:neondb_owner; do
+      value=$(get "${pin%%:*}")
+      if [ -z "$value" ] || [ "$value" = "${pin#*:}" ]; then ok "${pin%%:*}=${pin#*:}"
+      else note "the entry has ${pin%%:*}=$value; the runner connects with ${pin%%:*}=${pin#*:} regardless"
+      fi
+    done
     sslmode=$(get sslmode)
     if [ "$sslmode" = verify-full ]; then ok 'sslmode=verify-full'
     else note "the entry has sslmode=${sslmode:-(none)}; the runner uses sslmode=verify-full regardless"
     fi
+    # libpq takes the root certificate from the entry, else from PGSSLROOTCERT, else from ~/.postgresql/root.crt.
     rootcert=$(get sslrootcert)
+    rootsrc="the entry [$SERVICE]"
+    if [ -z "$rootcert" ] && [ -n "${PGSSLROOTCERT:-}" ]; then rootcert=$PGSSLROOTCERT; rootsrc='PGSSLROOTCERT'; fi
     case $rootcert in
       system)
-        if [ "$PSQL_MAJOR" -ge 16 ]; then ok 'sslrootcert=system (the macOS trust store)'
+        if [ "$PSQL_MAJOR" -ge 16 ]; then ok "sslrootcert=system (the macOS trust store), from $rootsrc"
         else stop 'sslrootcert=system needs psql 16 or later: use sslrootcert=/etc/ssl/cert.pem'
         fi ;;
       '')
         if [ -f "$HOME/.postgresql/root.crt" ]; then ok "no sslrootcert in the entry; $HOME/.postgresql/root.crt will be used"
         else stop "the entry [$SERVICE] has no sslrootcert, and $HOME/.postgresql/root.crt does not exist: add the line sslrootcert=/etc/ssl/cert.pem"
         fi ;;
-      '~'*) stop "the entry [$SERVICE] has sslrootcert=$rootcert: write the full path, libpq does not expand ~" ;;
+      '~'*) stop "$rootsrc has sslrootcert=$rootcert: write the full path, libpq does not expand ~" ;;
       *)
-        if [ -f "$rootcert" ]; then ok "sslrootcert=$rootcert"
-        else stop "the entry [$SERVICE] has sslrootcert=$rootcert, which does not exist"
+        if [ -f "$rootcert" ]; then ok "sslrootcert=$rootcert, from $rootsrc"
+        else stop "$rootsrc has sslrootcert=$rootcert, which does not exist"
         fi ;;
     esac
     others=$(printf '%s\n' "$entries" | awk -F'\t' -v s="$SERVICE" '$1 == "OTHER" && $2 == s { printf "%s ", $3 }')
@@ -238,7 +244,7 @@ else
       elif [ "$(mode_private "$passfile")" != '------' ]; then
         stop "$passfile is readable by others, so libpq ignores it: chmod 600 \"$passfile\""
       else
-        matches=$(awk -F: -v h="$HOST" -v p="${port:-5432}" '
+        matches=$(awk -F: -v h="$HOST" -v p=5432 '
           /^[ \t]*#/ { next }
           NF >= 5 && ($1 == h || $1 == "*") && ($2 == p || $2 == "*") && ($3 == "neondb" || $3 == "*") && ($4 == "neondb_owner" || $4 == "*") { c++ }
           END { print c + 0 }' "$passfile")
@@ -246,17 +252,32 @@ else
           ok "$passfile is private and has $matches line(s) for this host, port, database and role (passwords not shown)"
           [ "$matches" -eq 1 ] || note 'libpq uses the first of those lines'
         else
-          stop "$passfile has no line for this connection: add one that starts with $HOST:${port:-5432}:neondb:neondb_owner: and continues with the password"
+          stop "$passfile has no line for this connection: add one that starts with $HOST:5432:neondb:neondb_owner: and continues with the password"
         fi
       fi
     fi
   fi
 fi
 [ -z "${PGPASSWORD:-}" ] || stop 'PGPASSWORD is set in this shell (value not shown): run unset PGPASSWORD; A1 takes the password from the password file'
-pgvars=$(env | sed -n 's/^\(PG[A-Z_]*\)=.*/\1/p' | grep -v -e '^PGPASSWORD$' -e '^PGSERVICEFILE$' -e '^PGPASSFILE$' -e '^PGSYSCONFDIR$' -e '^PGSSLROOTCERT$' | sort | tr '\n' ' ')
-[ -z "$pgvars" ] || note "this shell sets $pgvars(values not shown); the runner clears them"
+# The runner clears exactly these; any other PG variable reaches psql as it is.
+CLEARED=' PGSERVICE PGHOST PGHOSTADDR PGPORT PGDATABASE PGUSER PGOPTIONS PGSSLMODE PGREQUIRESSL PGGSSENCMODE PGSSLNEGOTIATION PGTARGETSESSIONATTRS PGLOADBALANCEHOSTS PGCLIENTENCODING PGTZ PGDATESTYLE PGGEQO '
+cleared='' kept=''
+for var in $(env | sed -n 's/^\(PG[A-Z0-9_]*\)=.*/\1/p' | sort); do
+  case $CLEARED in
+    *" $var "*) cleared="$cleared$var " ;;
+    *) case $var in PGPASSWORD|PGSERVICEFILE|PGPASSFILE|PGSSLROOTCERT) ;; *) kept="$kept$var " ;; esac ;;
+  esac
+done
+[ -z "$cleared" ] || note "this shell sets $cleared(values not shown); the runner clears them"
+[ -z "$kept" ] || note "this shell also sets $kept(values not shown); psql uses them as they are"
 
-# 7. The evidence directory: private, local, outside the checkout and the synced folders.
+# 7. The evidence directory: private, local, outside every git repository and the synced folders.
+up=$EVIDENCE
+while :; do
+  if [ -e "$up/.git" ]; then stop "$EVIDENCE would be inside the git repository at $up, which the runner refuses"; break; fi
+  [ "$up" != / ] || break
+  up=$(dirname "$up")
+done
 if [ -L "$EVIDENCE" ]; then
   stop "$EVIDENCE is a symbolic link: use a plain directory"
 elif [ -d "$EVIDENCE" ]; then

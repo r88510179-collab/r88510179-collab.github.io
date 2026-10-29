@@ -107,7 +107,7 @@ ln -s "$FAKEBIN/sw_vers" "$NOPSQL/sw_vers"
 # Exactly the tools the preflight uses, and no psql (this machine has one in /usr/bin, which is /bin too).
 TOOLS="$WORK/tools"
 mkdir -p "$TOOLS"
-for t in shasum ssh-keygen awk sed grep ls mktemp head git cut env tr rm sort; do
+for t in shasum ssh-keygen awk sed grep ls mktemp head git cut env tr rm sort dirname; do
   if [ "$t" = awk ] && [ -e "$AWKBIN/awk" ]; then ln -s "$AWKBIN/awk" "$TOOLS/awk"; else ln -s "$(command -v "$t")" "$TOOLS/$t"; fi
 done
 
@@ -256,26 +256,32 @@ expect two-entries 1 "[STOP] more than one entry in $H/.pg_service.conf has host
 reset_config; write_service 'hostaddr=203.0.113.7'
 run hostaddr
 expect hostaddr 1 '[STOP] the entry [crm-a1-prod] sets hostaddr'
+# The runner pins the port, database and role, so other values in the entry are noted, not refused.
 reset_config; svc '[crm-a1-prod]' "$PROD" port=6543 dbname=neondb user=neondb_owner "sslrootcert=$WORK/cert.pem"
 run port
-expect port 1 '[STOP] the entry [crm-a1-prod] has port=6543; Neon uses 5432'
+expect port 0 '[note] the entry has port=6543; the runner connects with port=5432 regardless'
 reset_config; svc '[crm-a1-prod]' "$PROD" dbname=postgres user=neondb_owner "sslrootcert=$WORK/cert.pem"
 run dbname
-expect dbname 1 '[STOP] the entry [crm-a1-prod] must have dbname=neondb (it has "postgres")'
+expect dbname 0 '[note] the entry has dbname=postgres; the runner connects with dbname=neondb regardless'
 reset_config; svc '[crm-a1-prod]' "$PROD" dbname=neondb user=authenticator "sslrootcert=$WORK/cert.pem"
 run user
-expect user 1 '[STOP] the entry [crm-a1-prod] must have user=neondb_owner (it has "authenticator")'
+expect user 0 '[note] the entry has user=authenticator; the runner connects with user=neondb_owner regardless'
 reset_config; svc '[crm-a1-prod]' "$PROD" dbname=neondb user=neondb_owner
 run no-rootcert
 expect no-rootcert 1 'has no sslrootcert, and' 'add the line sslrootcert=/etc/ssl/cert.pem'
 reset_config; svc '[crm-a1-prod]' "$PROD" dbname=neondb user=neondb_owner; mkdir -p "$H/.postgresql"; : > "$H/.postgresql/root.crt"
 run default-rootcert
-expect default-rootcert 0 "[ok]   no sslrootcert in the entry; $H/.postgresql/root.crt will be used" "[ok]   port 5432 (default)"
+expect default-rootcert 0 "[ok]   no sslrootcert in the entry; $H/.postgresql/root.crt will be used" "[ok]   port=5432"
 reset_config; svc '[crm-a1-prod]' "$PROD" dbname=neondb user=neondb_owner sslrootcert=system
 run rootcert-system-16 FAKE_PSQL_VERSION=16.4
-expect rootcert-system-16 0 '[ok]   sslrootcert=system (the macOS trust store)'
+expect rootcert-system-16 0 '[ok]   sslrootcert=system (the macOS trust store), from the entry [crm-a1-prod]'
 run rootcert-system-15 FAKE_PSQL_VERSION=15.8
 expect rootcert-system-15 1 '[STOP] sslrootcert=system needs psql 16 or later'
+reset_config; svc '[crm-a1-prod]' "$PROD" dbname=neondb user=neondb_owner
+run rootcert-from-environment PGSSLROOTCERT="$WORK/cert.pem"
+expect rootcert-from-environment 0 "[ok]   sslrootcert=$WORK/cert.pem, from PGSSLROOTCERT"
+run rootcert-environment-missing PGSSLROOTCERT="$WORK/missing.pem"
+expect rootcert-environment-missing 1 "[STOP] PGSSLROOTCERT has sslrootcert=$WORK/missing.pem, which does not exist"
 reset_config; svc '[crm-a1-prod]' "$PROD" dbname=neondb user=neondb_owner 'sslrootcert=~/cert.pem'
 run rootcert-tilde
 expect rootcert-tilde 1 'write the full path, libpq does not expand ~'
@@ -329,8 +335,9 @@ expect passfile-key 0 "[ok]   $H/elsewhere.pgpass is private and has 1 line(s)"
 reset_config
 run pgpassword-set PGPASSWORD="$SECRET"
 expect pgpassword-set 1 '[STOP] PGPASSWORD is set in this shell (value not shown)'
-run pg-variables PGHOST=elsewhere.example PGOPTIONS=-csearch_path=x
-expect pg-variables 0 '[note] this shell sets PGHOST PGOPTIONS (values not shown); the runner clears them'
+run pg-variables PGHOST=elsewhere.example PGOPTIONS=-csearch_path=x PGCONNECT_TIMEOUT=9 PGAPPNAME=a1
+expect pg-variables 0 '[note] this shell sets PGHOST PGOPTIONS (values not shown); the runner clears them' \
+  '[note] this shell also sets PGAPPNAME PGCONNECT_TIMEOUT (values not shown); psql uses them as they are'
 
 echo '# the evidence directory'
 reset_config; mkdir -m 755 "$H/commissioner-crm-a1-evidence"
@@ -345,6 +352,10 @@ expect evidence-symlink 1 "[STOP] $H/commissioner-crm-a1-evidence is a symbolic 
 reset_config; : > "$H/commissioner-crm-a1-evidence"
 run evidence-file
 expect evidence-file 1 "[STOP] $H/commissioner-crm-a1-evidence exists and is not a directory"
+reset_config; git init -q "$H"
+run evidence-in-repository
+rm -rf "$H/.git"
+expect evidence-in-repository 1 "[STOP] $H/commissioner-crm-a1-evidence would be inside the git repository at $H, which the runner refuses"
 
 echo '# psql'
 reset_config

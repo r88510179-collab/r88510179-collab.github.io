@@ -6,45 +6,51 @@
 # this runner, by its SHA-256, to that authorization. It runs only after the owner's separate execution approval, from
 # the operator's own terminal, with four environment variables:
 #
-#   PP_SERVICE        the name of the operator's psql service entry for production
+#   PP_SERVICE        the name of the operator's psql service entry for production (its password and TLS root)
 #   PP_REPO           the absolute path of the repository checkout
-#   PP_OUT            a new or empty private evidence directory, outside the repository and any synced folder
+#   PP_OUT            a new or empty private evidence directory, outside any repository and any synced folder
 #   PP_RUNNER_SHA256  the SHA-256 of this file, as A1_RUNNER_ACK.txt approves it
 #
 # What it enforces, stopping at the first failure:
 #   1. the shell is not an AI agent or CI job, and every tool it needs is present;
 #   2. the inputs are well formed, PP_RUNNER_SHA256 equals this file's own SHA-256, and the evidence directory is new
-#      or empty, private, and outside the repository and the usual synced folders;
+#      or empty, private, and outside any git repository and the usual synced folders;
 #   3. the authorization text and the five SQL files match their pinned SHA-256 exactly;
 #   4. the operator types RUN A1 at the terminal;
-#   5. each file connects through the service entry with sslmode=verify-full, is refused unless the session is the
-#      production host, database and owner (the guard of the authorization, unchanged), runs inside
-#      BEGIN READ ONLY; ... ROLLBACK;, and has every row of its output checked: the verdict row, every required row,
-#      and the rules of the authorization's section 5 that the rows carry.
+#   5. each file connects to the production host, port, database and role, pinned here, with sslmode=verify-full; is
+#      refused unless the guard of the authorization confirms that session and the search path is exactly pg_catalog,
+#      public; runs inside BEGIN READ ONLY; ... ROLLBACK;; and has every line of its output checked: the line count
+#      against psql's own row count, the verdict row, every required row, and the rules of the authorization's
+#      section 5 that the rows carry. P2's run also lists, read-only, every object outside pool_platform_private
+#      that depends on it.
 #
 # The last line printed is the result, and the exit code matches it:
 #   10  HOLD  every required check passed and no STOP condition occurred; the listed items need the owner's written
 #             interpretation. This is the best result: P2 is an inventory the owner reads, never an automatic PASS,
 #             so A1 is recorded as PASS only by the owner, on this evidence.
 #   2   STOP  before any connection: boundary, tooling, inputs, this runner's own hash or a pinned hash
-#   3   STOP  at a connection: connection, TLS or authentication failure, guard refusal, or a psql or SQL error
+#   3   STOP  at a connection: connection, TLS or authentication failure, guard or search-path refusal, or a psql or
+#             SQL error
 #   4   STOP  a verdict, a required check or a rule of section 5 failed, or an output was malformed
 # Any other nonzero code (an interruption, or a command the runner relies on failing) is a STOP as well. A STOP ends
 # the run at once. A HOLD lets the remaining read-only files run, so the owner reviews one complete record.
 #
 # Evidence goes to PP_OUT only: manifest.txt (this runner's SHA-256, every source, result and the outcome),
 # sha256sums.txt, src/ (the exact files run, this runner included) and out/ (every row, kept whole). Nothing is
-# written anywhere else, and no password, key, token or connection string is printed.
+# written anywhere else, no password, key, token or connection string is printed, and text taken from the database
+# is printed only with its non-printable characters replaced.
 { # One block: bash reads all of it before running any of it, so the file it hashes is the code it runs.
 set -euo pipefail
 umask 077
 export LC_ALL=C
 export PSQL_HISTORY=/dev/null
-# The service entry alone says where to connect; these could otherwise change the target or the session.
+unset CDPATH
+# The connection string pins the target; these could otherwise change the connection or the session.
 unset PGSERVICE PGHOST PGHOSTADDR PGPORT PGDATABASE PGUSER PGOPTIONS PGSSLMODE PGREQUIRESSL PGGSSENCMODE \
       PGSSLNEGOTIATION PGTARGETSESSIONATTRS PGLOADBALANCEHOSTS PGCLIENTENCODING PGTZ PGDATESTYLE PGGEQO
 
 readonly EXPECT_HOST='ep-still-recipe-b5g7680z.c-7.us-east-2.aws.neon.tech'
+readonly EXPECT_PORT=5432
 readonly EXPECT_DB='neondb'
 readonly EXPECT_ROLE='neondb_owner'
 readonly EXPECT_BRANCH='br-hidden-darkness-b55g0j83'
@@ -77,6 +83,42 @@ F_REQ=('H01 H02 H03 H04 H05 H06'
        'C02 C03 C05 C06 C07 C08 C09 C10 C11 C12 C13 C14 C15 C16 C17 C18 C19 C20 C21 C22 C24 C25 C26'
        'I05 I06')
 
+# After P2, in the same read-only transaction: every object outside pool_platform_private that depends on one of its
+# relations, functions or types (views, defaults, constraints, indexes, triggers, policies, columns, functions), as
+# one row: how many, how many of them are views a Data API role can read, and their names with every non-printable
+# character replaced. Every name and operator is qualified, so nothing here depends on the search path.
+IFS= read -r -d '' P2_DEPENDENTS_SQL <<'SQL' || true
+SELECT 'A1-P2-DEPENDENTS', pg_catalog.count(*), pg_catalog.count(*) FILTER (WHERE x.readable),
+       COALESCE(pg_catalog.string_agg(pg_catalog.regexp_replace(x.what, '[^[:print:]]', '?', 'g'), '; ' ORDER BY x.what), '')
+FROM (
+  SELECT DISTINCT pg_catalog.pg_describe_object(d.classid, d.objid, d.objsubid) AS what,
+         COALESCE(d.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_rewrite'::pg_catalog.regclass::pg_catalog.oid
+           AND (SELECT (c.relkind OPERATOR(pg_catalog.=) 'v' OR c.relkind OPERATOR(pg_catalog.=) 'm')
+                       AND (pg_catalog.has_schema_privilege('anonymous', c.relnamespace, 'USAGE') AND pg_catalog.has_table_privilege('anonymous', c.oid, 'SELECT')
+                            OR pg_catalog.has_schema_privilege('authenticated', c.relnamespace, 'USAGE') AND pg_catalog.has_table_privilege('authenticated', c.oid, 'SELECT'))
+                FROM pg_catalog.pg_rewrite r JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) r.ev_class
+                WHERE r.oid OPERATOR(pg_catalog.=) d.objid), false) AS readable
+  FROM pg_catalog.pg_depend d
+  WHERE (d.refclassid OPERATOR(pg_catalog.=) 'pg_catalog.pg_class'::pg_catalog.regclass::pg_catalog.oid
+           AND d.refobjid OPERATOR(pg_catalog.=) ANY (SELECT c.oid FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace WHERE n.nspname OPERATOR(pg_catalog.=) 'pool_platform_private')
+      OR d.refclassid OPERATOR(pg_catalog.=) 'pg_catalog.pg_proc'::pg_catalog.regclass::pg_catalog.oid
+           AND d.refobjid OPERATOR(pg_catalog.=) ANY (SELECT p.oid FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) p.pronamespace WHERE n.nspname OPERATOR(pg_catalog.=) 'pool_platform_private')
+      OR d.refclassid OPERATOR(pg_catalog.=) 'pg_catalog.pg_type'::pg_catalog.regclass::pg_catalog.oid
+           AND d.refobjid OPERATOR(pg_catalog.=) ANY (SELECT t.oid FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) t.typnamespace WHERE n.nspname OPERATOR(pg_catalog.=) 'pool_platform_private'))
+    AND COALESCE((SELECT n.nspname FROM pg_catalog.pg_namespace n WHERE n.oid OPERATOR(pg_catalog.=) CASE
+          WHEN d.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_class'::pg_catalog.regclass::pg_catalog.oid THEN (SELECT c.relnamespace FROM pg_catalog.pg_class c WHERE c.oid OPERATOR(pg_catalog.=) d.objid)
+          WHEN d.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_proc'::pg_catalog.regclass::pg_catalog.oid THEN (SELECT p.pronamespace FROM pg_catalog.pg_proc p WHERE p.oid OPERATOR(pg_catalog.=) d.objid)
+          WHEN d.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_type'::pg_catalog.regclass::pg_catalog.oid THEN (SELECT t.typnamespace FROM pg_catalog.pg_type t WHERE t.oid OPERATOR(pg_catalog.=) d.objid)
+          WHEN d.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_constraint'::pg_catalog.regclass::pg_catalog.oid THEN (SELECT k.connamespace FROM pg_catalog.pg_constraint k WHERE k.oid OPERATOR(pg_catalog.=) d.objid)
+          WHEN d.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_rewrite'::pg_catalog.regclass::pg_catalog.oid THEN (SELECT c.relnamespace FROM pg_catalog.pg_rewrite r JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) r.ev_class WHERE r.oid OPERATOR(pg_catalog.=) d.objid)
+          WHEN d.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_attrdef'::pg_catalog.regclass::pg_catalog.oid THEN (SELECT c.relnamespace FROM pg_catalog.pg_attrdef a JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) a.adrelid WHERE a.oid OPERATOR(pg_catalog.=) d.objid)
+          WHEN d.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_trigger'::pg_catalog.regclass::pg_catalog.oid THEN (SELECT c.relnamespace FROM pg_catalog.pg_trigger g JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) g.tgrelid WHERE g.oid OPERATOR(pg_catalog.=) d.objid)
+          WHEN d.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_policy'::pg_catalog.regclass::pg_catalog.oid THEN (SELECT c.relnamespace FROM pg_catalog.pg_policy y JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) y.polrelid WHERE y.oid OPERATOR(pg_catalog.=) d.objid)
+        END), '') OPERATOR(pg_catalog.<>) ALL (ARRAY['pool_platform_private', 'pg_toast']::pg_catalog.name[])
+) x;
+\echo 'A1-ROWS' :ROW_COUNT
+SQL
+
 MANIFEST=''
 HOLDS=''
 SHA_TOOL=''
@@ -84,6 +126,7 @@ DONE=0
 
 now(){ date -u +%Y-%m-%dT%H:%M:%SZ; }
 note(){ if [ -n "$MANIFEST" ]; then printf '%s\n' "$*" >> "$MANIFEST"; fi; }
+clean(){ printf '%s' "$*" | tr -c '[:print:]' '?'; } # text -> printable ASCII only, for the terminal and the manifest
 
 sha256_of(){ # file -> 64 lowercase hex characters, or failure; read from stdin so no file name reaches the output
   local h=''
@@ -97,25 +140,27 @@ sha256_of(){ # file -> 64 lowercase hex characters, or failure; read from stdin 
   printf '%s\n' "$h"
 }
 
-finalize(){ # outcome exit-code
+finalize(){ # outcome exit-code; fails if any evidence file cannot be hashed
   [ -n "$MANIFEST" ] || return 0
   note "finished $(now)"
   note "outcome $1 exit $2"
-  local f h
+  local f h ok=0
   : > "$PP_OUT/sha256sums.txt"
   for f in "$PP_OUT"/manifest.txt "$PP_OUT"/src/* "$PP_OUT"/out/*; do
     [ -f "$f" ] || continue
-    h=$(sha256_of "$f") || h='unhashable'
+    h=$(sha256_of "$f") || { h='unhashable'; ok=1; }
     printf '%s  %s\n' "$h" "${f#"$PP_OUT"/}" >> "$PP_OUT/sha256sums.txt"
   done
+  return "$ok"
 }
 
 stop(){ # exit-code message
-  local code=$1
+  local code=$1 msg
   shift
+  msg=$(clean "$*" 2>/dev/null) || msg="$*"
   DONE=1
-  printf 'A1 STOP: %s\n' "$*" >&2
-  note "stop exit $code: $*"
+  printf 'A1 STOP: %s\n' "$msg" >&2
+  note "stop exit $code: $msg"
   finalize STOP "$code" || true
   printf 'A1 RESULT: STOP (exit %s)\n' "$code"
   exit "$code"
@@ -138,11 +183,11 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-hold(){ HOLDS="${HOLDS}${HOLDS:+$NL}$*"; note "hold $*"; }
+hold(){ local msg; msg=$(clean "$*"); HOLDS="${HOLDS}${HOLDS:+$NL}$msg"; note "hold $msg"; }
 
 show_psql_errors(){ # stderr file: at most three lines, which libpq never fills with passwords
   [ -s "$1" ] || return 0
-  head -n 3 "$1" | sed 's/^/  psql: /' >&2
+  head -n 3 "$1" | tr -c '[:print:]\n' '?' | sed 's/^/  psql: /' >&2
 }
 
 # 1. Boundary and tooling.
@@ -150,7 +195,7 @@ for marker in CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_REMOTE CI GITHUB_ACT
   eval "marker_value=\${$marker:-}"
   [ -z "$marker_value" ] || stop 2 "this shell is an AI agent or CI job because $marker is set: run A1 yourself from your own terminal"
 done
-for tool in psql git awk sed grep date cp mkdir chmod head wc ls dirname basename rmdir; do
+for tool in psql git awk sed grep tr date cp mkdir chmod head wc ls dirname basename rmdir; do
   command -v "$tool" >/dev/null 2>&1 || stop 2 "the required tool $tool is not on PATH"
 done
 if command -v shasum >/dev/null 2>&1; then SHA_TOOL='shasum'
@@ -161,6 +206,7 @@ fi
 
 # 2. Inputs, this runner's own hash, and the evidence directory.
 safe_path(){ case $1 in /*) ;; *) return 1 ;; esac; case $1 in *[!A-Za-z0-9._/@+-]*) return 1 ;; esac; return 0; }
+lower(){ printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; } # macOS file systems ignore case, so paths compare without it
 [ -n "${PP_SERVICE:-}" ] || stop 2 "PP_SERVICE is not set"
 case $PP_SERVICE in *[!A-Za-z0-9._-]*) stop 2 "PP_SERVICE may contain only letters, digits, dot, underscore and hyphen" ;; esac
 { [ -n "${PP_REPO:-}" ] && safe_path "$PP_REPO"; } || stop 2 "PP_REPO must be an absolute path made of letters, digits and . _ / @ + -"
@@ -177,7 +223,8 @@ RUNNER_SHA=$(sha256_of "$SELF") || stop 2 "cannot hash this runner at $SELF"
 REPO_REAL=$(cd "$PP_REPO" && pwd -P) || stop 2 "cannot enter PP_REPO"
 if [ -e "$PP_OUT" ] || [ -L "$PP_OUT" ]; then
   { [ -d "$PP_OUT" ] && [ ! -L "$PP_OUT" ]; } || stop 2 "PP_OUT exists and is not a plain directory"
-  [ -z "$(ls -A "$PP_OUT")" ] || stop 2 "PP_OUT is not empty: use a new directory for every run"
+  listing=$(ls -A "$PP_OUT") || stop 2 "cannot list PP_OUT"
+  [ -z "$listing" ] || stop 2 "PP_OUT is not empty: use a new directory for every run"
   OUT_CREATED=0
 else
   mkdir -p "$PP_OUT" || stop 2 "cannot create PP_OUT"
@@ -188,11 +235,19 @@ out_refused(){ # reason: remove the directory this run created, then stop
   if [ "$OUT_CREATED" -eq 1 ]; then rmdir "$PP_OUT" 2>/dev/null || true; fi
   stop 2 "$1"
 }
-case "$OUT_REAL/" in "$REPO_REAL/"*) out_refused "PP_OUT is inside the repository: keep evidence outside it" ;; esac
+OUT_LC=$(lower "$OUT_REAL/")
+case "$OUT_LC" in "$(lower "$REPO_REAL/")"*) out_refused "PP_OUT is inside the repository: keep evidence outside it" ;; esac
+up=$OUT_REAL
+while :; do
+  if [ -e "$up/.git" ]; then out_refused "PP_OUT is inside the git repository at $up: keep evidence outside any repository"; fi
+  [ "$up" != / ] || break
+  up=$(dirname "$up")
+done
 if [ -n "${HOME:-}" ] && HOME_REAL=$(cd "$HOME" 2>/dev/null && pwd -P); then
-  case "$OUT_REAL/" in
-    "$HOME_REAL/Documents/"*|"$HOME_REAL/Desktop/"*|"$HOME_REAL/Library/Mobile Documents/"*|"$HOME_REAL/Library/CloudStorage/"*|\
-    "$HOME_REAL/Dropbox"*|"$HOME_REAL/Google Drive"*|"$HOME_REAL/OneDrive"*|"$HOME_REAL/iCloud Drive"*)
+  HOME_LC=$(lower "$HOME_REAL")
+  case "$OUT_LC" in
+    "$HOME_LC/documents/"*|"$HOME_LC/desktop/"*|"$HOME_LC/library/mobile documents/"*|"$HOME_LC/library/cloudstorage/"*|\
+    "$HOME_LC/dropbox"*|"$HOME_LC/google drive"*|"$HOME_LC/onedrive"*|"$HOME_LC/icloud drive"*)
       out_refused "PP_OUT is inside a folder that may be synced to the cloud: keep evidence in a private local directory" ;;
   esac
 fi
@@ -207,10 +262,10 @@ MANIFEST="$PP_OUT/manifest.txt"
   printf 'authorization_sha256 %s\n' "$AUTHORIZATION_SHA256"
   printf 'repo %s\n' "$REPO_REAL"
   printf 'repo_head %s\n' "$(git -C "$PP_REPO" rev-parse HEAD 2>/dev/null || printf unknown)"
-  printf 'target host=%s database=%s role=%s branch=%s postgresql=%s sslmode=verify-full\n' \
-    "$EXPECT_HOST" "$EXPECT_DB" "$EXPECT_ROLE" "$EXPECT_BRANCH" "$EXPECT_PG_MAJOR"
+  printf 'target host=%s port=%s database=%s role=%s branch=%s postgresql=%s sslmode=verify-full\n' \
+    "$EXPECT_HOST" "$EXPECT_PORT" "$EXPECT_DB" "$EXPECT_ROLE" "$EXPECT_BRANCH" "$EXPECT_PG_MAJOR"
   printf 'service %s\n' "$PP_SERVICE"
-  printf 'psql_version %s\n' "$(psql --version 2>/dev/null | head -n 1)"
+  printf 'psql_version %s\n' "$(psql --version 2>/dev/null | head -n 1 | tr -c '[:print:]\n' '?')"
   printf 'bash_version %s\n' "$BASH_VERSION"
   printf 'started %s\n' "$(now)"
 } > "$MANIFEST" || stop 2 "cannot write the manifest"
@@ -250,7 +305,7 @@ printf 'Sources verified: the authorization, this runner and the five SQL files 
 if ! ( : < /dev/tty ) 2>/dev/null; then stop 2 "no terminal: run A1 yourself from a terminal window"; fi
 {
   printf '\nA1 will now connect read-only:\n'
-  printf '  host %s\n  database %s\n  role %s\n  branch %s\n' "$EXPECT_HOST" "$EXPECT_DB" "$EXPECT_ROLE" "$EXPECT_BRANCH"
+  printf '  host %s port %s\n  database %s\n  role %s\n  branch %s\n' "$EXPECT_HOST" "$EXPECT_PORT" "$EXPECT_DB" "$EXPECT_ROLE" "$EXPECT_BRANCH"
   printf '  runner %s\n  authorization %s\n' "$RUNNER_SHA" "$AUTHORIZATION_SHA256"
   printf 'Type RUN A1 and press Return to continue. Anything else stops: '
 } > /dev/tty
@@ -259,28 +314,39 @@ IFS= read -r answer < /dev/tty || answer=''
 [ "$answer" = 'RUN A1' ] || stop 2 "not confirmed at the terminal"
 note "confirmed $(now)"
 
-# 5. Run each file behind the guard, read-only, and check every row.
-run_one(){ # file name
-  local name=$1 base=${1%.sql} rc=0
+# 5. Run each file behind the guard, read-only, and check every line. The guard runs first, then the search-path
+# check, both outside the transaction and so written with every function and operator qualified: nothing a schema
+# could shadow runs before BEGIN READ ONLY. Inside it, the runner's own statements are qualified as well.
+run_one(){ # file-name [extra psql lines, run after the file inside the same transaction]
+  local name=$1 extra=${2:-} base=${1%.sql} rc=0
   local out="$PP_OUT/out/$base.tsv" err="$PP_OUT/out/$base.stderr"
-  psql "service=$PP_SERVICE sslmode=verify-full" -X -w -q -A -t -F "$TAB" -v ON_ERROR_STOP=1 > "$out" 2> "$err" <<SQL || rc=$?
+  psql "service=$PP_SERVICE host=$EXPECT_HOST port=$EXPECT_PORT dbname=$EXPECT_DB user=$EXPECT_ROLE sslmode=verify-full gssencmode=disable" \
+    -X -w -q -A -t -F "$TAB" -v ON_ERROR_STOP=1 > "$out" 2> "$err" <<SQL || rc=$?
 \set ECHO none
 \set VERBOSITY terse
-SELECT :'HOST' = '$EXPECT_HOST' AND current_database() = '$EXPECT_DB' AND current_user = '$EXPECT_ROLE' AS on_production \gset
+SELECT :'HOST' OPERATOR(pg_catalog.=) '$EXPECT_HOST' AND pg_catalog.current_database() OPERATOR(pg_catalog.=) '$EXPECT_DB' AND CURRENT_USER OPERATOR(pg_catalog.=) '$EXPECT_ROLE' AS on_production \gset
 \if :on_production
 \else
 \echo 'A1 STOP: not the production endpoint, database and owner'
 \quit
 \endif
+SELECT pg_catalog.array_to_string(pg_catalog.current_schemas(true), ',') OPERATOR(pg_catalog.=) 'pg_catalog,public' AS a1_search_path \gset
+\if :a1_search_path
+\else
+\echo 'A1 STOP: the search path is not exactly pg_catalog, public'
+\quit
+\endif
 BEGIN READ ONLY;
-SELECT pg_catalog.current_setting('transaction_read_only') = 'on' AS a1_read_only \gset
+SELECT pg_catalog.current_setting('transaction_read_only') OPERATOR(pg_catalog.=) 'on' AS a1_read_only \gset
 \if :a1_read_only
 \else
 \echo 'A1 STOP: the transaction is not read-only'
 \quit
 \endif
-SELECT 'A1-SESSION', current_user, pg_catalog.current_database(), :'HOST', pg_catalog.current_setting('transaction_read_only'), COALESCE((SELECT s.ssl::text FROM pg_catalog.pg_stat_ssl s WHERE s.pid = pg_catalog.pg_backend_pid()), 'unknown'), pg_catalog.current_setting('search_path');
+SELECT 'A1-SESSION', CURRENT_USER, pg_catalog.current_database(), :'HOST', pg_catalog.current_setting('transaction_read_only'), COALESCE((SELECT s.ssl::pg_catalog.text FROM pg_catalog.pg_stat_ssl s WHERE s.pid OPERATOR(pg_catalog.=) pg_catalog.pg_backend_pid()), 'unknown'), pg_catalog.regexp_replace(pg_catalog.current_setting('search_path'), '[^[:print:]]', '?', 'g');
 \i '$PP_OUT/src/$name'
+\echo 'A1-ROWS' :ROW_COUNT
+$extra
 ROLLBACK;
 SQL
   if [ "$rc" -ne 0 ]; then
@@ -296,19 +362,29 @@ SQL
   fi
 }
 
-# The first line is the session row. Every other line: exactly six fields, a known check id seen once, the required
-# flag the file defines for it, an ok flag of t, f or empty; the verdict row PASS; every required row ok. Prints one
+# The session row comes first: the production role, database and host in a read-only transaction, and the server's
+# view of TLS (recorded, not required: on Neon, TLS from this machine ends at Neon's proxy, and verify-full is what
+# protects that hop). The last line is psql's own row count for the file, so a value holding a line break shows up as
+# extra lines. Every line between them: exactly six fields, a known check id seen once, the required flag the file
+# defines for it, an ok flag of t, f or empty; then the verdict row PASS and every required row ok. Prints one
 # status: OK, or MALFORMED, VERDICT or REQUIRED with the reason.
 CHECKS_AWK='
 BEGIN {
-  FS = "\t"; status = ""; failed = ""
+  FS = "\t"; status = ""; failed = ""; rows = -1
   n = split(ids, want, " "); for (i = 1; i <= n; i++) expected[want[i]] = 1
   m = split(req, must, " "); for (i = 1; i <= m; i++) required[must[i]] = 1
 }
 status != "" { next }
+rows >= 0 { status = "MALFORMED: the output continues after the row count"; next }
 NR == 1 {
-  if (!(NF == 7 && $1 == "A1-SESSION" && $2 == role && $3 == db && $4 == host && $5 == "on" && $6 == "true"))
-    status = "MALFORMED: the session row is missing or does not show the production host, database and owner in a read-only TLS session"
+  if (!(NF == 7 && $1 == "A1-SESSION" && $2 == role && $3 == db && $4 == host && $5 == "on" && ($6 == "true" || $6 == "false")))
+    status = "MALFORMED: the session row is missing or does not show the production host, database and owner in a read-only transaction"
+  next
+}
+/^A1-ROWS / {
+  if ($0 !~ /^A1-ROWS [0-9]+$/) { status = "MALFORMED: an unreadable row count"; next }
+  rows = substr($0, 9) + 0
+  if (rows != NR - 2) status = "MALFORMED: " (NR - 2) " lines for " rows " rows: a value holds a line break"
   next
 }
 {
@@ -323,6 +399,7 @@ NR == 1 {
 }
 END {
   if (status == "" && NR == 0) status = "MALFORMED: the output is empty"
+  if (status == "" && rows < 0) status = "MALFORMED: the row count is missing"
   if (status == "") for (i = 1; i <= n; i++) if (!(want[i] in seen)) { status = "MALFORMED: check " want[i] " is missing"; break }
   if (status == "" && !(vname == "verdict" && vact == "PASS" && vok == "t")) status = "VERDICT: " verdict " is not PASS: " vact
   if (status == "" && failed != "") status = "REQUIRED: required checks not ok:" failed
@@ -331,6 +408,7 @@ END {
 }'
 
 field(){ awk -F"$TAB" -v id="$2" '$1 == id { print $5 }' "$1"; } # output-file check-id -> actual
+server_ssl(){ awk -F"$TAB" 'NR == 1 { print $6 }' "$1"; }       # output-file -> the session row's TLS flag
 
 evaluate_checks(){ # file name, verdict id, expected ids, required ids
   local name=$1 verdict=$2 ids=$3 req=$4 out="$PP_OUT/out/${1%.sql}.tsv" status
@@ -341,6 +419,7 @@ evaluate_checks(){ # file name, verdict id, expected ids, required ids
     C99) rule_catalog "$out" ;;
     I99) rule_identity_audit "$out" ;;
   esac
+  note "session $name server_ssl=$(server_ssl "$out")"
   note "result $name $verdict PASS, every required check ok"
   printf '%s: %s PASS, every required check ok\n' "$name" "$verdict"
 }
@@ -386,22 +465,43 @@ rule_identity_audit(){ # section 5 for the identity audit, beyond its required r
   [ "$other" -eq 0 ] || hold "I03: $other non-synthetic unverified user(s) hold a password or OAuth account; the owner classifies each"
 }
 
-# P2 is an inventory, never an automatic PASS. STOP: a Data API role can use or create objects in the schema,
-# reviewed public code names it, or a trigger outside it runs its code; or the output is malformed. HOLD: everything
-# else, its absence included (the Data API listed the schema on 2026-10-28), for the owner's written reading.
+# P2 is an inventory, never an automatic PASS. Its rows have exactly five fields (kind, name, owner, detail, oid), so
+# a tab or a line break inside a value fails closed. Then psql's row count, the dependents row, and its row count.
+# STOP: a Data API role can use or create objects in the schema, reviewed public code names it, a trigger outside it
+# runs its code, or a view outside it that a Data API role can read depends on it; or the output is malformed. HOLD:
+# everything else, the schema's absence included (the Data API listed it on 2026-10-28), for the owner's reading.
 INVENTORY_AWK='
-BEGIN { FS = "\t"; status = ""; why = ""; schema = 0; rel = 0; fn = 0; fk = 0; view = 0; trig = 0; prov = 0; hint = "" }
+BEGIN { FS = "\t"; status = ""; why = ""; schema = 0; rel = 0; fn = 0; fk = 0; view = 0; trig = 0; prov = 0; hint = ""
+        rows = -1; deps = -1; readable = 0; done = 0 }
 status != "" { next }
+done { status = "MALFORMED: the output continues after the dependents row"; next }
 NR == 1 {
-  if (!(NF == 7 && $1 == "A1-SESSION" && $2 == role && $3 == db && $4 == host && $5 == "on" && $6 == "true"))
-    status = "MALFORMED: the session row is missing or does not show the production host, database and owner in a read-only TLS session"
+  if (!(NF == 7 && $1 == "A1-SESSION" && $2 == role && $3 == db && $4 == host && $5 == "on" && ($6 == "true" || $6 == "false")))
+    status = "MALFORMED: the session row is missing or does not show the production host, database and owner in a read-only transaction"
+  next
+}
+/^A1-ROWS / {
+  if ($0 !~ /^A1-ROWS [0-9]+$/) { status = "MALFORMED: an unreadable row count"; next }
+  c = substr($0, 9) + 0
+  if (rows < 0) {
+    rows = c
+    if (rows != NR - 2) status = "MALFORMED: " (NR - 2) " lines for " rows " rows: a value holds a line break"
+    next
+  }
+  if (deps < 0 || c != 1) { status = "MALFORMED: the dependents row is missing or malformed"; next }
+  done = 1
+  next
+}
+rows >= 0 {
+  if (deps >= 0) { status = "MALFORMED: more than one dependents row"; next }
+  if (!(NF == 4 && $1 == "A1-P2-DEPENDENTS" && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/)) { status = "MALFORMED: the dependents row is missing or malformed"; next }
+  deps = $2 + 0; readable = $3 + 0
   next
 }
 {
-  if (NF < 5) { status = "MALFORMED: line " NR " has " NF " fields, not at least 5"; next }
-  if ($NF !~ /^[0-9]*$/) { status = "MALFORMED: line " NR " does not end in an oid"; next }
+  if (NF != 5) { status = "MALFORMED: line " NR " has " NF " fields, not 5"; next }
+  if ($5 !~ /^[0-9]*$/) { status = "MALFORMED: line " NR " does not end in an oid"; next }
   kind = $1; name = $2; detail = $4
-  for (i = 5; i < NF; i++) detail = detail "\t" $i
   if (kind == "schema") {
     schema++
     if (name != "pool_platform_private") status = "MALFORMED: a schema row for another schema"
@@ -419,40 +519,48 @@ NR == 1 {
 }
 END {
   if (status == "" && NR == 0) status = "MALFORMED: the output is empty"
+  if (status == "" && !done) status = "MALFORMED: the output ends before the dependents row and its row count"
   if (status == "" && prov != 1) status = "MALFORMED: expected one provenance row, found " prov
   if (status == "" && schema > 1) status = "MALFORMED: more than one schema row"
   if (status == "" && schema == 0 && rel + fn + fk + view + trig > 0) status = "MALFORMED: objects listed without a schema row"
   if (status == "" && schema == 0 && hint !~ /^schema absent/) status = "MALFORMED: no schema row and no absence note"
   if (status == "" && schema == 1 && hint ~ /^schema absent/) status = "MALFORMED: a schema row and an absence note"
+  if (status == "" && readable > 0) why = why "; " readable " view(s) outside the schema that a Data API role can read depend on it"
   if (status == "" && why != "") status = "STOP: " substr(why, 3)
-  if (status == "" && schema == 0) status = "HOLD absent"
-  if (status == "") status = "HOLD present " rel " " fn " " fk " " view " " trig
+  if (status == "" && schema == 0) status = "HOLD absent " rows " " deps
+  if (status == "") status = "HOLD present " rows " " rel " " fn " " fk " " view " " trig " " deps
   print status
 }'
 
 evaluate_inventory(){ # file name
   local name=$1 out="$PP_OUT/out/${1%.sql}.tsv" status rows
   status=$(awk -v host="$EXPECT_HOST" -v db="$EXPECT_DB" -v role="$EXPECT_ROLE" "$INVENTORY_AWK" "$out") || stop 4 "$name: its output could not be read"
-  rows=$(($(wc -l < "$out") - 1))
   case $status in
-    'HOLD absent')
-      hold "P2: pool_platform_private is absent, although the Data API listed it on 2026-10-28; the owner confirms why" ;;
+    'HOLD absent '*)
+      set -- ${status#HOLD absent }
+      rows=$1
+      hold "P2: pool_platform_private is absent, although the Data API listed it on 2026-10-28, and $2 object(s) outside it depend on it; the owner confirms why" ;;
     'HOLD present '*)
       set -- ${status#HOLD present }
-      hold "P2: pool_platform_private holds $1 relation(s) and $2 function(s), with $3 foreign key(s), $4 view dependency(ies) and $5 trigger(s) inside it; the owner explains every row from the window record" ;;
+      rows=$1
+      hold "P2: pool_platform_private holds $2 relation(s) and $3 function(s); $4 foreign key(s) and $5 view dependency(ies) involve it, $6 trigger(s) on its own relations call its code, and $7 object(s) outside it depend on it; the owner explains every row from the window record" ;;
     *)
       stop 4 "$name: $status" ;;
   esac
-  note "result $name HOLD, $rows inventory rows kept whole in out/${name%.sql}.tsv"
-  printf '%s: HOLD, %s inventory rows kept whole for the owner\n' "$name" "$rows"
+  note "session $name server_ssl=$(server_ssl "$out")"
+  note "result $name HOLD, $rows inventory rows and the dependents row kept whole in out/${name%.sql}.tsv"
+  printf '%s: HOLD, %s inventory rows and the dependents row kept whole for the owner\n' "$name" "$rows"
 }
 
 i=0
 while [ "$i" -lt 5 ]; do
   name=${F_NAME[$i]}
-  run_one "$name"
-  if [ "${F_VERDICT[$i]}" = '-' ]; then evaluate_inventory "$name"
-  else evaluate_checks "$name" "${F_VERDICT[$i]}" "${F_IDS[$i]}" "${F_REQ[$i]}"
+  if [ "${F_VERDICT[$i]}" = '-' ]; then
+    run_one "$name" "$P2_DEPENDENTS_SQL"
+    evaluate_inventory "$name"
+  else
+    run_one "$name"
+    evaluate_checks "$name" "${F_VERDICT[$i]}" "${F_IDS[$i]}" "${F_REQ[$i]}"
   fi
   i=$((i + 1))
 done
@@ -461,8 +569,8 @@ done
 [ -n "$HOLDS" ] || stop 4 "internal: no HOLD item recorded although P2 always needs the owner's reading"
 printf '\nOwner interpretation is required before A1 can be recorded as PASS:\n'
 printf '%s\n' "$HOLDS" | sed 's/^/  - /'
-DONE=1
 finalize HOLD 10
+DONE=1
 printf 'Evidence: %s/manifest.txt and %s/sha256sums.txt\n' "$PP_OUT" "$PP_OUT"
 printf 'A1 RESULT: HOLD (exit 10)\n'
 exit 10

@@ -6,71 +6,101 @@ Supplement to validation/A1_AUTHORIZATION.md. It changes nothing in that file, w
   Authorization  pool-platform/commissioner-crm/validation/A1_AUTHORIZATION.md
                  SHA-256 8de895da4d7f75eb5654497a41c6e7c0f888f64d65c76d2a711725d872331c12 (owner-signed, unchanged)
   Runner         pool-platform/commissioner-crm/validation/a1_run.sh, version 2
-                 SHA-256 8350ba4ac3514e36f19b8ca6670d2df960a961dba850528c3c28cf26b0278049
+                 SHA-256 675bc5a9e0115a02c0e308a07e8f4d849b4a5d03ba2977841315d7b3441b51c2
   Replaces       version 1, SHA-256 d63654bc4ccd91ae88bbf1641527b0827b0e13272916554fb837453db9c78557, which must not
                  be run: it did not stop on a missing or failing verdict, and its hash steps used GNU-only options.
   Tests          pool-platform/commissioner-crm/validation/a1_run.test.sh
-                 SHA-256 ba2ccd4a85d296231bfac88179635f6b4b2fec74aaf8372d07e2b35d778eb232
-                 713 assertions, all passing, run locally with no connection to Neon: bash 5.2 and bash 3.2.57
+                 SHA-256 f2b6bf628b478db0565c2893f4b35cc08a1f7031a4646d6184c4c202020886b5
+                 890 assertions, all passing, run locally with no connection to Neon: bash 5.2 and bash 3.2.57
                  (the macOS /bin/bash version), mawk and BWK awk (the macOS awk), psql 16 and 18 clients, and a
                  local PostgreSQL 18 server holding the Commercial V1 baseline schema.
+  Review         an independent review rejected an earlier build of version 2 for three defects (line breaks and
+                 tabs in P2 values could forge rows; a hostile search path could run code before the read-only
+                 transaction). This build fixes them and was reviewed again: pending.
 
-  The SQL the runner executes is section 3 of the authorization, unchanged; each file is refused unless its SHA-256 is:
+  The SQL files the runner executes are section 3 of the authorization, unchanged; each is refused unless its
+  SHA-256 is:
     P1_identity_helpers_004.sql                 9ef14dea4ea0f0ff9270b06eb05339f7dfe114accf9c6264d7dd810a979666ae
     P2_private_schema_inventory.sql             234b81f89d328107ff86b0564c32e57f25f220c8ad8da053dc2cbf82731e39d1
     P3_crm_preconditions.sql                    f652ecad1d7adcc1f474d1b0af9753e7a8aec1e14567d03cb350c1312cd2333d
     neon-catalog-verify.sql at AUTH-C 2c6e2a80  40b20416909c0ca2c26e2e682cb4ad2c5ef0b87fc257ca79d259dce55a0e9b43
     neon-identity-audit.sql at AUTH-C 2c6e2a80  d512b94f8281fd201bcecb3efae3eb39fda2ab372b921d8f4a224bec012dca61
 
-2. What version 2 keeps from the authorization, unchanged
+2. What version 2 keeps from the authorization
 
   - The target: host ep-still-recipe-b5g7680z.c-7.us-east-2.aws.neon.tech (the direct host, not -pooler), database
-    neondb, role neondb_owner, branch br-hidden-darkness-b55g0j83. On every connection the guard runs first and quits
-    unless psql's :HOST, current_database() and current_user are exactly these.
+    neondb, role neondb_owner, branch br-hidden-darkness-b55g0j83.
+  - The guard runs first on every connection and quits unless psql's :HOST, current_database() and current_user are
+    exactly these. Version 2 writes the guard's function and operators with their pg_catalog names, so that no
+    schema can stand in for them; the three values are unchanged.
   - Each file runs inside BEGIN READ ONLY; ... ROLLBACK; with ON_ERROR_STOP: no write, no DDL, no setting change.
   - psql runs from the operator's own terminal with the operator's own service entry, with PSQL_HISTORY=/dev/null and
-    umask 077; the evidence stays in a private directory outside the repository; no password, key, token or connection
-    string is printed.
+    umask 077; the evidence stays in a private directory; no password, key, token or connection string is printed.
 
 3. What version 2 adds (each makes A1 stricter; none relaxes the authorization)
 
-  - Every row of every output is checked, not only the verdict row. A missing, duplicated, unknown or malformed row, a
-    verdict (H99, X99, C99, I99) other than PASS, or a required row whose ok is not true is a STOP at once. The
-    required rows are pinned in the runner, so no output can make a required row optional.
+  - The connection string itself pins host, port 5432, database, role, sslmode=verify-full and gssencmode=disable.
+    The service entry is there for the password and the TLS root certificate; nothing else in it can change the host
+    name TLS verifies, the database or the role, and a search path it sets is a STOP. PGHOST, PGOPTIONS and the other
+    variables that could redirect the connection or change the session are cleared.
+  - Before BEGIN READ ONLY, after the guard, the search path must be exactly pg_catalog, public, checked with
+    qualified names only; anything else is a STOP. The runner's own statements are qualified throughout.
+  - Every line of every output is checked. psql's own row count closes each file's output, so a value holding a line
+    break (which would forge a row) is a STOP; every row must have exactly its file's number of fields, so a tab in a
+    value is a STOP; a missing, duplicated, unknown or malformed row, a verdict (H99, X99, C99, I99) other than PASS,
+    or a required row whose ok is not true, is a STOP at once. The required rows are pinned in the runner.
   - The rules of sections 1 and 5 that rows carry: H07 must report neondb_owner as the commercial table owner; C01 must
-    report PostgreSQL 18; C20 must report neondb_owner, not a superuser; C21 is required (PostgreSQL 17 and later).
-  - Identity audit: an impersonated live session, or a live session that is not of a verified user without an
-    account row (I07), is a STOP.
-  - TLS is sslmode=verify-full on every connection, whatever the service entry says, and the environment variables
-    that could redirect the connection or change the session (PGHOST, PGOPTIONS and the like) are cleared.
-  - The runner refuses to run without a terminal or in an AI-agent or CI shell, shows the target and both hashes,
-    and goes on only when the operator types RUN A1.
+    report PostgreSQL 18; C20 must report neondb_owner, not a superuser; C21 is required (PostgreSQL 17 and later);
+    an impersonated live session, or one not of a verified user without an account row (I07), is a STOP.
+  - After P2, inside its read-only transaction, the runner runs one query of its own, over pg_catalog only: every
+    object outside pool_platform_private that depends on one of its relations, functions or types (views, defaults,
+    constraints, indexes, triggers, policies, columns, functions), with their names kept in the evidence. P2's own
+    rows cannot show these, and a public view over the schema needs no USAGE on it.
+  - The server's view of TLS (pg_stat_ssl) is recorded, not required: TLS from the operator's machine ends at Neon's
+    proxy, and sslmode=verify-full is what protects that hop.
+  - It refuses to run without a terminal or in an AI-agent or CI shell, shows the target and both hashes, and goes on
+    only when the operator types RUN A1. This prevents running it by accident from such a shell; a program that
+    imitates a terminal can pass it, so the boundary remains that you run it yourself.
   - It refuses to run unless PP_RUNNER_SHA256 equals its own SHA-256 (the value above), records that hash in the
     manifest, keeps a copy of itself and of every file it runs, and writes sha256sums.txt over all of the evidence.
-  - It refuses an evidence directory inside the repository or in a folder that may sync to the cloud (Documents,
-    Desktop, iCloud Drive, Dropbox, Google Drive, OneDrive).
+  - It refuses an evidence directory inside any git repository or in a folder that may sync to the cloud (Documents,
+    Desktop, iCloud Drive, Dropbox, Google Drive, OneDrive), comparing paths without regard to case, as macOS does.
+  - Text taken from the database is printed only with its non-printable characters replaced.
   - The result is the last line printed and matches the exit code: HOLD 10; STOP 2 (before any connection), 3 (at a
     connection) or 4 (a check failed). Any other nonzero code, an interruption included, is a STOP too.
 
 4. Where version 2 reads the authorization more strictly (read these before signing)
 
   a. P2 is never an automatic PASS. Its rows are kept whole and the run ends at best in HOLD: A1 is PASS only once
-     you record your written reading of each P2 row. A Data API role with USAGE or CREATE on the schema, a reviewed
-     public function or policy that names it, or a trigger outside the schema that calls its code is a STOP. The
+     you record your written reading of each P2 row and of each object that depends on the schema. A Data API role
+     with USAGE or CREATE on the schema, a reviewed public function or policy that names it, a trigger outside it
+     that calls its code, or a view outside it that a Data API role can read and that depends on it, is a STOP. The
      schema's absence, which section 5 counts toward PASS, is a HOLD: the Data API listed the schema on 2026-10-28,
      so its absence needs your explanation.
   b. Identity audit: more than four live sessions (I07) is a HOLD for you to account for the extra ones; I04 above
      zero while I08 shows V1 standing held by users with an account row is a HOLD for you to confirm that each such
      identity was recovered (section 5 makes an unrecovered one a STOP); non-synthetic I03 accounts are a HOLD for
      you to classify.
-  c. A HOLD lets the remaining read-only files run, so you review one complete record. Any STOP still ends the run
+  c. A search path other than exactly pg_catalog, public is a STOP: the five files assume the default.
+  d. A HOLD lets the remaining read-only files run, so you review one complete record. Any STOP still ends the run
      at once, as section 5 says.
-  d. Any diagnostic psql writes, a server warning for example, is a STOP, even if the file otherwise completed.
+  e. Any diagnostic psql writes, a server warning for example, is a STOP, even if the file otherwise completed.
 
-5. Acknowledgment
+5. What A1 still cannot establish
+
+  - The five files call functions and operators without schema names. With the search path held to pg_catalog,
+    public, a function or operator planted in public with a better-matching signature could still change their
+    results; only someone able to create objects in production could plant one, and A1 cannot rule it out.
+  - Code the server itself runs when a session starts, if any were installed, is beyond what a client can prevent.
+  - The runner hashes itself just after bash has read it; a change to the file in that instant would not be seen.
+  - Not exercised before the real run: macOS's own sed, grep, date and ls (only POSIX features are used), a Homebrew
+    or Postgres.app psql, Neon's TLS chain and SNI routing, and the production catalog itself.
+
+6. Acknowledgment
 
   I have read this acknowledgment. I accept a1_run.sh with SHA-256
-      8350ba4ac3514e36f19b8ca6670d2df960a961dba850528c3c28cf26b0278049
+      675bc5a9e0115a02c0e308a07e8f4d849b4a5d03ba2977841315d7b3441b51c2
   as the runner that section 2 of A1_AUTHORIZATION.md names, in place of version 1, with the stricter readings of
-  section 4 above. This does not authorize running A1: that still needs my separate "Run A1 now" approval.
+  section 4 and the limits of section 5. This does not authorize running A1: that still needs my separate "Run A1
+  now" approval.
   Signed by the owner with the SSH key of principal crm-a1-owner, namespace file, as A1_RUNNER_ACK.txt.sig.
