@@ -67,3 +67,13 @@ This does not automatically fetch an independent NFL official feed. That feature
 ## Stop conditions
 
 Stop on a production URL, actual entry, unapproved token, unknown source status, expired current-week deadline, a mismatched Neon branch, a permission failure, or any test that would need real customer/personally identifiable data. Don't silently switch to production. Keep CRM draft PR #19 and Commercial V1 locked branch `commercial-v1-netlify-adapter` unchanged until the separate release gate authorizes integration.
+
+
+## Verified read-only live result — October 29, 2026
+
+GitHub Actions [run 40828802205](https://github.com/r88510179-collab/r88510179-collab.github.io/actions/runs/40828802205) executed `node nfl-pool/acceptance/score-reconcile.mjs --season 2026 --weeks 1-8` without secrets or production writes, exit 0.
+
+- Weeks 1–7: 16 + 16 + 16 + 16 + 15 + 14 + 14 = **107 completed games**; each matched the live `nflscores2` vs freshly fetched ESPN upstream projection.
+- Week 8: 14 scheduled games, **0 finalized** as of this run; skipped final-score comparisons properly.
+- **0 parity failures**; this establishes ESPN feed projection parity only, not official NFL.com independent parity, UI standings/scoring correctness, or signed-in pick/PDF write/read-back acceptance.
+- Next mandatory evidence: owner-approved synthetic staging tenant and read-after-write tests, plus independent NFL.com final records. Do not advertise full E2E PASS from this result.
