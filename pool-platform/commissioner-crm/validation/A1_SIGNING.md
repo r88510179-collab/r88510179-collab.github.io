@@ -51,9 +51,8 @@ is what A1 needs). It checks every hash in the table above (except its own and t
 `crm-a1-owner`, finds the one entry in your psql service file whose host is the production host, and checks that
 entry (it refuses any key that would change or break A1's connection, a misspelt one included), its TLS root
 certificate, your password file's permissions and matching line (by count only), and the evidence directory
-`$HOME/commissioner-crm-a1-evidence`. Each problem is a `[STOP]` or `[TODO]` line with the
-exact fix. When everything else is in place, its first run reports exactly one `[TODO]`: the acknowledgment is not
-signed yet.
+`$HOME/commissioner-crm-a1-evidence`. Each problem is a `[STOP]` or `[TODO]` line with the exact fix. When
+everything else is in place, its first run reports exactly one `[TODO]`: the acknowledgment is not signed yet.
 
 ## Step 2: sign the acknowledgment (once)
 
