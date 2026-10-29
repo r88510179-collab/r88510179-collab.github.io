@@ -41,6 +41,8 @@ For independently verified results, manually transcribe **all completed games** 
 week,away,home,awayScore,homeScore
 ```
 
+Team codes may be copied exactly as NFL.com shows them: the tool maps NFL.com's `AZ` to `ARI` (and `JAC`, `WSH`, `LA` to `JAX`, `WAS`, `LAR`).
+
 Example with *illustrative, fabricated scores only* (DO NOT use this as official evidence):
 
 ```csv
@@ -77,3 +79,7 @@ GitHub Actions [run 40828802205](https://github.com/r88510179-collab/r88510179-c
 - Week 8: 14 scheduled games, **0 finalized** as of this run; skipped final-score comparisons properly.
 - **0 parity failures**; this establishes ESPN feed projection parity only, not official NFL.com independent parity, UI standings/scoring correctness, or signed-in pick/PDF write/read-back acceptance.
 - Next mandatory evidence: owner-approved synthetic staging tenant and read-after-write tests, plus independent NFL.com final records. Do not advertise full E2E PASS from this result.
+
+## Independent NFL.com cross-check, October 29, 2026
+
+All 107 completed games of weeks 1-7 were read from nfl.com/scores/2026/week-1 to week-7 in a browser and checked with `--official`: **107 of 107 match**, 0 failures. A copy with one score altered failed as it should. Before the `AZ` mapping above, NFL.com's own codes produced 14 false failures (every Arizona game). The transcribed CSV stays local, as this document requires.

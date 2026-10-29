@@ -27,7 +27,8 @@ if(start<1||end>22||end<start)throw new Error('invalid week range');
 
 function team(code){
   const val=String(code??'').trim().toUpperCase();
-  return ({JAC:'JAX',WSH:'WAS',LA:'LAR'})[val]||val;
+  // NFL.com writes Arizona as AZ; ESPN and the pool use ARI.
+  return ({JAC:'JAX',WSH:'WAS',LA:'LAR',AZ:'ARI'})[val]||val;
 }
 function competition(e){return e?.competitions?.[0]||{}}
 function matchup(e){
