@@ -3,7 +3,7 @@
 const EXPECTED = [
   {id:"public-site",url:"https://smokkeventures.com/",kind:"html"},
   {id:"personal-pool",url:"https://r88510179-collab.github.io/nfl-pool/",kind:"html"},
-  {id:"commercial-pool",url:"https://pool-platform-commercial-v1.netlify.app/",kind:"html"},
+  {id:"commercial-pool",url:"https://pool-platform-commercial-v1-app.netlify.app/",kind:"html"},
   {id:"fantasy-gm",url:"https://fantasy.smokkeventures.com/",kind:"html"},
   {id:"score-function",url:"https://br-late-hat-b55ygmj4-nflscores2.compute.c-7.us-east-2.aws.neon.tech/?season=2026&week=1",kind:"score"},
 ];
