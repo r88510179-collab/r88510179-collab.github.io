@@ -101,14 +101,25 @@ $('drop').addEventListener('dragleave',()=>$('drop').classList.remove('over'));
 $('drop').addEventListener('drop',e=>{e.preventDefault();$('drop').classList.remove('over');const f=e.dataTransfer.files?.[0];if(f)setCurrentFile(f)});
 
 async function pdfGroups(file){
-  const pdfjs=await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs');
-  pdfjs.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs';
-  const data=new Uint8Array(await file.arrayBuffer()),pdf=await pdfjs.getDocument({data}).promise,groups=[];
-  for(let n=1;n<=pdf.numPages;n++){
-    const page=await pdf.getPage(n),content=await page.getTextContent(),sourceRows=groupPdfTextItems(content.items).map(r=>({...r,kind:'pdf',pageNumber:n})),lines=sourceRows.map(r=>r.text),week=lines.map(detectWeek).find(Boolean)||null;
-    groups.push({week,lines,sourceRows,pageNumber:n,pageFingerprint:lines.join('\n').replace(/\s+/g,' ').trim().toLowerCase()});
+  // QA-only resilience: two pinned PDF.js sources; no sheet data is uploaded to either CDN.
+  const sources=[
+    {name:'jsDelivr',module:'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs',worker:'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs'},
+    {name:'cdnjs',module:'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs',worker:'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs'}
+  ];
+  const bytes=new Uint8Array(await file.arrayBuffer()),attempts=[];
+  for(const source of sources){
+    try{
+      const pdfjs=await import(source.module);
+      pdfjs.GlobalWorkerOptions.workerSrc=source.worker;
+      const pdf=await pdfjs.getDocument({data:new Uint8Array(bytes)}).promise,groups=[];
+      for(let n=1;n<=pdf.numPages;n++){
+        const page=await pdf.getPage(n),content=await page.getTextContent(),sourceRows=groupPdfTextItems(content.items).map(r=>({...r,kind:'pdf',pageNumber:n})),lines=sourceRows.map(r=>r.text),week=lines.map(detectWeek).find(Boolean)||null;
+        groups.push({week,lines,sourceRows,pageNumber:n,pageFingerprint:lines.join('\n').replace(/\s+/g,' ').trim().toLowerCase()});
+      }
+      return carryForwardWeekHints(groups);
+    }catch(e){attempts.push(source.name+': '+(e?.message||String(e)))}
   }
-  return carryForwardWeekHints(groups);
+  throw new Error('PDF READER FAILED (both pinned CDN sources): '+attempts.join(' | ')+'. No data has been published.');
 }
 async function spreadsheetGroups(file){
   const XLSX=await import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/xlsx.mjs');
@@ -153,10 +164,28 @@ function renderCandidateSelector(valid,sourceFile,sourceGeneration){
 }
 
 function eventPair(event){const cs=event?.competitions?.[0]?.competitors||[],a=cs.find(x=>x.homeAway==='away'),h=cs.find(x=>x.homeAway==='home');return{away:norm(a?.team?.abbreviation),home:norm(h?.team?.abbreviation)}}
-async function readSchedule(season,week){
+async function fetchQaSchedule(season,week){
+  // Always request and validate ESPN; the protected same-origin function is only a network fallback.
   const url=`${ESPN_SCOREBOARD}?dates=${season}&seasontype=2&week=${week}&limit=100&_=${Date.now()}`;
-  const r=await fetch(url,{cache:'no-store',headers:{Accept:'application/json'}});if(!r.ok)throw new Error(`NFL schedule feed returned ${r.status}`);const j=await r.json();if(!Array.isArray(j.events)||!j.events.length)throw new Error('NFL schedule feed returned no games.');
-  return j.events;
+  const controller=new AbortController,timeout=setTimeout(()=>controller.abort(),9000);let directError='';
+  try{
+    const r=await fetch(url,{cache:'no-store',headers:{Accept:'application/json'},signal:controller.signal});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const j=await r.json();
+    if(j?.season?.year!==season||j?.week?.number!==week||!Array.isArray(j.events)||!j.events.length)throw new Error('NFL season/week context or games invalid');
+    return j;
+  }catch(e){directError=e?.message||String(e)}
+  finally{clearTimeout(timeout)}
+  try{
+    const r=await fetch('/api/qa-schedule?season='+encodeURIComponent(season)+'&week='+encodeURIComponent(week),{cache:'no-store',headers:{Accept:'application/json'}});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const j=await r.json();
+    if(j?.season?.year!==season||j?.week?.number!==week||!Array.isArray(j.events)||!j.events.length)throw new Error('NFL season/week context or games invalid');
+    return j;
+  }catch(e){throw new Error('NFL SCHEDULE NETWORK FAILED (direct ESPN: '+directError+'; protected QA proxy: '+(e?.message||String(e))+'). No publication was attempted.')}
+}
+async function readSchedule(season,week){
+  return (await fetchQaSchedule(season,week)).events;
 }
 // HDC-14. A sheet game is absent from its week's feed only when every listing of the week is a readable pair and none names
 // either team, in any orientation or against any opponent: a reversed, duplicate, re-paired or unreadable listing is never

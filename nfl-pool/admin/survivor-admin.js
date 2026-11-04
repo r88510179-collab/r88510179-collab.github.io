@@ -55,19 +55,48 @@ function absenceChanged(){
 }
 $('absenceConfirm').addEventListener('input',absenceChanged);$('absenceConfirm').addEventListener('change',absenceChanged);
 
-async function pdfPages(file){const pdfjs=await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs');pdfjs.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs';const data=new Uint8Array(await file.arrayBuffer()),pdf=await pdfjs.getDocument({data}).promise,pages=[];for(let n=1;n<=pdf.numPages;n++){const page=await pdf.getPage(n),content=await page.getTextContent(),rows=groupSurvivorPdfTextItems(content.items);pages.push({pageNumber:n,rows})}return pages}
+async function pdfPages(file){
+  const sources=[
+    {name:'jsDelivr',module:'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs',worker:'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs'},
+    {name:'cdnjs',module:'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs',worker:'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs'}
+  ];
+  const bytes=new Uint8Array(await file.arrayBuffer()),attempts=[];
+  for(const source of sources){
+    try{
+      const pdfjs=await import(source.module);pdfjs.GlobalWorkerOptions.workerSrc=source.worker;
+      const pdf=await pdfjs.getDocument({data:new Uint8Array(bytes)}).promise,pages=[];
+      for(let n=1;n<=pdf.numPages;n++){const page=await pdf.getPage(n),content=await page.getTextContent(),rows=groupSurvivorPdfTextItems(content.items);pages.push({pageNumber:n,rows})}
+      return pages;
+    }catch(e){attempts.push(source.name+': '+(e?.message||String(e)))}
+  }
+  throw new Error('PDF READER FAILED (both pinned CDN sources): '+attempts.join(' | ')+'. No data has been published.');
+}
 async function sha256(file){const bytes=await file.arrayBuffer();if(!bytes.byteLength)throw new Error('The selected file is empty.');const digest=await crypto.subtle.digest('SHA-256',bytes);return[...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('')}
 
 // Weeks 1..W of the NFL regular season, through the shared score-feed proxy. Any failure blocks publication.
+async function fetchQaSchedule(season,week){
+  // Always request and validate ESPN; the protected same-origin function is only a network fallback.
+  const url=`${ESPN_SCOREBOARD}?dates=${season}&seasontype=2&week=${week}&limit=100&_=${Date.now()}`;
+  const controller=new AbortController,timeout=setTimeout(()=>controller.abort(),9000);let directError='';
+  try{
+    const r=await fetch(url,{cache:'no-store',headers:{Accept:'application/json'},signal:controller.signal});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const j=await r.json();
+    if(j?.season?.year!==season||j?.week?.number!==week||!Array.isArray(j.events)||!j.events.length)throw new Error('NFL season/week context or games invalid');
+    return j;
+  }catch(e){directError=e?.message||String(e)}
+  finally{clearTimeout(timeout)}
+  try{
+    const r=await fetch('/api/qa-schedule?season='+encodeURIComponent(season)+'&week='+encodeURIComponent(week),{cache:'no-store',headers:{Accept:'application/json'}});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const j=await r.json();
+    if(j?.season?.year!==season||j?.week?.number!==week||!Array.isArray(j.events)||!j.events.length)throw new Error('NFL season/week context or games invalid');
+    return j;
+  }catch(e){throw new Error('NFL SCHEDULE NETWORK FAILED (direct ESPN: '+directError+'; protected QA proxy: '+(e?.message||String(e))+'). No publication was attempted.')}
+}
 async function fetchSchedules(season,week){
   const out={};
-  await Promise.all(Array.from({length:week},(_,i)=>i+1).map(async w=>{
-    let r;
-    try{r=await fetch(`${ESPN_SCOREBOARD}?dates=${season}&seasontype=2&week=${w}&limit=100&_=${Date.now()}`,{cache:'no-store',headers:{Accept:'application/json'}})}
-    catch(e){throw new Error(`NFL Week ${w} schedule could not be loaded (${e.message||e}). Schedule verification is required before publishing; try Read & validate again.`)}
-    if(!r.ok)throw new Error(`NFL schedule feed returned ${r.status} for Week ${w}. Schedule verification is required before publishing; try Read & validate again.`);
-    try{out[w]=await r.json()}catch{throw new Error(`NFL schedule feed returned unreadable data for Week ${w}. Schedule verification is required before publishing.`)}
-  }));
+  await Promise.all(Array.from({length:week},(_,i)=>i+1).map(async w=>{out[w]=await fetchQaSchedule(season,w)}));
   return out;
 }
 // HDC-14: the locked Pick'em slates of the season, the only proof of a Survivor matchup the week feed no longer lists.
@@ -78,11 +107,7 @@ async function readPickemSlates(season){
   return data;
 }
 // HDC-14: one week of the feed, re-read at publish to re-check an absence exception; the raw failure is reported.
-async function recheckWeek(season,week){
-  const r=await fetch(`${ESPN_SCOREBOARD}?dates=${season}&seasontype=2&week=${week}&limit=100&_=${Date.now()}`,{cache:'no-store',headers:{Accept:'application/json'}});
-  if(!r.ok)throw new Error(`NFL schedule feed returned ${r.status}`);
-  return r.json();
-}
+async function recheckWeek(season,week){return fetchQaSchedule(season,week)}
 async function readPublished(season,{withConfig=true}={}){
   const {data,error}=await neon.from('nfl_survivor_weeks').select(`season,week,status,revision,source_sha256,updated_at${withConfig?',config':''}`).eq('season',season);
   if(error)throw new Error(`Could not read published Survivor weeks for ${season}: ${error.message||error}`);
