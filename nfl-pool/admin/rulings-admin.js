@@ -17,8 +17,8 @@ import {PUBLIC_COLUMNS,RPC_FUNCTION,ACTIONS,scoreboardUrl,evidenceSourceFor,read
   previewOutcome,sameOutcome,confirmationPhrase,confirmationMatches,preflightKey,rpcErrorInfo,classifyReadBack,probeOutcome,
   ABSENT_RPC_FUNCTION,ABSENCE_LABEL,buildAbsentRequest,absentWriteProbeRequest,absentActionPhrase,classifyAbsentReadBack,absentProbeOutcome} from './incident-rulings.js?v=2';
 
-const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
-const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
+const NEON_AUTH_URL='https://ep-silent-sunset-bbdqbm47.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth';
+const NEON_DATA_URL='https://ep-silent-sunset-bbdqbm47.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
 const ADMIN_EMAIL='djsmokke@gmail.com',neon=createClient({auth:{url:NEON_AUTH_URL},dataApi:{url:NEON_DATA_URL}});
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));

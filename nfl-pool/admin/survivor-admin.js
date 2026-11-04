@@ -3,8 +3,8 @@ import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0
 import {groupSurvivorPdfTextItems,parseSurvivorPages,validateSurvivorConfig} from './survivor-parser.js?v=3';
 import {verifySurvivorSchedule,survivorPublishGuard,survivorScheduleWeek} from './survivor-publish-checks.js?v=3';
 
-const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
-const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
+const NEON_AUTH_URL='https://ep-silent-sunset-bbdqbm47.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth';
+const NEON_DATA_URL='https://ep-silent-sunset-bbdqbm47.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
 const ESPN_SCOREBOARD='https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
 const ADMIN_EMAIL='djsmokke@gmail.com',neon=createClient({auth:{url:NEON_AUTH_URL},dataApi:{url:NEON_DATA_URL}});
 const $=id=>document.getElementById(id);

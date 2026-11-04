@@ -3,8 +3,8 @@
 import {competitionRanks,ownershipShare,scoreEntry,tiebreakState} from './public-math.js?v=3';
 import {PUBLIC_COLUMNS,FIRST_RULING_SEASON,contestIdFor,evaluateContestRulings,pickemSlotRuling,pickemSlotEffect,pickemEffectiveGame,rulesModel,isAbsenceEvidence} from './contest-rulings.js?v=2';
 
-const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
-const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
+const NEON_AUTH_URL='https://ep-silent-sunset-bbdqbm47.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth';
+const NEON_DATA_URL='https://ep-silent-sunset-bbdqbm47.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
 const ESPN_SCOREBOARD='https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
 const TEAM_COLORS={ARI:'#97233F',ATL:'#A71930',BAL:'#241773',BUF:'#00338D',CAR:'#0085CA',CHI:'#0B162A',CIN:'#FB4F14',CLE:'#311D00',DAL:'#003594',DEN:'#FB4F14',DET:'#0076B6',GB:'#203731',HOU:'#03202F',IND:'#002C5F',JAX:'#006778',KC:'#E31837',LV:'#111',LAC:'#0080C6',LAR:'#003594',MIA:'#008E97',MIN:'#4F2683',NE:'#002244',NO:'#B3995D',NYG:'#0B2265',NYJ:'#125740',PHI:'#004C54',PIT:'#FFB612',SF:'#AA0000',SEA:'#002244',TB:'#D50A0A',TEN:'#4B92DB',WAS:'#5A1414'};
 const ALIAS={JAC:'JAX',WSH:'WAS'};
