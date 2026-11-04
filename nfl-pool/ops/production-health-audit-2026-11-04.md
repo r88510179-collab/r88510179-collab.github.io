@@ -31,7 +31,8 @@ and the validation repo `r88510179-collab/personal-nologin-offline-validation` a
 An independent recomputation (`nfl-pool/ops/standings-reconcile.mjs`, added with this audit) reads only what a participant's
 browser reads: the anonymous Data API token, the locked `nfl_pool_weeks` / `nfl_survivor_weeks` rows and the public
 `nflscores2` output. It imports nothing from the app. Its output was compared with the page's own share, picks and season
-snapshots, captured from the live site for every published week (Pick'em Weeks 1–8, Survivor Weeks 2–7).
+snapshots, captured from the live site for every published week (Pick'em Weeks 1–8, Survivor Weeks 2–7). The raw
+evidence (captured page snapshots, recomputation output, phone screenshots) is in `nfl-pool/ops/audit-2026-11-04-evidence/`.
 
 ### 2.2 Pick'em, 2026 (displayed = recomputed for every row)
 

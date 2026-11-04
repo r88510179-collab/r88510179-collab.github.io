@@ -1,0 +1,114 @@
+{
+ "season": 2026,
+ "week": 7,
+ "revision": 1,
+ "competitionSize": 247,
+ "currentWeekEntryCount": 18,
+ "counts": {
+  "poolSize": 247,
+  "eligibleEntering": 18,
+  "submitted": 18,
+  "legal": 18,
+  "alive": 13,
+  "pending": 0,
+  "outBefore": 229,
+  "outThisWeek": 5
+ },
+ "tracked": [
+  {
+   "id": "dc",
+   "name": "D.C.",
+   "status": "out",
+   "week": 5,
+   "why": "loss"
+  },
+  {
+   "id": "djs",
+   "name": "DJS",
+   "status": "out",
+   "week": 7,
+   "why": "loss"
+  },
+  {
+   "id": "thaddeus",
+   "name": "Thaddeus",
+   "status": "out",
+   "week": 1,
+   "why": "loss"
+  }
+ ],
+ "distribution": [
+  {
+   "team": "MIN",
+   "count": 5,
+   "pct": 28
+  },
+  {
+   "team": "DEN",
+   "count": 4,
+   "pct": 22
+  },
+  {
+   "team": "HOU",
+   "count": 4,
+   "pct": 22
+  },
+  {
+   "team": "CLE",
+   "count": 2,
+   "pct": 11
+  },
+  {
+   "team": "DAL",
+   "count": 1,
+   "pct": 6
+  },
+  {
+   "team": "LAR",
+   "count": 1,
+   "pct": 6
+  },
+  {
+   "team": "NYJ",
+   "count": 1,
+   "pct": 6
+  }
+ ],
+ "perWeek": [
+  {
+   "week": 1,
+   "remaining": 161,
+   "eliminated": 86
+  },
+  {
+   "week": 2,
+   "remaining": 98,
+   "eliminated": 63
+  },
+  {
+   "week": 3,
+   "remaining": 81,
+   "eliminated": 17
+  },
+  {
+   "week": 4,
+   "remaining": 77,
+   "eliminated": 4
+  },
+  {
+   "week": 5,
+   "remaining": 52,
+   "eliminated": 25
+  },
+  {
+   "week": 6,
+   "remaining": 18,
+   "eliminated": 34
+  },
+  {
+   "week": 7,
+   "remaining": 13,
+   "eliminated": 5
+  }
+ ]
+}
