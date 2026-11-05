@@ -84,6 +84,9 @@ const fixture={
         const field=document.querySelector('#homeFieldPulse');
         return{innerWidth:innerWidth,documentWidth:document.documentElement.scrollWidth,
           clientWidth:document.documentElement.clientWidth,pulseText:field.innerText,
+          pulseCardCount:field.querySelectorAll('.group-field-pulse').length,
+          pulseCaptionFontPx:parseFloat(getComputedStyle(field.querySelector('.field-pulse-caption')).fontSize),
+          pulseOuterIsBare:!field.classList.contains('group-field-pulse'),
           positions:Object.fromEntries(selectors.map(x=>[x,rect(x)])),
           tinyTargets:[...document.querySelectorAll('button')].filter(x=>x.getBoundingClientRect().height>0).map(x=>({text:x.textContent.trim().slice(0,30),width:Math.round(x.getBoundingClientRect().width),height:Math.round(x.getBoundingClientRect().height)})).filter(x=>x.height<40||x.width<40).slice(0,20),
           offscreen:[...document.querySelectorAll('#dashSections *')].filter(e=>{const b=e.getBoundingClientRect(),s=getComputedStyle(e);return b.width>0&&b.height>0&&s.position!=='fixed'&&b.right>innerWidth+1&&b.left<innerWidth}).slice(0,30).map(x=>({tag:x.tagName,cls:x.className?.toString().slice(0,80),text:x.textContent.slice(0,24)}))
@@ -108,6 +111,8 @@ const fixture={
         viewportMatches:before.innerWidth===width,
         noDocumentOverflow:before.documentWidth<=width+1,
         correctRank:before.pulseText.includes('#3')&&before.pulseText.includes('87'),
+        oneComparisonCard:before.pulseCardCount===1&&before.pulseOuterIsBare,
+        captionReadable:before.pulseCaptionFontPx>=11,
         correctTop25Count:before.pulseText.includes('3 of 4 submitted'),
         noteVisible:before.pulseText.includes('In-progress scores do not count until final'),
         standingsVisible:before.positions['#homeFieldPulse']?.visible===true,
