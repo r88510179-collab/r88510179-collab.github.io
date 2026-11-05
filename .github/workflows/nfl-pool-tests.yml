@@ -9,6 +9,7 @@ name: NFL Pool Tests
 on:
   push:
   pull_request:
+  workflow_dispatch:  # Owner can launch the existing read-only regression and SQL tests manually
 
 permissions:
   contents: read
@@ -185,6 +186,8 @@ jobs:
           node-version: '22'
       - name: Verify read-only acceptance script parses
         run: node --check nfl-pool/acceptance/score-reconcile.mjs
+      - name: Verify deterministic synthetic reconciliation scenarios
+        run: node --test nfl-pool/acceptance/score-reconcile.spec.mjs
 
   sql-behavior-gate:
     # HDC-13: the incident-ruling write path (migration 004) exercised as the

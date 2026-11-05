@@ -76,6 +76,46 @@ export function leaderText(pk){
   if(!leaders.length)return'—';
   return`${leaders.map(e=>e.name).join(' / ')} ${leaders[0].w}–${leaders[0].l}`;
 }
+// Group-vs-field is a presentation summary of the SAME sanitized, finalized-game standings snapshot.
+// It does not read anonymous field picks, re-grade live games or infer an NFL result. Suppress
+// misleading all-#1 ranks when no game has finished, and refuse partial/inconsistent field ranks.
+export function groupFieldPulse(snapshot,{now=Date.now()}={}){
+  if(snapshot?.ready!==true)return{state:'unavailable',reason:'Waiting for published Pick’em standings.'};
+  const status=contestStatus('pickem',snapshot,{now});
+  if(status.label==='UNAVAILABLE')return{state:'unavailable',reason:'Current standings could not be verified.'};
+  if(snapshot.hold===true||status.label==='ON HOLD')return{state:'unavailable',reason:'Standings are on hold while contest rulings are unavailable.'};
+  const entries=snapshot.entries,size=snapshot.fieldSize;
+  if(!Array.isArray(entries)||!entries.length||!Number.isInteger(size)||size<entries.length)
+    return{state:'unavailable',reason:'Full-pool rankings were not published with this week’s sheet.'};
+  if(!Number.isInteger(snapshot.games?.final)||snapshot.games.final<1)
+    return{state:'pending',reason:'No NFL games are final yet. Group-versus-field rankings will appear after a final result.'};
+  const submitted=entries.filter(e=>e?.noPicks!==true);
+  if(!submitted.length)return{state:'pending',reason:'No tracked picks are recorded for this week.'};
+  if(submitted.some(e=>!Number.isInteger(e?.field?.rank)||e.field.rank<1||e.field.rank>size))
+    return{state:'unavailable',reason:'Full-pool rankings are incomplete for the tracked entries.'};
+  const best=submitted.reduce((a,b)=>b.field.rank<a.field.rank?b:a);
+  const percent=e=>Math.max(1,Math.ceil(e.field.rank/size*100));
+  return{
+    state:'ready',fieldSize:size,submittedCount:submitted.length,trackedCount:entries.length,
+    bestName:best.name,bestRank:best.field.rank,
+    bestLabel:Number.isInteger(best.field.tieCount)&&best.field.tieCount>1?`T-${best.field.rank}`:`#${best.field.rank}`,
+    bestPercent:percent(best),
+    topQuarter:submitted.filter(e=>percent(e)<=25).length,
+    delayed:status.label!=='LIVE'&&status.label!=='FINAL',status:status.label
+  };
+}
+export function groupFieldPulseHtml(snapshot,{now=Date.now()}={}){
+  const p=groupFieldPulse(snapshot,{now});
+  if(p.state!=='ready')return`<div class="group-field-pulse field-pulse-empty" data-field-pulse="${p.state}"><span class="field-pulse-label">Group vs full pool</span><p>${esc(p.reason)}</p></div>`;
+  return`<div class="group-field-pulse" data-field-pulse="ready" aria-label="Tracked group versus the full Pick’em pool">
+    <div class="field-pulse-grid">
+      <div class="field-pulse-stat"><span class="field-pulse-label">Best overall</span><strong>${esc(p.bestLabel)} <small>of ${p.fieldSize}</small></strong><span class="field-pulse-detail">${esc(p.bestName)} · Top ${p.bestPercent}%</span></div>
+      <div class="field-pulse-stat"><span class="field-pulse-label">Top 25% of field</span><strong>${p.topQuarter} <small>of ${p.submittedCount} submitted</small></strong><span class="field-pulse-detail">Your tracked group</span></div>
+    </div>
+    <p class="field-pulse-caption">${p.delayed?`Last verified standings (${esc(p.status)}). `:''}Ranks use the organizer’s published picks and final NFL results. In-progress scores do not count until final.</p>
+  </div>`;
+}
+
 export function spotlightText(s){
   if(!s||typeof s!=='object')return'';
   const scored=Number.isInteger(s.awayScore)&&Number.isInteger(s.homeScore);
@@ -177,9 +217,10 @@ export function boot(){
     root.dataset.dashDensity=prefs.density;
   }
   function renderData(){
-    const now=Date.now(),contests=document.getElementById('dashContests'),survivor=document.getElementById('dashSurvivor');
+    const now=Date.now(),contests=document.getElementById('dashContests'),survivor=document.getElementById('dashSurvivor'),fieldPulse=document.getElementById('homeFieldPulse');
     if(contests)contests.innerHTML=overviewHtml(snapshots,{now});
     if(survivor)survivor.innerHTML=survivorQuickViewHtml(snapshots.survivor,{density:prefs.density,now});
+    if(fieldPulse)fieldPulse.innerHTML=groupFieldPulseHtml(snapshots.pickem,{now});
     for(const [id,node] of sections){const summary=node.querySelector('[data-dash-summary]');if(summary)summary.textContent=sectionSummary(id,snapshots,{now})}
   }
   function setCollapsed(id,collapsed){

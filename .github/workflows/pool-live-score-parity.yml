@@ -10,6 +10,17 @@ on:
       - 'nfl-pool/score-proxy/index.mjs'
       - '.github/workflows/pool-live-score-parity.yml'
   workflow_dispatch:
+    inputs:
+      season:
+        description: NFL season year (regular season)
+        type: string
+        required: true
+        default: '2026'
+      weeks:
+        description: Week N or N-M (e.g. 1-9); adjust as the season progresses
+        type: string
+        required: true
+        default: '1-9'
 
 permissions:
   contents: read
@@ -19,6 +30,9 @@ jobs:
     name: deployed-score-parity
     runs-on: ubuntu-latest
     timeout-minutes: 8
+    env:
+      CHECK_SEASON: ${{ github.event.inputs.season || '2026' }}
+      CHECK_WEEKS: ${{ github.event.inputs.weeks || '1-9' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -29,4 +43,4 @@ jobs:
         with:
           node-version: '22'
       - name: Compare completed NFL games in ESPN with live nflscores2
-        run: node nfl-pool/acceptance/score-reconcile.mjs --season 2026 --weeks 1-8
+        run: node nfl-pool/acceptance/score-reconcile.mjs --season "$CHECK_SEASON" --weeks "$CHECK_WEEKS"

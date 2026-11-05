@@ -9,11 +9,11 @@ import {projectScoreboard} from '../score-proxy/index.mjs';
 
 const PROXY='https://br-late-hat-b55ygmj4-nflscores2.compute.c-7.us-east-2.aws.neon.tech/';
 const ESPN='https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
-const options={season:2026,weeks:'1-8',official:null};
+const options={season:2026,weeks:'1-9',official:null};
 for(let i=2;i<process.argv.length;i++){
   const arg=process.argv[i];
   if(!['--season','--weeks','--official'].includes(arg)||!process.argv[i+1]){
-    console.error('Usage: node score-reconcile.mjs [--season 2026] [--weeks 1-8] [--official manually-verified-nfl-finals.csv]');
+    console.error('Usage: node score-reconcile.mjs [--season 2026] [--weeks 1-9] [--official manually-verified-nfl-finals.csv]');
     process.exit(2);
   }
   options[arg.slice(2)]=process.argv[++i];
@@ -97,6 +97,15 @@ for(let week=start;week<=end;week++){
     proxy.searchParams.set('season',String(season));
     proxy.searchParams.set('week',String(week));
     const deployed=await getJson(proxy.toString());
+    // A pair of empty responses must never be reported as a successful comparison.
+    if(!upstream.events.length||!deployed.events.length)
+      throw new Error('empty scoreboard (ESPN='+upstream.events.length+', proxy='+deployed.events.length+')');
+    // Catch a silently cached/frozen feed: a successful HTTP response alone is not freshness evidence.
+    const fetched=Date.parse(deployed.fetchedAt);
+    if(!Number.isFinite(fetched))throw new Error('proxy missing or invalid fetchedAt timestamp');
+    const age=Date.now()-fetched;
+    if(age>15*60*1000||age< -2*60*1000)
+      throw new Error('proxy stale/future fetchedAt '+deployed.fetchedAt+' (ageSeconds='+Math.round(age/1000)+')');
     const expected=projectScoreboard(upstream,'test-ignored')?.events;
     assert(Array.isArray(expected),'local projection failed');
     const live=new Map(deployed.events.map(e=>[String(e.id),e]));
@@ -114,8 +123,10 @@ for(let week=start;week<=end;week++){
           console.error('FAIL week '+week+' contradictory finality evidence '+id);
           weekFail++;
         }
-        if(JSON.stringify(view(e))!==JSON.stringify(view(actual))){
-          console.error('FAIL week '+week+' final mismatch for '+id);
+        const expectedView=view(e),actualView=view(actual);
+        if(JSON.stringify(expectedView)!==JSON.stringify(actualView)){
+          // Only public scoreboard fields are shown: no entries, secrets, or customer records.
+          console.error('FAIL week '+week+' final mismatch '+id+' '+JSON.stringify({expected:expectedView,actual:actualView}));
           weekFail++;
         }else parity++;
         if(official){

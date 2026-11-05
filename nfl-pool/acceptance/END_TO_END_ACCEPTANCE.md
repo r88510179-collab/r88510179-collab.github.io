@@ -20,7 +20,7 @@ This package does not authorize writing to a live customer or personal pool, cha
 | Commercial Survivor direct entry | Isolated commercial environment and two synthetic users | Submit legal team, reload, attempt reused team, wrong tenant and locked week | Correct persisted selection; reused/wrong-tenant/late attempts rejected |
 | Commercial commissioner import | Test-only tenant and entries | Import synthetic CSV/PDF via supported channel (only if the version actually implements it), then attempt participant override and second import | Approved source channel recorded; source conflicts and locks enforced; exact record count and reread identical; if not implemented, mark NOT IMPLEMENTED, not PASS |
 | CRM permissions | Isolated CRM branch and real synthetic test identities | Confirm owner, assistant, viewer and foreign tenant cannot exceed granted scopes, before any production integration | Database queries, API outcomes and browser UI all agree; negative cross-tenant cases are denied |
-| Official final scores + ties | Independent NFL.com final scoreboard for each completed game; read-only proxy check | Run `node nfl-pool/acceptance/score-reconcile.mjs --season 2026 --weeks 1-8 --official path/to/official.csv`. Compare resulting pool scores and tie policy manually in UI | Every finalized game included in independent reference, no mismatch; one real tie fixture grades **both sides as losses** unless a documented contest ruling overrides |
+| Official final scores + ties | Independent NFL.com final scoreboard for each completed game; read-only proxy check | Run `node nfl-pool/acceptance/score-reconcile.mjs --season 2026 --weeks 1-9 --official path/to/official.csv`. Compare resulting pool scores and tie policy manually in UI | Every finalized game included in independent reference, no mismatch; one real tie fixture grades **both sides as losses** unless a documented contest ruling overrides |
 | Rollback and recovery | Tested snapshot and restore on disposable branch, known-good SHA | Deliberately deploy a faulty **test** candidate, recover the staging site and test database | Original browser behavior, roles, pick submissions and scores return without new data loss |
 
 **Do not fabricate an acceptance PASS:** Record untested, blocked and simulated results separately. A read-only check never proves a write path works.
@@ -83,3 +83,13 @@ GitHub Actions [run 40828802205](https://github.com/r88510179-collab/r88510179-c
 ## Independent NFL.com cross-check, October 29, 2026
 
 All 107 completed games of weeks 1-7 were read from nfl.com/scores/2026/week-1 to week-7 in a browser and checked with `--official`: **107 of 107 match**, 0 failures. A copy with one score altered failed as it should. Before the `AZ` mapping above, NFL.com's own codes produced 14 false failures (every Arizona game). The transcribed CSV stays local, as this document requires.
+
+
+## November 5, 2026 continuation (PR #23, not a completed E2E release)
+
+- The October 29 parity run and 107-game independent check are **historical evidence**, not proof of current-week parity.
+- The default parity job now covers **2026 Weeks 1-9**. The manual workflow has explicit season/week inputs so the owner can extend the range after Week 9 without needing AI or code changes. Manual dispatch is available only after the workflow is merged to the default branch.
+- The checker refuses a green result for empty ESPN/proxy event lists or a stale/invalid proxy `fetchedAt`, and prints expected-vs-actual *public game* evidence for finalized-score mismatches.
+- Deterministic, network-free synthetic tests cover parity, ties, score mismatches, empty feeds, stale data and independently supplied score comparisons.
+- Run from the feature branch: `node --test nfl-pool/acceptance/score-reconcile.spec.mjs`.
+- A new post-update live read-only run is required for current parity; do not mark any current-week results verified until that job completes. Full browser/PDF write-path acceptance remains blocked by separate staging authorization.
