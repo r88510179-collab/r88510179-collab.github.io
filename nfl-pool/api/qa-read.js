@@ -1,8 +1,16 @@
 // Personal PR previews only. Fixed isolated QA backend, anonymous RLS reads, no caller credentials or writes.
 import {PUBLIC_COLUMNS} from '../contest-rulings.js';
 
-const AUTH='https://ep-silent-sunset-bbdqbm47.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth';
-const DATA='https://ep-silent-sunset-bbdqbm47.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
+// QA ONLY (PR #29): reads come from the authorized isolated QA child branch br-damp-credit-bbn7d0zr (endpoint
+// ep-shiny-snow-bbx446zt), never its QA parent or production. The module refuses to load with any other backend.
+const BACKEND='ep-shiny-snow-bbx446zt';
+const AUTH='https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth';
+const DATA='https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
+const REFUSED_BACKENDS=['ep-muddy-forest-au7eygkw','ep-silent-sunset-bbdqbm47'];
+for(const url of [AUTH,DATA]){
+  const host=new URL(url).hostname;
+  if(!host.startsWith(BACKEND+'.')||REFUSED_BACKENDS.some(id=>host.includes(id)))throw new Error('qa_read_backend_refused');
+}
 const PUBLICATION=['season','week','status','revision','published_at','config'];
 const RESOURCES={
   nfl_pool_weeks:PUBLICATION,nfl_survivor_weeks:PUBLICATION,
@@ -60,7 +68,7 @@ export function createQaReadHandler({fetchImpl=(...args)=>fetch(...args),environ
       if(!response.ok)throw new Error('qa_data_http_'+response.status);
       const rows=await response.json();
       if(!Array.isArray(rows))throw new Error('qa_data_invalid');
-      res.setHeader('X-QA-Backend','ep-silent-sunset-bbdqbm47');
+      res.setHeader('X-QA-Backend',BACKEND);
       return res.status(200).json(rows);
     }catch(error){
       const code=error?.name==='AbortError'?'qa_read_timeout':/^qa_(auth|data)_[-\w]+$/.test(error?.message||'')?error.message:'qa_read_failed';

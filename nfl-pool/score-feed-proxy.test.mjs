@@ -73,7 +73,8 @@ function loadQaRouting(href='https://nfl-pool-personal-review.vercel.app/nfl-poo
 }
 {
   const {fetch}=loadQaRouting(),init={cache:'no-store',signal:new AbortController().signal};
-  const base='https://ep-silent-sunset-bbdqbm47';
+  // QA ONLY (PR #29): the public QA transport is retargeted from the QA parent to the authorized QA child branch.
+  const base='https://ep-shiny-snow-bbx446zt';
   let call=fetch(base+'.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous',init);
   assert.equal(call.input,'https://nfl-pool-personal-review.vercel.app/api/qa-read?kind=anonymous');
   assert.equal(call.init,init);
@@ -95,7 +96,9 @@ function loadQaRouting(href='https://nfl-pool-personal-review.vercel.app/nfl-poo
   assert.equal(fetch(SCOREBOARD).input,'https://nfl-pool-personal-review.vercel.app/api/qa-schedule','missing context is not invented');
   for(const input of [PROXY,base+'.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/sign-in/email',
     base+'.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_admins',
-    'https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks'])
+    'https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks',
+    'https://ep-silent-sunset-bbdqbm47.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season',
+    'https://ep-silent-sunset-bbdqbm47.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous'])
     assert.equal(fetch(input).input,input,'unrelated/production URLs and auth sessions are not routed');
   assert.equal(loadQaRouting('https://picks.smokkeventures.com/nfl-pool/').fetch(url).input,url,'custom-domain production is untouched');
   for(const file of ['admin/index.html','admin/survivor.html'])
@@ -120,12 +123,14 @@ async function gateway(query,{method='GET',environment='preview',host='nfl-pool-
   assert.equal(t.res.headers['X-QA-Read-Only'],'1');
   assert.equal(t.calls.length,2);
   assert(t.calls.every(c=>c.init.cache==='no-store'&&c.init.signal instanceof AbortSignal));
-  assert(t.calls[0].url.startsWith('https://ep-silent-sunset-bbdqbm47.neonauth.'));
+  assert(t.calls[0].url.startsWith('https://ep-shiny-snow-bbx446zt.neonauth.'),'the anonymous token comes from the QA child Auth');
   assert.deepEqual(t.calls[0].init.headers,{Accept:'application/json'});
   assert.equal(t.calls[1].init.headers.Authorization,'Bearer qa.anon.sig','caller admin credentials are never forwarded');
   assert(!Object.keys(t.calls[1].init.headers).some(k=>/cookie|origin/i.test(k)));
   const target=new URL(t.calls[1].url);
-  assert.equal(target.hostname,'ep-silent-sunset-bbdqbm47.apirest.c-15.us-east-1.aws.neon.tech');
+  assert.equal(target.hostname,'ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech','reads come from the QA child Data API');
+  assert.equal(t.res.headers['X-QA-Backend'],'ep-shiny-snow-bbx446zt');
+  assert(t.calls.every(c=>!/ep-silent-sunset-bbdqbm47|ep-muddy-forest-au7eygkw/.test(c.url)),'never the QA parent or production');
   assert.equal(target.searchParams.get('status'),'eq.locked');
   assert.equal(target.searchParams.get('season'),'eq.2026');
   assert.equal((await gateway('kind=anonymous')).calls.length,1);

@@ -1,10 +1,13 @@
 import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';
 import {TARGETS,detectWeek,groupPdfTextItems,carryForwardWeekHints,parseDocumentGroups,chooseBestCandidate,validateConfig} from './parser-core.js?v=14';
+// QA ONLY (never merge): target and identity come from the fail-closed staging configuration bound to the QA child branch.
+import {qaPublisherRuntime} from './qa-publisher-config.js?v=1';
 
-const NEON_AUTH_URL='https://ep-silent-sunset-bbdqbm47.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth';
-const NEON_DATA_URL='https://ep-silent-sunset-bbdqbm47.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
+const QA=qaPublisherRuntime(globalThis);
+const NEON_AUTH_URL=QA.authUrl;
+const NEON_DATA_URL=QA.dataUrl;
 const ESPN_SCOREBOARD='https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
-const ADMIN_EMAIL='djsmokke@gmail.com';
+const ADMIN_EMAIL=QA.publisherEmail;
 const now=new Date(),DEFAULT_SEASON=now.getUTCMonth()<2?now.getUTCFullYear()-1:now.getUTCFullYear();
 const neon=createClient({auth:{url:NEON_AUTH_URL},dataApi:{url:NEON_DATA_URL}});
 
@@ -44,7 +47,7 @@ function fileContextCurrent(file,generation){return !!file&&currentFile===file&&
 const absenceText=()=>String($('absenceConfirm').value??'');
 const absenceShown=()=>absenceText()===candidateAbsence;
 function canPublish(){return !!session&&!!candidate&&scheduleVerified&&candidateFile===currentFile&&candidateFileGeneration===fileGeneration&&competitionSizeCurrent(candidateCompetitionSize)&&totalEntriesShown()&&absenceShown()}
-function setBusy(on,text='Working…'){$('busy').hidden=!on;$('busyText').textContent=text;$('parseBtn').disabled=on||!currentFile;$('publishBtn').disabled=on||!canPublish();$('sendCode').disabled=on;$('verifyCode').disabled=on;$('season').disabled=on;$('totalEntries').disabled=on;$('absenceConfirm').disabled=on;$('detectedWeek').disabled=on;$('tiebreakGame').disabled=on;$('replaceLocked').disabled=on}
+function setBusy(on,text='Working…'){$('busy').hidden=!on;$('busyText').textContent=text;$('parseBtn').disabled=on||!currentFile;$('publishBtn').disabled=on||!canPublish();$('sendCode').disabled=on;$('verifyCode').disabled=on;$('qaSignIn').disabled=on;$('season').disabled=on;$('totalEntries').disabled=on;$('absenceConfirm').disabled=on;$('detectedWeek').disabled=on;$('tiebreakGame').disabled=on;$('replaceLocked').disabled=on}
 function staleFileError(){const e=new Error('Selected file changed while validation was running.');e.name='StaleFileContext';return e}
 function assertFileContext(file,generation,operation=null){if(!fileContextCurrent(file,generation)||(operation!==null&&operation!==parseGeneration))throw staleFileError()}
 function invalidateParsedState(){candidates=[];candidate=null;scheduleVerified=false;candidateFile=null;candidateFileGeneration=-1;candidateCompetitionSize=undefined;$('review').hidden=true;$('publishResult').hidden=true;$('weekChoice').hidden=true;$('replaceLocked').checked=false;$('publishBtn').disabled=true}
@@ -54,7 +57,7 @@ async function refreshSession(){
   const data=result?.data||null,user=data?.user||null,s=data?.session||null;
   if(result?.error)console.warn('Session check failed',result.error);
   session=s&&user?{session:s,user}:null;
-  if(session&&session.user?.email?.toLowerCase()!==ADMIN_EMAIL){await neon.auth.signOut();session=null}
+  if(session&&session.user?.email?.toLowerCase()!==ADMIN_EMAIL){const refused=session.user;await neon.auth.signOut();session=null;QA.reportRefusedIdentity(refused)}
   renderAuth();
 }
 function renderAuth(){const signed=!!session;$('signedOut').hidden=signed;$('signedIn').hidden=!signed;$('signedEmail').textContent=signed?session.user.email:'';$('publishBtn').disabled=!canPublish();$('authState').textContent=signed?'AUTHORIZED':'SIGN IN REQUIRED';$('authState').className=`pill ${signed?'ok':'warn'}`}
@@ -65,6 +68,7 @@ function setCurrentFile(file){
 }
 
 $('sendCode').addEventListener('click',async()=>{
+  if(QA.otpDisabled){message('Email sign-in codes are disabled on the QA publisher: the synthetic QA publisher has no mailbox.','error');return}
   $('sendCode').disabled=true;message('');
   try{
     const {error}=await neon.auth.emailOtp.sendVerificationOtp({email:ADMIN_EMAIL,type:'sign-in'});
@@ -74,6 +78,7 @@ $('sendCode').addEventListener('click',async()=>{
   finally{$('sendCode').disabled=false}
 });
 $('verifyCode').addEventListener('click',async()=>{
+  if(QA.otpDisabled){message('Email sign-in codes are disabled on the QA publisher: the synthetic QA publisher has no mailbox.','error');return}
   const otp=$('otp').value.trim();if(!/^\d{4,10}$/.test(otp)){message('Enter the numeric code from your email.','error');return}
   setBusy(true,'Verifying sign-in…');message('');
   try{
@@ -85,6 +90,21 @@ $('verifyCode').addEventListener('click',async()=>{
   finally{setBusy(false)}
 });
 $('otp').addEventListener('keydown',e=>{if(e.key==='Enter'){$('verifyCode').click()}});
+// QA ONLY: the synthetic QA publisher signs in to the QA child's own Neon Auth with email and password. Any other account
+// that signs in is refused and signed out by refreshSession; row-level security still authorizes every write.
+$('qaSignIn').addEventListener('click',async()=>{
+  const email=String($('qaEmail').value??'').trim(),password=String($('qaPassword').value??'');
+  if(!email||!password){message('Enter the QA account email and password.','error');return}
+  setBusy(true,'Verifying sign-in…');message('');
+  try{
+    const {error}=await neon.auth.signIn.email({email,password});if(error)throw error;
+    $('qaPassword').value='';await refreshSession();
+    if(!session)throw new Error('Authentication completed but no authorized session was created.');
+    message('Signed in securely as the synthetic QA publisher.','success');
+  }catch(e){$('qaPassword').value='';message(`Sign-in failed: ${e.message||e}`,'error')}
+  finally{setBusy(false)}
+});
+$('qaPassword').addEventListener('keydown',e=>{if(e.key==='Enter'){$('qaSignIn').click()}});
 $('signOut').addEventListener('click',async()=>{await neon.auth.signOut();session=null;renderAuth();message('Signed out.','info')});
 
 $('season').value=String(DEFAULT_SEASON);

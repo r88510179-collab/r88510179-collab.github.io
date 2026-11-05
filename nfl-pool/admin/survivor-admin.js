@@ -2,11 +2,14 @@
 import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';
 import {groupSurvivorPdfTextItems,parseSurvivorPages,validateSurvivorConfig} from './survivor-parser.js?v=3';
 import {verifySurvivorSchedule,survivorPublishGuard,survivorScheduleWeek} from './survivor-publish-checks.js?v=3';
+// QA ONLY (never merge): target and identity come from the fail-closed staging configuration bound to the QA child branch.
+import {qaPublisherRuntime} from './qa-publisher-config.js?v=1';
 
-const NEON_AUTH_URL='https://ep-silent-sunset-bbdqbm47.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth';
-const NEON_DATA_URL='https://ep-silent-sunset-bbdqbm47.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
+const QA=qaPublisherRuntime(globalThis);
+const NEON_AUTH_URL=QA.authUrl;
+const NEON_DATA_URL=QA.dataUrl;
 const ESPN_SCOREBOARD='https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
-const ADMIN_EMAIL='djsmokke@gmail.com',neon=createClient({auth:{url:NEON_AUTH_URL},dataApi:{url:NEON_DATA_URL}});
+const ADMIN_EMAIL=QA.publisherEmail,neon=createClient({auth:{url:NEON_AUTH_URL},dataApi:{url:NEON_DATA_URL}});
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 let session=null,currentFile=null,candidate=null,busy=false,authBusy=false,publishInFlight=false,lastAttempt=null;
@@ -26,19 +29,23 @@ const absenceText=()=>String($('absenceConfirm').value??'');
 const absenceLines=text=>String(text??'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
 function canPublish(){return !!session&&!busy&&!authBusy&&!publishInFlight&&candidateCurrent()&&candidate.verified===true&&candidate.published!==true&&dbCheckCurrent(candidate)&&!candidate.guard.blocking.length&&(!candidate.guard.requiresConfirmation||$('confirmPartial').checked)&&absenceText()===candidate.absenceText}
 function syncPublish(){$('publishBtn').disabled=!canPublish()}
-function syncControls(){const locked=busy||publishInFlight;$('parseBtn').disabled=locked||!currentFile;$('file').disabled=locked;$('season').disabled=locked;$('absenceConfirm').disabled=locked;$('replaceLocked').disabled=locked;$('confirmPartial').disabled=locked;$('sendCode').disabled=locked||authBusy;$('verifyCode').disabled=locked||authBusy;$('signOut').disabled=publishInFlight||authBusy;syncPublish()}
+function syncControls(){const locked=busy||publishInFlight;$('parseBtn').disabled=locked||!currentFile;$('file').disabled=locked;$('season').disabled=locked;$('absenceConfirm').disabled=locked;$('replaceLocked').disabled=locked;$('confirmPartial').disabled=locked;$('sendCode').disabled=locked||authBusy;$('verifyCode').disabled=locked||authBusy;$('qaSignIn').disabled=locked||authBusy;$('signOut').disabled=publishInFlight||authBusy;syncPublish()}
 function setBusy(on,text='Working…'){busy=on;$('busy').hidden=!on;$('busyText').textContent=text;syncControls()}
 function invalidateCandidate(){candidate=null;candidateFile=null;candidateFileGeneration=-1;candidateSeason=null;dbGeneration++;$('review').hidden=true;$('publishResult').hidden=true;$('replaceLocked').checked=false;$('confirmPartial').checked=false;$('confirmWrap').hidden=true;$('publishBtn').disabled=true}
 function renderAuth(){const signed=!!session;$('signedOut').hidden=signed;$('signedIn').hidden=!signed;$('signedEmail').textContent=signed?session.user.email:'';$('authState').textContent=signed?'AUTHORIZED':'SIGN IN REQUIRED';$('authState').className=`pill ${signed?'ok':'warn'}`;syncControls()}
 async function refreshSession(){
   const r=await neon.auth.getSession(),u=r?.data?.user,s=r?.data?.session;session=s&&u?{session:s,user:u}:null;
-  if(session&&u.email?.toLowerCase()!==ADMIN_EMAIL){await neon.auth.signOut();session=null}
+  if(session&&u.email?.toLowerCase()!==ADMIN_EMAIL){await neon.auth.signOut();session=null;QA.reportRefusedIdentity(u)}
   renderAuth();
   if(candidate&&!dbCheckCurrent(candidate)){candidate.db=null;refreshGuard(candidate);if(session)void checkPublished(candidate)}
 }
 async function authAction(fn){if(authBusy)return;authBusy=true;syncControls();try{await fn()}finally{authBusy=false;syncControls()}}
-$('sendCode').onclick=()=>authAction(async()=>{msg('');try{const {error}=await neon.auth.emailOtp.sendVerificationOtp({email:ADMIN_EMAIL,type:'sign-in'});if(error)throw error;$('otpWrap').hidden=false;$('otp').focus();msg(`Sign-in code sent to ${ADMIN_EMAIL}.`,'success')}catch(e){msg(`Could not send sign-in code: ${e.message||e}`,'error')}});
-$('verifyCode').onclick=()=>authAction(async()=>{const code=$('otp').value.trim();if(!/^\d{4,10}$/.test(code)){msg('Enter the numeric code from your email.','error');return}msg('');try{const {error}=await neon.auth.signIn.emailOtp({email:ADMIN_EMAIL,otp:code});if(error)throw error;$('otp').value='';$('otpWrap').hidden=true;await refreshSession();if(!session)throw new Error('Authentication completed but no authorized session was created.');msg('Signed in securely.','success')}catch(e){msg(`Sign-in failed: ${e.message||e}`,'error')}});
+$('sendCode').onclick=()=>authAction(async()=>{if(QA.otpDisabled){msg('Email sign-in codes are disabled on the QA publisher: the synthetic QA publisher has no mailbox.','error');return}msg('');try{const {error}=await neon.auth.emailOtp.sendVerificationOtp({email:ADMIN_EMAIL,type:'sign-in'});if(error)throw error;$('otpWrap').hidden=false;$('otp').focus();msg(`Sign-in code sent to ${ADMIN_EMAIL}.`,'success')}catch(e){msg(`Could not send sign-in code: ${e.message||e}`,'error')}});
+$('verifyCode').onclick=()=>authAction(async()=>{if(QA.otpDisabled){msg('Email sign-in codes are disabled on the QA publisher: the synthetic QA publisher has no mailbox.','error');return}const code=$('otp').value.trim();if(!/^\d{4,10}$/.test(code)){msg('Enter the numeric code from your email.','error');return}msg('');try{const {error}=await neon.auth.signIn.emailOtp({email:ADMIN_EMAIL,otp:code});if(error)throw error;$('otp').value='';$('otpWrap').hidden=true;await refreshSession();if(!session)throw new Error('Authentication completed but no authorized session was created.');msg('Signed in securely.','success')}catch(e){msg(`Sign-in failed: ${e.message||e}`,'error')}});
+// QA ONLY: the synthetic QA publisher signs in to the QA child's own Neon Auth with email and password. Any other account
+// that signs in is refused and signed out by refreshSession; row-level security still authorizes every write.
+$('qaSignIn').onclick=()=>authAction(async()=>{const email=String($('qaEmail').value??'').trim(),password=String($('qaPassword').value??'');if(!email||!password){msg('Enter the QA account email and password.','error');return}msg('');try{const {error}=await neon.auth.signIn.email({email,password});if(error)throw error;$('qaPassword').value='';await refreshSession();if(!session)throw new Error('Authentication completed but no authorized session was created.');msg('Signed in securely as the synthetic QA publisher.','success')}catch(e){$('qaPassword').value='';msg(`Sign-in failed: ${e.message||e}`,'error')}});
+$('qaPassword').addEventListener('keydown',e=>{if(e.key==='Enter')$('qaSignIn').onclick()});
 $('signOut').onclick=()=>{if(publishInFlight)return;void authAction(async()=>{await neon.auth.signOut();session=null;renderAuth();if(candidate){candidate.db=null;refreshGuard(candidate)}})};
 
 function setFile(file){

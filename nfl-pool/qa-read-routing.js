@@ -3,8 +3,8 @@
   'use strict';
   const page=new URL(window.location.href);
   if(!page.hostname.endsWith('.vercel.app'))return;
-  const auth='https://ep-silent-sunset-bbdqbm47.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous';
-  const data='https://ep-silent-sunset-bbdqbm47.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/';
+  const auth='https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous';
+  const data='https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/';
   const nativeFetch=window.fetch.bind(window);
   window.fetch=function(input,init){
     const request=input instanceof Request?input:null;

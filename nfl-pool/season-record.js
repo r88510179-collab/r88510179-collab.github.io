@@ -20,8 +20,8 @@
 // explicitly instead of a total.
 import {PUBLIC_COLUMNS,FIRST_RULING_SEASON,contestIdFor} from './contest-rulings.js?v=2';
 
-const NEON_AUTH_URL='https://ep-silent-sunset-bbdqbm47.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth';
-const NEON_DATA_URL='https://ep-silent-sunset-bbdqbm47.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
+const NEON_AUTH_URL='https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth';
+const NEON_DATA_URL='https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
 const ESPN_SCOREBOARD='https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
 const PUB_ROW_COLUMNS='season,week,status,revision,published_at,config';
 // Each read (its token, headers and body together) is abandoned after READ_TIMEOUT_MS, the page's own limit. An unresolved

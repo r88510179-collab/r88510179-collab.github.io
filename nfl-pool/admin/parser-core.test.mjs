@@ -1008,7 +1008,9 @@ function assertTrackedOnly(c,issue,label=''){
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Pick'em publisher state (admin.js) for the authoritative count, against a fake DOM, a mock Neon client, a mock PDF reader
-// and a mock NFL schedule feed. Only the CDN imports and the versioned parser URL are rewritten; publisher logic runs as is.
+// and a mock NFL schedule feed. Only the CDN imports, the versioned parser URL and (QA branch) the staging-configuration import
+// are rewritten; publisher logic runs as is. The default staging runtime keeps the original publisher identity, so every
+// pre-QA regression below runs unchanged; the QA-only section at the end binds the real fail-closed QA configuration.
 const adminHtml=readFileSync(new URL('./index.html',import.meta.url),'utf8');
 const adminSource=readFileSync(new URL('./admin.js',import.meta.url),'utf8');
 const adminPatched=(()=>{
@@ -1029,6 +1031,7 @@ const adminPatched=(()=>{
     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs'
   ],'PDF fallback workers must remain pinned to the same versions');
   swap('await import(source.module)','globalThis.__pickemTest.pdfjs');
+  swap("import {qaPublisherRuntime} from './qa-publisher-config.js?v=1';",'const {qaPublisherRuntime}=globalThis.__pickemTest.qaModule;');
   // Each instance binds its own page and schedule feed, so two Admin pages can run side by side against one database.
   return `const {document,fetch}=globalThis.__pickemTest;\n${s}`;
 })();
@@ -1064,13 +1067,14 @@ const jsonbKeyOrder=v=>Array.isArray(v)?v.map(jsonbKeyOrder):v!==null&&typeof v=
 // What the table keeps of a written row: its config is the JSON the client sent, stored as a JSONB column stores it.
 const storedRow=row=>({...structuredClone(row),config:jsonbKeyOrder(JSON.parse(JSON.stringify(row.config)))});
 let adminInstance=0;
-async function bootAdmin({rows=[]}={}){
+const HARNESS_QA={qaPublisherRuntime:()=>({authUrl:'https://neon-harness.invalid/auth',dataUrl:'https://neon-harness.invalid/rest/v1',publisherEmail:'djsmokke@gmail.com',otpDisabled:false,identityRefusal:()=>null,reportRefusedIdentity(){}})};
+async function bootAdmin({rows=[],qaModule=HARNESS_QA,session={id:'admin-1',email:'djsmokke@gmail.com'}}={}){
   const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new AdminEl(id));return els.get(id)};
   // `rows` is the nfl_pool_weeks table: pages booted with the same array share it, and each keeps its own session, logs
   // and hooks. `affected` records how many rows each committed write changed. A read returns only the columns it selects.
   // `net.feed` is the NFL schedule feed the page reads (a payload, or a function of the requested week); `net.urls`
   // records every schedule URL it requests.
-  const db={session:{id:'admin-1',email:'djsmokke@gmail.com'},rows,log:[],dispatched:[],affected:[],readGate:null,writeGate:null,readFail:null,beforeWrite:null,afterWrite:null},net={gate:null,feed:scheduleFeed,urls:[],fail:null};
+  const db={session,signIns:[],otpSends:0,clientOptions:null,rows,log:[],dispatched:[],affected:[],readGate:null,writeGate:null,readFail:null,beforeWrite:null,afterWrite:null},net={gate:null,feed:scheduleFeed,urls:[],fail:null};
   class Query{
     constructor(table){Object.assign(this,{table,op:'select',filters:[],row:null,columns:null})}
     select(columns){if(this.op==='select'&&columns)this.columns=columns.split(',');return this}
@@ -1117,7 +1121,8 @@ async function bootAdmin({rows=[]}={}){
       // deliberately incorrect context) so the publisher still validates and rejects mismatches.
       return{ok:true,status:200,json:async()=>structuredClone({season:{year:2026},week:{number:requestedWeek},...feed})};
     },
-    neonModule:{createClient:()=>({auth:{getSession:async()=>({data:db.session?{user:db.session,session:{token:'t'}}:null}),signOut:async()=>{db.session=null},emailOtp:{sendVerificationOtp:async()=>({error:null})},signIn:{emailOtp:async()=>({error:null})}},from:table=>new Query(table)})},
+    neonModule:{createClient:options=>{db.clientOptions=structuredClone(options);return{auth:{getSession:async()=>({data:db.session?{user:db.session,session:{token:'t'}}:null}),signOut:async()=>{db.session=null},emailOtp:{sendVerificationOtp:async()=>{db.otpSends++;return{error:null}}},signIn:{emailOtp:async()=>({error:null}),email:async({email})=>{db.signIns.push(email);db.session={id:'signed-'+db.signIns.length,email};return{error:null}}}},from:table=>new Query(table)}}},
+    qaModule,db,
     pdfjs:{GlobalWorkerOptions:{},getDocument:({data})=>{const pages=ADMIN_SHEETS[new TextDecoder().decode(data)];return{promise:Promise.resolve({numPages:pages.length,getPage:async n=>({getTextContent:async()=>({items:pages[n-1]})})})}}}
   };
   await import(`data:text/javascript;base64,${Buffer.from(adminPatched+`\n//pickem admin instance ${++adminInstance}`).toString('base64')}`);
@@ -2105,6 +2110,171 @@ async function atInstant(iso,run){
     assert.equal(t.writes(),1);assert.deepEqual(t.db.rows.find(r=>r.week===2).config.publicationExceptions,[EXCEPTION]);
   });
   assert.equal(failures.length,0,`HDC-14 Pick'em publication-exception regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// QA ONLY (PR #29, never merge): the staging-only publisher configuration and the Pick'em publisher bound to it. The real
+// qa-publisher-config.js runs here; only the Neon client, the PDF reader and the schedule feed are mocks, as above.
+{
+  const qa=await import('./qa-publisher-config.js');
+  const failures=[];
+  const regression=async(name,check)=>{try{await check()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+  const CHILD_AUTH='https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth';
+  const CHILD_DATA='https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
+  const PROD_DATA='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
+  const PARENT_DATA='https://ep-silent-sunset-bbdqbm47.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
+  const SYNTHETIC='qa.pdf-e2e.publisher@example.com',INTRUDER='qa.pdf-e2e.intruder@example.com',PRODUCTION='djsmokke@gmail.com';
+  const LOCAL='http://localhost:8765/nfl-pool/admin/';
+  const fakePage=href=>{const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new AdminEl(id));return els.get(id)};const seen=[];return{$,seen,window:{location:{href},document:{getElementById:$},fetch:async url=>{seen.push(String(url));return{ok:true,status:200,json:async()=>({})}},navigator:{}}}};
+  // The page's boot module runs qaPublisherBoot first; admin.js then calls qaPublisherRuntime on the same window.
+  const bootedQa=page=>({qaPublisherRuntime:()=>qa.qaPublisherRuntime(page.window)});
+
+  await regression('the QA target is exactly the authorized child branch endpoint, database and synthetic identity',()=>{
+    assert.deepEqual({...qa.QA_TARGET},{projectId:'green-base-66242978',branchId:'br-damp-credit-bbn7d0zr',branchName:'qa-pr23-personal-pdf-e2e-20261105',parentBranchId:'br-dawn-fire-bb923034',database:'nfl_pool',endpointId:'ep-shiny-snow-bbx446zt',authUrl:CHILD_AUTH,dataUrl:CHILD_DATA,publisherEmail:SYNTHETIC});
+    assert(Object.isFrozen(qa.QA_TARGET),'the target cannot be modified at runtime');
+    assert.equal(qa.qaTargetRefusal(),null);
+  });
+  await regression('a production, parent, foreign, plain-HTTP or decorated target is refused',()=>{
+    const refuse=(key,value)=>qa.qaTargetRefusal({...qa.QA_TARGET,[key]:value})||'';
+    assert.match(refuse('authUrl','https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth'),/targets ep-muddy-forest-au7eygkw, the live Personal production database/);
+    assert.match(refuse('dataUrl',PROD_DATA),/live Personal production database/);
+    assert.match(refuse('dataUrl',PARENT_DATA),/isolated QA parent branch br-dawn-fire-bb923034/);
+    assert.match(refuse('authUrl','https://ep-silent-sunset-bbdqbm47.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth'),/QA parent/);
+    assert.match(refuse('dataUrl','https://evil.example.com/nfl_pool/rest/v1'),/is not the authorized QA child host/);
+    assert.match(refuse('authUrl',CHILD_AUTH.replace('https:','http:')),/is not HTTPS/);
+    assert.match(refuse('dataUrl',CHILD_DATA+'?select=*'),/must be exactly/);
+    assert.match(refuse('dataUrl',CHILD_DATA.replace('/rest/v1','/rest/v2')),/must be exactly/);
+    assert.match(refuse('branchId','br-dawn-fire-bb923034'),/branchId must be br-damp-credit-bbn7d0zr/);
+    assert.match(refuse('projectId','flat-cake-85432375'),/projectId must be green-base-66242978/);
+    assert.match(refuse('endpointId','ep-silent-sunset-bbdqbm47'),/endpointId must be ep-shiny-snow-bbx446zt/);
+    assert.match(refuse('publisherEmail',PRODUCTION),/the publisher identity is the production publisher/);
+    assert.match(refuse('publisherEmail',INTRUDER),/not the synthetic QA publisher/);
+  });
+  await regression('only the local QA harness and the protected PR #29 preview alias may run the publisher',()=>{
+    for(const href of [LOCAL,'http://127.0.0.1:4173/admin/survivor.html',qa.QA_PREVIEW_ORIGIN+'/nfl-pool/admin/'])assert.equal(qa.qaPageOriginRefusal(href),null,href);
+    for(const [href,pattern] of [
+      ['https://picks.smokkeventures.com/nfl-pool/admin/',/production Pool Center domain/],
+      ['https://r88510179-collab.github.io/nfl-pool/admin/',/production GitHub Pages site/],
+      ['https://nfl-pool-personal.vercel.app/nfl-pool/admin/',/not an authorized QA publisher environment/],
+      ['https://nfl-pool-personal-93spk2k21-r88510179-collabs-projects.vercel.app/nfl-pool/admin/',/not an authorized QA publisher environment/],
+      ['https://localhost:8765/admin/',/not an authorized/],['file:///tmp/admin/index.html',/not an authorized/],
+      ['http://evil.example.com/nfl-pool/admin/',/not an authorized/],['not a url',/unreadable/],[undefined,/unreadable/]
+    ])assert.match(qa.qaPageOriginRefusal(href)||'',pattern,String(href));
+  });
+  await regression('the network allowlist admits only the child Auth, the two child publication tables, ESPN reads and /api/qa-schedule',()=>{
+    const allow=(url,method='GET')=>assert.equal(qa.qaRequestRefusal(url,{method,pageHref:LOCAL}),null,`${method} ${url}`);
+    const deny=(url,pattern,method='GET')=>assert.match(qa.qaRequestRefusal(url,{method,pageHref:LOCAL})||'',pattern,`${method} ${url}`);
+    allow(CHILD_AUTH+'/get-session');allow(CHILD_AUTH+'/sign-in/email','POST');allow(CHILD_AUTH+'/sign-out','POST');allow(CHILD_AUTH+'/token');
+    allow(CHILD_DATA+'/nfl_pool_weeks?select=season,week&season=eq.2026');allow(CHILD_DATA+'/nfl_pool_weeks?season=eq.2026&week=eq.10&revision=eq.1','PATCH');
+    allow(CHILD_DATA+'/nfl_survivor_weeks?select=season','POST');
+    allow('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=10&limit=100');
+    allow('/api/qa-schedule?season=2026&week=10');
+    deny(PROD_DATA+'/nfl_pool_weeks',/live Personal production database/,'PATCH');
+    deny('https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth/get-session',/live Personal production database/);
+    deny(PARENT_DATA+'/nfl_pool_weeks',/isolated QA parent/,'POST');
+    deny('https://ep-silent-sunset-bbdqbm47.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous',/isolated QA parent/);
+    deny('https://br-late-hat-b55ygmj4-nflscores2.compute.c-7.us-east-2.aws.neon.tech/?season=2026&week=10',/production NFL score proxy/);
+    deny('https://picks.smokkeventures.com/nfl-pool/',/production Pool Center domain/);
+    deny(CHILD_DATA+'/nfl_incident_rulings',/not a QA publication table/,'POST');deny(CHILD_DATA+'/rpc/nfl_record_incident_ruling',/not a QA publication table/,'POST');
+    deny(CHILD_AUTH.replace('/nfl_pool/auth','/other/auth')+'/get-session',/outside the QA child's Neon Auth/);
+    deny('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard',/read-only/,'POST');
+    deny('/api/qa-read?resource=nfl_pool_weeks',/same-origin GET \/api\/qa-read is not allowed/);deny('/api/qa-schedule',/same-origin POST/,'POST');
+    deny(CHILD_DATA.replace('https:','http:')+'/nfl_pool_weeks',/is not HTTPS/);deny('https://example.com/collect',/outside the QA publisher allowlist/,'POST');
+  });
+  await regression('only the synthetic QA publisher identity is accepted; the production publisher is refused by name',()=>{
+    assert.equal(qa.qaIdentityRefusal({email:SYNTHETIC}),null);assert.equal(qa.qaIdentityRefusal({email:' QA.PDF-E2E.Publisher@Example.com '}),null);
+    assert.match(qa.qaIdentityRefusal({email:PRODUCTION}),/production publisher identity is refused/);
+    assert.match(qa.qaIdentityRefusal({email:INTRUDER}),/is not the authorized synthetic QA publisher/);
+    assert.match(qa.qaIdentityRefusal({}),/no email identity/);assert.match(qa.qaIdentityRefusal(null),/no email identity/);
+  });
+  await regression('a refused origin locks the page, installs nothing and refuses the publisher runtime',()=>{
+    const page=fakePage('https://picks.smokkeventures.com/nfl-pool/admin/'),before=page.window.fetch,state=qa.qaPublisherBoot(page.window);
+    assert.equal(state.verified,false);assert.equal(page.window.fetch,before,'no network guard on a refused page');
+    assert.match(page.$('qaBanner').textContent,/^QA PUBLISHER DISABLED — this page is served from the production Pool Center domain/);
+    assert.match(page.$('qaBanner').className,/refused/);
+    for(const id of ['qaSignIn','qaPassword','sendCode','parseBtn','publishBtn','file'])assert.equal(page.$(id).disabled,true,id);
+    assert.throws(()=>qa.qaPublisherRuntime(page.window),e=>e.name==='QaPublisherRefusal'&&/production Pool Center domain/.test(e.message));
+    assert.equal(page.window.__qaPublisher.verified,false);
+    const unbooted=fakePage(LOCAL);assert.throws(()=>qa.qaPublisherRuntime(unbooted.window),/did not run before the publisher/);
+    assert.match(unbooted.$('qaBanner').textContent,/^QA PUBLISHER DISABLED/);assert.equal(unbooted.$('publishBtn').disabled,true);
+  });
+  await regression('an allowed origin shows the verified target, hides email codes and guards every request before it leaves the page',async()=>{
+    const page=fakePage(LOCAL),state=qa.qaPublisherBoot(page.window);
+    assert.equal(state.verified,true);assert.equal(qa.qaPublisherBoot(page.window),state,'boot is idempotent');
+    assert.match(page.$('qaBanner').textContent,/^QA STAGING PUBLISHER — writes only to Neon project green-base-66242978 · child branch br-damp-credit-bbn7d0zr \(qa-pr23-personal-pdf-e2e-20261105\) · database nfl_pool · endpoint ep-shiny-snow-bbx446zt\./);
+    assert.match(page.$('qaBanner').className,/ok/);
+    assert.equal(page.$('sendCode').hidden,true);assert.equal(page.$('otpWrap').hidden,true);
+    assert.equal(page.$('qaEmail').value,SYNTHETIC);assert.equal(page.$('qaPublisherEmail').textContent,SYNTHETIC);
+    await page.window.fetch(CHILD_DATA+'/nfl_pool_weeks?select=season');
+    await assert.rejects(page.window.fetch(PARENT_DATA+'/nfl_pool_weeks',{method:'POST'}),/QA publisher network guard refused .*isolated QA parent/);
+    await assert.rejects(page.window.fetch(PROD_DATA+'/nfl_pool_weeks?season=eq.2026',{method:'PATCH'}),/live Personal production database/);
+    await assert.rejects(page.window.fetch('https://br-late-hat-b55ygmj4-nflscores2.compute.c-7.us-east-2.aws.neon.tech/?season=2026&week=10'),/production NFL score proxy/);
+    assert.deepEqual(page.seen,[CHILD_DATA+'/nfl_pool_weeks?select=season'],'refused requests never reach the network');
+    const refusals=page.window.__qaPublisher.networkRefusals;
+    assert.deepEqual(refusals.map(r=>r.method),['POST','PATCH','GET']);assert(refusals.every(r=>!r.url.includes('?')),'the refusal log keeps no query string');
+    const runtime=qa.qaPublisherRuntime(page.window);
+    assert.deepEqual({authUrl:runtime.authUrl,dataUrl:runtime.dataUrl,publisherEmail:runtime.publisherEmail,otpDisabled:runtime.otpDisabled},{authUrl:CHILD_AUTH,dataUrl:CHILD_DATA,publisherEmail:SYNTHETIC,otpDisabled:true});
+    assert.match(runtime.reportRefusedIdentity({email:PRODUCTION}),/production publisher identity is refused/);
+    assert.equal(page.$('qaIdentityNote').hidden,false);assert.match(page.$('qaIdentityNote').textContent,/^Signed-in account refused and signed out — the production publisher identity is refused/);
+  });
+  await regression('admin.js creates its Neon client with exactly the QA child URLs and publishes for the synthetic publisher',async()=>{
+    const page=fakePage(LOCAL);qa.qaPublisherBoot(page.window);
+    const t=await bootAdmin({qaModule:bootedQa(page),session:{id:'qa-publisher',email:SYNTHETIC}});
+    assert.deepEqual(t.db.clientOptions,{auth:{url:CHILD_AUTH},dataApi:{url:CHILD_DATA}});
+    assert.equal(t.$('authState').textContent,'AUTHORIZED');assert.equal(t.$('signedEmail').textContent,SYNTHETIC);
+    await t.choose('six.pdf');await t.parse();assert.equal(t.$('publishBtn').disabled,false,t.$('message').textContent);
+    await t.publish();assert.equal(t.writes(),1);assert.match(t.$('message').textContent,/Week 2 published and locked successfully\. Revision 1\./);
+  });
+  for(const [label,email,pattern] of [['the production publisher',PRODUCTION,/production publisher identity is refused/],['another synthetic account',INTRUDER,/is not the authorized synthetic QA publisher/]]){
+    await regression(`a session of ${label} is signed out, reported, and cannot publish`,async()=>{
+      const page=fakePage(LOCAL);qa.qaPublisherBoot(page.window);
+      const t=await bootAdmin({qaModule:bootedQa(page),session:{id:'other',email}});
+      assert.equal(t.db.session,null,'the session was signed out');assert.equal(t.$('authState').textContent,'SIGN IN REQUIRED');
+      assert.match(page.$('qaIdentityNote').textContent,pattern);
+      await t.choose('six.pdf');await t.parse();assert.equal(t.$('publishBtn').disabled,true);
+      await t.publish();assert.equal(t.writes(),0);assert.equal(t.$('message').textContent,'Sign in before publishing.');
+    });
+  }
+  await regression('the QA sign-in form signs the synthetic publisher in and refuses any other account',async()=>{
+    const page=fakePage(LOCAL);qa.qaPublisherBoot(page.window);
+    const t=await bootAdmin({qaModule:bootedQa(page),session:null});
+    assert.equal(t.$('authState').textContent,'SIGN IN REQUIRED');
+    t.$('qaEmail').value=INTRUDER;t.$('qaPassword').value='synthetic-test-only';await t.$('qaSignIn').dispatch('click');await adminFlush();
+    assert.deepEqual(t.db.signIns,[INTRUDER]);assert.equal(t.db.session,null);assert.equal(t.$('qaPassword').value,'','the password field is cleared');
+    assert.equal(t.$('message').textContent,'Sign-in failed: Authentication completed but no authorized session was created.');
+    assert.match(page.$('qaIdentityNote').textContent,/is not the authorized synthetic QA publisher/);
+    t.$('qaEmail').value=SYNTHETIC;t.$('qaPassword').value='synthetic-test-only';await t.$('qaSignIn').dispatch('click');await adminFlush();
+    assert.equal(t.$('authState').textContent,'AUTHORIZED');assert.equal(t.$('message').textContent,'Signed in securely as the synthetic QA publisher.');
+    await t.$('sendCode').dispatch('click');assert.equal(t.db.otpSends,0,'no email code is ever sent');
+    assert.match(t.$('message').textContent,/Email sign-in codes are disabled on the QA publisher/);
+  });
+  await regression('on a refused origin admin.js never creates a Neon client',async()=>{
+    const page=fakePage('https://picks.smokkeventures.com/nfl-pool/admin/');qa.qaPublisherBoot(page.window);
+    let consulted=false;const watch={qaPublisherRuntime:()=>{consulted=true;return qa.qaPublisherRuntime(page.window)}};
+    await assert.rejects(bootAdmin({qaModule:watch}),e=>e.name==='QaPublisherRefusal'&&/production Pool Center domain/.test(e.message));
+    assert.equal(consulted,true,'the runtime was consulted');
+    assert.equal(globalThis.__pickemTest.db.clientOptions,null,'createClient was never called');
+    assert.equal(globalThis.__pickemTest.db.log.length,0,'nothing was read or written');
+  });
+  await regression('index.html loads the QA boot module first, never the production score shim, and names no production identity',()=>{
+    const scripts=[...adminHtml.matchAll(/<script\b[^>]*src="([^"]+)"/g)].map(m=>m[1]);
+    assert.deepEqual(scripts,['qa-publisher-boot.js?v=1','admin.js?v=14','../pwa.js?v=1']);
+    assert.match(adminHtml,/<script type="module" src="qa-publisher-boot\.js\?v=1"><\/script>\n<script type="module" src="admin\.js\?v=14"><\/script>/);
+    assert(!adminHtml.includes('score-feed-proxy'),'the production score shim is not loaded by the QA publisher');
+    assert(!adminHtml.includes(PRODUCTION),'the production publisher identity is not shown');
+    assert.match(adminHtml,/<div id="qaBanner" class="qa-banner refused" role="status">QA PUBLISHER DISABLED — the QA safety checks have not run\./,'fail-closed until the checks pass');
+    for(const id of ['qaIdentityNote','qaEmail','qaPassword','qaSignIn','qaPublisherEmail'])assert(adminHtml.includes(`id="${id}"`),id);
+    assert.match(adminHtml,/<input id="qaPassword" class="auth-input" type="password"/);
+    const boot=readFileSync(new URL('./qa-publisher-boot.js',import.meta.url),'utf8');
+    assert.match(boot,/import \{qaPublisherBoot\} from '\.\/qa-publisher-config\.js\?v=1';\nqaPublisherBoot\(globalThis\);/);
+  });
+  await regression('admin.js takes its target and identity only from the QA runtime and names no Neon host itself',()=>{
+    assert.match(adminSource,/import \{qaPublisherRuntime\} from '\.\/qa-publisher-config\.js\?v=1';\n\nconst QA=qaPublisherRuntime\(globalThis\);\nconst NEON_AUTH_URL=QA\.authUrl;\nconst NEON_DATA_URL=QA\.dataUrl;/);
+    assert.match(adminSource,/const ADMIN_EMAIL=QA\.publisherEmail;/);
+    assert(!/neon\.tech|djsmokke|ep-[a-z]+-[a-z]+-[a-z0-9]{8}/.test(adminSource),'no hardcoded Neon host or identity');
+  });
+  assert.equal(failures.length,0,`QA publisher configuration regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+  console.log('QA-only Pick\'em publisher configuration, environment, network, identity and binding regressions passed');
 }
 
 console.log('parser-core regular-table region, continuation, fail-closed field, duplicate, privacy, and publication write-integrity regressions passed');

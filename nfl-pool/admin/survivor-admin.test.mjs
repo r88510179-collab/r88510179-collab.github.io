@@ -13,7 +13,10 @@ const replacements=[
   ["import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';","const {createClient}=globalThis.__survivorTest.neonModule;"],
   ["from './survivor-parser.js?v=3';",`from '${new URL('./survivor-parser.js?v=3',here).href}';`],
   [checksImport[0],`from '${new URL(`./survivor-publish-checks.js?v=${checksImport[1]}`,here).href}';`],
-  ['await import(source.module)','globalThis.__survivorTest.pdfjs']
+  ['await import(source.module)','globalThis.__survivorTest.pdfjs'],
+  // QA branch: the staging configuration import. The default harness runtime keeps the original publisher identity, so the
+  // pre-QA regressions run unchanged; the QA-only section at the end binds the real fail-closed QA configuration.
+  ["import {qaPublisherRuntime} from './qa-publisher-config.js?v=1';",'const {qaPublisherRuntime}=globalThis.__survivorTest.qaModule;']
 ];
 assert(source.includes('gridBreaks:c.review.gridBreaks'),'publisher must pass parser-proven grid restarts to the confirmation guard');
 let patched=source;
@@ -80,21 +83,23 @@ function neonModule(db){
       return{data,error:null};
     }
   }
-  return{createClient:()=>({auth:{
+  return{createClient:options=>{db.clientOptions=structuredClone(options);return{auth:{
     getSession:async()=>({data:db.session?{user:db.session,session:{token:'t'}}:null}),
     signOut:async()=>{db.session=null},
-    emailOtp:{sendVerificationOtp:async()=>({error:null})},
-    signIn:{emailOtp:async()=>{db.session=db.pendingSession;return{error:null}}}
-  },from:table=>new Query(table)})};
+    emailOtp:{sendVerificationOtp:async()=>{db.otpSends=(db.otpSends||0)+1;return{error:null}}},
+    signIn:{emailOtp:async()=>{db.session=db.pendingSession;return{error:null}},email:async({email})=>{(db.signIns||=[]).push(email);db.session={id:'signed-'+db.signIns.length,email};return{error:null}}}
+  },from:table=>new Query(table)}}};
 }
 
-async function boot({signedIn=true,rows=[],sheets={},pickem=[],feed=feedPayload}={}){
+const HARNESS_QA={qaPublisherRuntime:()=>({authUrl:'https://neon-harness.invalid/auth',dataUrl:'https://neon-harness.invalid/rest/v1',publisherEmail:'djsmokke@gmail.com',otpDisabled:false,identityRefusal:()=>null,reportRefusedIdentity(){}})};
+async function boot({signedIn=true,rows=[],sheets={},pickem=[],feed=feedPayload,qaModule=HARNESS_QA,session=null}={}){
   const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new El(id));return els.get(id)};
-  const db={session:signedIn?{id:'admin-1',email:'djsmokke@gmail.com'}:null,pendingSession:{id:'admin-1',email:'djsmokke@gmail.com'},rows:structuredClone(rows),pickem:structuredClone(pickem),log:[]};
+  const db={clientOptions:null,session:session||(signedIn?{id:'admin-1',email:'djsmokke@gmail.com'}:null),pendingSession:{id:'admin-1',email:'djsmokke@gmail.com'},rows:structuredClone(rows),pickem:structuredClone(pickem),log:[]};
   // `net.feed` maps a requested week to the NFL score-feed payload; `net.weeks` records every requested week.
   const net={fetches:0,gate:null,fail:null,feed,weeks:[]};
   globalThis.document={getElementById:$};
   globalThis.__survivorTest={
+    db,qaModule,
     neonModule:neonModule(db),
     pdfjs:{GlobalWorkerOptions:{},getDocument:({data})=>{const name=new TextDecoder().decode(data),pages=Array.isArray(sheets[name][0])?sheets[name]:[sheets[name]];return{promise:Promise.resolve({numPages:pages.length,getPage:async n=>({getTextContent:async()=>({items:pages[n-1]})})})}}}
   };
@@ -419,6 +424,89 @@ const sheets={'week2.pdf':sheetItems(SHEET),'week2-complete.pdf':sheetItems(COMP
     assert.equal(writes(t),1);assert.deepEqual(t.db.rows.find(r=>r.week===2).config.publicationExceptions,[EXC]);
   });
   assert.equal(failures.length,0,`HDC-14 Survivor publisher regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// QA ONLY (PR #29, never merge): the Survivor publisher bound to the real fail-closed staging configuration.
+{
+  const qa=await import('./qa-publisher-config.js');
+  const html=readFileSync(new URL('./survivor.html',import.meta.url),'utf8');
+  const failures=[];
+  const regression=async(name,check)=>{try{await check()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
+  const CHILD_AUTH='https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth';
+  const CHILD_DATA='https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
+  const SYNTHETIC='qa.pdf-e2e.publisher@example.com',INTRUDER='qa.pdf-e2e.intruder@example.com',PRODUCTION='djsmokke@gmail.com';
+  const fakePage=href=>{const els=new Map(),$=id=>{if(!els.has(id))els.set(id,new El(id));return els.get(id)};return{$,window:{location:{href},document:{getElementById:$},fetch:async()=>({ok:true,json:async()=>({})}),navigator:{}}}};
+  const bootedQa=page=>({qaPublisherRuntime:()=>qa.qaPublisherRuntime(page.window)});
+  const writes=t=>t.db.log.filter(l=>l[0]==='insert'||l[0]==='update').length;
+
+  await regression('survivor-admin.js creates its Neon client with exactly the QA child URLs and publishes for the synthetic publisher',async()=>{
+    const page=fakePage('http://localhost:8765/nfl-pool/admin/survivor.html');qa.qaPublisherBoot(page.window);
+    const t=await boot({rows:[week1Row(SHEET)],sheets,qaModule:bootedQa(page),session:{id:'qa-publisher',email:SYNTHETIC}});
+    assert.deepEqual(t.db.clientOptions,{auth:{url:CHILD_AUTH},dataApi:{url:CHILD_DATA}});
+    assert.equal(t.$('authState').textContent,'AUTHORIZED');
+    t.choose('week2.pdf');await t.parse();assert.equal(t.$('review').hidden,false,t.$('message').textContent);
+    t.$('confirmPartial').checked=true;t.$('confirmPartial').dispatch('change');assert.equal(t.$('publishBtn').disabled,false);
+    await t.publish();assert.equal(writes(t),1);assert.match(t.$('message').textContent,/Survivor Week 2 published and locked\. Revision 1\./);
+  });
+  for(const [label,email,pattern] of [['the production publisher',PRODUCTION,/production publisher identity is refused/],['another synthetic account',INTRUDER,/is not the authorized synthetic QA publisher/]]){
+    await regression(`a session of ${label} is signed out, reported, and cannot publish Survivor`,async()=>{
+      const page=fakePage('http://127.0.0.1:8765/nfl-pool/admin/survivor.html');qa.qaPublisherBoot(page.window);
+      const t=await boot({rows:[week1Row(SHEET)],sheets,qaModule:bootedQa(page),session:{id:'other',email}});
+      assert.equal(t.db.session,null,'signed out');assert.equal(t.$('authState').textContent,'SIGN IN REQUIRED');
+      assert.match(page.$('qaIdentityNote').textContent,pattern);
+      t.choose('week2.pdf');await t.parse();assert.equal(t.$('publishBtn').disabled,true);
+      await t.publish();assert.equal(writes(t),0);assert.equal(t.$('message').textContent,'Sign in before publishing.');
+    });
+  }
+  await regression('the Survivor QA sign-in form admits only the synthetic publisher and never sends an email code',async()=>{
+    const page=fakePage('http://localhost:8765/nfl-pool/admin/survivor.html');qa.qaPublisherBoot(page.window);
+    const t=await boot({signedIn:false,qaModule:bootedQa(page)});
+    t.$('qaEmail').value=INTRUDER;t.$('qaPassword').value='synthetic-test-only';await t.$('qaSignIn').onclick();await flush();
+    assert.equal(t.db.session,null);assert.equal(t.$('qaPassword').value,'');
+    assert.equal(t.$('message').textContent,'Sign-in failed: Authentication completed but no authorized session was created.');
+    t.$('qaEmail').value=SYNTHETIC;t.$('qaPassword').value='synthetic-test-only';await t.$('qaSignIn').onclick();await flush();
+    assert.equal(t.$('authState').textContent,'AUTHORIZED');assert.deepEqual(t.db.signIns,[INTRUDER,SYNTHETIC]);
+    await t.$('sendCode').onclick();await flush();assert.equal(t.db.otpSends||0,0,'no email code is sent');
+    assert.match(t.$('message').textContent,/Email sign-in codes are disabled on the QA publisher/);
+  });
+  await regression('on a refused origin survivor-admin.js never creates a Neon client or reads anything',async()=>{
+    const page=fakePage('https://r88510179-collab.github.io/nfl-pool/admin/survivor.html');qa.qaPublisherBoot(page.window);
+    await assert.rejects(boot({qaModule:bootedQa(page)}),e=>e.name==='QaPublisherRefusal'&&/production GitHub Pages site/.test(e.message));
+    assert.equal(globalThis.__survivorTest.db.clientOptions,null,'createClient was never called');
+    assert.equal(globalThis.__survivorTest.db.log.length,0,'nothing was read or written');
+    assert.match(page.$('qaBanner').textContent,/^QA PUBLISHER DISABLED — this page is served from the production GitHub Pages site/);
+  });
+  await regression('survivor.html loads the QA boot module first, never the production score shim, and names no production identity',()=>{
+    const scripts=[...html.matchAll(/<script\b[^>]*src="([^"]+)"/g)].map(m=>m[1]);
+    assert.deepEqual(scripts,['qa-publisher-boot.js?v=1','survivor-admin.js?v=4']);
+    assert(!html.includes('score-feed-proxy'),'the production score shim is not loaded by the QA publisher');
+    assert(!html.includes(PRODUCTION),'the production publisher identity is not shown');
+    assert.match(html,/<div id="qaBanner" class="qa-banner refused" role="status">QA PUBLISHER DISABLED — the QA safety checks have not run\./);
+    for(const id of ['qaIdentityNote','qaEmail','qaPassword','qaSignIn','qaPublisherEmail'])assert(html.includes(`id="${id}"`),id);
+  });
+  await regression('survivor-admin.js takes its target and identity only from the QA runtime and names no Neon host itself',()=>{
+    assert.match(source,/import \{qaPublisherRuntime\} from '\.\/qa-publisher-config\.js\?v=1';\n\nconst QA=qaPublisherRuntime\(globalThis\);\nconst NEON_AUTH_URL=QA\.authUrl;\nconst NEON_DATA_URL=QA\.dataUrl;/);
+    assert.match(source,/const ADMIN_EMAIL=QA\.publisherEmail,neon=createClient\(\{auth:\{url:NEON_AUTH_URL\},dataApi:\{url:NEON_DATA_URL\}\}\);/);
+    assert(!/neon\.tech|djsmokke|ep-[a-z]+-[a-z]+-[a-z0-9]{8}/.test(source),'no hardcoded Neon host or identity');
+  });
+  await regression('only qa-publisher-config.js and the gateway name the production or parent endpoints, and only to refuse them',()=>{
+    const read=path=>readFileSync(new URL(path,import.meta.url),'utf8');
+    const config=read('./qa-publisher-config.js');
+    for(const id of ['ep-muddy-forest-au7eygkw','ep-silent-sunset-bbdqbm47']){
+      assert.equal(config.split(id).length-1,1,`${id} appears once, in FORBIDDEN_NEON_ENDPOINTS`);
+      assert.match(config,new RegExp(`export const FORBIDDEN_NEON_ENDPOINTS=Object\\.freeze\\(\\{[^}]*'${id}'`));
+    }
+    const gateway=read('../api/qa-read.js');
+    assert.match(gateway,/const REFUSED_BACKENDS=\['ep-muddy-forest-au7eygkw','ep-silent-sunset-bbdqbm47'\];/);
+    for(const path of ['./admin.js','./survivor-admin.js','./qa-publisher-boot.js','../weekly-app.js','../survivor-app.js','../season-record.js','../qa-read-routing.js']){
+      const text=read(path);
+      assert(!text.includes('ep-muddy-forest-au7eygkw'),`${path} names no production endpoint`);
+      assert(!text.includes('ep-silent-sunset-bbdqbm47'),`${path} names no QA parent endpoint`);
+    }
+  });
+  assert.equal(failures.length,0,`QA Survivor publisher configuration regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
+  console.log('QA-only Survivor publisher configuration, identity and binding regressions passed');
 }
 
 console.log('survivor publisher stale-context, confirmation, schedule, compare-and-swap, double-submit and write-outcome regressions passed');

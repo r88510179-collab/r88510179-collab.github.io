@@ -53,12 +53,14 @@ const readFileSync=(url,encoding)=>{
   // tracking modules. Reverse that known staging-only substitution for historical SHA assertions.
   // The actual on-disk QA URLs are checked below and are never changed in the shipped scripts.
   if(['weekly-app.js','survivor-app.js','season-record.js'].includes(path)){
-    const qa='ep-silent-sunset-bbdqbm47',prior='ep-muddy-forest-au7eygkw';
+    // QA ONLY (PR #29): the isolated QA host is now the authorized QA child branch endpoint, never the QA parent.
+    const qa='ep-shiny-snow-bbx446zt',prior='ep-muddy-forest-au7eygkw';
     const content=raw.toString('utf8');
+    assert(!content.includes('ep-silent-sunset-bbdqbm47'),`${path} must not use the QA parent`);
     assert.equal(content.split(qa).length-1,2,`${path} must use QA Neon for Auth and Data API`);
     assert(!content.includes(prior),`${path} must not use the production Neon host`);
-    result=Buffer.from(content.replaceAll('ep-silent-sunset-bbdqbm47.neonauth.c-15','ep-muddy-forest-au7eygkw.neonauth.c-10')
-      .replaceAll('ep-silent-sunset-bbdqbm47.apirest.c-15','ep-muddy-forest-au7eygkw.apirest.c-10'),'utf8');
+    result=Buffer.from(content.replaceAll('ep-shiny-snow-bbx446zt.neonauth.c-15','ep-muddy-forest-au7eygkw.neonauth.c-10')
+      .replaceAll('ep-shiny-snow-bbx446zt.apirest.c-15','ep-muddy-forest-au7eygkw.apirest.c-10'),'utf8');
   }
   return encoding==='utf8'?result.toString('utf8'):result;
 };
@@ -2322,7 +2324,8 @@ assert.equal(hdFailures.length,0,`Home dashboard service-worker regressions fail
   assert.match(currentCss,/\.group-field-pulse\{/);
   for(const file of ['weekly-app.js','survivor-app.js','season-record.js']){
     const actual=diskReadFileSync(new URL('./'+file,import.meta.url),'utf8');
-    assert.equal(actual.split('ep-silent-sunset-bbdqbm47').length-1,2,`${file} is still confined to the approved isolated QA endpoints`);
+    assert.equal(actual.split('ep-shiny-snow-bbx446zt').length-1,2,`${file} is still confined to the approved isolated QA child endpoints`);
+    assert(!actual.includes('ep-silent-sunset-bbdqbm47'),`${file} does not read the QA parent`);
     assert(!actual.includes('ep-muddy-forest-au7eygkw'),`${file} does not contact Personal production`);
   }
   assert.equal(restorePulse('index.html',currentPage),index,'only the approved new Home slot and asset versions changed');
