@@ -2044,7 +2044,7 @@ async function atInstant(iso,run){
   });
   await regression('generic missing data is never an absence: an empty Week 2 feed still blocks with the typed exception',async()=>{
     const t=await readWith({feed:()=>({events:[]}),text:PHRASE});
-    assert.equal(t.$('message').textContent,'NFL schedule feed returned no games.');
+    assert.equal(t.$('message').textContent,'NFL SCHEDULE NETWORK FAILED (direct ESPN: NFL season/week context or games invalid; protected QA proxy: NFL season/week context or games invalid). No publication was attempted.');
     await t.publish();assert.equal(t.writes(),0);
   });
   await regression('a typed confirmation that matches no absent game blocks publication',async()=>{
@@ -2089,7 +2089,7 @@ async function atInstant(iso,run){
   await regression('a feed that cannot be re-checked at publish refuses the write and allows a retry',async()=>{
     const t=await readWith({text:PHRASE});
     t.net.fail=new TypeError('Failed to fetch');await t.publish();
-    assert.equal(t.$('message').textContent,'Publish refused: the NFL Week 2 feed could not be re-checked for PIT at NE (Failed to fetch). Nothing was written. You can retry Publish.');
+    assert.equal(t.$('message').textContent,'Publish refused: the NFL Week 2 feed could not be re-checked for PIT at NE (NFL SCHEDULE NETWORK FAILED (direct ESPN: Failed to fetch; protected QA proxy: Failed to fetch). No publication was attempted.). Nothing was written. You can retry Publish.');
     assert.equal(t.writes(),0);assert.equal(t.$('publishBtn').disabled,false,'the validated week can be retried');
     t.net.fail=null;await t.publish();
     assert.equal(t.writes(),1);assert.deepEqual(t.db.rows.find(r=>r.week===2).config.publicationExceptions,[EXCEPTION]);
