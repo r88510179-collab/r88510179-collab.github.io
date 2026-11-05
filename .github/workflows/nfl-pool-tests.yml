@@ -9,6 +9,7 @@ name: NFL Pool Tests
 on:
   push:
   pull_request:
+  workflow_dispatch:  # Owner can launch the existing read-only regression and SQL tests manually
 
 permissions:
   contents: read
