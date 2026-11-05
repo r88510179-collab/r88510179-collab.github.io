@@ -99,7 +99,7 @@ async function boot({signedIn=true,rows=[],sheets={},pickem=[],feed=feedPayload}
     pdfjs:{GlobalWorkerOptions:{},getDocument:({data})=>{const name=new TextDecoder().decode(data),pages=Array.isArray(sheets[name][0])?sheets[name]:[sheets[name]];return{promise:Promise.resolve({numPages:pages.length,getPage:async n=>({getTextContent:async()=>({items:pages[n-1]})})})}}}
   };
   globalThis.fetch=async url=>{
-    net.fetches++;const week=Number(new URL(url).searchParams.get('week'));net.weeks.push(week);
+    net.fetches++;const week=Number(new URL(url,'https://qa.fixture.test').searchParams.get('week'));net.weeks.push(week);
     if(net.gate)await net.gate.promise;
     if(net.fail)throw net.fail;
     return{ok:true,status:200,json:async()=>net.feed(week)};
@@ -155,7 +155,7 @@ const sheets={'week2.pdf':sheetItems(SHEET),'week2-complete.pdf':sheetItems(COMP
 {
   const t=await boot({rows:[week1Row(SHEET)],sheets});
   t.net.fail=new TypeError('Failed to fetch');t.choose('week2.pdf');await t.parse();
-  assert.equal(t.$('review').hidden,true);assert.match(t.$('message').textContent,/NFL Week \d schedule could not be loaded \(Failed to fetch\)\. Schedule verification is required before publishing/);
+  assert.equal(t.$('review').hidden,true);assert.match(t.$('message').textContent,/NFL SCHEDULE NETWORK FAILED \(direct ESPN: Failed to fetch; protected QA proxy: Failed to fetch\)\. No publication was attempted\./);
   assert.equal(t.$('publishBtn').disabled,true);
 }
 
@@ -402,7 +402,7 @@ const sheets={'week2.pdf':sheetItems(SHEET),'week2-complete.pdf':sheetItems(COMP
   await regression('a feed that cannot be re-checked refuses the write and allows a retry',async()=>{
     const t=await ready();
     t.net.fail=new TypeError('Failed to fetch');await t.publish();
-    assert.equal(t.$('message').textContent,'Publish refused: the NFL Week 2 feed could not be re-checked for SF @ ARI (Failed to fetch). Nothing was written. You can retry Publish.');
+    assert.equal(t.$('message').textContent,'Publish refused: the NFL Week 2 feed could not be re-checked for SF @ ARI (NFL SCHEDULE NETWORK FAILED (direct ESPN: Failed to fetch; protected QA proxy: Failed to fetch). No publication was attempted.). Nothing was written. You can retry Publish.');
     assert.equal(writes(t),0);assert.equal(t.$('publishBtn').disabled,false);
     t.net.fail=null;await t.publish();
     assert.equal(writes(t),1);assert.deepEqual(t.db.rows.find(r=>r.week===2).config.publicationExceptions,[EXC]);
