@@ -1,0 +1,47 @@
+name: Personal Mobile Visual QA (temporary)
+on:
+  push:
+    branches:
+      - feat/personal-tracked-vs-field-pulse-20261105
+    paths:
+      - nfl-pool/qa/mobile-visual-qa.cjs
+      - .github/workflows/personal-mobile-visual-qa.yml
+permissions:
+  contents: read
+jobs:
+  screenshot-layout:
+    name: Screenshot and geometry 375 / 390 / 430
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Configure Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install browser driver
+        run: |
+          mkdir -p /tmp/personal-mobile-playwright
+          npm install --prefix /tmp/personal-mobile-playwright --no-save --no-audit --no-fund playwright@1.57.0
+          if ! command -v google-chrome; then
+            /tmp/personal-mobile-playwright/node_modules/.bin/playwright install --with-deps chromium
+          fi
+      - name: Check mobile dashboard with isolated published-data fixtures
+        env:
+          PLAYWRIGHT_MODULE: /tmp/personal-mobile-playwright/node_modules/playwright
+        run: |
+          python3 -m http.server 8765 --directory nfl-pool >/tmp/personal-mobile-qa.log 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          sleep 2
+          node nfl-pool/qa/mobile-visual-qa.cjs
+      - name: Preserve viewports, screenshots and geometry
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: personal-mobile-visual-qa
+          path: mobile-qa-artifact/
+          retention-days: 7
+          if-no-files-found: warn
