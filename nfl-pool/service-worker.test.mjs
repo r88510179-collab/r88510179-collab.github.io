@@ -6,7 +6,7 @@ import vm from 'node:vm';
 // Undo ONLY this new group-vs-field presentation layer for those immutable-baseline tests.
 // The current deployed bytes are tested separately at the end. These inverses were compared
 // byte-for-byte with the verified Personal QA base before being committed.
-const PULSE_MARKUP='<div class="group-field-pulse field-pulse-empty" id="homeFieldPulse" aria-live="polite"><span class="field-pulse-label">Group vs full pool</span><p>Waiting for published standings.</p></div>';
+const PULSE_MARKUP='<div id="homeFieldPulse" aria-live="polite"><div class="group-field-pulse field-pulse-empty" data-field-pulse="pending"><span class="field-pulse-label">Group vs full pool</span><p>Waiting for published standings.</p></div></div>';
 const restorePulse=(path,text)=>{
   if(path==='home-dashboard.js'){
     const start=text.indexOf('// Group-vs-field is a presentation summary'),end=text.indexOf('export function spotlightText(s){',start);
