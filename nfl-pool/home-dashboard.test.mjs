@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {STORAGE_KEY,PREFERENCES_VERSION,SECTIONS,DENSITIES,SPOTLIGHT_ENTRANT,defaultPreferences,normalizePreferences,readPreferences,writePreferences,
-  formatAge,contestStatus,leaderText,spotlightText,sectionSummary,overviewHtml,survivorQuickViewHtml} from './home-dashboard.js';
+  formatAge,contestStatus,leaderText,groupFieldPulse,groupFieldPulseHtml,spotlightText,sectionSummary,overviewHtml,survivorQuickViewHtml} from './home-dashboard.js';
 
 const failures=[];
 const check=async(name,fn)=>{try{await fn()}catch(error){failures.push(`${name}: [${error?.code||error?.name}] ${error?.message||error}`)}};
@@ -529,6 +529,61 @@ await check('a hidden or collapsed section never stops a card: sharing reads the
   assert.equal(dialog.querySelector('.share-placeholder').textContent,"Survivor results are still loading. The combined card needs both contests; Pick'em standings can be shared on their own meanwhile.");
   assert.equal(dialog.querySelector('.share-actions').hidden,true);dialog.close();
   card('pickem').click();await flush();assert.equal(dialog.querySelector('.share-image').hidden,false,"Pick'em alone still shares");dialog.close();
+});
+
+// ---- Personal tracker: group versus the organizer's full published pool, never a commissioner operation.
+await check('Group vs full pool: actual rankings and top-quarter count, only finalized NFL outcomes counted',()=>{
+  const p=groupFieldPulse(pickem(),{now:NOW});
+  assert.deepEqual([p.state,p.fieldSize,p.bestName,p.bestRank,p.bestLabel,p.bestPercent,p.topQuarter,p.submittedCount],
+    ['ready',87,'D.C.',3,'#3',4,3,4]);
+  assert.equal(p.delayed,false);
+  const html=groupFieldPulseHtml(pickem(),{now:NOW});
+  assert.match(html,/Best overall/);
+  assert.match(html,/#3 <small>of 87/);
+  assert.match(html,/3 <small>of 4 submitted/);
+  assert.match(html,/In-progress scores do not count until final/);
+});
+await check('Group vs full pool: no misleading rank when no NFL games are final, no field sheet, or rulings are held',()=>{
+  const none=pickem({games:{total:16,final:0,void:0,live:2,remaining:16},
+    entries:pickem().entries.map(e=>({...e,w:0,l:0,left:16}))});
+  assert.equal(groupFieldPulse(none,{now:NOW}).state,'pending');
+  const noField=pickem({fieldSize:null,entries:pickem().entries.map(e=>({...e,field:null}))});
+  assert.equal(groupFieldPulse(noField,{now:NOW}).state,'unavailable');
+  assert.match(groupFieldPulseHtml(noField,{now:NOW}),/Full-pool rankings were not published/);
+  assert.equal(groupFieldPulse(pickem({hold:true}),{now:NOW}).state,'unavailable');
+  assert.equal(groupFieldPulse({ready:false},{now:NOW}).state,'unavailable');
+});
+await check('Group vs full pool: non-submitters cannot inflate top-25 placement, incomplete field ranks fail closed',()=>{
+  const noPick=pickem({entries:pickem().entries.map((e,i)=>i===0?{...e,noPicks:true,w:0,l:12,left:4}:e)});
+  const p=groupFieldPulse(noPick,{now:NOW});
+  assert.deepEqual([p.bestName,p.topQuarter,p.submittedCount,p.trackedCount],['JC',2,3,4]);
+  const incomplete=pickem({entries:pickem().entries.map((e,i)=>i===0?{...e,field:null}:e)});
+  assert.equal(groupFieldPulse(incomplete,{now:NOW}).state,'unavailable');
+});
+await check('Group vs full pool: tied best rank, hostile tracked names and stale feed are displayed safely',()=>{
+  const tied=pickem({entries:pickem().entries.map((e,i)=>i===0?{...e,name:'<script>alert(1)</script>',field:{...e.field,rank:1,tieCount:3,label:'T-1',topPercent:2,behind:0}}:e)});
+  const model=groupFieldPulse(tied,{now:NOW}),html=groupFieldPulseHtml(tied,{now:NOW});
+  assert.equal(model.bestLabel,'T-1');
+  assert.match(html,/&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert(!html.includes('<script>'),'tracked names remain escaped');
+  const fail=pickem({feed:{...pickem().feed,failed:true}});
+  assert.equal(groupFieldPulse(fail,{now:NOW}).delayed,true);
+  assert.match(groupFieldPulseHtml(fail,{now:NOW}),/Last verified standings/);
+  assert.match(groupFieldPulseHtml(pickem({publishedStale:true}),{now:NOW}),/PUBLISHED DATA STALE/);
+});
+await check('Home group-versus-field strip reuses Pick\'em snapshots, responds to refresh and handles missing field publication',async()=>{
+  const p=await page();
+  const el=p.doc.getElementById('homeFieldPulse');
+  assert(el,'present in the real Home panel');
+  assert.equal((HOME_PANEL.match(/id="homeFieldPulse"/g)||[]).length,1);
+  assert.match(el.innerHTML,/#3 <small>of 87/);
+  p.answers.pickem=()=>pickemFresh({fieldSize:null,entries:pickem().entries.map(e=>({...e,field:null}))});
+  p.update('pickem');
+  assert.equal(p.doc.getElementById('homeFieldPulse').querySelector('[data-field-pulse="unavailable"]')!==null,true);
+  assert.match(el.textContent,/Full-pool rankings were not published/);
+  p.answers.pickem=()=>pickemFresh();
+  p.update('pickem');
+  assert.match(el.innerHTML,/#3 <small>of 87/);
 });
 
 assert.equal(failures.length,0,`Home dashboard regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);
