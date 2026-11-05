@@ -93,3 +93,10 @@ All 107 completed games of weeks 1-7 were read from nfl.com/scores/2026/week-1 t
 - Deterministic, network-free synthetic tests cover parity, ties, score mismatches, empty feeds, stale data and independently supplied score comparisons.
 - Run from the feature branch: `node --test nfl-pool/acceptance/score-reconcile.spec.mjs`.
 - A new post-update live read-only run is required for current parity; do not mark any current-week results verified until that job completes. Full browser/PDF write-path acceptance remains blocked by separate staging authorization.
+
+## November 5, 2026 independent official Week 8 evidence
+
+- NFL's official [2026 Week 8 final-score schedule](https://www.nfl.com/schedules/2026/by-week/week-8) was read and matched against the independently published [CBS Sports Week 8 results](https://www.cbssports.com/nfl/schedule/2026/regular/8/): 14 final games, same matchups and scores, including Arizona's 33–30 OT win and Tennessee's 36–43 OT loss.
+- An official-reference CSV is assembled **ephemerally inside the read-only CI runner** from those 14 reviewed public score facts (not committed as a stand-alone customer or private data file). `--official` requires all 14 finalized games, rejects missing/incorrect/extra results, and exits nonzero on disagreement.
+- This official check covers **Week 8**. The October 29 run documented separate official coverage for Weeks 1–7; Week 9 remains future/current when this evidence was added. Review the newest live Actions result before marking the new official check PASS.
+- Official final-score parity does **not** verify the third-party contest operator's standings or any PDF/participant write-path.
