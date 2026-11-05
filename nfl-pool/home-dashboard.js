@@ -82,6 +82,7 @@ export function leaderText(pk){
 export function groupFieldPulse(snapshot,{now=Date.now()}={}){
   if(snapshot?.ready!==true)return{state:'unavailable',reason:'Waiting for published Pick’em standings.'};
   const status=contestStatus('pickem',snapshot,{now});
+  if(status.label==='UNAVAILABLE')return{state:'unavailable',reason:'Current standings could not be verified.'};
   if(snapshot.hold===true||status.label==='ON HOLD')return{state:'unavailable',reason:'Standings are on hold while contest rulings are unavailable.'};
   const entries=snapshot.entries,size=snapshot.fieldSize;
   if(!Array.isArray(entries)||!entries.length||!Number.isInteger(size)||size<entries.length)
