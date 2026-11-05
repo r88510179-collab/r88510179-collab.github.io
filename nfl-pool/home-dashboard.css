@@ -52,6 +52,16 @@
 .dash-status.tone-warn{color:#ffd278;border-color:#725c29;background:#f3bd4212}
 .dash-status.tone-bad{color:#ffb1b5;border-color:#d52d3466;background:#d52d3412}
 .dash-status.tone-muted{color:var(--dim)}
+.group-field-pulse{margin:1px 11px 9px;padding:10px 12px;border:1px solid #ffffff16;border-radius:12px;background:#090d13}
+.field-pulse-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.field-pulse-stat{min-width:0;display:grid;align-content:start;gap:3px}
+.field-pulse-stat+.field-pulse-stat{padding-left:10px;border-left:1px solid #ffffff16}
+.field-pulse-label{display:block;color:var(--muted);font-size:9px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}
+.field-pulse-stat strong{display:block;font-size:clamp(18px,4vw,24px);font-variant-numeric:tabular-nums;line-height:1.15}
+.field-pulse-stat strong small{color:var(--muted);font-size:11px;font-weight:700}
+.field-pulse-detail{color:#c9ced6;font-size:10px;overflow-wrap:anywhere}
+.field-pulse-caption,.field-pulse-empty p{margin:8px 0 0;color:var(--muted);font-size:10px;line-height:1.45}
+.field-pulse-empty{border-style:dashed}
 .dash-survivor{padding:0 12px 12px}
 .dash-survivor-empty{display:grid;gap:8px;justify-items:start;padding:8px 2px 4px}
 .dash-survivor-empty p{margin:0;color:var(--muted);font-size:10px;line-height:1.5}
