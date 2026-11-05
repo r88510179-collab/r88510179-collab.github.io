@@ -1018,7 +1018,17 @@ const adminPatched=(()=>{
   const parserImport=s.match(/from '\.\/parser-core\.js\?v=(\d+)';/);
   assert(parserImport,'admin harness expects a versioned parser-core import');
   swap(parserImport[0],`from '${new URL(`./parser-core.js?v=${parserImport[1]}`,import.meta.url).href}';`);
-  swap("await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs')","globalThis.__pickemTest.pdfjs");
+  // QA's network-resilient PDF reader imports either of two fixed providers. Keep the exact
+  // URLs/versions pinned, and replace only that import expression for this offline harness.
+  assert.deepEqual([...s.matchAll(/module:'([^']+)'/g)].map(m=>m[1]),[
+    'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs',
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs'
+  ],'PDF fallback modules must remain the two pinned sources, in order');
+  assert.deepEqual([...s.matchAll(/worker:'([^']+)'/g)].map(m=>m[1]),[
+    'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs',
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs'
+  ],'PDF fallback workers must remain pinned to the same versions');
+  swap('await import(source.module)','globalThis.__pickemTest.pdfjs');
   // Each instance binds its own page and schedule feed, so two Admin pages can run side by side against one database.
   return `const {document,fetch}=globalThis.__pickemTest;\n${s}`;
 })();
