@@ -11,7 +11,13 @@
     if(String(init?.method||request?.method||'GET').toUpperCase()!=='GET')return nativeFetch(input,init);
     let url;try{url=new URL(request?.url||input,page)}catch{return nativeFetch(input,init)}
     const target=new URL('/api/qa-read',page);
-    if(url.href===auth)target.searchParams.set('kind','anonymous');
+    if(url.origin==='https://site.api.espn.com'&&url.pathname==='/apis/site/v2/sports/football/nfl/scoreboard'){
+      // Reuse the existing isolated QA schedule endpoint; no production score-function or grading change.
+      target.pathname='/api/qa-schedule';
+      const season=url.searchParams.get('dates'),week=url.searchParams.get('week');
+      if(season)target.searchParams.set('season',season);
+      if(week)target.searchParams.set('week',week);
+    }else if(url.href===auth)target.searchParams.set('kind','anonymous');
     else if(url.href.startsWith(data)){
       const resource=url.pathname.slice(new URL(data).pathname.length);
       if(!/^nfl_(pool_weeks|survivor_weeks|contests|contest_policies|incident_rulings)$/.test(resource))return nativeFetch(input,init);

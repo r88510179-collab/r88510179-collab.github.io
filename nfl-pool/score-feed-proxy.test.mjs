@@ -89,7 +89,11 @@ function loadQaRouting(href='https://nfl-pool-personal-review.vercel.app/nfl-poo
   const url=base+'.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season';
   assert.equal(fetch(url,{method:'POST'}).input,url,'writes are never routed');
   assert.equal(fetch(new Request(url)).input.url,'https://nfl-pool-personal-review.vercel.app/api/qa-read?select=season&resource=nfl_pool_weeks');
-  for(const input of [SCOREBOARD,PROXY,base+'.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/sign-in/email',
+  const scoreCall=fetch(SCOREBOARD+'?dates=2026&week=9&seasontype=2&_=123',init);
+  assert.equal(scoreCall.input,'https://nfl-pool-personal-review.vercel.app/api/qa-schedule?season=2026&week=9');
+  assert.equal(scoreCall.init,init,'score refresh cancellation and cache policy are preserved');
+  assert.equal(fetch(SCOREBOARD).input,'https://nfl-pool-personal-review.vercel.app/api/qa-schedule','missing context is not invented');
+  for(const input of [PROXY,base+'.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/sign-in/email',
     base+'.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_admins',
     'https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks'])
     assert.equal(fetch(input).input,input,'unrelated/production URLs and auth sessions are not routed');
