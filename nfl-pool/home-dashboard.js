@@ -216,9 +216,10 @@ export function boot(){
     root.dataset.dashDensity=prefs.density;
   }
   function renderData(){
-    const now=Date.now(),contests=document.getElementById('dashContests'),survivor=document.getElementById('dashSurvivor');
+    const now=Date.now(),contests=document.getElementById('dashContests'),survivor=document.getElementById('dashSurvivor'),fieldPulse=document.getElementById('homeFieldPulse');
     if(contests)contests.innerHTML=overviewHtml(snapshots,{now});
     if(survivor)survivor.innerHTML=survivorQuickViewHtml(snapshots.survivor,{density:prefs.density,now});
+    if(fieldPulse)fieldPulse.innerHTML=groupFieldPulseHtml(snapshots.pickem,{now});
     for(const [id,node] of sections){const summary=node.querySelector('[data-dash-summary]');if(summary)summary.textContent=sectionSummary(id,snapshots,{now})}
   }
   function setCollapsed(id,collapsed){
