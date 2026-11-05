@@ -13,7 +13,7 @@ const replacements=[
   ["import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';","const {createClient}=globalThis.__survivorTest.neonModule;"],
   ["from './survivor-parser.js?v=3';",`from '${new URL('./survivor-parser.js?v=3',here).href}';`],
   [checksImport[0],`from '${new URL(`./survivor-publish-checks.js?v=${checksImport[1]}`,here).href}';`],
-  ["await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs')","globalThis.__survivorTest.pdfjs"]
+  ['await import(source.module)','globalThis.__survivorTest.pdfjs']
 ];
 assert(source.includes('gridBreaks:c.review.gridBreaks'),'publisher must pass parser-proven grid restarts to the confirmation guard');
 let patched=source;
