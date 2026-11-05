@@ -1,0 +1,36 @@
+# Public endpoints only: no credentials, writes, customer data or paid services.
+# GitHub Actions schedules are best-effort (may run late or skip under high load).
+name: Smokke Cloud Monitor
+
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'nfl-pool/ops/cloud-smoke.mjs'
+      - '.github/workflows/smokke-cloud-monitor.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smokke-cloud-monitor-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  public-health:
+    name: public-endpoints-read-only
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Verify monitor script syntax
+        run: node --check nfl-pool/ops/cloud-smoke.mjs
+      - name: Check public apps and score function without secrets
+        run: node nfl-pool/ops/cloud-smoke.mjs
