@@ -1,0 +1,74 @@
+# Read-only score verification against the deployed public NFL score proxy.
+# Pull request checks are deliberately bounded and use no secrets, login or database access.
+# This does NOT prove independent official NFL scores or any write-path E2E acceptance.
+name: Pool live score parity (read-only)
+
+on:
+  pull_request:
+    paths:
+      - 'nfl-pool/acceptance/**'
+      - 'nfl-pool/score-proxy/index.mjs'
+      - '.github/workflows/pool-live-score-parity.yml'
+  workflow_dispatch:
+    inputs:
+      season:
+        description: NFL season year (regular season)
+        type: string
+        required: true
+        default: '2026'
+      weeks:
+        description: Week N or N-M (e.g. 1-9); adjust as the season progresses
+        type: string
+        required: true
+        default: '1-9'
+
+permissions:
+  contents: read
+
+jobs:
+  deployed-score-parity:
+    name: deployed-score-parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      CHECK_SEASON: ${{ github.event.inputs.season || '2026' }}
+      CHECK_WEEKS: ${{ github.event.inputs.weeks || '1-9' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Compare completed NFL games in ESPN with live nflscores2
+        run: node nfl-pool/acceptance/score-reconcile.mjs --season "$CHECK_SEASON" --weeks "$CHECK_WEEKS"
+
+      - name: Cross-check Week 8 finals with independently verified NFL.com official scores
+        shell: bash
+        run: |
+          set -euo pipefail
+          official="$(mktemp)"
+          trap 'rm -f "$official"' EXIT
+          # Transcribed and reviewed Nov 5 2026 from https://www.nfl.com/schedules/2026/by-week/week-8
+          # Cross-checked independently against https://www.cbssports.com/nfl/schedule/2026/regular/8/
+          # Public score facts only, no private pool data. The file is created only on this disposable CI runner.
+          cat > "$official" <<'CSV'
+          week,away,home,awayScore,homeScore
+          8,CAR,GB,19,27
+          8,BAL,BUF,10,36
+          8,TEN,CIN,36,43
+          8,AZ,DAL,33,30
+          8,MIN,DET,15,19
+          8,IND,JAC,7,42
+          8,LV,NYJ,38,33
+          8,CLE,PIT,6,27
+          8,ATL,TB,0,16
+          8,LAC,LAR,9,24
+          8,KC,DEN,24,28
+          8,NE,MIA,24,19
+          8,PHI,WSH,10,27
+          8,CHI,SEA,34,17
+          CSV
+          node nfl-pool/acceptance/score-reconcile.mjs --season 2026 --weeks 8 --official "$official"
