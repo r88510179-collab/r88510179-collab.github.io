@@ -45,6 +45,14 @@ button{font:inherit}
 .busy{display:flex;align-items:center;gap:8px;color:var(--muted)}
 .spinner{width:16px;height:16px;border:2px solid #424850;border-top-color:#d83a42;border-radius:50%;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
+.publisher-advanced{margin:12px 0 14px;border:1px solid var(--admin-line);border-radius:11px;background:#0b0f14}
+.publisher-advanced summary{cursor:pointer;padding:12px 13px;color:var(--text);font-weight:900}
+.publisher-advanced summary span{display:block;margin:3px 0 0 19px;color:var(--muted);font-size:11px;font-weight:500}
+.publisher-advanced summary:focus-visible{outline:2px solid #d52d34;outline-offset:2px;border-radius:9px}
+.publisher-advanced[open] summary{border-bottom:1px solid var(--admin-line)}
+.publisher-advanced-body{padding:0 13px 13px}
+.publisher-advanced-help{margin:11px 0 5px;color:var(--muted);font-size:11px}
+.publisher-advanced textarea.season-input{display:block;box-sizing:border-box;width:min(100%,660px);min-height:74px;padding:10px;resize:vertical}
 .field{margin-top:14px}
 .field label{display:block;font-weight:900;margin-bottom:6px}
 .field select{width:100%;max-width:420px;min-height:42px;border:1px solid var(--admin-line);border-radius:9px;background:#090c11;color:var(--text);padding:0 10px}
