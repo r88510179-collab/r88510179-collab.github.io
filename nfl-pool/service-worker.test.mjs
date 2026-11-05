@@ -1,7 +1,49 @@
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {readFileSync as diskReadFileSync} from 'node:fs';
 import vm from 'node:vm';
 
+// Historical HDC/PWA tests compare every earlier feature to its exact historical bytes.
+// Undo ONLY this new group-vs-field presentation layer for those immutable-baseline tests.
+// The current deployed bytes are tested separately at the end. These inverses were compared
+// byte-for-byte with the verified Personal QA base before being committed.
+const PULSE_MARKUP='<div class="group-field-pulse field-pulse-empty" id="homeFieldPulse" aria-live="polite"><span class="field-pulse-label">Group vs full pool</span><p>Waiting for published standings.</p></div>';
+const restorePulse=(path,text)=>{
+  if(path==='home-dashboard.js'){
+    const start=text.indexOf('// Group-vs-field is a presentation summary'),end=text.indexOf('export function spotlightText(s){',start);
+    assert(start>=0&&end>start,'Group/field helper must have its own bounded section');
+    text=text.slice(0,start)+text.slice(end);
+    const edited="const now=Date.now(),contests=document.getElementById('dashContests'),survivor=document.getElementById('dashSurvivor'),fieldPulse=document.getElementById('homeFieldPulse');";
+    const baseline="const now=Date.now(),contests=document.getElementById('dashContests'),survivor=document.getElementById('dashSurvivor');";
+    assert.equal(text.split(edited).length,2,'One Home pulse snapshot binding');
+    text=text.replace(edited,baseline);
+    const binding="    if(fieldPulse)fieldPulse.innerHTML=groupFieldPulseHtml(snapshots.pickem,{now});\n";
+    assert.equal(text.split(binding).length,2,'One Home pulse rendering site');
+    return text.replace(binding,'');
+  }
+  if(path==='home-dashboard.css'){
+    const start=text.indexOf('.group-field-pulse{margin:1px'),end=text.indexOf('.dash-survivor{',start);
+    assert(start>=0&&end>start,'Group/field styles must be one bounded section');
+    return text.slice(0,start)+text.slice(end);
+  }
+  if(path==='index.html'){
+    assert.equal(text.split(PULSE_MARKUP).length,2,'Exactly one Home group/field slot');
+    assert(text.includes('home-dashboard.js?v=2')&&text.includes('home-dashboard.css?v=2'),'Bumped Home references required');
+    return text.replace(PULSE_MARKUP,'').replace('home-dashboard.js?v=2','home-dashboard.js?v=1').replace('home-dashboard.css?v=2','home-dashboard.css?v=1');
+  }
+  if(path==='service-worker.js'){
+    assert(text.includes("const CACHE='pool-center-shell-v32'"),'New cache generation is required');
+    assert(text.includes("'./home-dashboard.js?v=2'")&&text.includes("'./home-dashboard.css?v=2'"),'Both new Home assets must be precached');
+    return text.replace("pool-center-shell-v32","pool-center-shell-v31").replace('home-dashboard.js?v=2','home-dashboard.js?v=1').replace('home-dashboard.css?v=2','home-dashboard.css?v=1');
+  }
+  return text;
+};
+const readFileSync=(url,encoding)=>{
+  const pathname=new URL(url).pathname,path=pathname.split('/').pop();
+  const raw=diskReadFileSync(url);
+  const result=['home-dashboard.js','home-dashboard.css','index.html','service-worker.js'].includes(path)
+    ?Buffer.from(restorePulse(path,raw.toString('utf8')),'utf8'):raw;
+  return encoding==='utf8'?result.toString('utf8'):result;
+};
 const source=readFileSync(new URL('./service-worker.js',import.meta.url),'utf8');
 const index=readFileSync(new URL('./index.html',import.meta.url),'utf8');
 // HDC-12 regressions run through this collector so every one of them reports, not only the first; the suite fails at the
@@ -2239,6 +2281,28 @@ assert.equal(hdc14Failures.length,0,`HDC-14 service-worker regressions failed ($
 assert.equal(hdc15Failures.length,0,`HDC-15 service-worker regressions failed (${hdc15Failures.length}):\n  ${hdc15Failures.join('\n  ')}`);
 assert.equal(sc1Failures.length,0,`Share-card service-worker regressions failed (${sc1Failures.length}):\n  ${sc1Failures.join('\n  ')}`);
 assert.equal(hdFailures.length,0,`Home dashboard service-worker regressions failed (${hdFailures.length}):\n  ${hdFailures.join('\n  ')}`);
+// New tracker layer: compare the ACTUAL on-disk PWA references, while every historical
+// baseline above sees only its exact previous generation. Changing any unrelated bytes
+// still fails the historical hashes, rather than weakening those release protections.
+{
+  const currentWorker=diskReadFileSync(new URL('./service-worker.js',import.meta.url),'utf8');
+  const currentPage=diskReadFileSync(new URL('./index.html',import.meta.url),'utf8');
+  const currentHome=diskReadFileSync(new URL('./home-dashboard.js',import.meta.url),'utf8');
+  const currentCss=diskReadFileSync(new URL('./home-dashboard.css',import.meta.url),'utf8');
+  assert.equal((currentPage.match(/id="homeFieldPulse"/g)||[]).length,1,'one group/field summary slot');
+  for(const asset of ['home-dashboard.js','home-dashboard.css']){
+    assert.equal((currentPage.match(new RegExp(asset.replaceAll('.','\\.')+'\\?v=2','g'))||[]).length,1,`page references exactly one ${asset} v2`);
+    assert.equal((currentWorker.match(new RegExp(asset.replaceAll('.','\\.')+'\\?v=2','g'))||[]).length,1,`worker precaches exactly one ${asset} v2`);
+  }
+  assert.match(currentWorker,/const CACHE='pool-center-shell-v32'/);
+  assert(!currentWorker.includes('home-dashboard.js?v=1')&&!currentWorker.includes('home-dashboard.css?v=1'));
+  assert.match(currentHome,/export function groupFieldPulse\(/);
+  assert.match(currentHome,/if\(fieldPulse\)fieldPulse\.innerHTML=groupFieldPulseHtml\(snapshots\.pickem,\{now\}\)/);
+  assert.match(currentCss,/\.group-field-pulse\{/);
+  assert.equal(restorePulse('index.html',currentPage),index,'only the approved new Home slot and asset versions changed');
+  assert.equal(restorePulse('service-worker.js',currentWorker),source,'only Home versions and cache generation changed');
+}
+
 assert.equal(pmFailures.length,0,`V1.3 mobile UX service-worker regressions failed (${pmFailures.length}):\n  ${pmFailures.join('\n  ')}`);
 assert.equal(pcFailures.length,0,`V1.4 compact Picks UX service-worker regressions failed (${pcFailures.length}):\n  ${pcFailures.join('\n  ')}`);
 assert.equal(ppFailures.length,0,`V1.4 final polish service-worker regressions failed (${ppFailures.length}):\n  ${ppFailures.join('\n  ')}`);
