@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Personal QA — live CSS viewports</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#151921;color:#e8edf5;font:14px system-ui,sans-serif}header{padding:12px 18px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}h1{font-size:16px;margin:0}button{min-width:64px;min-height:44px;border:1px solid #67758d;border-radius:8px;background:#252e3c;color:inherit;font:inherit;cursor:pointer}button[aria-pressed=true]{background:#1d5e94;border-color:#9bc9ef}p{margin:0;color:#b9c5d5}main{padding:0 18px 18px}iframe{display:block;border:0;width:375px;height:760px;background:#0b0e13}pre{margin:12px 0;white-space:pre-wrap;max-width:1000px;font-size:12px}details{margin-top:12px}
+</style></head><body><header><h1>Live synthetic QA</h1><button data-width="375" aria-pressed="true">375 px</button><button data-width="390" aria-pressed="false">390 px</button><button data-width="430" aria-pressed="false">430 px</button><p id="qaViewport">Loading real preview…</p></header><main>
+<iframe id="livePreview" title="Live isolated QA preview" src="../?view=home"></iframe>
+<details><summary>Read-only viewport and loading measurements</summary><pre id="qaMetrics"></pre></details>
+<p>This review-only frame loads the actual protected app and its live isolated QA responses. No fixtures, score overrides, publication or account changes. An iframe measures a real CSS viewport; it does not emulate a physical phone or its browser chrome.</p>
+</main><script>
+const frame=document.getElementById('livePreview'),widths=new Set([375,390,430]);
+function measure(){
+  try{
+    const win=frame.contentWindow,doc=frame.contentDocument,root=doc.documentElement;
+    const text=id=>doc.getElementById(id)?.innerText||'';
+    const result={innerWidth:win.innerWidth,innerHeight:win.innerHeight,clientWidth:root.clientWidth,scrollWidth:root.scrollWidth,view:doc.body?.dataset.view||'',sync:text('sync'),week:text('weekLine'),weekOptions:doc.getElementById('weekSelect')?.options.length||0,standingsRows:doc.querySelectorAll('#standings tr').length,groupVersusField:text('homeFieldPulse'),survivor:text('dashSurvivor')};
+    document.getElementById('qaViewport').textContent=result.innerWidth+' × '+result.innerHeight+' CSS px · document '+result.scrollWidth+' px';
+    document.getElementById('qaMetrics').textContent=JSON.stringify(result,null,2);
+  }catch{document.getElementById('qaViewport').textContent='Waiting for same-origin protected preview';}
+}
+document.querySelectorAll('[data-width]').forEach(button=>button.addEventListener('click',()=>{
+  const width=Number(button.dataset.width);if(!widths.has(width))return;
+  frame.style.width=width+'px';
+  document.querySelectorAll('[data-width]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));
+  requestAnimationFrame(measure);
+}));
+frame.addEventListener('load',measure);setInterval(measure,1000);
+</script></body></html>

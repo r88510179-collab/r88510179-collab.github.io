@@ -63,3 +63,92 @@ function load(){
 }
 
 console.log('score-feed shim scoreboard rewrite and pass-through regressions passed');
+
+// The Personal QA transport remains separate from the unchanged score shim and is absent from Admin.
+const routing=readFileSync(new URL('./qa-read-routing.js',import.meta.url),'utf8');
+function loadQaRouting(href='https://nfl-pool-personal-review.vercel.app/nfl-pool/'){
+  const calls=[],window={location:{href},fetch(input,init){calls.push({input,init});return Promise.resolve({ok:true})}};
+  vm.runInNewContext(routing,{window,URL,Request});
+  return{calls,fetch:(input,init)=>{window.fetch(input,init);return calls.at(-1)}};
+}
+{
+  const {fetch}=loadQaRouting(),init={cache:'no-store',signal:new AbortController().signal};
+  const base='https://ep-silent-sunset-bbdqbm47';
+  let call=fetch(base+'.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous',init);
+  assert.equal(call.input,'https://nfl-pool-personal-review.vercel.app/api/qa-read?kind=anonymous');
+  assert.equal(call.init,init);
+  for(const resource of ['nfl_pool_weeks','nfl_survivor_weeks','nfl_contests','nfl_contest_policies','nfl_incident_rulings']){
+    call=fetch(base+'.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/'+resource+'?select=season,week',init);
+    const target=new URL(call.input);
+    assert.equal(target.origin,'https://nfl-pool-personal-review.vercel.app');
+    assert.equal(target.pathname,'/api/qa-read');
+    assert.equal(target.searchParams.get('resource'),resource);
+    assert.equal(target.searchParams.get('select'),'season,week');
+    assert.equal(call.init,init);
+  }
+  const url=base+'.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season';
+  assert.equal(fetch(url,{method:'POST'}).input,url,'writes are never routed');
+  assert.equal(fetch(new Request(url)).input.url,'https://nfl-pool-personal-review.vercel.app/api/qa-read?select=season&resource=nfl_pool_weeks');
+  for(const input of [SCOREBOARD,PROXY,base+'.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/sign-in/email',
+    base+'.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_admins',
+    'https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks'])
+    assert.equal(fetch(input).input,input,'unrelated/production URLs and auth sessions are not routed');
+  assert.equal(loadQaRouting('https://picks.smokkeventures.com/nfl-pool/').fetch(url).input,url,'custom-domain production is untouched');
+  for(const file of ['admin/index.html','admin/survivor.html'])
+    assert(!readFileSync(new URL('./'+file,import.meta.url),'utf8').includes('qa-read-routing'),'publisher transport is unchanged');
+}
+
+const {createQaReadHandler}=await import('./api/qa-read.js');
+async function gateway(query,{method='GET',environment='preview',host='nfl-pool-personal-review.vercel.app',authStatus=200,dataStatus=200,rows=[{season:2026,week:9,status:'locked'}],token='qa.anon.sig',fail=null}={}){
+  const calls=[],res={headers:{},statusCode:200,setHeader(k,v){this.headers[k]=v},status(code){this.statusCode=code;return this},json(body){this.body=body;return this}};
+  const handler=createQaReadHandler({environment:()=>environment,fetchImpl:async(url,init)=>{
+    calls.push({url,init});if(fail)throw fail;
+    return calls.length===1?{ok:authStatus===200,status:authStatus,json:async()=>({token})}:{ok:dataStatus===200,status:dataStatus,json:async()=>rows};
+  }});
+  await handler({method,url:'/api/qa-read?'+query,headers:{host,authorization:'Bearer caller-admin-token',cookie:'private-session'}},res);
+  return{res,calls};
+}
+{
+  const query='resource=nfl_pool_weeks&select=season,week,status,revision,published_at,config&week=eq.9';
+  const t=await gateway(query);
+  assert.equal(t.res.statusCode,200);
+  assert.equal(t.res.headers['Cache-Control'],'no-store');
+  assert.equal(t.res.headers['X-QA-Read-Only'],'1');
+  assert.equal(t.calls.length,2);
+  assert(t.calls.every(c=>c.init.cache==='no-store'&&c.init.signal instanceof AbortSignal));
+  assert(t.calls[0].url.startsWith('https://ep-silent-sunset-bbdqbm47.neonauth.'));
+  assert.deepEqual(t.calls[0].init.headers,{Accept:'application/json'});
+  assert.equal(t.calls[1].init.headers.Authorization,'Bearer qa.anon.sig','caller admin credentials are never forwarded');
+  assert(!Object.keys(t.calls[1].init.headers).some(k=>/cookie|origin/i.test(k)));
+  const target=new URL(t.calls[1].url);
+  assert.equal(target.hostname,'ep-silent-sunset-bbdqbm47.apirest.c-15.us-east-1.aws.neon.tech');
+  assert.equal(target.searchParams.get('status'),'eq.locked');
+  assert.equal(target.searchParams.get('season'),'eq.2026');
+  assert.equal((await gateway('kind=anonymous')).calls.length,1);
+  for(const options of [{environment:'production'},{environment:undefined},{host:'picks.smokkeventures.com'}]){
+    // Undefined is tested directly below; the helper's default is preview.
+    if(Object.hasOwn(options,'environment')&&options.environment===undefined)options.environment='';
+    const denied=await gateway(query,options);assert.equal(denied.res.statusCode,404);assert.equal(denied.calls.length,0);
+  }
+  for(const method of ['POST','PUT','PATCH','DELETE','OPTIONS','HEAD']){
+    const denied=await gateway(query,{method});assert.equal(denied.res.statusCode,405);assert.equal(denied.calls.length,0);
+  }
+  for(const bad of [
+    'resource=nfl_pool_admins&select=*','resource=__proto__&select=season','resource=nfl_pool_weeks&select=*',
+    'resource=nfl_pool_weeks&select=season&select=config','resource=nfl_pool_weeks&select=season&status=eq.draft',
+    'resource=nfl_pool_weeks&select=season&season=eq.2025','resource=nfl_pool_weeks&select=season&week=eq.19',
+    'resource=nfl_incident_rulings&select=admin_note&contest_id=eq.pool-center-2026-pickem',
+    'resource=nfl_incident_rulings&select=public_note','resource=nfl_contests&select=season&contest_id=eq.other',
+    'resource=nfl_pool_weeks&select=season&url=https://production.example/',
+    'resource=nfl_pool_weeks&select=season&order=season.asc,nullsfirst','kind=anonymous&url=https://other.test/'
+  ]){const denied=await gateway(bad);assert.equal(denied.res.statusCode,400,bad);assert.equal(denied.calls.length,0)}
+  for(const resource of ['nfl_contests','nfl_contest_policies','nfl_incident_rulings']){
+    const ok=await gateway('resource='+resource+'&select=contest_id&contest_id=eq.pool-center-2026-survivor');
+    assert.equal(ok.res.statusCode,200,resource);
+  }
+  for(const options of [{authStatus:503},{token:'invalid'},{dataStatus:403},{rows:{error:'not rows'}},{fail:new TypeError('network failure')}])
+    assert.equal((await gateway(query,options)).res.statusCode,502);
+  const aborted=new Error('aborted');aborted.name='AbortError';
+  assert.equal((await gateway(query,{fail:aborted})).res.statusCode,504);
+}
+console.log('QA read gateway: preview guard, anonymous-only identity, fixed backend, public columns, published context, write rejection, timeouts and routing passed');

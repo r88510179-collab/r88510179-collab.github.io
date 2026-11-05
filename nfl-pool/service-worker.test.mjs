@@ -7,7 +7,13 @@ import vm from 'node:vm';
 // The current deployed bytes are tested separately at the end. These inverses were compared
 // byte-for-byte with the verified Personal QA base before being committed.
 const PULSE_MARKUP='<div id="homeFieldPulse" aria-live="polite"><div class="group-field-pulse field-pulse-empty" data-field-pulse="pending"><span class="field-pulse-label">Group vs full pool</span><p>Waiting for published standings.</p></div></div>';
+const restoreQaRead=(path,text)=>{
+  if(path==='index.html')return text.replace('<script src="qa-read-routing.js?v=1"></script>\n','');
+  if(path==='service-worker.js')return text.replace('pool-center-shell-v33','pool-center-shell-v32').replace("  './qa-read-routing.js?v=1',\n",'');
+  return text;
+};
 const restorePulse=(path,text)=>{
+  text=restoreQaRead(path,text);
   if(path==='home-dashboard.js'){
     const start=text.indexOf('// Group-vs-field is a presentation summary'),end=text.indexOf('export function spotlightText(s){',start);
     assert(start>=0&&end>start,'Group/field helper must have its own bounded section');
@@ -2306,7 +2312,10 @@ assert.equal(hdFailures.length,0,`Home dashboard service-worker regressions fail
     assert.equal((currentPage.match(new RegExp(asset.replaceAll('.','\\.')+'\\?v=2','g'))||[]).length,1,`page references exactly one ${asset} v2`);
     assert.equal((currentWorker.match(new RegExp(asset.replaceAll('.','\\.')+'\\?v=2','g'))||[]).length,1,`worker precaches exactly one ${asset} v2`);
   }
-  assert.match(currentWorker,/const CACHE='pool-center-shell-v32'/);
+  assert.match(currentWorker,/const CACHE='pool-center-shell-v33'/);
+  assert.equal(currentPage.split('<script src="qa-read-routing.js?v=1"></script>').length-1,1);
+  assert.equal(currentWorker.split("'./qa-read-routing.js?v=1'").length-1,1);
+  assert(currentPage.indexOf('qa-read-routing.js?v=1')<currentPage.indexOf('weekly-app.js?v=weekly-v24'));
   assert(!currentWorker.includes('home-dashboard.js?v=1')&&!currentWorker.includes('home-dashboard.css?v=1'));
   assert.match(currentHome,/export function groupFieldPulse\(/);
   assert.match(currentHome,/if\(fieldPulse\)fieldPulse\.innerHTML=groupFieldPulseHtml\(snapshots\.pickem,\{now\}\)/);
