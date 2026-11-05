@@ -1110,8 +1110,12 @@ async function bootAdmin({rows=[]}={}){
     document:{getElementById:$},
     fetch:async url=>{
       net.urls.push(String(url));if(net.gate)await net.gate.promise;if(net.fail)throw net.fail;
-      const feed=typeof net.feed==='function'?net.feed(Number(new URL(url).searchParams.get('week'))):net.feed;
-      return{ok:true,status:200,json:async()=>structuredClone(feed)};
+      const requestedWeek=Number(new URL(url,'https://qa.fixture.test').searchParams.get('week'));
+      const feed=typeof net.feed==='function'?net.feed(requestedWeek):net.feed;
+      // The fixture's shorthand lists only synthetic games. Supply the usual ESPN season/week
+      // response envelope for each requested week, while preserving explicit overrides (including
+      // deliberately incorrect context) so the publisher still validates and rejects mismatches.
+      return{ok:true,status:200,json:async()=>structuredClone({season:{year:2026},week:{number:requestedWeek},...feed})};
     },
     neonModule:{createClient:()=>({auth:{getSession:async()=>({data:db.session?{user:db.session,session:{token:'t'}}:null}),signOut:async()=>{db.session=null},emailOtp:{sendVerificationOtp:async()=>({error:null})},signIn:{emailOtp:async()=>({error:null})}},from:table=>new Query(table)})},
     pdfjs:{GlobalWorkerOptions:{},getDocument:({data})=>{const pages=ADMIN_SHEETS[new TextDecoder().decode(data)];return{promise:Promise.resolve({numPages:pages.length,getPage:async n=>({getTextContent:async()=>({items:pages[n-1]})})})}}}
