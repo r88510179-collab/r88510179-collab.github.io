@@ -37,12 +37,29 @@ const restorePulse=(path,text)=>{
   }
   return text;
 };
+// Undo only the isolated Week 10–18 width fix before the immutable historical PWA
+// SHA checks below. They must continue to see the exact v32 production bytes.
+// The actual v33 files are checked independently at the end of this suite.
+const SELECTOR_LINK='<link rel="stylesheet" href="week-selector.css?v=1">\\n'.replace('\\n','\n');
+const SELECTOR_WORKER="  './week-selector.css?v=1',\\n".replace('\\n','\n');
+function restoreWeekSelector(path,text){
+  if(path==='index.html'){
+    assert.equal(text.split(SELECTOR_LINK).length,2,'only one new selector stylesheet reference');
+    return text.replace(SELECTOR_LINK,'');
+  }
+  if(path==='service-worker.js'){
+    assert(text.includes("const CACHE='pool-center-shell-v33'"),'selector fix uses a fresh worker cache');
+    assert.equal(text.split(SELECTOR_WORKER).length,2,'only one new selector cache reference');
+    return text.replace("pool-center-shell-v33","pool-center-shell-v32").replace(SELECTOR_WORKER,'');
+  }
+  return text;
+}
 const readFileSync=(url,encoding)=>{
   const pathname=new URL(url).pathname,path=pathname.split('/').pop();
   const raw=diskReadFileSync(url);
   let result=raw;
   if(['home-dashboard.js','home-dashboard.css','index.html','service-worker.js'].includes(path))
-    result=Buffer.from(restorePulse(path,raw.toString('utf8')),'utf8');
+    result=Buffer.from(restorePulse(path,restoreWeekSelector(path,raw.toString('utf8'))),'utf8');
   return encoding==='utf8'?result.toString('utf8'):result;
 };
 const source=readFileSync(new URL('./service-worker.js',import.meta.url),'utf8');
@@ -2295,7 +2312,7 @@ assert.equal(hdFailures.length,0,`Home dashboard service-worker regressions fail
     assert.equal((currentPage.match(new RegExp(asset.replaceAll('.','\\.')+'\\?v=2','g'))||[]).length,1,`page references exactly one ${asset} v2`);
     assert.equal((currentWorker.match(new RegExp(asset.replaceAll('.','\\.')+'\\?v=2','g'))||[]).length,1,`worker precaches exactly one ${asset} v2`);
   }
-  assert.match(currentWorker,/const CACHE='pool-center-shell-v32'/);
+  assert.match(currentWorker,/const CACHE='pool-center-shell-v33'/);
   assert(!currentPage.includes('qa-read-routing')&&!currentWorker.includes('qa-read-routing'),
     'release candidate must never include staging-only fetch interception');
   assert(!currentWorker.includes('home-dashboard.js?v=1')&&!currentWorker.includes('home-dashboard.css?v=1'));
@@ -2312,8 +2329,8 @@ assert.equal(hdFailures.length,0,`Home dashboard service-worker regressions fail
   for(const forbidden of ['qa-read-routing.js','qa/live-mobile.html','api/qa-read.js','api/qa-schedule.js'])
     assert(!currentPage.includes(forbidden)&&!currentWorker.includes(forbidden),
       `${forbidden} cannot be in release shell`);
-  assert.equal(restorePulse('index.html',currentPage),index,'only the approved new Home slot and asset versions changed');
-  assert.equal(restorePulse('service-worker.js',currentWorker),source,'only Home versions and cache generation changed');
+  assert.equal(restorePulse('index.html',restoreWeekSelector('index.html',currentPage)),index,'only approved Home and selector layers changed');
+  assert.equal(restorePulse('service-worker.js',restoreWeekSelector('service-worker.js',currentWorker)),source,'only Home versions and cache generation changed');
 }
 
 assert.equal(pmFailures.length,0,`V1.3 mobile UX service-worker regressions failed (${pmFailures.length}):\n  ${pmFailures.join('\n  ')}`);
@@ -2322,5 +2339,26 @@ assert.equal(ppFailures.length,0,`V1.4 final polish service-worker regressions f
 assert.equal(paFailures.length,0,`V1.4 collapsible slate groups service-worker regressions failed (${paFailures.length}):\n  ${paFailures.join('\n  ')}`);
 assert.equal(psFailures.length,0,`V1.4 multi-select slates service-worker regressions failed (${psFailures.length}):\n  ${psFailures.join('\n  ')}`);
 assert.equal(ssFailures.length,0,`Season record service-worker regressions failed (${ssFailures.length}):\n  ${ssFailures.join('\n  ')}`);
+
+// Week 10-18 mobile selector regression: separate CSS, immutable baselines intact.
+// The measured old mobile select had a 76px content box; Week 10 needs 84px.
+// A fixed 150px outer width leaves at least 100px after its 48px padding + borders.
+{
+  const actualPage=diskReadFileSync(new URL('./index.html',import.meta.url),'utf8');
+  const actualWorker=diskReadFileSync(new URL('./service-worker.js',import.meta.url),'utf8');
+  const css=diskReadFileSync(new URL('./week-selector.css',import.meta.url),'utf8');
+  assert.equal(actualPage.split(SELECTOR_LINK).length,2,'one loaded fix stylesheet');
+  assert.equal(actualWorker.split(SELECTOR_WORKER).length,2,'one precached fix stylesheet');
+  assert.match(actualWorker,/const CACHE='pool-center-shell-v33'/);
+  assert(css.includes('.week-strip > #weekSelect { flex:0 0 150px; width:150px; min-width:150px; max-width:150px; }'));
+  assert(css.includes('.week-strip > .week-copy { flex:1 1 0; min-width:0; }'));
+  assert(!css.includes('url(')&&!css.includes('@import')&&!css.includes('http:')&&!css.includes('https:'),'no remote CSS or request');
+  for(const viewport of [320,375,390,430]){
+    const contentArea=viewport-20/* shell */-20/* strip padding */-2/* borders */-14/* gap */;
+    assert(contentArea-150>=0,viewport+'px viewport still leaves room for the week description');
+  }
+  assert.equal(restoreWeekSelector('index.html',actualPage),diskReadFileSync(new URL('./index.html',import.meta.url),'utf8').replace(SELECTOR_LINK,''),'bounded HTML inverse');
+  assert.equal(restoreWeekSelector('service-worker.js',actualWorker),actualWorker.replace("pool-center-shell-v33","pool-center-shell-v32").replace(SELECTOR_WORKER,''),'bounded worker inverse');
+}
 
 console.log('service-worker precache graph (share-card, Home dashboard, V1.3 mobile UX, V1.4 compact Picks UX, V1.4 final polish, V1.4 collapsible slate groups, V1.4 multi-select slates and season record versions), fresh (cache:"reload") precache requests, all-or-nothing install, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');
