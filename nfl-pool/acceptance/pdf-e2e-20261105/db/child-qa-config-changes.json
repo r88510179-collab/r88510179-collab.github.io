@@ -1,0 +1,40 @@
+{
+ "scope": "Only Neon project green-base-66242978, child branch br-damp-credit-bbn7d0zr (qa-pr23-personal-pdf-e2e-20261105), database nfl_pool. Nothing was changed on the parent br-dawn-fire-bb923034 or in production.",
+ "changes": [
+  {
+   "at": "2026-11-05T23:44Z",
+   "what": "Two synthetic accounts signed up through the child's own Neon Auth (email/password, reserved example.com domain, no mailbox).",
+   "accounts": [
+    {"email": "qa.pdf-e2e.publisher@example.com", "user_id": "68d3902a-0064-4a05-bbb5-9a9b12c8c8f1", "role_after": "admin"},
+    {"email": "qa.pdf-e2e.intruder@example.com", "user_id": "0b4fc99e-b8da-48ae-8106-327c774db969", "role_after": "user (wrong-account control; never granted publisher rights)"}
+   ],
+   "credentials": "Random passwords exist only in the QA runner's local scratchpad (mode 600); never committed, logged, printed or screenshotted."
+  },
+  {
+   "at": "2026-11-06T00:2xZ",
+   "what": "Neon Auth admin API (MCP update_auth_user_role): synthetic publisher role user -> admin, on the child only.",
+   "why": "The existing publisher policies also require role 'admin'."
+  },
+  {
+   "at": "2026-11-06T00:3xZ",
+   "what": "Six ADDITIVE RLS policies (qa_synthetic_publisher_insert/read/update on nfl_pool_weeks and nfl_survivor_weeks).",
+   "sql": "qa-child-synthetic-publisher-policies.sql (includes the revert statements)",
+   "why": "The existing policies authorize exactly one identity, the production publisher's email, which must not be used. The new policies are the existing predicate with only the email literal changed.",
+   "verified": "11 original policies byte-identical (sha256 845f1b41... unchanged); each QA policy equals its original after substituting only the identity literal; same roles (authenticated) and PERMISSIVE; RLS enabled; no DELETE policy exists.",
+   "note": "The original policies (production publisher identity) remain in force on the child; the QA publisher pages refuse that identity by name at the application layer."
+  },
+  {
+   "at": "2026-11-06T00:45:11Z",
+   "what": "Data API server_cors_allowed_origins: appended exactly http://localhost:8765 to the 3 existing origins (all other settings preserved).",
+   "why": "The publisher runs from the local QA harness, which the child's Neon Auth already trusts (allow_localhost=true); without this the Data API omitted Access-Control-Allow-Origin for that origin, so authenticated reads/writes failed with 'Failed to fetch' (the same failure PR #27 recorded).",
+   "propagation": "Saved setting was effective on ~50% of preflights after ~8 minutes and on 30/30 consecutive preflights from 2026-11-06T00:57:07Z (about 13 minutes after the save). Unlisted origins (other localhost ports, the PR #29 preview alias, an arbitrary domain) still receive no Access-Control-Allow-Origin.",
+   "revert": "Set server_cors_allowed_origins back to the 3 original origins (owner decision)."
+  }
+ ],
+ "not_changed": [
+  "Neon Auth trusted origins and allow_localhost on the child (already true)",
+  "RLS enablement, table grants, anonymous locked-only read policies",
+  "Any parent (br-dawn-fire-bb923034) setting or row",
+  "Vercel project protection (SSO), domains, DNS, environment variables"
+ ]
+}

@@ -1,0 +1,147 @@
+{
+ "QA-PDF-E2E-Pickem-2026-W10-duplicate-page.pdf": {
+  "bytes": 8429,
+  "entries": 43,
+  "pages": 4,
+  "purpose": "Pick'em field gate: repeated table page",
+  "sha256": "1dc48e84053fb7c16a8f99446575f4db9a233993e0e9f6c44ba99fc69e47b42b",
+  "tableRowsPerPage": [
+   36,
+   7
+  ],
+  "trackedNoSubmission": false
+ },
+ "QA-PDF-E2E-Pickem-2026-W10-duplicate-tracked.pdf": {
+  "bytes": 7294,
+  "entries": 44,
+  "pages": 3,
+  "purpose": "Pick'em negative: two DJS rows",
+  "sha256": "dbc89f6eab1765843fafde88a783de15b4ee4636889f344c4f28f2a5adbbd059",
+  "tableRowsPerPage": [
+   36,
+   8
+  ],
+  "trackedNoSubmission": false
+ },
+ "QA-PDF-E2E-Pickem-2026-W10-invalid-schedule.pdf": {
+  "bytes": 7218,
+  "entries": 43,
+  "pages": 3,
+  "purpose": "Pick'em negative: CHI at CIN is not a 2026 Week 10 NFL game",
+  "sha256": "f9a8a59fdcc0380a1f17510df3bbec3e0e07fedc17ca64c9cf2f5a00db9e81d2",
+  "tableRowsPerPage": [
+   36,
+   7
+  ],
+  "trackedNoSubmission": false
+ },
+ "QA-PDF-E2E-Pickem-2026-W10-missing-picks.pdf": {
+  "bytes": 7222,
+  "entries": 43,
+  "pages": 3,
+  "purpose": "Pick'em negative: tracked JC row missing a pick cell",
+  "sha256": "e75e7d618eaab25e058bc275a8ffe4f74de65bdee087e8a233f088a3ccd733fc",
+  "tableRowsPerPage": [
+   36,
+   7
+  ],
+  "trackedNoSubmission": false
+ },
+ "QA-PDF-E2E-Pickem-2026-W10-r1.pdf": {
+  "bytes": 7160,
+  "entries": 43,
+  "pages": 3,
+  "purpose": "Pick'em positive: Week 10 revision 1 (Thaddeus has no submission yet)",
+  "sha256": "0c667fae0794945c54df478a42b4c007a138ea5a25e5f055926cf8d94342a196",
+  "tableRowsPerPage": [
+   36,
+   7
+  ],
+  "trackedNoSubmission": true
+ },
+ "QA-PDF-E2E-Pickem-2026-W10-r2.pdf": {
+  "bytes": 7221,
+  "entries": 43,
+  "pages": 3,
+  "purpose": "Pick'em revision: Week 10 correction (Thaddeus picks added)",
+  "sha256": "68f33324e4fdb04550409a0dba692e91d769dcc28c0e41e187cea371c6c498ca",
+  "tableRowsPerPage": [
+   36,
+   7
+  ],
+  "trackedNoSubmission": false
+ },
+ "QA-PDF-E2E-Pickem-2026-W10-unanchored.pdf": {
+  "bytes": 7362,
+  "entries": 43,
+  "pages": 3,
+  "purpose": "Pick'em field gate: participant-shaped row outside the proven table",
+  "sha256": "cbfb9a463e0c24c57fd490987f497f5264b0b9b1a7af4eb5300da9e9a1a35757",
+  "tableRowsPerPage": [
+   36,
+   7
+  ],
+  "trackedNoSubmission": false
+ },
+ "QA-PDF-E2E-Survivor-2026-W6-bye-pick.pdf": {
+  "bytes": 2602,
+  "entries": 4,
+  "pages": 2,
+  "purpose": "Survivor negative: KC picked in Week 5, when KC had a bye",
+  "rowsPerPage": [
+   2,
+   2
+  ],
+  "sha256": "f7c9591632834017b59965f0d6fcfcdbc8722c1bdf9f67339cbae764e5904a8e"
+ },
+ "QA-PDF-E2E-Survivor-2026-W6-duplicate-tracked.pdf": {
+  "bytes": 2625,
+  "entries": 5,
+  "pages": 2,
+  "purpose": "Survivor negative: two DJS rows",
+  "rowsPerPage": [
+   3,
+   2
+  ],
+  "sha256": "0c0fa18e8972be88f57d729d0407fc8897f2d2c4c4f8c56e7c27084fa5703035"
+ },
+ "QA-PDF-E2E-Survivor-2026-W6-r1.pdf": {
+  "bytes": 2592,
+  "entries": 4,
+  "pages": 2,
+  "purpose": "Survivor positive: Week 6 revision 1 (Thaddeus has no Week 6 pick)",
+  "rowsPerPage": [
+   2,
+   2
+  ],
+  "sha256": "401144f584de3f4ce05c5481db774f10568836ee47e73edcb526fb048c627cf7"
+ },
+ "QA-PDF-E2E-Survivor-2026-W6-r2.pdf": {
+  "bytes": 2602,
+  "entries": 4,
+  "pages": 2,
+  "purpose": "Survivor revision: Week 6 correction (Thaddeus Week 6 PIT)",
+  "rowsPerPage": [
+   2,
+   2
+  ],
+  "sha256": "8ee186b49dc6b52045ffc757ae2659e36f3b060f5254cf399338b12429af2180"
+ },
+ "QA-PDF-E2E-Survivor-2026-W6-unknown-team.pdf": {
+  "bytes": 2604,
+  "entries": 4,
+  "pages": 2,
+  "purpose": "Survivor negative: unknown team code XYZ",
+  "rowsPerPage": [
+   2,
+   2
+  ],
+  "sha256": "ca6f4b144f012570561a08aa69cab99f35be418b6b85a90dd93c8dba44ecab33"
+ },
+ "QA-PDF-E2E-malformed.pdf": {
+  "bytes": 2112,
+  "pages": null,
+  "purpose": "Negative: malformed PDF bytes (both publishers)",
+  "sha256": "8220ebdf1c869ecf6ae649b8554ebb92561e02c9f50d5033944751bfd7c72151"
+ }
+}

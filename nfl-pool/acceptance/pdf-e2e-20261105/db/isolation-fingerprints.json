@@ -1,0 +1,51 @@
+{
+ "method": "Read-only SELECT via Neon MCP run_sql. Each *_sha256 is SHA-256 over every row (all columns, config::text) ordered by key; policies over pg_policies; auth users over id|email|role|banned|emailVerified|createdAt|updatedAt (emails are hashed, never printed).",
+ "production": {
+  "project": "flat-cake-85432375",
+  "accessed": false,
+  "note": "Never contacted: no Neon MCP call named it, and the browser/API network logs contain zero requests to ep-muddy-forest-au7eygkw, the production score proxy, picks.smokkeventures.com or r88510179-collab.github.io. A production fingerprint was deliberately NOT taken because accessing that project is forbidden for this acceptance."
+ },
+ "parent": {
+  "project": "green-base-66242978", "branch": "br-dawn-fire-bb923034", "endpoint": "ep-silent-sunset-bbdqbm47", "database": "nfl_pool",
+  "before": {"observed_at": "2026-11-05T23:15:02.686Z", "wal_lsn": "0/1D57940",
+   "pickem_rows": 1, "pickem_weeks": "9:r3", "pickem_sha256": "68f5d8fb9e1e72357bbd9603b036194989645570cd338893152c13a530cf5b5d",
+   "survivor_rows": 2, "survivor_weeks": "2:r2,9:r1", "survivor_sha256": "fe201a7397dacf601b208ad7c9bb5a492f1f4203cb9e4f21e697aed0250096a9",
+   "contests_sha256": "bdfb013cc96f4e02614ffc62b1ba49e6327586117f13ac0413f45f1aef65d19c", "contest_policies_sha256": "d33abeb0638fd4b1cfd1b66af1eeaddd6b290b5ce618e82ac64eb84100b5475d",
+   "rulings_rows": 0, "rulings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "rls_policy_count": 11, "rls_policies_sha256": "845f1b415a3c08af1373b9bc707b70516b5b07213cd521ed1501fee4e3922d3a",
+   "auth_users": 1, "auth_users_sha256": "5ac36ef0127c6a831edac834eadf4e0f142b6fd177a02167d7129b46eb51f14a",
+   "public_schema_sha256": "e49213e5977905ab6ef6d41de78e4d3aeb06f544a5b9ef612bac01a110f374a4", "public_functions": 5, "public_functions_sha256": "98a7c6b552f09f2f5b0c2a87c42bc7e76c049e218b0eacab36eaa6db6935af11"},
+  "after": {"observed_at": "2026-11-06T01:14:22.532Z", "wal_lsn": "0/1D6B078",
+   "pickem_rows": 1, "pickem_weeks": "9:r3", "pickem_sha256": "68f5d8fb9e1e72357bbd9603b036194989645570cd338893152c13a530cf5b5d",
+   "survivor_rows": 2, "survivor_weeks": "2:r2,9:r1", "survivor_sha256": "fe201a7397dacf601b208ad7c9bb5a492f1f4203cb9e4f21e697aed0250096a9",
+   "contests_sha256": "bdfb013cc96f4e02614ffc62b1ba49e6327586117f13ac0413f45f1aef65d19c", "contest_policies_sha256": "d33abeb0638fd4b1cfd1b66af1eeaddd6b290b5ce618e82ac64eb84100b5475d",
+   "rulings_rows": 0, "rulings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "rls_policy_count": 11, "rls_policies_sha256": "845f1b415a3c08af1373b9bc707b70516b5b07213cd521ed1501fee4e3922d3a",
+   "auth_users": 1, "auth_users_sha256": "5ac36ef0127c6a831edac834eadf4e0f142b6fd177a02167d7129b46eb51f14a",
+   "public_schema_sha256": "e49213e5977905ab6ef6d41de78e4d3aeb06f544a5b9ef612bac01a110f374a4", "public_functions": 5, "public_functions_sha256": "98a7c6b552f09f2f5b0c2a87c42bc7e76c049e218b0eacab36eaa6db6935af11"},
+  "content_unchanged": true,
+  "config_unchanged": "Data API settings (incl. the 3-origin CORS list) and Neon Auth config (3 trusted origins, allow_localhost, email/password) re-read at 2026-11-06T01:15Z are identical to the 2026-11-05T23:05Z preflight.",
+  "wal_note": "The WAL position advanced although every content hash is identical. This acceptance sent the parent only read-only SELECTs (fingerprints) and no browser/API request; PostgreSQL with data checksums can WAL-log hint-bit updates during reads, and Neon/Auth background activity also writes WAL. The cause was not further attributed."
+ },
+ "child": {
+  "project": "green-base-66242978", "branch": "br-damp-credit-bbn7d0zr", "endpoint": "ep-shiny-snow-bbx446zt", "database": "nfl_pool",
+  "before": {"observed_at": "2026-11-05T23:15:06.246Z", "wal_lsn": "0/1D3ADE0",
+   "pickem_weeks": "9:r3", "pickem_sha256": "68f5d8fb9e1e72357bbd9603b036194989645570cd338893152c13a530cf5b5d",
+   "survivor_weeks": "2:r2,9:r1", "survivor_sha256": "fe201a7397dacf601b208ad7c9bb5a492f1f4203cb9e4f21e697aed0250096a9",
+   "rls_policy_count": 11, "rls_policies_sha256": "845f1b415a3c08af1373b9bc707b70516b5b07213cd521ed1501fee4e3922d3a", "auth_users": 1},
+  "after": {"observed_at": "2026-11-06T01:14:44.977Z",
+   "pickem_weeks": "9:r3,10:r2", "pickem_sha256": "277a4b0d1aef2e7b2f2ec928d41e5e2157dd4e6a1077684fdc5af00c1826bb1a",
+   "pickem_preexisting_rows_sha256": "68f5d8fb9e1e72357bbd9603b036194989645570cd338893152c13a530cf5b5d",
+   "survivor_weeks": "2:r2,6:r2,9:r1", "survivor_sha256": "6454bc7488d3da6b68f960f6f2ad76d078637b68e789021eaa9e5ef538c3e32b",
+   "survivor_preexisting_rows_sha256": "fe201a7397dacf601b208ad7c9bb5a492f1f4203cb9e4f21e697aed0250096a9",
+   "contests_sha256": "bdfb013cc96f4e02614ffc62b1ba49e6327586117f13ac0413f45f1aef65d19c", "contest_policies_sha256": "d33abeb0638fd4b1cfd1b66af1eeaddd6b290b5ce618e82ac64eb84100b5475d",
+   "rulings_rows": 0, "rls_policy_count": 17, "original_rls_policies_sha256": "845f1b415a3c08af1373b9bc707b70516b5b07213cd521ed1501fee4e3922d3a", "auth_users": 3,
+   "public_schema_sha256": "e49213e5977905ab6ef6d41de78e4d3aeb06f544a5b9ef612bac01a110f374a4", "public_functions_sha256": "98a7c6b552f09f2f5b0c2a87c42bc7e76c049e218b0eacab36eaa6db6935af11"},
+  "intended_changes": [
+   "nfl_pool_weeks 2026 Week 10 inserted (revision 1) then replaced by compare-and-swap (revision 2) through the browser publisher.",
+   "nfl_survivor_weeks 2026 Week 6 inserted (revision 1) then replaced by compare-and-swap (revision 2) through the browser publisher.",
+   "Pre-existing publication rows (Pick'em 9 r3; Survivor 2 r2, 9 r1) are byte-identical to before.",
+   "See child-qa-config-changes.json for the identity, policy and CORS changes."
+  ]
+ }
+}

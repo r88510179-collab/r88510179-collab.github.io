@@ -1,0 +1,32 @@
+{
+ "source": "Neon MCP run_sql (database owner, read-only SELECT) on project green-base-66242978, branch br-damp-credit-bbn7d0zr, database nfl_pool",
+ "observed_at": "2026-11-06T01:05Z",
+ "rows": [
+  {
+   "contest": "pickem", "season": 2026, "week": 10, "status": "locked", "revision": 2,
+   "source_filename": "QA-PDF-E2E-Pickem-2026-W10-r2.pdf",
+   "source_sha256": "68f33324e4fdb04550409a0dba692e91d769dcc28c0e41e187cea371c6c498ca",
+   "config_source_sha256": "68f33324e4fdb04550409a0dba692e91d769dcc28c0e41e187cea371c6c498ca",
+   "published_at": "2026-11-06T01:03:18.271Z", "locked_at": "2026-11-06T01:03:18.271Z", "updated_at": "2026-11-06T01:03:18.271Z",
+   "created_at": "2026-11-06T01:03:06.039Z",
+   "games": 14, "games_with_event_id": 14, "tracked": 4, "field": 39, "competition_size": 43, "full_field_ready": true,
+   "tracked_tiebreaks": "D.C. tb35, DJS tb55, JC tb37, Thaddeus tb41",
+   "config_sha256": "0dc625446c0d460aa116f2cfb182f9b6fb00ac49128d6fed3df8e2299964ca89"
+  },
+  {
+   "contest": "survivor", "season": 2026, "week": 6, "status": "locked", "revision": 2,
+   "source_filename": "QA-PDF-E2E-Survivor-2026-W6-r2.pdf",
+   "source_sha256": "8ee186b49dc6b52045ffc757ae2659e36f3b060f5254cf399338b12429af2180",
+   "config_source_sha256": "8ee186b49dc6b52045ffc757ae2659e36f3b060f5254cf399338b12429af2180",
+   "published_at": "2026-11-06T01:03:56.820Z", "locked_at": "2026-11-06T01:03:56.820Z", "updated_at": "2026-11-06T01:03:56.820Z",
+   "created_at": "2026-11-06T01:03:45.535Z",
+   "tracked": 3, "field": 1, "competition_size": 4,
+   "tracked_histories": "D.C.:NE,MIN,SF,GB,DEN,BUF | DJS:SF,GB,DET,SEA,NYG,KC | Thaddeus:BUF,PHI,BAL,KC,DEN,PIT",
+   "config_sha256": "e1e5e67a5b7844648b2fe67acc3bc463e1ae7289dca027ec40e7a6bbc38c10bb"
+  }
+ ],
+ "notes": [
+  "created_at is the revision-1 insert; published_at = locked_at = updated_at is the revision-2 compare-and-swap update.",
+  "Fixture SHA-256 values match fixtures/fixtures-manifest.json."
+ ]
+}

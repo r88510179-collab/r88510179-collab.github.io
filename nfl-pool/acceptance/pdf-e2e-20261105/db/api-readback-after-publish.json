@@ -1,0 +1,297 @@
+{
+ "at": "2026-11-06T01:04:27.104Z",
+ "target": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1",
+ "pickem": {
+  "fixture": "QA-PDF-E2E-Pickem-2026-W10-r2.pdf",
+  "sha256": "68f33324e4fdb04550409a0dba692e91d769dcc28c0e41e187cea371c6c498ca",
+  "revision": 2
+ },
+ "survivor": {
+  "fixture": "QA-PDF-E2E-Survivor-2026-W6-r2.pdf",
+  "sha256": "8ee186b49dc6b52045ffc757ae2659e36f3b060f5254cf399338b12429af2180",
+  "revision": 2
+ },
+ "checks": [
+  {
+   "name": "Pick'em Week 10 readable by anonymous public role",
+   "observed": {
+    "status": 200,
+    "rows": 1
+   },
+   "pass": true
+  },
+  {
+   "name": "Pick'em revision/status/source via anonymous public role",
+   "observed": {
+    "revision": 2,
+    "status": "locked",
+    "source_filename": "QA-PDF-E2E-Pickem-2026-W10-r2.pdf",
+    "source_sha256": "68f33324e4fdb04550409a0dba692e91d769dcc28c0e41e187cea371c6c498ca",
+    "configSource": {
+     "kind": "weekly-upload",
+     "sha256": "68f33324e4fdb04550409a0dba692e91d769dcc28c0e41e187cea371c6c498ca",
+     "filename": "QA-PDF-E2E-Pickem-2026-W10-r2.pdf"
+    }
+   },
+   "pass": true
+  },
+  {
+   "name": "Pick'em locked/published timestamps are one instant via anonymous public role",
+   "observed": {
+    "published_at": "2026-11-06T01:03:18.271+00:00",
+    "locked_at": "2026-11-06T01:03:18.271+00:00",
+    "updated_at": "2026-11-06T01:03:18.271+00:00"
+   },
+   "pass": true
+  },
+  {
+   "name": "Pick'em games: 14 real Week 10 games with NFL event ids via anonymous public role",
+   "observed": {
+    "games": 14,
+    "eventIds": [
+     "401873052",
+     "401873053",
+     "401873058",
+     "401873056",
+     "401873060",
+     "401873057",
+     "401873059",
+     "401873055",
+     "401873054",
+     "401873062",
+     "401873061",
+     "401873063",
+     "401873064",
+     "401873065"
+    ],
+    "dates": [
+     "2026-11-13",
+     "2026-11-15",
+     "2026-11-16",
+     "2026-11-17"
+    ]
+   },
+   "pass": true
+  },
+  {
+   "name": "Pick'em tracked entries and picks equal the fixture via anonymous public role",
+   "observed": {
+    "participants": [
+     "D.C.:1 4 6 7 9 11 14 16 17 20 22 23 26 27|tb 35",
+     "JC:2 3 5 7 10 12 14 15 18 19 21 23 25 27|tb 37",
+     "DJS:1 4 5 7 10 12 14 15 17 20 22 23 25 27|tb 55",
+     "Thaddeus:1 3 5 8 10 11 13 15 17 19 21 23 25 28|tb 41"
+    ]
+   },
+   "pass": true
+  },
+  {
+   "name": "Pick'em anonymous field (39 entries, ids/picks/tiebreaks only) equals the fixture via anonymous public role",
+   "observed": {
+    "fieldEntries": 39,
+    "competitionSize": 43,
+    "keys": [
+     "id",
+     "tiebreak",
+     "pickNumbers"
+    ]
+   },
+   "pass": true
+  },
+  {
+   "name": "Pick'em published config contains no anonymous entrant names via anonymous public role",
+   "observed": {},
+   "pass": true
+  },
+  {
+   "name": "Pick'em tiebreak game is the last matchup via anonymous public role",
+   "observed": {
+    "tiebreakGameIndex": 13
+   },
+   "pass": true
+  },
+  {
+   "name": "Pick'em Week 10 readable by synthetic publisher (admin RLS policy)",
+   "observed": {
+    "status": 200,
+    "rows": 1
+   },
+   "pass": true
+  },
+  {
+   "name": "Pick'em revision/status/source via synthetic publisher (admin RLS policy)",
+   "observed": {
+    "revision": 2,
+    "status": "locked",
+    "source_filename": "QA-PDF-E2E-Pickem-2026-W10-r2.pdf",
+    "source_sha256": "68f33324e4fdb04550409a0dba692e91d769dcc28c0e41e187cea371c6c498ca",
+    "configSource": {
+     "kind": "weekly-upload",
+     "sha256": "68f33324e4fdb04550409a0dba692e91d769dcc28c0e41e187cea371c6c498ca",
+     "filename": "QA-PDF-E2E-Pickem-2026-W10-r2.pdf"
+    }
+   },
+   "pass": true
+  },
+  {
+   "name": "Pick'em locked/published timestamps are one instant via synthetic publisher (admin RLS policy)",
+   "observed": {
+    "published_at": "2026-11-06T01:03:18.271+00:00",
+    "locked_at": "2026-11-06T01:03:18.271+00:00",
+    "updated_at": "2026-11-06T01:03:18.271+00:00"
+   },
+   "pass": true
+  },
+  {
+   "name": "Pick'em games: 14 real Week 10 games with NFL event ids via synthetic publisher (admin RLS policy)",
+   "observed": {
+    "games": 14,
+    "eventIds": [
+     "401873052",
+     "401873053",
+     "401873058",
+     "401873056",
+     "401873060",
+     "401873057",
+     "401873059",
+     "401873055",
+     "401873054",
+     "401873062",
+     "401873061",
+     "401873063",
+     "401873064",
+     "401873065"
+    ],
+    "dates": [
+     "2026-11-13",
+     "2026-11-15",
+     "2026-11-16",
+     "2026-11-17"
+    ]
+   },
+   "pass": true
+  },
+  {
+   "name": "Pick'em tracked entries and picks equal the fixture via synthetic publisher (admin RLS policy)",
+   "observed": {
+    "participants": [
+     "D.C.:1 4 6 7 9 11 14 16 17 20 22 23 26 27|tb 35",
+     "JC:2 3 5 7 10 12 14 15 18 19 21 23 25 27|tb 37",
+     "DJS:1 4 5 7 10 12 14 15 17 20 22 23 25 27|tb 55",
+     "Thaddeus:1 3 5 8 10 11 13 15 17 19 21 23 25 28|tb 41"
+    ]
+   },
+   "pass": true
+  },
+  {
+   "name": "Pick'em anonymous field (39 entries, ids/picks/tiebreaks only) equals the fixture via synthetic publisher (admin RLS policy)",
+   "observed": {
+    "fieldEntries": 39,
+    "competitionSize": 43,
+    "keys": [
+     "id",
+     "tiebreak",
+     "pickNumbers"
+    ]
+   },
+   "pass": true
+  },
+  {
+   "name": "Pick'em published config contains no anonymous entrant names via synthetic publisher (admin RLS policy)",
+   "observed": {},
+   "pass": true
+  },
+  {
+   "name": "Pick'em tiebreak game is the last matchup via synthetic publisher (admin RLS policy)",
+   "observed": {
+    "tiebreakGameIndex": 13
+   },
+   "pass": true
+  },
+  {
+   "name": "Survivor Week 6 readable by anonymous public role",
+   "observed": {
+    "status": 200,
+    "rows": 1
+   },
+   "pass": true
+  },
+  {
+   "name": "Survivor revision/status/source via anonymous public role",
+   "observed": {
+    "revision": 2,
+    "status": "locked",
+    "source_filename": "QA-PDF-E2E-Survivor-2026-W6-r2.pdf",
+    "source_sha256": "8ee186b49dc6b52045ffc757ae2659e36f3b060f5254cf399338b12429af2180",
+    "configSource": {
+     "kind": "survivor-upload",
+     "sha256": "8ee186b49dc6b52045ffc757ae2659e36f3b060f5254cf399338b12429af2180",
+     "filename": "QA-PDF-E2E-Survivor-2026-W6-r2.pdf"
+    }
+   },
+   "pass": true
+  },
+  {
+   "name": "Survivor selection histories equal the fixture via anonymous public role",
+   "observed": {
+    "tracked": [
+     "D.C.:NE,MIN,SF,GB,DEN,BUF",
+     "DJS:SF,GB,DET,SEA,NYG,KC",
+     "Thaddeus:BUF,PHI,BAL,KC,DEN,PIT"
+    ],
+    "field": [
+     "survivor-001:KC,BUF,KC,LAR,BUF,GB"
+    ]
+   },
+   "pass": true
+  },
+  {
+   "name": "Survivor published config contains no anonymous entrant name via anonymous public role",
+   "observed": {},
+   "pass": true
+  },
+  {
+   "name": "Survivor Week 6 readable by synthetic publisher (admin RLS policy)",
+   "observed": {
+    "status": 200,
+    "rows": 1
+   },
+   "pass": true
+  },
+  {
+   "name": "Survivor revision/status/source via synthetic publisher (admin RLS policy)",
+   "observed": {
+    "revision": 2,
+    "status": "locked",
+    "source_filename": "QA-PDF-E2E-Survivor-2026-W6-r2.pdf",
+    "source_sha256": "8ee186b49dc6b52045ffc757ae2659e36f3b060f5254cf399338b12429af2180",
+    "configSource": {
+     "kind": "survivor-upload",
+     "sha256": "8ee186b49dc6b52045ffc757ae2659e36f3b060f5254cf399338b12429af2180",
+     "filename": "QA-PDF-E2E-Survivor-2026-W6-r2.pdf"
+    }
+   },
+   "pass": true
+  },
+  {
+   "name": "Survivor selection histories equal the fixture via synthetic publisher (admin RLS policy)",
+   "observed": {
+    "tracked": [
+     "D.C.:NE,MIN,SF,GB,DEN,BUF",
+     "DJS:SF,GB,DET,SEA,NYG,KC",
+     "Thaddeus:BUF,PHI,BAL,KC,DEN,PIT"
+    ],
+    "field": [
+     "survivor-001:KC,BUF,KC,LAR,BUF,GB"
+    ]
+   },
+   "pass": true
+  },
+  {
+   "name": "Survivor published config contains no anonymous entrant name via synthetic publisher (admin RLS policy)",
+   "observed": {},
+   "pass": true
+  }
+ ],
+ "pass": true
+}

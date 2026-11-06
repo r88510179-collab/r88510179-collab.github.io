@@ -1,0 +1,1265 @@
+{
+ "summary": {
+  "at": "2026-11-06T01:13:20.033Z",
+  "deploymentOrigin": "https://nfl-pool-personal-1vk5pbr6m-r88510179-collabs-projects.vercel.app",
+  "expected": {
+   "pickemRevision": 2,
+   "survivorRevision": 2
+  },
+  "widths": [
+   {
+    "width": 375,
+    "checks": {
+     "viewportIsRequestedWidth": true,
+     "noDocumentOverflow": true,
+     "pickemWeek10Revision": true,
+     "survivorWeek6Revision": true,
+     "pickemTrackedRows": true,
+     "survivorWeek6Selected": true,
+     "survivorPool": true,
+     "gatewayChildOnly": true,
+     "noBrokenImages": true,
+     "weekSelectorLabelsFit": false,
+     "noAppConsoleErrors": true
+    },
+    "pass": false
+   },
+   {
+    "width": 390,
+    "checks": {
+     "viewportIsRequestedWidth": true,
+     "noDocumentOverflow": true,
+     "pickemWeek10Revision": true,
+     "survivorWeek6Revision": true,
+     "pickemTrackedRows": true,
+     "survivorWeek6Selected": true,
+     "survivorPool": true,
+     "gatewayChildOnly": true,
+     "noBrokenImages": true,
+     "weekSelectorLabelsFit": false,
+     "noAppConsoleErrors": true
+    },
+    "pass": false
+   },
+   {
+    "width": 430,
+    "checks": {
+     "viewportIsRequestedWidth": true,
+     "noDocumentOverflow": true,
+     "pickemWeek10Revision": true,
+     "survivorWeek6Revision": true,
+     "pickemTrackedRows": true,
+     "survivorWeek6Selected": true,
+     "survivorPool": true,
+     "gatewayChildOnly": true,
+     "noBrokenImages": true,
+     "weekSelectorLabelsFit": false,
+     "noAppConsoleErrors": true
+    },
+    "pass": false
+   }
+  ],
+  "forbiddenRequests": 0,
+  "directNeonRequestsFromBrowser": 0,
+  "pass": false
+ },
+ "results": [
+  {
+   "width": 375,
+   "pickem": {
+    "innerWidth": 375,
+    "innerHeight": 844,
+    "clientWidth": 375,
+    "scrollWidth": 375,
+    "bodyScrollWidth": 375,
+    "view": "standings",
+    "sync": "LIVE · data 0s old",
+    "weekLine": "Week 10 · revision 2 · Nov 13–Nov 17, 2026 · D.C. · JC · DJS · Thaddeus",
+    "weekSelected": "2026 · Week 10",
+    "weekOptions": [
+     "2026 · Week 9",
+     "2026 · Week 10"
+    ],
+    "standings": [
+     [
+      "1",
+      "D.C.",
+      "T-1\nTop 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1\nWIN CEILING · unresolved tiebreak not projected",
+      "35"
+     ],
+     [
+      "1",
+      "JC",
+      "T-1\nTop 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1\nWIN CEILING · unresolved tiebreak not projected",
+      "37"
+     ],
+     [
+      "1",
+      "DJS",
+      "T-1\nTop 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1\nWIN CEILING · unresolved tiebreak not projected",
+      "55"
+     ],
+     [
+      "1",
+      "Thaddeus",
+      "T-1\nTop 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1\nWIN CEILING · unresolved tiebreak not projected",
+      "41"
+     ]
+    ],
+    "survivorWeek": "2026 · Week 9",
+    "survivorMeta": "Week 9 · revision 1",
+    "survivorFeed": "LIVE · 1 TEAM RESULT UNVERIFIED",
+    "survivorMetrics": {
+     "pool": "4",
+     "entered": "0",
+     "stillIn": "0",
+     "pending": "0"
+    },
+    "survivorTracked": "D.C.W1BUFW2PHIW3KCW4SFW5DETW6GBW7NEW8PITW9BALNEOUTNE lost in Week 7DJSW1KCW2SEAW3BUFW4PHIW5SFW6DENW7GBW8DALW9JAXPHIOUTPHI lost in Week 4ThaddeusW1SEAW2SFW3MIAW4KCW5DETW6GBW7NYJW8NOW9NEMIAOUTMIA lost in Week 3",
+    "survivorError": "",
+    "brokenImages": 0,
+    "selectFit": [
+     {
+      "id": "weekSelect",
+      "label": "2026 · Week 10",
+      "textWidth": 84,
+      "contentBoxWidth": 76,
+      "selectWidth": 126,
+      "fits": false
+     }
+    ],
+    "screenshot": "screenshots/tracker-pickem-week10-standings-375.jpg"
+   },
+   "survivor": {
+    "innerWidth": 375,
+    "innerHeight": 844,
+    "clientWidth": 375,
+    "scrollWidth": 375,
+    "bodyScrollWidth": 375,
+    "view": "survivor",
+    "sync": "PICK'EM PAUSED · refreshes on return",
+    "weekLine": "Week 10 · revision 2 · Nov 13–Nov 17, 2026 · D.C. · JC · DJS · Thaddeus",
+    "weekSelected": "2026 · Week 10",
+    "weekOptions": [
+     "2026 · Week 9",
+     "2026 · Week 10"
+    ],
+    "standings": [
+     [
+      "1",
+      "D.C.",
+      "T-1Top 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1WIN CEILING · unresolved tiebreak not projected",
+      "35"
+     ],
+     [
+      "1",
+      "JC",
+      "T-1Top 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1WIN CEILING · unresolved tiebreak not projected",
+      "37"
+     ],
+     [
+      "1",
+      "DJS",
+      "T-1Top 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1WIN CEILING · unresolved tiebreak not projected",
+      "55"
+     ],
+     [
+      "1",
+      "Thaddeus",
+      "T-1Top 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1WIN CEILING · unresolved tiebreak not projected",
+      "41"
+     ]
+    ],
+    "survivorWeek": "2026 · Week 6",
+    "survivorMeta": "Week 6 · revision 2",
+    "survivorFeed": "LIVE · NFL results",
+    "survivorMetrics": {
+     "pool": "4",
+     "entered": "1",
+     "stillIn": "1",
+     "pending": "0"
+    },
+    "survivorTracked": "D.C.\nW1\nNE\nW2\nMIN\nW3\nSF\nW4\nGB\nW5\nDEN\nW6\nBUF\nNE\nOUT\nNE lost in Week 1\nDJS\nW1\nSF\nW2\nGB\nW3\nDET\nW4\nSEA\nW5\nNYG\nW6\nKC\nNYG\nOUT\nNFL tie eliminated entry in Week 5\nThaddeus\nW1\nBUF\nW2\nPHI\nW3\nBAL\nW4\nKC\nW5\nDEN\nW6\nPIT\nPIT\nALIVE\nAlive through Week 6",
+    "survivorError": "",
+    "brokenImages": 0,
+    "selectFit": [
+     {
+      "id": "survivorWeekSelect",
+      "label": "2026 · Week 6",
+      "textWidth": 79,
+      "contentBoxWidth": 299,
+      "selectWidth": 349,
+      "fits": true
+     }
+    ],
+    "screenshot": "screenshots/tracker-survivor-week6-375.jpg"
+   },
+   "gateway": [
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    }
+   ],
+   "console": [],
+   "checks": {
+    "viewportIsRequestedWidth": true,
+    "noDocumentOverflow": true,
+    "pickemWeek10Revision": true,
+    "survivorWeek6Revision": true,
+    "pickemTrackedRows": true,
+    "survivorWeek6Selected": true,
+    "survivorPool": true,
+    "gatewayChildOnly": true,
+    "noBrokenImages": true,
+    "weekSelectorLabelsFit": false,
+    "noAppConsoleErrors": true
+   }
+  },
+  {
+   "width": 390,
+   "pickem": {
+    "innerWidth": 390,
+    "innerHeight": 844,
+    "clientWidth": 390,
+    "scrollWidth": 390,
+    "bodyScrollWidth": 390,
+    "view": "standings",
+    "sync": "LIVE · data 0s old",
+    "weekLine": "Week 10 · revision 2 · Nov 13–Nov 17, 2026 · D.C. · JC · DJS · Thaddeus",
+    "weekSelected": "2026 · Week 10",
+    "weekOptions": [
+     "2026 · Week 9",
+     "2026 · Week 10"
+    ],
+    "standings": [
+     [
+      "1",
+      "D.C.",
+      "T-1\nTop 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1\nWIN CEILING · unresolved tiebreak not projected",
+      "35"
+     ],
+     [
+      "1",
+      "JC",
+      "T-1\nTop 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1\nWIN CEILING · unresolved tiebreak not projected",
+      "37"
+     ],
+     [
+      "1",
+      "DJS",
+      "T-1\nTop 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1\nWIN CEILING · unresolved tiebreak not projected",
+      "55"
+     ],
+     [
+      "1",
+      "Thaddeus",
+      "T-1\nTop 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1\nWIN CEILING · unresolved tiebreak not projected",
+      "41"
+     ]
+    ],
+    "survivorWeek": "2026 · Week 9",
+    "survivorMeta": "Week 9 · revision 1",
+    "survivorFeed": "LIVE · 1 TEAM RESULT UNVERIFIED",
+    "survivorMetrics": {
+     "pool": "4",
+     "entered": "0",
+     "stillIn": "0",
+     "pending": "0"
+    },
+    "survivorTracked": "D.C.W1BUFW2PHIW3KCW4SFW5DETW6GBW7NEW8PITW9BALNEOUTNE lost in Week 7DJSW1KCW2SEAW3BUFW4PHIW5SFW6DENW7GBW8DALW9JAXPHIOUTPHI lost in Week 4ThaddeusW1SEAW2SFW3MIAW4KCW5DETW6GBW7NYJW8NOW9NEMIAOUTMIA lost in Week 3",
+    "survivorError": "",
+    "brokenImages": 0,
+    "selectFit": [
+     {
+      "id": "weekSelect",
+      "label": "2026 · Week 10",
+      "textWidth": 84,
+      "contentBoxWidth": 76,
+      "selectWidth": 126,
+      "fits": false
+     }
+    ],
+    "screenshot": "screenshots/tracker-pickem-week10-standings-390.jpg"
+   },
+   "survivor": {
+    "innerWidth": 390,
+    "innerHeight": 844,
+    "clientWidth": 390,
+    "scrollWidth": 390,
+    "bodyScrollWidth": 390,
+    "view": "survivor",
+    "sync": "PICK'EM PAUSED · refreshes on return",
+    "weekLine": "Week 10 · revision 2 · Nov 13–Nov 17, 2026 · D.C. · JC · DJS · Thaddeus",
+    "weekSelected": "2026 · Week 10",
+    "weekOptions": [
+     "2026 · Week 9",
+     "2026 · Week 10"
+    ],
+    "standings": [
+     [
+      "1",
+      "D.C.",
+      "T-1Top 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1WIN CEILING · unresolved tiebreak not projected",
+      "35"
+     ],
+     [
+      "1",
+      "JC",
+      "T-1Top 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1WIN CEILING · unresolved tiebreak not projected",
+      "37"
+     ],
+     [
+      "1",
+      "DJS",
+      "T-1Top 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1WIN CEILING · unresolved tiebreak not projected",
+      "55"
+     ],
+     [
+      "1",
+      "Thaddeus",
+      "T-1Top 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1WIN CEILING · unresolved tiebreak not projected",
+      "41"
+     ]
+    ],
+    "survivorWeek": "2026 · Week 6",
+    "survivorMeta": "Week 6 · revision 2",
+    "survivorFeed": "LIVE · NFL results",
+    "survivorMetrics": {
+     "pool": "4",
+     "entered": "1",
+     "stillIn": "1",
+     "pending": "0"
+    },
+    "survivorTracked": "D.C.\nW1\nNE\nW2\nMIN\nW3\nSF\nW4\nGB\nW5\nDEN\nW6\nBUF\nNE\nOUT\nNE lost in Week 1\nDJS\nW1\nSF\nW2\nGB\nW3\nDET\nW4\nSEA\nW5\nNYG\nW6\nKC\nNYG\nOUT\nNFL tie eliminated entry in Week 5\nThaddeus\nW1\nBUF\nW2\nPHI\nW3\nBAL\nW4\nKC\nW5\nDEN\nW6\nPIT\nPIT\nALIVE\nAlive through Week 6",
+    "survivorError": "",
+    "brokenImages": 0,
+    "selectFit": [
+     {
+      "id": "survivorWeekSelect",
+      "label": "2026 · Week 6",
+      "textWidth": 79,
+      "contentBoxWidth": 314,
+      "selectWidth": 364,
+      "fits": true
+     }
+    ],
+    "screenshot": "screenshots/tracker-survivor-week6-390.jpg"
+   },
+   "gateway": [
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    }
+   ],
+   "console": [],
+   "checks": {
+    "viewportIsRequestedWidth": true,
+    "noDocumentOverflow": true,
+    "pickemWeek10Revision": true,
+    "survivorWeek6Revision": true,
+    "pickemTrackedRows": true,
+    "survivorWeek6Selected": true,
+    "survivorPool": true,
+    "gatewayChildOnly": true,
+    "noBrokenImages": true,
+    "weekSelectorLabelsFit": false,
+    "noAppConsoleErrors": true
+   }
+  },
+  {
+   "width": 430,
+   "pickem": {
+    "innerWidth": 430,
+    "innerHeight": 844,
+    "clientWidth": 430,
+    "scrollWidth": 430,
+    "bodyScrollWidth": 430,
+    "view": "standings",
+    "sync": "LIVE · data 0s old",
+    "weekLine": "Week 10 · revision 2 · Nov 13–Nov 17, 2026 · D.C. · JC · DJS · Thaddeus",
+    "weekSelected": "2026 · Week 10",
+    "weekOptions": [
+     "2026 · Week 9",
+     "2026 · Week 10"
+    ],
+    "standings": [
+     [
+      "1",
+      "D.C.",
+      "T-1\nTop 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1\nWIN CEILING · unresolved tiebreak not projected",
+      "35"
+     ],
+     [
+      "1",
+      "JC",
+      "T-1\nTop 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1\nWIN CEILING · unresolved tiebreak not projected",
+      "37"
+     ],
+     [
+      "1",
+      "DJS",
+      "T-1\nTop 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1\nWIN CEILING · unresolved tiebreak not projected",
+      "55"
+     ],
+     [
+      "1",
+      "Thaddeus",
+      "T-1\nTop 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1\nWIN CEILING · unresolved tiebreak not projected",
+      "41"
+     ]
+    ],
+    "survivorWeek": "2026 · Week 9",
+    "survivorMeta": "Week 9 · revision 1",
+    "survivorFeed": "LIVE · 1 TEAM RESULT UNVERIFIED",
+    "survivorMetrics": {
+     "pool": "4",
+     "entered": "0",
+     "stillIn": "0",
+     "pending": "0"
+    },
+    "survivorTracked": "D.C.W1BUFW2PHIW3KCW4SFW5DETW6GBW7NEW8PITW9BALNEOUTNE lost in Week 7DJSW1KCW2SEAW3BUFW4PHIW5SFW6DENW7GBW8DALW9JAXPHIOUTPHI lost in Week 4ThaddeusW1SEAW2SFW3MIAW4KCW5DETW6GBW7NYJW8NOW9NEMIAOUTMIA lost in Week 3",
+    "survivorError": "",
+    "brokenImages": 0,
+    "selectFit": [
+     {
+      "id": "weekSelect",
+      "label": "2026 · Week 10",
+      "textWidth": 84,
+      "contentBoxWidth": 76,
+      "selectWidth": 126,
+      "fits": false
+     }
+    ],
+    "screenshot": "screenshots/tracker-pickem-week10-standings-430.jpg"
+   },
+   "survivor": {
+    "innerWidth": 430,
+    "innerHeight": 844,
+    "clientWidth": 430,
+    "scrollWidth": 430,
+    "bodyScrollWidth": 430,
+    "view": "survivor",
+    "sync": "PICK'EM PAUSED · refreshes on return",
+    "weekLine": "Week 10 · revision 2 · Nov 13–Nov 17, 2026 · D.C. · JC · DJS · Thaddeus",
+    "weekSelected": "2026 · Week 10",
+    "weekOptions": [
+     "2026 · Week 9",
+     "2026 · Week 10"
+    ],
+    "standings": [
+     [
+      "1",
+      "D.C.",
+      "T-1Top 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1WIN CEILING · unresolved tiebreak not projected",
+      "35"
+     ],
+     [
+      "1",
+      "JC",
+      "T-1Top 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1WIN CEILING · unresolved tiebreak not projected",
+      "37"
+     ],
+     [
+      "1",
+      "DJS",
+      "T-1Top 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1WIN CEILING · unresolved tiebreak not projected",
+      "55"
+     ],
+     [
+      "1",
+      "Thaddeus",
+      "T-1Top 3% · 43 tied",
+      "0",
+      "0",
+      "14",
+      "—",
+      "#1WIN CEILING · unresolved tiebreak not projected",
+      "41"
+     ]
+    ],
+    "survivorWeek": "2026 · Week 6",
+    "survivorMeta": "Week 6 · revision 2",
+    "survivorFeed": "LIVE · NFL results",
+    "survivorMetrics": {
+     "pool": "4",
+     "entered": "1",
+     "stillIn": "1",
+     "pending": "0"
+    },
+    "survivorTracked": "D.C.\nW1\nNE\nW2\nMIN\nW3\nSF\nW4\nGB\nW5\nDEN\nW6\nBUF\nNE\nOUT\nNE lost in Week 1\nDJS\nW1\nSF\nW2\nGB\nW3\nDET\nW4\nSEA\nW5\nNYG\nW6\nKC\nNYG\nOUT\nNFL tie eliminated entry in Week 5\nThaddeus\nW1\nBUF\nW2\nPHI\nW3\nBAL\nW4\nKC\nW5\nDEN\nW6\nPIT\nPIT\nALIVE\nAlive through Week 6",
+    "survivorError": "",
+    "brokenImages": 0,
+    "selectFit": [
+     {
+      "id": "survivorWeekSelect",
+      "label": "2026 · Week 6",
+      "textWidth": 79,
+      "contentBoxWidth": 354,
+      "selectWidth": 404,
+      "fits": true
+     }
+    ],
+    "screenshot": "screenshots/tracker-survivor-week6-430.jpg"
+   },
+   "gateway": [
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    }
+   ],
+   "console": [],
+   "checks": {
+    "viewportIsRequestedWidth": true,
+    "noDocumentOverflow": true,
+    "pickemWeek10Revision": true,
+    "survivorWeek6Revision": true,
+    "pickemTrackedRows": true,
+    "survivorWeek6Selected": true,
+    "survivorPool": true,
+    "gatewayChildOnly": true,
+    "noBrokenImages": true,
+    "weekSelectorLabelsFit": false,
+    "noAppConsoleErrors": true
+   }
+  }
+ ]
+}

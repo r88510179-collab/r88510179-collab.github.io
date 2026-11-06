@@ -1,0 +1,188 @@
+{
+ "at": "2026-11-06T00:28:44.076Z",
+ "target": {
+  "auth": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth",
+  "data": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1"
+ },
+ "checks": [
+  {
+   "name": "anonymous token issued by child Auth",
+   "observed": {
+    "role": "anonymous"
+   },
+   "pass": true
+  },
+  {
+   "name": "anonymous reads locked Pick'em weeks",
+   "observed": {
+    "status": 200,
+    "rows": 1,
+    "code": null,
+    "message": null
+   },
+   "pass": true
+  },
+  {
+   "name": "anonymous INSERT refused",
+   "observed": {
+    "status": 403,
+    "rows": null,
+    "code": "42501",
+    "message": "permission denied for table nfl_pool_weeks"
+   },
+   "pass": true
+  },
+  {
+   "name": "anonymous UPDATE refused or matches nothing",
+   "observed": {
+    "status": 403,
+    "rows": null,
+    "code": "42501",
+    "message": "permission denied for table nfl_pool_weeks"
+   },
+   "pass": true
+  },
+  {
+   "name": "no-credential read refused",
+   "observed": {
+    "status": 400,
+    "rows": null,
+    "code": null,
+    "message": "missing authentication credentials: required authorization bearer token in JWT format"
+   },
+   "pass": true
+  },
+  {
+   "name": "malformed bearer refused",
+   "observed": {
+    "status": 400,
+    "rows": null,
+    "code": null,
+    "message": "Provided authentication token is not a valid JWT encoding"
+   },
+   "pass": true
+  },
+  {
+   "name": "forged-signature JWT refused",
+   "observed": {
+    "status": 400,
+    "rows": null,
+    "code": null,
+    "message": "signature error"
+   },
+   "pass": true
+  },
+  {
+   "name": "wrong account (synthetic, role user) signs in to child Auth",
+   "observed": {
+    "signIn": 200,
+    "token": 200,
+    "role": "user",
+    "jwtRole": "authenticated"
+   },
+   "pass": true
+  },
+  {
+   "name": "wrong account sees no publisher rows",
+   "observed": {
+    "status": 200,
+    "rows": 0,
+    "code": null,
+    "message": null
+   },
+   "pass": true
+  },
+  {
+   "name": "wrong account Pick'em INSERT refused by RLS",
+   "observed": {
+    "status": 403,
+    "rows": null,
+    "code": "42501",
+    "message": "new row violates row-level security policy for table \"nfl_pool_weeks\""
+   },
+   "pass": true
+  },
+  {
+   "name": "wrong account Survivor INSERT refused by RLS",
+   "observed": {
+    "status": 403,
+    "rows": null,
+    "code": "42501",
+    "message": "new row violates row-level security policy for table \"nfl_survivor_weeks\""
+   },
+   "pass": true
+  },
+  {
+   "name": "wrong account Pick'em UPDATE matches 0 rows",
+   "observed": {
+    "status": 200,
+    "rows": 0,
+    "code": null,
+    "message": null
+   },
+   "pass": true
+  },
+  {
+   "name": "wrong account Survivor UPDATE matches 0 rows",
+   "observed": {
+    "status": 200,
+    "rows": 0,
+    "code": null,
+    "message": null
+   },
+   "pass": true
+  },
+  {
+   "name": "wrong account DELETE removes nothing (no DELETE policy)",
+   "observed": {
+    "status": 200,
+    "rows": 0,
+    "code": null,
+    "message": null
+   },
+   "pass": true
+  },
+  {
+   "name": "synthetic publisher signs in to child Auth",
+   "observed": {
+    "signIn": 200,
+    "token": 200,
+    "role": "admin",
+    "jwtRole": "authenticated",
+    "sub": true
+   },
+   "pass": true
+  },
+  {
+   "name": "synthetic publisher reads Pick'em rows via admin policy",
+   "observed": {
+    "status": 200,
+    "rows": 1,
+    "code": null,
+    "message": null
+   },
+   "pass": true
+  },
+  {
+   "name": "synthetic publisher reads Survivor rows via admin policy",
+   "observed": {
+    "status": 200,
+    "rows": 2,
+    "code": null,
+    "message": null
+   },
+   "pass": true
+  },
+  {
+   "name": "even the synthetic publisher cannot DELETE (no DELETE policy)",
+   "observed": {
+    "status": 200,
+    "rows": 0,
+    "code": null,
+    "message": null
+   },
+   "pass": true
+  }
+ ],
+ "pass": true
+}

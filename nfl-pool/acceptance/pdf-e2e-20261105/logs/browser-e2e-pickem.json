@@ -1,0 +1,490 @@
+{
+ "summary": {
+  "startedAt": "2026-11-06T01:02:54.580Z",
+  "browser": "chromium 153.0.8010.12",
+  "base": "http://localhost:8765/nfl-pool/admin/",
+  "phase": "pickem",
+  "fixtures": {
+   "QA-PDF-E2E-Pickem-2026-W10-duplicate-page.pdf": "1dc48e84053fb7c16a8f99446575f4db9a233993e0e9f6c44ba99fc69e47b42b",
+   "QA-PDF-E2E-Pickem-2026-W10-duplicate-tracked.pdf": "dbc89f6eab1765843fafde88a783de15b4ee4636889f344c4f28f2a5adbbd059",
+   "QA-PDF-E2E-Pickem-2026-W10-invalid-schedule.pdf": "f9a8a59fdcc0380a1f17510df3bbec3e0e07fedc17ca64c9cf2f5a00db9e81d2",
+   "QA-PDF-E2E-Pickem-2026-W10-missing-picks.pdf": "e75e7d618eaab25e058bc275a8ffe4f74de65bdee087e8a233f088a3ccd733fc",
+   "QA-PDF-E2E-Pickem-2026-W10-r1.pdf": "0c667fae0794945c54df478a42b4c007a138ea5a25e5f055926cf8d94342a196",
+   "QA-PDF-E2E-Pickem-2026-W10-r2.pdf": "68f33324e4fdb04550409a0dba692e91d769dcc28c0e41e187cea371c6c498ca",
+   "QA-PDF-E2E-Pickem-2026-W10-unanchored.pdf": "cbfb9a463e0c24c57fd490987f497f5264b0b9b1a7af4eb5300da9e9a1a35757",
+   "QA-PDF-E2E-Survivor-2026-W6-bye-pick.pdf": "f7c9591632834017b59965f0d6fcfcdbc8722c1bdf9f67339cbae764e5904a8e",
+   "QA-PDF-E2E-Survivor-2026-W6-duplicate-tracked.pdf": "0c0fa18e8972be88f57d729d0407fc8897f2d2c4c4f8c56e7c27084fa5703035",
+   "QA-PDF-E2E-Survivor-2026-W6-r1.pdf": "401144f584de3f4ce05c5481db774f10568836ee47e73edcb526fb048c627cf7",
+   "QA-PDF-E2E-Survivor-2026-W6-r2.pdf": "8ee186b49dc6b52045ffc757ae2659e36f3b060f5254cf399338b12429af2180",
+   "QA-PDF-E2E-Survivor-2026-W6-unknown-team.pdf": "ca6f4b144f012570561a08aa69cab99f35be418b6b85a90dd93c8dba44ecab33",
+   "QA-PDF-E2E-malformed.pdf": "8220ebdf1c869ecf6ae649b8554ebb92561e02c9f50d5033944751bfd7c72151"
+  },
+  "finishedAt": "2026-11-06T01:03:20.258Z",
+  "steps": 17,
+  "passed": 17,
+  "failed": [],
+  "isolation": {
+   "forbiddenRequests": [],
+   "neonHostsContacted": [
+    "ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech",
+    "ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech"
+   ],
+   "onlyChildNeon": true,
+   "pass": true
+  }
+ },
+ "steps": [
+  {
+   "id": "P01",
+   "name": "QA publisher page loads fail-closed configuration bound to the QA child; email codes hidden",
+   "started": "2026-11-06T01:02:54.620Z",
+   "finished": "2026-11-06T01:02:56.871Z",
+   "pass": true,
+   "observed": {
+    "banner": "QA STAGING PUBLISHER — writes only to Neon project green-base-66242978 · child branch br-damp-credit-bbn7d0zr (qa-pr23-personal-pdf-e2e-20261105) · database nfl_pool · endpoint ep-shiny-snow-bbx446zt. Production, the QA parent br-dawn-fire-bb923034 and every other host are refused. Authorized identity: synthetic qa.pdf-e2e.publisher@example.com. QA only — never merge.",
+    "bannerClass": "qa-banner ok",
+    "auth": "SIGN IN REQUIRED",
+    "otpHidden": true,
+    "qa": {
+     "verified": true,
+     "networkRefusals": [],
+     "identityRefusals": []
+    }
+   },
+   "screenshot": "screenshots/pickem-01-qa-banner-signed-out.jpg"
+  },
+  {
+   "id": "P02",
+   "name": "wrong account (synthetic, no publisher rights) is refused and signed out by the publisher",
+   "started": "2026-11-06T01:02:56.871Z",
+   "finished": "2026-11-06T01:02:58.007Z",
+   "pass": true,
+   "observed": {
+    "message": "Sign-in failed: Authentication completed but no authorized session was created.",
+    "identityNote": "Signed-in account refused and signed out — qa.pdf-e2e.intruder@example.com is not the authorized synthetic QA publisher. Only the synthetic QA publisher qa.pdf-e2e.publisher@example.com may publish here.",
+    "auth": "SIGN IN REQUIRED",
+    "identityRefusals": [
+     "qa.pdf-e2e.intruder@example.com is not the authorized synthetic QA publisher"
+    ]
+   },
+   "screenshot": "screenshots/pickem-02-wrong-account-refused.jpg"
+  },
+  {
+   "id": "P03",
+   "name": "synthetic QA publisher signs in through the QA child Neon Auth",
+   "started": "2026-11-06T01:02:58.008Z",
+   "finished": "2026-11-06T01:02:58.829Z",
+   "pass": true,
+   "observed": {
+    "message": "Signed in securely as the synthetic QA publisher.",
+    "auth": "AUTHORIZED",
+    "signedEmail": "qa.pdf-e2e.publisher@example.com"
+   },
+   "screenshot": "screenshots/pickem-03-publisher-signed-in.jpg"
+  },
+  {
+   "id": "P04",
+   "name": "malformed PDF is rejected by the PDF reader; nothing published",
+   "started": "2026-11-06T01:02:58.829Z",
+   "finished": "2026-11-06T01:02:59.857Z",
+   "pass": true,
+   "fixture": "QA-PDF-E2E-malformed.pdf",
+   "fixtureSha256": "8220ebdf1c869ecf6ae649b8554ebb92561e02c9f50d5033944751bfd7c72151",
+   "observed": {
+    "message": "PDF READER FAILED (both pinned CDN sources): jsDelivr: Invalid PDF structure. | cdnjs: Invalid PDF structure.. No data has been published.",
+    "messageClass": "notice error",
+    "reviewHidden": true,
+    "publishDisabled": true
+   },
+   "screenshot": "screenshots/pickem-04-malformed-pdf.jpg"
+  },
+  {
+   "id": "P05",
+   "name": "tracked entry with a missing pick cell is rejected",
+   "started": "2026-11-06T01:02:59.858Z",
+   "finished": "2026-11-06T01:03:00.410Z",
+   "pass": true,
+   "fixture": "QA-PDF-E2E-Pickem-2026-W10-missing-picks.pdf",
+   "fixtureSha256": "e75e7d618eaab25e058bc275a8ffe4f74de65bdee087e8a233f088a3ccd733fc",
+   "observed": {
+    "message": "No complete tracked week was found. Week 10: JC: regular weekly row is structurally invalid",
+    "messageClass": "notice error",
+    "reviewHidden": true,
+    "publishDisabled": true
+   },
+   "screenshot": "screenshots/pickem-05-missing-picks.jpg"
+  },
+  {
+   "id": "P06",
+   "name": "duplicate tracked entry row is rejected",
+   "started": "2026-11-06T01:03:00.410Z",
+   "finished": "2026-11-06T01:03:00.960Z",
+   "pass": true,
+   "fixture": "QA-PDF-E2E-Pickem-2026-W10-duplicate-tracked.pdf",
+   "fixtureSha256": "dbc89f6eab1765843fafde88a783de15b4ee4636889f344c4f28f2a5adbbd059",
+   "observed": {
+    "message": "No complete tracked week was found. Week 10: Multiple DJS rows found",
+    "messageClass": "notice error",
+    "reviewHidden": true,
+    "publishDisabled": true
+   },
+   "screenshot": "screenshots/pickem-06-duplicate-tracked.jpg"
+  },
+  {
+   "id": "P07",
+   "name": "sheet game that is not on the NFL Week 10 schedule is rejected",
+   "started": "2026-11-06T01:03:00.961Z",
+   "finished": "2026-11-06T01:03:01.875Z",
+   "pass": true,
+   "fixture": "QA-PDF-E2E-Pickem-2026-W10-invalid-schedule.pdf",
+   "fixtureSha256": "f9a8a59fdcc0380a1f17510df3bbec3e0e07fedc17ca64c9cf2f5a00db9e81d2",
+   "observed": {
+    "message": "Schedule mismatch for CHI at CIN. Found 0 matching NFL games.",
+    "messageClass": "notice error",
+    "reviewHidden": true,
+    "publishDisabled": true
+   },
+   "screenshot": "screenshots/pickem-07-invalid-schedule.jpg"
+  },
+  {
+   "id": "P08",
+   "name": "field gate: unanchored sheet keeps tracked entries valid but withholds full-field metrics (not published)",
+   "started": "2026-11-06T01:03:01.876Z",
+   "finished": "2026-11-06T01:03:02.994Z",
+   "pass": true,
+   "fixture": "QA-PDF-E2E-Pickem-2026-W10-unanchored.pdf",
+   "fixtureSha256": "cbfb9a463e0c24c57fd490987f497f5264b0b9b1a7af4eb5300da9e9a1a35757",
+   "observed": {
+    "message": "Week 10 parsed. Full-field metrics unavailable — Participant-shaped PDF row exists outside the proven regular participant table. The four tracked entries remain valid.",
+    "reviewTitle": "2026 · Week 10 · 14 games · 4 entries",
+    "validation": [
+     "✓ Tracked rows valid",
+     "✓ Four tracked entries found",
+     "✓ Anonymous privacy allowlist enforced",
+     "⚠ Full-field metrics unavailable — Participant-shaped PDF row exists outside the proven regular participant table. The four tracked entries remain valid.",
+     "✓ NFL schedule matched"
+    ]
+   },
+   "screenshot": "screenshots/pickem-08-unanchored-field-gate.jpg"
+  },
+  {
+   "id": "P09",
+   "name": "field gate: duplicate-page sheet keeps tracked entries valid but withholds full-field metrics (not published)",
+   "started": "2026-11-06T01:03:02.995Z",
+   "finished": "2026-11-06T01:03:04.115Z",
+   "pass": true,
+   "fixture": "QA-PDF-E2E-Pickem-2026-W10-duplicate-page.pdf",
+   "fixtureSha256": "1dc48e84053fb7c16a8f99446575f4db9a233993e0e9f6c44ba99fc69e47b42b",
+   "observed": {
+    "message": "Week 10 parsed. Full-field metrics unavailable — Duplicate PDF page or repeated source table region detected. The four tracked entries remain valid.",
+    "reviewTitle": "2026 · Week 10 · 14 games · 4 entries",
+    "validation": [
+     "✓ Tracked rows valid",
+     "✓ Four tracked entries found",
+     "✓ Anonymous privacy allowlist enforced",
+     "⚠ Full-field metrics unavailable — Duplicate PDF page or repeated source table region detected. The four tracked entries remain valid.",
+     "✓ NFL schedule matched"
+    ]
+   },
+   "screenshot": "screenshots/pickem-09-duplicate-page-field-gate.jpg"
+  },
+  {
+   "id": "P10",
+   "name": "revision-1 multi-page sheet: parser preview, tracked rows, 43-entry field and NFL Week 10 schedule match",
+   "started": "2026-11-06T01:03:04.115Z",
+   "finished": "2026-11-06T01:03:05.583Z",
+   "pass": true,
+   "fixture": "QA-PDF-E2E-Pickem-2026-W10-r1.pdf",
+   "fixtureSha256": "0c667fae0794945c54df478a42b4c007a138ea5a25e5f055926cf8d94342a196",
+   "observed": {
+    "message": "Week 10 parsed with 43 competition entries and matched to the NFL schedule. Review it before publishing.",
+    "reviewTitle": "2026 · Week 10 · 14 games · 43 entries",
+    "validation": [
+     "✓ Tracked rows valid",
+     "✓ Four tracked entries found",
+     "✓ Anonymous privacy allowlist enforced",
+     "✓ Full-field regular Pick'em data validated · 43 entries",
+     "✓ NFL schedule matched"
+    ],
+    "entries": [
+     [
+      "D.C.",
+      "1 4 6 7 9 11 14 16 17 20 22 23 26 27",
+      "35"
+     ],
+     [
+      "JC",
+      "2 3 5 7 10 12 14 15 18 19 21 23 25 27",
+      "37"
+     ],
+     [
+      "DJS",
+      "1 4 5 7 10 12 14 15 17 20 22 23 25 27",
+      "55"
+     ],
+     [
+      "Thaddeus",
+      "NO PICKS SUBMITTED",
+      "—"
+     ]
+    ],
+    "games": [
+     [
+      "1",
+      "1 Commanders",
+      "at",
+      "2 Giants",
+      "2026-11-13"
+     ],
+     [
+      "2",
+      "3 Patriots",
+      "at",
+      "4 Lions",
+      "2026-11-15"
+     ],
+     [
+      "3",
+      "5 Chiefs",
+      "at",
+      "6 Falcons",
+      "2026-11-15"
+     ],
+     [
+      "4",
+      "7 Texans",
+      "at",
+      "8 Browns",
+      "2026-11-15"
+     ],
+     [
+      "5",
+      "9 Vikings",
+      "at",
+      "10 Packers",
+      "2026-11-15"
+     ],
+     [
+      "6",
+      "11 Jaguars",
+      "at",
+      "12 Titans",
+      "2026-11-15"
+     ],
+     [
+      "7",
+      "13 Dolphins",
+      "at",
+      "14 Colts",
+      "2026-11-15"
+     ],
+     [
+      "8",
+      "15 Panthers",
+      "at",
+      "16 Saints",
+      "2026-11-15"
+     ],
+     [
+      "9",
+      "17 Bills",
+      "at",
+      "18 Jets",
+      "2026-11-15"
+     ],
+     [
+      "10",
+      "19 Seahawks",
+      "at",
+      "20 Raiders",
+      "2026-11-15"
+     ],
+     [
+      "11",
+      "21 Rams",
+      "at",
+      "22 Cardinals",
+      "2026-11-15"
+     ],
+     [
+      "12",
+      "23 49ers",
+      "at",
+      "24 Cowboys",
+      "2026-11-15"
+     ],
+     [
+      "13",
+      "25 Steelers",
+      "at",
+      "26 Bengals",
+      "2026-11-16"
+     ],
+     [
+      "14",
+      "27 Chargers",
+      "at",
+      "28 Ravens",
+      "2026-11-17"
+     ]
+    ]
+   },
+   "screenshot": "screenshots/pickem-10-r1-preview.jpg"
+  },
+  {
+   "id": "P11",
+   "name": "publish revision 1 (double-dispatched click) writes exactly one locked row",
+   "started": "2026-11-06T01:03:05.583Z",
+   "finished": "2026-11-06T01:03:06.747Z",
+   "pass": true,
+   "fixture": "QA-PDF-E2E-Pickem-2026-W10-r1.pdf",
+   "observed": {
+    "message": "Week 10 published and locked successfully. Revision 1.",
+    "writes": [
+     {
+      "ctx": "pickem-A",
+      "at": "2026-11-06T01:03:06.057Z",
+      "method": "POST",
+      "host": "ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech",
+      "path": "/nfl_pool/rest/v1/nfl_pool_weeks",
+      "query": "?select=season%2Cweek%2Crevision",
+      "type": "fetch",
+      "status": 201,
+      "failure": null
+     }
+    ]
+   },
+   "screenshot": "screenshots/pickem-11-r1-published.jpg"
+  },
+  {
+   "id": "P12",
+   "name": "duplicate submission: publishing the locked week again is refused without a write",
+   "started": "2026-11-06T01:03:06.747Z",
+   "finished": "2026-11-06T01:03:08.718Z",
+   "pass": true,
+   "observed": {
+    "sameCandidate": "Week 10 is already locked. Check “replace locked week” only if you intentionally need to correct it.",
+    "freshUploadOfSameFile": "Week 10 is already locked. Check “replace locked week” only if you intentionally need to correct it.",
+    "writes": 0
+   },
+   "screenshot": "screenshots/pickem-12-duplicate-refused.jpg"
+  },
+  {
+   "id": "P13",
+   "name": "revision-2 sheet parses; without “replace” the locked week is refused (locking)",
+   "started": "2026-11-06T01:03:13.888Z",
+   "finished": "2026-11-06T01:03:16.888Z",
+   "pass": true,
+   "fixture": "QA-PDF-E2E-Pickem-2026-W10-r2.pdf",
+   "fixtureSha256": "68f33324e4fdb04550409a0dba692e91d769dcc28c0e41e187cea371c6c498ca",
+   "observed": {
+    "reviewTitle": "2026 · Week 10 · 14 games · 43 entries",
+    "thaddeus": [
+     "Thaddeus",
+     "1 3 5 8 10 11 13 15 17 19 21 23 25 28",
+     "41"
+    ],
+    "locked": "Week 10 is already locked. Check “replace locked week” only if you intentionally need to correct it.",
+    "writes": 0
+   },
+   "screenshot": "screenshots/pickem-13-r2-locked-without-replace.jpg"
+  },
+  {
+   "id": "P14",
+   "name": "stale-revision race: a held write from a second session loses compare-and-swap after revision 2 lands",
+   "started": "2026-11-06T01:03:16.888Z",
+   "finished": "2026-11-06T01:03:20.177Z",
+   "pass": true,
+   "fixture": "QA-PDF-E2E-Pickem-2026-W10-r2.pdf",
+   "observed": {
+    "winner": "Week 10 published and locked successfully. Revision 2.",
+    "loser": "Publish failed: Week 10 changed before this write (no row matched revision 1). Nothing from this stale attempt was written. Read and validate the sheet again before publishing.",
+    "winnerWrites": [
+     {
+      "ctx": "pickem-B",
+      "at": "2026-11-06T01:03:18.460Z",
+      "method": "PATCH",
+      "host": "ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech",
+      "path": "/nfl_pool/rest/v1/nfl_pool_weeks",
+      "query": "?season=eq.2026&week=eq.10&revision=eq.1&select=season%2Cweek%2Crevision",
+      "type": "fetch",
+      "status": 200,
+      "failure": null
+     }
+    ],
+    "loserWrites": [
+     {
+      "ctx": "pickem-C",
+      "at": "2026-11-06T01:03:18.768Z",
+      "method": "PATCH",
+      "host": "ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech",
+      "path": "/nfl_pool/rest/v1/nfl_pool_weeks",
+      "query": "?season=eq.2026&week=eq.10&revision=eq.1&select=season%2Cweek%2Crevision",
+      "type": "fetch",
+      "status": 200,
+      "failure": null
+     }
+    ]
+   },
+   "screenshots": [
+    "screenshots/pickem-14a-r2-revision-2-published.jpg",
+    "screenshots/pickem-14b-stale-cas-refused.jpg"
+   ]
+  },
+  {
+   "id": "pickem-A-guard",
+   "name": "pickem-A: network guard and identity log at end of session",
+   "pass": true,
+   "observed": {
+    "verified": true,
+    "networkRefusals": [],
+    "identityRefusals": [
+     "qa.pdf-e2e.intruder@example.com is not the authorized synthetic QA publisher"
+    ]
+   },
+   "console": [
+    "warning: Service Worker registration blocked by Playwright",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=10&limit=100&_=1793926981161' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=10&limit=100&_=1793926982078' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=10&limit=100&_=1793926983195' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=10&limit=100&_=1793926984301' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=10&limit=100&_=1793926987218' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED"
+   ]
+  },
+  {
+   "id": "pickem-B-guard",
+   "name": "pickem-B: network guard and identity log at end of session",
+   "pass": true,
+   "observed": {
+    "verified": true,
+    "networkRefusals": [],
+    "identityRefusals": []
+   },
+   "console": [
+    "warning: Service Worker registration blocked by Playwright",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=10&limit=100&_=1793926994446' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED"
+   ]
+  },
+  {
+   "id": "pickem-C-guard",
+   "name": "pickem-C: network guard and identity log at end of session",
+   "pass": true,
+   "observed": {
+    "verified": true,
+    "networkRefusals": [],
+    "identityRefusals": []
+   },
+   "console": [
+    "warning: Service Worker registration blocked by Playwright",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=10&limit=100&_=1793926997475' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,336 @@
+{
+ "source": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=N&limit=100",
+ "fetched_at": "2026-11-05T23:16Z",
+ "weeks": [
+  {
+   "week": 1,
+   "context": [
+    2026,
+    2,
+    1
+   ],
+   "events": 16,
+   "final": 16,
+   "pre": 0,
+   "ties": [],
+   "payload_sha256": "0a7e70cf6582e067687fbb10877e35918754b805347ff9ca924a666157a3d537",
+   "games": [
+    "NE@SEA 10-13",
+    "SF@LAR 27-7",
+    "TB@CIN 27-33",
+    "NO@DET 30-31",
+    "NYJ@TEN 23-10",
+    "BAL@IND 41-23",
+    "ATL@PIT 13-20",
+    "CHI@CAR 59-37",
+    "CLE@JAX 10-34",
+    "BUF@HOU 36-31",
+    "MIA@LV 13-27",
+    "GB@MIN 22-39",
+    "WSH@PHI 22-24",
+    "ARI@LAC 26-14",
+    "DAL@NYG 20-28",
+    "DEN@KC 10-31"
+   ]
+  },
+  {
+   "week": 2,
+   "context": [
+    2026,
+    2,
+    2
+   ],
+   "events": 16,
+   "final": 16,
+   "pre": 0,
+   "ties": [],
+   "payload_sha256": "630f989c2d0a47cd0c1eb8253bd9ef7efdbb160c95be947a066670cf0f83f853",
+   "games": [
+    "DET@BUF 31-41",
+    "CAR@ATL 34-3",
+    "MIN@CHI 9-3",
+    "PHI@TEN 24-20",
+    "PIT@NE 3-20",
+    "GB@NYJ 20-17",
+    "CLE@TB 23-19",
+    "NO@BAL 24-17",
+    "CIN@HOU 20-6",
+    "JAX@DEN 13-20",
+    "LV@LAC 26-14",
+    "WSH@DAL 20-37",
+    "SEA@ARI 31-7",
+    "MIA@SF 13-35",
+    "IND@KC 30-33",
+    "NYG@LAR 6-28"
+   ]
+  },
+  {
+   "week": 3,
+   "context": [
+    2026,
+    2,
+    3
+   ],
+   "events": 16,
+   "final": 16,
+   "pre": 0,
+   "ties": [],
+   "payload_sha256": "63e0c7cea49339c940af9eea32e94230f9e0721ccc34de965bc5ee42b3006464",
+   "games": [
+    "ATL@GB 35-14",
+    "LAC@BUF 16-24",
+    "CAR@CLE 18-21",
+    "NYJ@DET 24-31",
+    "HOU@IND 17-19",
+    "KC@MIA 24-10",
+    "TEN@NYG 7-12",
+    "CIN@PIT 27-30",
+    "SEA@WSH 31-33",
+    "NE@JAX 6-35",
+    "ARI@SF 30-36",
+    "MIN@TB 23-16",
+    "BAL@DAL 34-31",
+    "LV@NO 35-27",
+    "LAR@DEN 26-30",
+    "PHI@CHI 7-27"
+   ]
+  },
+  {
+   "week": 4,
+   "context": [
+    2026,
+    2,
+    4
+   ],
+   "events": 16,
+   "final": 16,
+   "pre": 0,
+   "ties": [],
+   "payload_sha256": "52e959bd95ce4b0e61051e3247f667a4b024f498781d04df187ffe668790d200",
+   "games": [
+    "PIT@CLE 24-27",
+    "IND@WSH 30-13",
+    "NE@BUF 29-26",
+    "NYJ@CHI 12-23",
+    "JAX@CIN 22-17",
+    "ARI@NYG 24-36",
+    "LAR@PHI 24-20",
+    "GB@TB 17-14",
+    "TEN@BAL 18-24",
+    "DAL@HOU 34-30",
+    "MIA@MIN 10-15",
+    "KC@LV 30-27",
+    "DEN@SF 14-24",
+    "LAC@SEA 23-30",
+    "DET@CAR 26-32",
+    "ATL@NO 45-24"
+   ]
+  },
+  {
+   "week": 5,
+   "context": [
+    2026,
+    2,
+    5
+   ],
+   "events": 15,
+   "final": 15,
+   "pre": 0,
+   "ties": [
+    "NYG@WSH 27-27"
+   ],
+   "payload_sha256": "11452a662b5f9db93631ac3a9ed0d41ce8b21aca05ef4ae47846443f9a72dbda",
+   "games": [
+    "TB@DAL 24-16",
+    "PHI@JAX 17-19",
+    "CHI@GB 7-31",
+    "HOU@TEN 26-3",
+    "CIN@MIA 31-24",
+    "LV@NE 17-45",
+    "MIN@NO 23-13",
+    "CLE@NYJ 12-17",
+    "IND@PIT 22-34",
+    "NYG@WSH 27-27",
+    "DEN@LAC 23-17",
+    "DET@ARI 45-21",
+    "SF@SEA 32-29",
+    "BAL@ATL 30-23",
+    "BUF@LAR 37-34"
+   ]
+  },
+  {
+   "week": 6,
+   "context": [
+    2026,
+    2,
+    6
+   ],
+   "events": 14,
+   "final": 14,
+   "pre": 0,
+   "ties": [],
+   "payload_sha256": "90430edd5f0fb73213334a5ebbd0fa790867c052321d8892cf3a999acb6ed4fa",
+   "games": [
+    "SEA@DEN 14-17",
+    "HOU@JAX 34-31",
+    "CHI@ATL 31-23",
+    "BAL@CLE 10-13",
+    "TEN@IND 26-20",
+    "NYJ@NE 19-26",
+    "NO@NYG 34-27",
+    "CAR@PHI 25-14",
+    "PIT@TB 26-19",
+    "ARI@LAR 18-16",
+    "LAC@KC 6-22",
+    "BUF@LV 33-30",
+    "DAL@GB 13-23",
+    "WSH@SF 17-23"
+   ]
+  },
+  {
+   "week": 7,
+   "context": [
+    2026,
+    2,
+    7
+   ],
+   "events": 14,
+   "final": 14,
+   "pre": 0,
+   "ties": [],
+   "payload_sha256": "267036dab3a42d9587345b7b939ef189e93849fe379c0961a3244be5ce9af1ff",
+   "games": [
+    "NE@CHI 24-30",
+    "PIT@NO 16-10",
+    "SF@ATL 20-29",
+    "CLE@TEN 27-24",
+    "IND@MIN 10-16",
+    "MIA@NYJ 28-25",
+    "TB@CAR 43-13",
+    "CIN@BAL 35-13",
+    "NYG@HOU 27-21",
+    "DEN@ARI 30-16",
+    "GB@DET 17-20",
+    "LAR@LV 35-21",
+    "KC@SEA 3-20",
+    "DAL@PHI 38-21"
+   ]
+  },
+  {
+   "week": 8,
+   "context": [
+    2026,
+    2,
+    8
+   ],
+   "events": 14,
+   "final": 14,
+   "pre": 0,
+   "ties": [],
+   "payload_sha256": "4d85e0a8d2bb03c3c31092924b5a87574431ead1a74e90a659a9e2d0ec92b77c",
+   "games": [
+    "CAR@GB 19-27",
+    "BAL@BUF 10-36",
+    "TEN@CIN 36-43",
+    "ARI@DAL 33-30",
+    "MIN@DET 15-19",
+    "LV@NYJ 38-33",
+    "CLE@PIT 6-27",
+    "ATL@TB 0-16",
+    "IND@JAX 7-42",
+    "LAC@LAR 9-24",
+    "KC@DEN 24-28",
+    "NE@MIA 24-19",
+    "PHI@WSH 10-27",
+    "CHI@SEA 34-17"
+   ]
+  },
+  {
+   "week": 9,
+   "context": [
+    2026,
+    2,
+    9
+   ],
+   "events": 15,
+   "final": 0,
+   "pre": 15,
+   "ties": [],
+   "payload_sha256": "03a4d85e2ba990a04cbcaaed3baeda0dc5903898373145ed5ebfdc69d4c6ac57",
+   "games": [
+    "JAX@BAL pre",
+    "CIN@ATL pre",
+    "DAL@IND pre",
+    "NYJ@KC pre",
+    "DET@MIA pre",
+    "CLE@NO pre",
+    "NYG@PHI pre",
+    "LAR@WSH pre",
+    "DEN@CAR pre",
+    "HOU@LAC pre",
+    "GB@NE pre",
+    "LV@SF pre",
+    "ARI@SEA pre",
+    "TB@CHI pre",
+    "BUF@MIN pre"
+   ]
+  },
+  {
+   "week": 10,
+   "context": [
+    2026,
+    2,
+    10
+   ],
+   "events": 14,
+   "final": 0,
+   "pre": 14,
+   "ties": [],
+   "payload_sha256": "1d30ce492dfcffe99cb0baa5bf19abd48bae2bfb577ff9cd7ba68b2e195d5c9a",
+   "games": [
+    "WSH@NYG pre",
+    "NE@DET pre",
+    "KC@ATL pre",
+    "HOU@CLE pre",
+    "MIN@GB pre",
+    "JAX@TEN pre",
+    "MIA@IND pre",
+    "CAR@NO pre",
+    "BUF@NYJ pre",
+    "SEA@LV pre",
+    "LAR@ARI pre",
+    "SF@DAL pre",
+    "PIT@CIN pre",
+    "LAC@BAL pre"
+   ]
+  },
+  {
+   "week": 11,
+   "context": [
+    2026,
+    2,
+    11
+   ],
+   "events": 13,
+   "final": 0,
+   "pre": 13,
+   "ties": [],
+   "payload_sha256": "ffa6f6b3ca845df71cc106675c525197fc09c86acfc7e6ab692c1aefbd3dd90b",
+   "games": [
+    "IND@HOU pre",
+    "MIA@BUF pre",
+    "NO@CHI pre",
+    "TEN@DAL pre",
+    "TB@DET pre",
+    "ARI@KC pre",
+    "JAX@NYG pre",
+    "BAL@CAR pre",
+    "NYJ@LAC pre",
+    "LV@DEN pre",
+    "PIT@PHI pre",
+    "MIN@SF pre",
+    "CIN@WSH pre"
+   ]
+  }
+ ]
+}

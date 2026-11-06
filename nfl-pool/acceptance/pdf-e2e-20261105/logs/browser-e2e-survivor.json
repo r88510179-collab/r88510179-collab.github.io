@@ -1,0 +1,405 @@
+{
+ "summary": {
+  "startedAt": "2026-11-06T01:03:36.201Z",
+  "browser": "chromium 153.0.8010.12",
+  "base": "http://localhost:8765/nfl-pool/admin/",
+  "phase": "survivor",
+  "fixtures": {
+   "QA-PDF-E2E-Pickem-2026-W10-duplicate-page.pdf": "1dc48e84053fb7c16a8f99446575f4db9a233993e0e9f6c44ba99fc69e47b42b",
+   "QA-PDF-E2E-Pickem-2026-W10-duplicate-tracked.pdf": "dbc89f6eab1765843fafde88a783de15b4ee4636889f344c4f28f2a5adbbd059",
+   "QA-PDF-E2E-Pickem-2026-W10-invalid-schedule.pdf": "f9a8a59fdcc0380a1f17510df3bbec3e0e07fedc17ca64c9cf2f5a00db9e81d2",
+   "QA-PDF-E2E-Pickem-2026-W10-missing-picks.pdf": "e75e7d618eaab25e058bc275a8ffe4f74de65bdee087e8a233f088a3ccd733fc",
+   "QA-PDF-E2E-Pickem-2026-W10-r1.pdf": "0c667fae0794945c54df478a42b4c007a138ea5a25e5f055926cf8d94342a196",
+   "QA-PDF-E2E-Pickem-2026-W10-r2.pdf": "68f33324e4fdb04550409a0dba692e91d769dcc28c0e41e187cea371c6c498ca",
+   "QA-PDF-E2E-Pickem-2026-W10-unanchored.pdf": "cbfb9a463e0c24c57fd490987f497f5264b0b9b1a7af4eb5300da9e9a1a35757",
+   "QA-PDF-E2E-Survivor-2026-W6-bye-pick.pdf": "f7c9591632834017b59965f0d6fcfcdbc8722c1bdf9f67339cbae764e5904a8e",
+   "QA-PDF-E2E-Survivor-2026-W6-duplicate-tracked.pdf": "0c0fa18e8972be88f57d729d0407fc8897f2d2c4c4f8c56e7c27084fa5703035",
+   "QA-PDF-E2E-Survivor-2026-W6-r1.pdf": "401144f584de3f4ce05c5481db774f10568836ee47e73edcb526fb048c627cf7",
+   "QA-PDF-E2E-Survivor-2026-W6-r2.pdf": "8ee186b49dc6b52045ffc757ae2659e36f3b060f5254cf399338b12429af2180",
+   "QA-PDF-E2E-Survivor-2026-W6-unknown-team.pdf": "ca6f4b144f012570561a08aa69cab99f35be418b6b85a90dd93c8dba44ecab33",
+   "QA-PDF-E2E-malformed.pdf": "8220ebdf1c869ecf6ae649b8554ebb92561e02c9f50d5033944751bfd7c72151"
+  },
+  "finishedAt": "2026-11-06T01:04:08.354Z",
+  "steps": 16,
+  "passed": 16,
+  "failed": [],
+  "isolation": {
+   "forbiddenRequests": [],
+   "neonHostsContacted": [
+    "ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech",
+    "ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech"
+   ],
+   "onlyChildNeon": true,
+   "pass": true
+  }
+ },
+ "steps": [
+  {
+   "id": "S01",
+   "name": "Survivor QA publisher page loads the QA child configuration; synthetic publisher signs in",
+   "started": "2026-11-06T01:03:36.252Z",
+   "finished": "2026-11-06T01:03:39.470Z",
+   "pass": true,
+   "observed": {
+    "banner": "QA STAGING PUBLISHER — writes only to Neon project green-base-66242978 · child branch br-damp-credit-bbn7d0zr (qa-pr23-personal-pdf-e2e-20261105) · database nfl_pool · endpoint ep-shiny-snow-bbx446zt. Production, the QA parent br-dawn-fire-bb923034 and every other host are refused. Authorized identity: synthetic qa.pdf-e2e.publisher@example.com. QA only — never merge.",
+    "auth": "AUTHORIZED",
+    "message": "Signed in securely as the synthetic QA publisher."
+   },
+   "screenshot": "screenshots/survivor-01-signed-in.jpg"
+  },
+  {
+   "id": "S02",
+   "name": "malformed PDF is rejected by the PDF reader",
+   "started": "2026-11-06T01:03:39.471Z",
+   "finished": "2026-11-06T01:03:41.101Z",
+   "pass": true,
+   "fixture": "QA-PDF-E2E-malformed.pdf",
+   "fixtureSha256": "8220ebdf1c869ecf6ae649b8554ebb92561e02c9f50d5033944751bfd7c72151",
+   "observed": {
+    "message": "PDF READER FAILED (both pinned CDN sources): jsDelivr: Invalid PDF structure. | cdnjs: Invalid PDF structure.. No data has been published.",
+    "reviewHidden": true,
+    "publishDisabled": true
+   },
+   "screenshot": "screenshots/survivor-02-malformed-pdf.jpg"
+  },
+  {
+   "id": "S03",
+   "name": "unknown team code is rejected by the parser",
+   "started": "2026-11-06T01:03:41.101Z",
+   "finished": "2026-11-06T01:03:41.628Z",
+   "pass": true,
+   "fixture": "QA-PDF-E2E-Survivor-2026-W6-unknown-team.pdf",
+   "fixtureSha256": "ca6f4b144f012570561a08aa69cab99f35be418b6b85a90dd93c8dba44ecab33",
+   "observed": {
+    "message": "DJS: unknown Week 4 team XYZ",
+    "reviewHidden": true,
+    "publishDisabled": true
+   },
+   "screenshot": "screenshots/survivor-03-unknown-team.jpg"
+  },
+  {
+   "id": "S04",
+   "name": "duplicate tracked Survivor row is rejected",
+   "started": "2026-11-06T01:03:41.628Z",
+   "finished": "2026-11-06T01:03:42.156Z",
+   "pass": true,
+   "fixture": "QA-PDF-E2E-Survivor-2026-W6-duplicate-tracked.pdf",
+   "fixtureSha256": "0c0fa18e8972be88f57d729d0407fc8897f2d2c4c4f8c56e7c27084fa5703035",
+   "observed": {
+    "message": "Multiple DJS Survivor rows found",
+    "reviewHidden": true,
+    "publishDisabled": true
+   },
+   "screenshot": "screenshots/survivor-04-duplicate-tracked.jpg"
+  },
+  {
+   "id": "S05",
+   "name": "pick of a team on its bye week (absent from the NFL Week 5 schedule) blocks publication",
+   "started": "2026-11-06T01:03:42.156Z",
+   "finished": "2026-11-06T01:03:43.703Z",
+   "pass": true,
+   "fixture": "QA-PDF-E2E-Survivor-2026-W6-bye-pick.pdf",
+   "fixtureSha256": "f7c9591632834017b59965f0d6fcfcdbc8722c1bdf9f67339cbae764e5904a8e",
+   "observed": {
+    "message": "NFL schedule verification failed; this sheet cannot be published: Week 5: KC is not scheduled in verified NFL Week 5 (bye or invalid team) — 1 entry: survivor-001. Check the sheet's Week 5 column for KC.",
+    "reviewHidden": true,
+    "publishDisabled": true
+   },
+   "screenshot": "screenshots/survivor-05-bye-week-pick.jpg"
+  },
+  {
+   "id": "S06",
+   "name": "revision-1 Survivor sheet: selection history, eligibility, tie, reused-team and loss checks require explicit confirmation",
+   "started": "2026-11-06T01:03:43.703Z",
+   "finished": "2026-11-06T01:03:45.129Z",
+   "pass": true,
+   "fixture": "QA-PDF-E2E-Survivor-2026-W6-r1.pdf",
+   "fixtureSha256": "401144f584de3f4ce05c5481db774f10568836ee47e73edcb526fb048c627cf7",
+   "observed": {
+    "message": "Survivor Week 6 parsed and matched to the NFL schedule: 4 entries, 3 with a Week 6 pick. Review the publication checks and confirm before publishing.",
+    "reviewTitle": "2026 · Week 6 · 4 entries · 3 with Week 6 pick",
+    "validation": [
+     "✓ Three tracked Survivor entries found",
+     "✓ Anonymous field privacy enforced",
+     "✓ Week columns and participant table validated",
+     "✓ 4 total entries",
+     "✓ NFL schedule verified for Weeks 1–6",
+     "⚠ Confirmation required before publishing"
+    ],
+    "entries": [
+     [
+      "D.C.",
+      "W1 NE · W2 MIN · W3 SF · W4 GB · W5 DEN · W6 BUF",
+      "BUF"
+     ],
+     [
+      "DJS",
+      "W1 SF · W2 GB · W3 DET · W4 SEA · W5 NYG · W6 KC",
+      "KC"
+     ],
+     [
+      "Thaddeus",
+      "W1 BUF · W2 PHI · W3 BAL · W4 KC · W5 DEN · W6 —",
+      "NO PICK"
+     ]
+    ],
+    "checks": "Publication checks\n1 entries are proven alive entering Week 6 from verified Weeks 1–5 NFL results; 0 of them have a Week 6 pick.\nPublished Survivor weeks visible for 2026: 2, 9.\n14 of 14 NFL Week 6 games have kicked off.\nEntry count and Weeks 1–2 pick histories match published Week 2 (revision 2).\n\nReview before publishing:\n\n1 of 1 entries alive entering Week 6 has no Week 6 pick (including Thaddeus). Publishing shows it OUT (no pick) in Week 6.\n3 entries already eliminated before Week 6 still show a Week 6 pick (1 OUT by NE's Week 1 loss; 1 OUT by NYG's Week 5 tie; 1 OUT by repeating KC in Week 3). The sheet may disagree with the NFL results or its own earlier picks; Survivor rules still treat them as OUT.\nSurvivor Weeks 3–5 have never been published; this sheet becomes the first published record of those weeks.\nPublished Survivor Week 9 already exists; it keeps its own history and is not changed by this publication.\n\nText outside the participant table (not counted):\n\nQA Synthetic Survivor Pool - picks through Week 6 (page 1) — above the Week header\nSYNTHETIC QA FIXTURE ONLY - every entrant is fictitious - not a real pool (page 1) — above the Week header\n\nSheet geometry: Week column gap 34pt · pick text offset -6pt · row pitch 20pt · name x 30–30.",
+    "confirmShown": true,
+    "confirmText": "I reviewed every item listed above and confirm this sheet is the final Survivor Week 6 submission set — no more Week 6 picks will be added. Publishing shows 1 entry OUT for no pick (Week 6).",
+    "publishDisabled": true
+   },
+   "screenshot": "screenshots/survivor-06-r1-preview-checks.jpg"
+  },
+  {
+   "id": "S07",
+   "name": "publish revision 1 after confirmation (double-dispatched click) writes exactly one locked row",
+   "started": "2026-11-06T01:03:45.129Z",
+   "finished": "2026-11-06T01:03:46.099Z",
+   "pass": true,
+   "fixture": "QA-PDF-E2E-Survivor-2026-W6-r1.pdf",
+   "observed": {
+    "message": "Survivor Week 6 published and locked. Revision 1.",
+    "writes": [
+     {
+      "ctx": "survivor-A",
+      "at": "2026-11-06T01:03:45.544Z",
+      "method": "POST",
+      "host": "ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech",
+      "path": "/nfl_pool/rest/v1/nfl_survivor_weeks",
+      "query": "?select=season%2Cweek%2Crevision",
+      "type": "fetch",
+      "status": 201,
+      "failure": null
+     }
+    ],
+    "publishDisabledAfter": true
+   },
+   "screenshot": "screenshots/survivor-07-r1-published.jpg"
+  },
+  {
+   "id": "S08",
+   "name": "duplicate submission: the same sheet re-validated is identical to revision 1 and is refused while locked",
+   "started": "2026-11-06T01:03:46.100Z",
+   "finished": "2026-11-06T01:03:47.919Z",
+   "pass": true,
+   "observed": {
+    "checks": "Publication checks\n1 entries are proven alive entering Week 6 from verified Weeks 1–5 NFL results; 0 of them have a Week 6 pick.\nPublished Survivor weeks visible for 2026: 2, 6, 9.\n14 of 14 NFL Week 6 games have kicked off.\nThis sheet is identical to published Week 6 revision 1 (entries and Weeks 1–6 pick histories).\n\nReview before publishing:\n\n1 of 1 entries alive entering Week 6 has no Week 6 pick (including Thaddeus). Publishing shows it OUT (no pick) in Week 6.\n3 entries already eliminated before Week 6 still show a Week 6 pick (1 OUT by NE's Week 1 loss; 1 OUT by NYG's Week 5 tie; 1 OUT by repeating KC in Week 3). The sheet may disagree with the NFL results or its own earlier picks; Survivor rules still treat them as OUT.\nPublished Survivor Week 9 already exists; it keeps its own history and is not changed by this publication.\n\nText outside the participant table (not counted):\n\nQA Synthetic Survivor Pool - picks through Week 6 (page 1) — above the Week header\nSYNTHETIC QA FIXTURE ONLY - every entrant is fictitious - not a real pool (page 1) — above the Week header\n\nSheet geometry: Week column gap 34pt · pick text offset -6pt · row pitch 20pt · name x 30–30.",
+    "message": "Survivor Week 6 is already locked. Check replace only for an intentional correction. Nothing was written.",
+    "writes": 1
+   },
+   "screenshot": "screenshots/survivor-08-duplicate-refused.jpg"
+  },
+  {
+   "id": "S09",
+   "name": "stale validation: a sheet validated before another session publishes revision 2 is refused without writing",
+   "started": "2026-11-06T01:03:52.917Z",
+   "finished": "2026-11-06T01:03:59.524Z",
+   "pass": true,
+   "fixture": "QA-PDF-E2E-Survivor-2026-W6-r2.pdf",
+   "fixtureSha256": "8ee186b49dc6b52045ffc757ae2659e36f3b060f5254cf399338b12429af2180",
+   "observed": {
+    "checksBeforePublish": "Publication checks\n1 entries are proven alive entering Week 6 from verified Weeks 1–5 NFL results; 1 of them have a Week 6 pick.\nPublished Survivor weeks visible for 2026: 2, 6, 9.\n14 of 14 NFL Week 6 games have kicked off.\n\nReview before publishing:\n\n3 entries already eliminated before Week 6 still show a Week 6 pick (1 OUT by NE's Week 1 loss; 1 OUT by NYG's Week 5 tie; 1 OUT by repeating KC in Week 3). The sheet may disagree with the NFL results or its own earlier picks; Survivor rules still treat them as OUT.\nThis replaces published Week 6 revision 1:\nThaddeus's Weeks 1–6 history differs from published Week 6 revision 1.\n1 pick history for Weeks 1–6 differs from published Week 6 revision 1.\nPublished Survivor Week 9 already exists; it keeps its own history and is not changed by this publication.\n\nText outside the participant table (not counted):\n\nQA Synthetic Survivor Pool - picks through Week 6 (page 1) — above the Week header\nSYNTHETIC QA FIXTURE ONLY - every entrant is fictitious - not a real pool (page 1) — above the Week header\n\nSheet geometry: Week column gap 34pt · pick text offset -6pt · row pitch 20pt · name x 30–30.",
+    "thaddeus": [
+     "Thaddeus",
+     "W1 BUF · W2 PHI · W3 BAL · W4 KC · W5 DEN · W6 PIT",
+     "PIT"
+    ],
+    "winner": "Survivor Week 6 published and locked. Revision 2.",
+    "stale": "Published Survivor weeks for 2026 changed since this sheet was validated. Nothing was written. Read & validate again.",
+    "winnerWrites": [
+     {
+      "ctx": "survivor-B",
+      "at": "2026-11-06T01:03:57.005Z",
+      "method": "PATCH",
+      "host": "ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech",
+      "path": "/nfl_pool/rest/v1/nfl_survivor_weeks",
+      "query": "?season=eq.2026&week=eq.6&revision=eq.1&select=season%2Cweek%2Crevision",
+      "type": "fetch",
+      "status": 200,
+      "failure": null
+     }
+    ],
+    "staleWrites": 0
+   },
+   "screenshots": [
+    "screenshots/survivor-09a-r2-revision-2-published.jpg",
+    "screenshots/survivor-09b-stale-validation-refused.jpg"
+   ]
+  },
+  {
+   "id": "S10",
+   "name": "wrong account is refused on the Survivor publisher",
+   "started": "2026-11-06T01:03:59.564Z",
+   "finished": "2026-11-06T01:04:03.398Z",
+   "pass": true,
+   "observed": {
+    "message": "Sign-in failed: Authentication completed but no authorized session was created.",
+    "identityNote": "Signed-in account refused and signed out — qa.pdf-e2e.intruder@example.com is not the authorized synthetic QA publisher. Only the synthetic QA publisher qa.pdf-e2e.publisher@example.com may publish here.",
+    "auth": "SIGN IN REQUIRED"
+   },
+   "screenshot": "screenshots/survivor-10-wrong-account-refused.jpg"
+  },
+  {
+   "id": "S11",
+   "name": "new browser session: authenticated publisher comparison reads back revision 2 exactly",
+   "started": "2026-11-06T01:04:03.434Z",
+   "finished": "2026-11-06T01:04:08.232Z",
+   "pass": true,
+   "fixture": "QA-PDF-E2E-Survivor-2026-W6-r2.pdf",
+   "observed": {
+    "checks": "Publication checks\n1 entries are proven alive entering Week 6 from verified Weeks 1–5 NFL results; 1 of them have a Week 6 pick.\nPublished Survivor weeks visible for 2026: 2, 6, 9.\n14 of 14 NFL Week 6 games have kicked off.\nThis sheet is identical to published Week 6 revision 2 (entries and Weeks 1–6 pick histories).\n\nReview before publishing:\n\n3 entries already eliminated before Week 6 still show a Week 6 pick (1 OUT by NE's Week 1 loss; 1 OUT by NYG's Week 5 tie; 1 OUT by repeating KC in Week 3). The sheet may disagree with the NFL results or its own earlier picks; Survivor rules still treat them as OUT.\nPublished Survivor Week 9 already exists; it keeps its own history and is not changed by this publication.\n\nText outside the participant table (not counted):\n\nQA Synthetic Survivor Pool - picks through Week 6 (page 1) — above the Week header\nSYNTHETIC QA FIXTURE ONLY - every entrant is fictitious - not a real pool (page 1) — above the Week header\n\nSheet geometry: Week column gap 34pt · pick text offset -6pt · row pitch 20pt · name x 30–30.",
+    "entries": [
+     [
+      "D.C.",
+      "W1 NE · W2 MIN · W3 SF · W4 GB · W5 DEN · W6 BUF",
+      "BUF"
+     ],
+     [
+      "DJS",
+      "W1 SF · W2 GB · W3 DET · W4 SEA · W5 NYG · W6 KC",
+      "KC"
+     ],
+     [
+      "Thaddeus",
+      "W1 BUF · W2 PHI · W3 BAL · W4 KC · W5 DEN · W6 PIT",
+      "PIT"
+     ]
+    ]
+   },
+   "screenshot": "screenshots/survivor-11-new-session-readback.jpg"
+  },
+  {
+   "id": "survivor-A-guard",
+   "name": "survivor-A: network guard and identity log at end of session",
+   "pass": true,
+   "observed": {
+    "verified": true,
+    "networkRefusals": [],
+    "identityRefusals": []
+   },
+   "console": [
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=1&limit=100&_=1793927022318' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=4&limit=100&_=1793927022319' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=2&limit=100&_=1793927022318' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=3&limit=100&_=1793927022318' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=6&limit=100&_=1793927022320' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=5&limit=100&_=1793927022319' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=1&limit=100&_=1793927023881' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=2&limit=100&_=1793927023881' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=4&limit=100&_=1793927023881' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=3&limit=100&_=1793927023881' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=5&limit=100&_=1793927023881' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=6&limit=100&_=1793927023881' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=3&limit=100&_=1793927026256' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=1&limit=100&_=1793927026256' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=4&limit=100&_=1793927026256' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=2&limit=100&_=1793927026256' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=5&limit=100&_=1793927026256' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=6&limit=100&_=1793927026257' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED"
+   ]
+  },
+  {
+   "id": "survivor-B-guard",
+   "name": "survivor-B: network guard and identity log at end of session",
+   "pass": true,
+   "observed": {
+    "verified": true,
+    "networkRefusals": [],
+    "identityRefusals": []
+   },
+   "console": [
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=2&limit=100&_=1793927035486' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=3&limit=100&_=1793927035486' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=4&limit=100&_=1793927035486' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=1&limit=100&_=1793927035485' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=5&limit=100&_=1793927035486' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=6&limit=100&_=1793927035486' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED"
+   ]
+  },
+  {
+   "id": "survivor-C-guard",
+   "name": "survivor-C: network guard and identity log at end of session",
+   "pass": true,
+   "observed": {
+    "verified": true,
+    "networkRefusals": [],
+    "identityRefusals": []
+   },
+   "console": [
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=1&limit=100&_=1793927033731' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=2&limit=100&_=1793927033732' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=4&limit=100&_=1793927033732' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=3&limit=100&_=1793927033732' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=5&limit=100&_=1793927033732' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=6&limit=100&_=1793927033732' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED"
+   ]
+  },
+  {
+   "id": "survivor-D-guard",
+   "name": "survivor-D: network guard and identity log at end of session",
+   "pass": true,
+   "observed": {
+    "verified": true,
+    "networkRefusals": [],
+    "identityRefusals": [
+     "qa.pdf-e2e.intruder@example.com is not the authorized synthetic QA publisher"
+    ]
+   },
+   "console": []
+  },
+  {
+   "id": "survivor-E-guard",
+   "name": "survivor-E: network guard and identity log at end of session",
+   "pass": true,
+   "observed": {
+    "verified": true,
+    "networkRefusals": [],
+    "identityRefusals": []
+   },
+   "console": [
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=2&limit=100&_=1793927046725' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=1&limit=100&_=1793927046724' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=3&limit=100&_=1793927046725' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=4&limit=100&_=1793927046725' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=5&limit=100&_=1793927046725' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED",
+    "error: Access to fetch at 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2026&seasontype=2&week=6&limit=100&_=1793927046726' from origin 'http://localhost:8765' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "error: Failed to load resource: net::ERR_FAILED"
+   ]
+  }
+ ]
+}
