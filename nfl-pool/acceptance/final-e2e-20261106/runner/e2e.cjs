@@ -10,6 +10,8 @@
 //
 // Usage: QA_SCRATCH=<dir outside repo> node e2e.cjs <scenario...>
 //   smoke, negatives, tracker, readback  — need no publisher session (run 2026-11-06, see REPORT.md)
+//   week5                                 — read-only check of the QA W5 r3 / Survivor W8 r3 rows published later
+//                                           (QA_PASSWORD_E2E_CLOSEOUT.md); needs NODE_USE_ENV_PROXY=1 for ESPN
 //   pickem, survivor                      — need an authorized QA publisher session: BLOCKED on 2026-11-06 at sign-in
 //   cleanup                               — removes the auth storage state from $QA_SCRATCH
 // Optional: QA_ONLY_STEPS=T04,T06 reruns only those steps; QA_SHOT_TAG names a tagged rerun's log and stale screenshot.
@@ -635,6 +637,135 @@ async function scenarioNegatives(browser){
   }finally{await context.close();save(rec)}
 }
 
+// Independent read-back of the QA child's 2026 Week 5 Pick'em and Week 8 Survivor publications (published outside this
+// runner by the authorized child-only QA publisher; see QA_PASSWORD_E2E_CLOSEOUT.md). Anonymous and read-only. Expected
+// values are computed here, NOT by app code: from the published config (anonymous Data API, the public pages' path) and
+// ESPN's final scores fetched directly by Node, with the documented rules (an NFL tie is a loss for either pick; the
+// tiebreak is the absolute difference from the designated game's total once it is final; competition ranks).
+async function espnWeek(season,week){
+  const r=await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${season}&seasontype=2&week=${week}&limit=100`,{headers:{Accept:'application/json'}});
+  if(!r.ok)throw new Error(`ESPN ${r.status}`);return r.json();
+}
+async function publishedRow(page,table,season,week){
+  return page.evaluate(async({auth,data,table,season,week})=>{
+    const token=(await (await fetch(`${auth}/token/anonymous`,{cache:'no-store'})).json()).token;
+    const r=await fetch(`${data}/${table}?select=season,week,status,revision,source_filename,source_sha256,config&season=eq.${season}&week=eq.${week}&status=eq.locked`,{cache:'no-store',headers:{Authorization:`Bearer ${token}`,Accept:'application/json'}});
+    return{status:r.status,rows:await r.json()};
+  },{auth:QA_AUTH,data:QA_DATA,table,season,week});
+}
+function expectedPickem(cfg,events){
+  const byId=new Map(events.map(e=>[String(e.id),e]));
+  const games=cfg.games.map((g,i)=>{
+    const e=byId.get(String(g.eventId));if(!e)throw new Error(`no ESPN event ${g.eventId} for game ${i+1}`);
+    const c=e.competitions[0],a=c.competitors.find(x=>x.homeAway==='away'),h=c.competitors.find(x=>x.homeAway==='home');
+    const as=Number(a.score),hs=Number(h.score),final=e.status?.type?.completed===true;
+    return{i,away:g.away,home:g.home,final,tie:final&&as===hs,winner:!final?null:as>hs?g.awayNumber:hs>as?g.homeNumber:null,total:as+hs,score:`${a.team.abbreviation} ${as}-${hs} ${h.team.abbreviation}`};
+  });
+  const tb=games[cfg.tiebreakGameIndex],tbFinal=tb.final;
+  const grade=(nums,tiebreak)=>{let w=0,l=0;games.forEach((g,i)=>{if(!g.final)return;if(g.winner!==null&&nums?.[i]===g.winner)w++;else l++});return{w,l,diff:tbFinal?(Number.isInteger(tiebreak)?Math.abs(tiebreak-tb.total):Infinity):null}};
+  const tracked=cfg.participants.map((p,i)=>({name:p.displayName,i,...grade(p.pickNumbers,p.tiebreak),tiePick:(()=>{const t=games.find(g=>g.tie);return t?p.pickNumbers[t.i]:null})()}));
+  const field=(cfg.fieldEntries||[]).map((f,i)=>({name:`field-${i}`,...grade(f.pickNumbers,f.tiebreak)}));
+  const all=[...tracked.map((t,k)=>({...t,order:k,tracked:true})),...field.map((f,k)=>({...f,order:tracked.length+k,tracked:false}))];
+  const same=(a,b)=>a.w===b.w&&a.l===b.l&&(!tbFinal||a.diff===b.diff);
+  all.sort((a,b)=>b.w-a.w||a.l-b.l||(tbFinal?a.diff-b.diff:0)||a.order-b.order);
+  let rank=1;all.forEach((x,i)=>{if(i&&!same(x,all[i-1]))rank=i+1;x.rank=rank});
+  all.forEach(x=>{x.tieCount=all.filter(y=>same(x,y)).length});
+  const size=all.length,trackedRanked=all.filter(x=>x.tracked);
+  const groupOrder=[...tracked].sort((a,b)=>b.w-a.w||a.l-b.l||(tbFinal?a.diff-b.diff:0)||a.i-b.i).map(x=>x.name);
+  const best=trackedRanked.reduce((a,b)=>b.rank<a.rank?b:a),pct=x=>Math.max(1,Math.ceil(x.rank/size*100));
+  return{games,tiebreak:{game:`${tb.away}@${tb.home}`,total:tb.total,final:tbFinal},tieGames:games.filter(g=>g.tie).map(g=>g.score),
+    tracked:Object.fromEntries(trackedRanked.map(x=>[x.name,{w:x.w,l:x.l,diff:x.diff,rank:x.rank,tieCount:x.tieCount,label:x.tieCount>1?`T-${x.rank}`:`#${x.rank}`,tiePick:x.tiePick}])),
+    groupOrder,fieldSize:size,pulse:{bestName:best.name,bestLabel:best.tieCount>1?`T-${best.rank}`:`#${best.rank}`,bestPercent:pct(best),topQuarter:trackedRanked.filter(x=>pct(x)<=25).length,submitted:trackedRanked.length}};
+}
+async function scenarioWeek5(browser){
+  const rec=recorder('week5-week8-readback');rec.browser=browser.version();
+  let expected=null,pub=null;
+  try{
+    await step(rec,'V00','Published rows (anonymous Data API) + independent expectations from ESPN finals',async()=>{
+      const {context,page}=await openTracker(browser,rec);
+      try{
+        const pk=await publishedRow(page,'nfl_pool_weeks',2026,5),sv=await publishedRow(page,'nfl_survivor_weeks',2026,8);
+        expect(pk.status===200&&pk.rows.length===1&&sv.status===200&&sv.rows.length===1,'published rows not readable');
+        pub={pickem:pk.rows[0],survivor:sv.rows[0]};
+        const espn=await espnWeek(2026,5);
+        expected=expectedPickem(pub.pickem.config,espn.events);
+        return{pickem:{revision:pub.pickem.revision,source_filename:pub.pickem.source_filename,source_sha256:pub.pickem.source_sha256,games:pub.pickem.config.games.length,competitionSize:pub.pickem.config.competitionSize},
+          survivor:{revision:pub.survivor.revision,source_filename:pub.survivor.source_filename,source_sha256:pub.survivor.source_sha256,tracked:pub.survivor.config.trackedEntries.map(x=>`${x.displayName}: ${x.picks.map(v=>v||'-').join(',')}`)},
+          espnFetchedAt:new Date().toISOString(),expected};
+      }finally{await context.close()}
+    },{fatal:true});
+    await step(rec,'V01','Desktop: selector → 2026 · Week 5; revision 3; Eastern header; 15/15 final; LIVE',async()=>{
+      const {context,page}=await openTracker(browser,rec);
+      try{
+        await waitScored(page);await chooseWeek(page,'2026 · Week 5',5);
+        const s=await trackerState(page);
+        expect(/^Week 5 · revision 3 · Oct 8–Oct 12, 2026 · /.test(s.weekLine),`week line ${s.weekLine}`);
+        expect(s.finals==='15/15'&&s.left==='0',`finals ${s.finals} left ${s.left}`);
+        expect(/^LIVE/.test(s.sync),`sync ${s.sync}`);
+        return{weekLine:s.weekLine,sync:s.sync,finals:s.finals,left:s.left,leader:s.leader,screenshot:await shot(page,'w5-01-desktop-home-week5-r3')};
+      }finally{await context.close()}
+    });
+    await step(rec,'V02','Standings equal the independent computation (W–L, group order, Overall rank) — NYG 27–27 WSH graded as a loss for every tracked pick',async()=>{
+      const {context,page}=await openTracker(browser,rec,{url:BASE+'?season=2026&week=5&view=standings'});
+      try{
+        await page.waitForFunction(()=>/Week 5 · revision 3/.test(document.getElementById('weekLine')?.textContent||''),null,{timeout:30000});
+        await page.waitForFunction(()=>/LIVE|DELAYED/.test(document.getElementById('sync')?.textContent||''),null,{timeout:60000});await sleep(1500);
+        const s=await trackerState(page),rows=s.standings.map(r=>({name:r[1],overall:r[2],w:Number(r[3]),l:Number(r[4]),left:Number(r[5])}));
+        expect(rows.map(r=>r.name).join()===expected.groupOrder.join(),`group order ${rows.map(r=>r.name)} != ${expected.groupOrder}`);
+        for(const r of rows){const e=expected.tracked[r.name];expect(e&&r.w===e.w&&r.l===e.l&&r.left===0,`${r.name} ${r.w}-${r.l} != ${e?.w}-${e?.l}`);expect(r.overall.startsWith(e.label),`${r.name} overall "${r.overall}" != ${e.label}`)}
+        const tieGrades=await page.evaluate(()=>{const d={contest:'pickem',snapshot:null};document.dispatchEvent(new CustomEvent('poolcenter:picks',{detail:d}));const g=(d.snapshot?.games||[]).find(x=>x.kind==='tie');return g?{status:g.status,away:g.away.code,home:g.home.code,awayScore:g.awayScore,homeScore:g.homeScore,picks:g.picks.map(p=>`${p.name}:${p.team}:${p.result}`)}:null});
+        expect(tieGrades&&tieGrades.picks.length===4&&tieGrades.picks.every(p=>p.endsWith(':tie')),`tie game grades ${JSON.stringify(tieGrades)}`);
+        expect(new Set(tieGrades.picks.map(p=>p.split(':')[1])).size===2,'tracked picks do not cover both sides of the tie');
+        return{standings:s.standings,expected:expected.tracked,groupOrder:expected.groupOrder,tieGame:tieGrades,tbNote:s.tbNote,footer:s.footer,screenshot:await shot(page,'w5-02-desktop-standings-week5-r3')};
+      }finally{await context.close()}
+    });
+    await step(rec,'V03','Home group-vs-field pulse equals the independent field ranking',async()=>{
+      const {context,page}=await openTracker(browser,rec,{url:BASE+'?season=2026&week=5'});
+      try{
+        await page.waitForFunction(()=>document.querySelector('#homeFieldPulse [data-field-pulse]')?.dataset.fieldPulse==='ready',null,{timeout:60000});await sleep(800);
+        const s=await trackerState(page),p=expected.pulse;
+        expect(s.fieldPulse.includes(p.bestLabel)&&s.fieldPulse.includes(`of ${expected.fieldSize}`)&&s.fieldPulse.includes(`${p.bestName} · Top ${p.bestPercent}%`)&&new RegExp(`${p.topQuarter}\\s*of ${p.submitted} submitted`).test(s.fieldPulse),`pulse "${s.fieldPulse}" vs ${JSON.stringify(p)} of ${expected.fieldSize}`);
+        return{fieldPulse:s.fieldPulse,expected:{...p,fieldSize:expected.fieldSize},screenshot:await shot(page,'w5-03-desktop-home-field-pulse-week5-r3')};
+      }finally{await context.close()}
+    });
+    await step(rec,'V04','Games view: NYG–WAS card shows the final tie',async()=>{
+      const {context,page}=await openTracker(browser,rec,{url:BASE+'?season=2026&week=5&view=games'});
+      try{
+        await page.waitForFunction(()=>/LIVE|DELAYED/.test(document.getElementById('sync')?.textContent||''),null,{timeout:60000});await sleep(1500);
+        const cards=await page.evaluate(()=>[...document.querySelectorAll('#gamegrid > *')].map(el=>el.innerText.replace(/\s+/g,' ').trim()).filter(Boolean));
+        const tie=cards.find(c=>/NYG/.test(c)&&/WAS|WSH/.test(c));
+        expect(tie&&/TIE/.test(tie)&&/27/.test(tie),`tie card ${tie}`);
+        return{tieCard:tie,cards:cards.length,screenshot:await shot(page,'w5-04-desktop-games-week5-r3')};
+      }finally{await context.close()}
+    });
+    await step(rec,'V05','Mobile 390: Week 5 standings and picks; no horizontal overflow',async()=>{
+      const {context,page}=await openTracker(browser,rec,{width:390,height:844,mobile:true,url:BASE+'?season=2026&week=5&view=standings'});
+      try{
+        await page.waitForFunction(()=>/LIVE|DELAYED/.test(document.getElementById('sync')?.textContent||''),null,{timeout:60000});await sleep(1500);
+        const st=await measure(page),stShot=await shot(page,'w5-05-mobile-390-standings-week5-r3');
+        await view(page,'picks');const pk=await measure(page),pkShot=await shot(page,'w5-05-mobile-390-picks-week5-r3');
+        for(const m of [st,pk])expect(!m.horizontalOverflow&&m.innerWidth===390&&m.clientWidth===390&&m.scrollWidth===390,`overflow ${JSON.stringify(m)}`);
+        return{measure:{standings:st,picks:pk},screenshots:[stShot,pkShot]};
+      }finally{await context.close()}
+    });
+    await step(rec,'V06','Survivor archive Week 8 revision 3: every tracked entry OUT — W1 loss, W5 NFL tie, W8 loss',async()=>{
+      const {context,page}=await openTracker(browser,rec,{url:BASE+'?view=survivor'});
+      try{
+        const s=await survivorWeek(page,'2026 · Week 8');
+        expect(/Week 8 · revision 3/.test(s.meta),`meta ${s.meta}`);
+        expect(s.stillIn==='0',`still in ${s.stillIn}`);
+        const parts=s.tracked.split(' | ');
+        const names=['D.C.','DJS','Thaddeus'];
+        const status=name=>{const i=parts.indexOf(name);expect(i>=0,`${name} missing from the archive`);const ends=names.map(n=>parts.indexOf(n)).filter(j=>j>i);return parts.slice(i,ends.length?Math.min(...ends):parts.length).join(' | ')};
+        expect(/OUT/.test(status('D.C.'))&&/Week 1/.test(status('D.C.')),'D.C. not OUT in Week 1');
+        expect(/OUT/.test(status('DJS'))&&/tie/i.test(status('DJS')),'DJS not OUT by the tie');
+        expect(/OUT/.test(status('Thaddeus'))&&/Week 8/.test(status('Thaddeus')),'Thaddeus not OUT in Week 8');
+        return{...s,screenshot:await shot(page,'w5-06-desktop-archive-survivor-week8-r3')};
+      }finally{await context.close()}
+    });
+  }finally{save(rec)}
+}
+
 // Signed-out run before any write: harness, network guard and publisher gates. Zero writes expected.
 async function scenarioSmoke(browser){
   const rec=recorder('smoke-signed-out');rec.browser=browser.version();
@@ -672,6 +803,7 @@ async function scenarioSmoke(browser){
     for(const s of scenarios){
       if(s==='smoke')await scenarioSmoke(browser);
       else if(s==='negatives')await scenarioNegatives(browser);
+      else if(s==='week5')await scenarioWeek5(browser);
       else if(s==='pickem')await scenarioPickem(browser);
       else if(s==='survivor')await scenarioSurvivor(browser);
       else if(s==='tracker')await scenarioTracker(browser);

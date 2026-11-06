@@ -494,20 +494,99 @@
      ]
     }
    }
+  },
+  "e2e-week5-week8-readback.json": {
+   "browser": "153.0.8010.12",
+   "startedAt": "2026-11-06T19:44:46.971Z",
+   "finishedAt": "2026-11-06T19:45:25.434Z",
+   "summary": {
+    "steps": 7,
+    "pass": 7,
+    "fail": 0,
+    "writes": 0,
+    "violations": 0,
+    "refused": 0,
+    "pageErrors": 0,
+    "consoleErrors": 0,
+    "consoleWarnings": 7
+   },
+   "steps": [
+    "V00 PASS",
+    "V01 PASS",
+    "V02 PASS",
+    "V03 PASS",
+    "V04 PASS",
+    "V05 PASS",
+    "V06 PASS"
+   ],
+   "hosts": {
+    "localhost:8765": 269,
+    "a.espncdn.com": 69,
+    "ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech": 23,
+    "ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech": 115
+   },
+   "writes": [],
+   "violations": [],
+   "refused": [],
+   "pageErrors": [],
+   "consoleByStep": {
+    "V00 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    },
+    "V01 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    },
+    "V02 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    },
+    "V03 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    },
+    "V04 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    },
+    "V05 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    },
+    "V06 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    }
+   }
   }
  },
  "totals": {
-  "requests": 1559,
+  "requests": 2035,
   "violations": 0,
   "refused": 0,
   "writes": 1,
   "pageErrors": 0,
   "hosts": {
-   "localhost:8765": 735,
-   "a.espncdn.com": 310,
+   "localhost:8765": 1004,
+   "a.espncdn.com": 379,
    "cdn.jsdelivr.net": 135,
-   "ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech": 60,
-   "ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech": 319
+   "ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech": 83,
+   "ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech": 434
   }
  },
  "forbiddenHostsContacted": []

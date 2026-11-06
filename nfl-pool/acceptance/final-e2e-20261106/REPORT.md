@@ -1,6 +1,13 @@
 # Personal Pool — final E2E acceptance run (2026-11-06)
 
-**Verdict: NOT fully accepted.** Everything that can run without an authorized publisher session passed on current `main`, one genuine defect was found and fixed, and isolation held. The authenticated publish → revision → read-back of *new* synthetic weeks on current `main` is **BLOCKED** (reason below), and with it the in-browser grading of a Pick'em NFL tie.
+> **Update, 19:45 UTC: both BLOCKED items now have evidence; isolated-QA E2E acceptance complete.** After this run, the owner authorized a child-only synthetic password publisher, and a separate follow-up executed the authenticated publish, revision, stale-writer and read-back scenarios with these fixtures ([`QA_PASSWORD_E2E_CLOSEOUT.md`](QA_PASSWORD_E2E_CLOSEOUT.md); that run's browser logs are not committed, only its summary). This harness then checked the result independently, read-only:
+>
+> - **Database:** Pick'em 2026 W5 is locked at revision 3 (source = r2 fixture SHA-256 `95cc4d5a…`) and Survivor 2026 W8 at revision 3 (r2 fixture `1bc6cd85…`). That end state is consistent with r1 → r2 → stale writer refused → r3. On the child, all five earlier publications, the contest rows and the original 17 RLS policies still hash identically to `db/fingerprints-pre.json`. The additions are six `qa_final_e2e_*` policies and one synthetic publisher `qa.pdf-e2e.final20261106@example.com`, created as `admin` for that run and downgraded to `user` afterwards (confirmed read-only at 19:53Z, so those policies no longer grant it anything). The parent is unchanged.
+> - **Browser, anonymous:** `logs/e2e-week5-week8-readback.json`, V00–V06 **7/7 PASS**, `screenshots/w5-*.jpg`. Standings equal an independent computation from the published config and ESPN finals: DJS 13–2 (Δ0, #3), D.C. 13–2 (Δ1, #4), Thaddeus 12–3 (Δ3, #9), JC 12–3 (Δ9, #10); field pulse "#3 of 38 · Top 8% · 3 of 4". **NYG 27–27 WAS is a FINAL TIE graded as a loss for all four tracked picks** (two NYG, two WAS). The header reads "Week 5 · revision 3 · Oct 8–Oct 12, 2026", 15/15 final, LIVE, with no overflow at 390 px. Survivor W8 r3 shows D.C. OUT (Week 1 loss), DJS OUT (Week 5 NFL tie), Thaddeus OUT (Week 8 loss), still in 0 of 4. 0 writes, 0 violations.
+>
+> Release boundary unchanged: the date fix is under separate review in PR #35, and nothing was merged or deployed. The original text below is kept as the record of the first run.
+
+**Original verdict (first run): NOT fully accepted.** Everything that can run without an authorized publisher session passed on current `main`, one genuine defect was found and fixed, and isolation held. The authenticated publish → revision → read-back of *new* synthetic weeks on current `main` is **BLOCKED** (reason below), and with it the in-browser grading of a Pick'em NFL tie.
 
 | Item | Value |
 | --- | --- |
