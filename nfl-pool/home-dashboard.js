@@ -218,17 +218,10 @@ export function boot(){
   }
   function renderData(){
     const now=Date.now(),contests=document.getElementById('dashContests'),survivor=document.getElementById('dashSurvivor'),fieldPulse=document.getElementById('homeFieldPulse');
-    const archived=document.body?.dataset?.survivorArchived==='true';
-    if(contests){
-      contests.innerHTML=overviewHtml(snapshots,{now});
-      if(archived){
-        const panel=contests.querySelector('[data-dash-contest="survivor"]');
-        if(panel)panel.innerHTML='<div class="dash-contest-head"><span class="dash-contest-name">Survivor</span><span class="dash-status tone-final">GROUP ENDED</span></div><div class="dash-contest-line">Historical archive · no further tracking</div><div class="dash-contest-facts">All tracked members eliminated (owner-confirmed).</div>';
-      }
-    }
-    if(survivor)survivor.innerHTML=archived?'<div class="dash-survivor-empty"><strong>Our Survivor run is finished.</strong><p>All tracked members eliminated (owner-confirmed). Past published weeks remain readable; Pick’em continues.</p></div>':survivorQuickViewHtml(snapshots.survivor,{density:prefs.density,now});
+    if(contests)contests.innerHTML=overviewHtml(snapshots,{now});
+    if(survivor)survivor.innerHTML=survivorQuickViewHtml(snapshots.survivor,{density:prefs.density,now});
     if(fieldPulse)fieldPulse.innerHTML=groupFieldPulseHtml(snapshots.pickem,{now});
-    for(const [id,node] of sections){const summary=node.querySelector('[data-dash-summary]');if(summary)summary.textContent=archived&&id==='survivor'?'Our group eliminated · archive':sectionSummary(id,snapshots,{now})}
+    for(const [id,node] of sections){const summary=node.querySelector('[data-dash-summary]');if(summary)summary.textContent=sectionSummary(id,snapshots,{now})}
   }
   function setCollapsed(id,collapsed){
     const set=new Set(prefs.collapsed);if(collapsed)set.add(id);else set.delete(id);
