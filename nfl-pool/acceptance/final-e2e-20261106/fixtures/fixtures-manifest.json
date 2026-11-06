@@ -1,0 +1,129 @@
+{
+ "QA-FINAL-E2E-Pickem-2026-W5-duplicate-team.pdf": {
+  "bytes": 6983,
+  "entries": 38,
+  "pages": 3,
+  "purpose": "Pick'em negative: GB in two matchups (game 10 and game 14) - validation added after PR #29",
+  "sha256": "c3c544fa548253213d31d261bf9650f91fe2827b4f7687151efc4383f29c0355",
+  "tableRowsPerPage": [
+   34,
+   4
+  ]
+ },
+ "QA-FINAL-E2E-Pickem-2026-W5-duplicate-tracked.pdf": {
+  "bytes": 7079,
+  "entries": 39,
+  "pages": 3,
+  "purpose": "Pick'em negative: two DJS rows",
+  "sha256": "cd6882085df2c0dbaef801910ba68fd2faf666fa9fadcdb0359376e4d2393a04",
+  "tableRowsPerPage": [
+   34,
+   5
+  ]
+ },
+ "QA-FINAL-E2E-Pickem-2026-W5-invalid-schedule.pdf": {
+  "bytes": 6987,
+  "entries": 38,
+  "pages": 3,
+  "purpose": "Pick'em negative: BAL at KC is not a 2026 Week 5 NFL game",
+  "sha256": "4a66b69eea7976572e97a0cf30bf328f0ef767fcc899a123cc84cd773326b3b0",
+  "tableRowsPerPage": [
+   34,
+   4
+  ]
+ },
+ "QA-FINAL-E2E-Pickem-2026-W5-missing-picks.pdf": {
+  "bytes": 6989,
+  "entries": 38,
+  "pages": 3,
+  "purpose": "Pick'em negative: tracked JC row missing its game 10 pick cell",
+  "sha256": "84fbca24777c118943b4d88ac80c1a252f247976447d98273ebfb777c2bcdd85",
+  "tableRowsPerPage": [
+   34,
+   4
+  ]
+ },
+ "QA-FINAL-E2E-Pickem-2026-W5-r1.pdf": {
+  "bytes": 6989,
+  "entries": 38,
+  "pages": 3,
+  "purpose": "Pick'em positive: 2026 Week 5 revision 1 (4 tracked + 34 field = 38 entries)",
+  "sha256": "9a5e65dfe318edf5ceccbd5cff213a1be96270f040daf8d9c98182b665a6747b",
+  "tableRowsPerPage": [
+   34,
+   4
+  ]
+ },
+ "QA-FINAL-E2E-Pickem-2026-W5-r2.pdf": {
+  "bytes": 6989,
+  "entries": 38,
+  "pages": 3,
+  "purpose": "Pick'em revision: Week 5 correction (JC game 2 pick 3->4; DJS tiebreak 75->71)",
+  "sha256": "95cc4d5aaf28de0193a3226e5bfd69d40c8a1aa935c5b039a85c35a049d24a9c",
+  "tableRowsPerPage": [
+   34,
+   4
+  ]
+ },
+ "QA-FINAL-E2E-Survivor-2026-W8-bye-pick.pdf": {
+  "bytes": 2617,
+  "entries": 4,
+  "pages": 2,
+  "purpose": "Survivor negative: SF picked in Week 8, when SF had a bye",
+  "rowsPerPage": [
+   2,
+   2
+  ],
+  "sha256": "51804ab0358bf828931dc91054b8fc3032920a5fe5add161771ec2a2ad1fafa5"
+ },
+ "QA-FINAL-E2E-Survivor-2026-W8-duplicate-tracked.pdf": {
+  "bytes": 2641,
+  "entries": 5,
+  "pages": 2,
+  "purpose": "Survivor negative: two DJS rows",
+  "rowsPerPage": [
+   3,
+   2
+  ],
+  "sha256": "105d9dcfd22d6af02e5219bfafbda78690a2ac1d559fe784ea50df693066746e"
+ },
+ "QA-FINAL-E2E-Survivor-2026-W8-r1.pdf": {
+  "bytes": 2616,
+  "entries": 4,
+  "pages": 2,
+  "purpose": "Survivor positive: 2026 Week 8 revision 1 (Thaddeus OUT Week 7 with SF; stray Week 8 pick GB)",
+  "rowsPerPage": [
+   2,
+   2
+  ],
+  "sha256": "0ffc19c5bac62510aa6b18bb986ed684e31e1be57e95477c6307de3fecc0e8fd"
+ },
+ "QA-FINAL-E2E-Survivor-2026-W8-r2.pdf": {
+  "bytes": 2619,
+  "entries": 4,
+  "pages": 2,
+  "purpose": "Survivor revision: Week 8 correction (Thaddeus Week 7 TB win, Week 8 SEA loss)",
+  "rowsPerPage": [
+   2,
+   2
+  ],
+  "sha256": "1bc6cd8517a86a65178eed74b2a8565dc0cd626c8be140dda50784d8c370565b"
+ },
+ "QA-FINAL-E2E-Survivor-2026-W8-unknown-team.pdf": {
+  "bytes": 2620,
+  "entries": 4,
+  "pages": 2,
+  "purpose": "Survivor negative: unknown team code XYZ",
+  "rowsPerPage": [
+   2,
+   2
+  ],
+  "sha256": "bf241981e6bda2237031a4442d12ad6abd025d7f9214d30baffd15e61cd1b930"
+ },
+ "QA-FINAL-E2E-malformed.pdf": {
+  "bytes": 2112,
+  "pages": null,
+  "purpose": "Negative: malformed PDF bytes (both publishers)",
+  "sha256": "c26968f57819e85b0d639abcc3ddcbe2d58a2d3a15093e9f84eb76f380b5ecee"
+ }
+}

@@ -35,12 +35,17 @@ export function verifiedWeekRange(games) {
 // Keep the existing status, week, revision, and entrant text verbatim.
 // The source app writes those fields, so the independent date display touches
 // only the single range between the revision and the first entrant separator.
+// While the publication on screen cannot be re-verified, the strip leads with
+// PUBLISHED DATA STALE in place of "Week N"; that warning is kept verbatim and
+// the same revision still names the publication whose kickoffs are verified.
 export function correctedWeekLine(line, snapshot) {
   if (typeof line !== 'string' || snapshot?.ready !== true) return line;
   if (!Number.isInteger(snapshot.week) || !Number.isInteger(snapshot.revision)) return line;
-  const marker = 'Week ' + snapshot.week + ' · revision ' + snapshot.revision + ' · ';
+  const revision = ' · revision ' + snapshot.revision + ' · ';
+  const marker = ['Week ' + snapshot.week + revision, 'PUBLISHED DATA STALE' + revision]
+    .find(lead => line.includes(lead));
+  if (!marker) return line;
   const hit = line.indexOf(marker);
-  if (hit < 0) return line;
   const start = hit + marker.length, end = line.indexOf(' · ', start);
   if (end < 0) return line;
   const range = verifiedWeekRange(snapshot.games) || 'Kickoff dates unverified';

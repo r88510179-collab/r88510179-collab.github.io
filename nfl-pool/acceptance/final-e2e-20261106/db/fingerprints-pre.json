@@ -1,0 +1,49 @@
+{
+  "note": "Read-only fingerprints captured BEFORE any test write, via the Neon MCP run_sql tool (database owner, SELECT only). Neon project green-base-66242978 (\"NFL Pool Personal Week9 Recovery QA 2026\"). Production project flat-cake-85432375 was never queried. row_md5 = md5(row::text); config_md5 = md5(config::text); session TimeZone recorded so timestamp rendering is comparable.",
+  "branches": {
+    "br-dawn-fire-bb923034": {
+      "role": "QA parent (Neon branch name 'main'), endpoint ep-silent-sunset-bbdqbm47; read-only in this run",
+      "captured_at": "2026-11-06 17:01:30.213807+00",
+      "session_timezone": "GMT",
+      "row_counts": {"nfl_pool_weeks": 1, "nfl_survivor_weeks": 2, "nfl_contests": 2, "nfl_contest_policies": 2, "nfl_incident_rulings": 0},
+      "publications": [
+        {"contest": "pickem", "season": 2026, "week": 9, "status": "locked", "revision": 3, "source_filename": "Personal-Week9-QA-Pickem-Revision.pdf", "source_sha256": "93134b381c94865469cfe4bc6bf27f2caf7c58511222801f07f1896fae5d2f61", "published_at": "2026-11-04 17:06:04.007+00", "updated_at": "2026-11-04 17:06:04.007+00", "config_md5": "d6d616b68a08f754778eb1798efd0299", "row_md5": "9414137bf10cfe7c57d8b9b6078af1a9"},
+        {"contest": "survivor", "season": 2026, "week": 2, "status": "locked", "revision": 2, "source_filename": "Survivor-QA-Week2-Revision-v2.pdf", "source_sha256": "118a558d6f6927fffff3ee98aff6dc2c7c5ca2e525c29c38fdd5f2581611b4db", "published_at": "2026-11-04 17:42:50.136+00", "updated_at": "2026-11-04 17:42:50.136+00", "config_md5": "64ed41ebe842a0782356553105f31ab0", "row_md5": "5be7248119aa513ad1e625959835d4b1"},
+        {"contest": "survivor", "season": 2026, "week": 9, "status": "locked", "revision": 1, "source_filename": "SYNTHETIC_QA_ONLY_20261104", "source_sha256": null, "published_at": "2026-11-04 16:15:11.147017+00", "updated_at": "2026-11-04 16:15:11.144809+00", "config_md5": "f5800e61c4e00cd28583fbbd2367fbab", "row_md5": "89001f98c86614f9ce1048126a99abff"}
+      ],
+      "other_rows_md5": {"nfl_contest_policies": ["2a11865ba6b40851364d03be485d17e4", "d417a94d6ed08a9d47d142a57ddf89a1"], "nfl_contests": ["4c0f0cade070d15ecd73ea79eea0170f", "618ad6b041e8ca889ae5a3fedcb483d6"], "nfl_incident_rulings": []},
+      "rls_policies": {"count": 11, "md5": "170a41ac2c198edf84ec7fb78ee060a8"},
+      "rls_flags_md5": "6f7b4d8074d0ff26648c10004451d7d2",
+      "table_grants": {"count": 45, "md5": "9d2ca9f53d633eaaa4fd248fac3365e6"},
+      "auth_users": {"count": 1, "md5": "05f14b42328111b9568eeaf7bbea3f48"},
+      "public_functions": {"count": 5, "md5": "b480cf9130b3ef132b1b50fe15fec74f"},
+      "triggers": {"count": 9, "md5": "818588975cabc0c1ce225fcf5f931a79"},
+      "data_api": {"url": "https://ep-silent-sunset-bbdqbm47.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1", "status": "active", "server_cors_allowed_origins": ["https://nfl-pool-personal-bce5bbld1-r88510179-collabs-projects.vercel.app", "https://nfl-pool-personal-git-test-pe-d82ed3-r88510179-collabs-projects.vercel.app", "https://nfl-pool-personal-93spk2k21-r88510179-collabs-projects.vercel.app"], "observed_at": "2026-11-06T17:02:25Z"},
+      "auth": {"provider": "better_auth", "base_url": "https://ep-silent-sunset-bbdqbm47.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth"},
+      "write_authorization": "nfl_pool_weeks / nfl_survivor_weeks INSERT/UPDATE policies authorize only the real production publisher identity (role admin). No synthetic identity is authorized, so a synthetic browser publish here is impossible without altering its authentication protections."
+    },
+    "br-damp-credit-bbn7d0zr": {
+      "role": "Existing QA child of br-dawn-fire-bb923034 (name qa-pr23-personal-pdf-e2e-20261105, created 2026-11-05 for PR #29), endpoint ep-shiny-snow-bbx446zt; the only intended write target of this run (no publication write occurred: publishing was blocked at sign-in)",
+      "captured_at": "2026-11-06 17:02:14.093992+00",
+      "session_timezone": "GMT",
+      "row_counts": {"nfl_pool_weeks": 2, "nfl_survivor_weeks": 3, "nfl_contests": 2, "nfl_contest_policies": 2, "nfl_incident_rulings": 0},
+      "publications": [
+        {"contest": "pickem", "season": 2026, "week": 9, "status": "locked", "revision": 3, "source_filename": "Personal-Week9-QA-Pickem-Revision.pdf", "source_sha256": "93134b381c94865469cfe4bc6bf27f2caf7c58511222801f07f1896fae5d2f61", "published_at": "2026-11-04 17:06:04.007+00", "updated_at": "2026-11-04 17:06:04.007+00", "config_md5": "d6d616b68a08f754778eb1798efd0299", "row_md5": "9414137bf10cfe7c57d8b9b6078af1a9"},
+        {"contest": "pickem", "season": 2026, "week": 10, "status": "locked", "revision": 2, "source_filename": "QA-PDF-E2E-Pickem-2026-W10-r2.pdf", "source_sha256": "68f33324e4fdb04550409a0dba692e91d769dcc28c0e41e187cea371c6c498ca", "published_at": "2026-11-06 01:03:18.271+00", "updated_at": "2026-11-06 01:03:18.271+00", "config_md5": "a843be04b824410a21e99a46c55fbda3", "row_md5": "9cec7630b411a62e57d72389bbd12cce"},
+        {"contest": "survivor", "season": 2026, "week": 2, "status": "locked", "revision": 2, "source_filename": "Survivor-QA-Week2-Revision-v2.pdf", "source_sha256": "118a558d6f6927fffff3ee98aff6dc2c7c5ca2e525c29c38fdd5f2581611b4db", "published_at": "2026-11-04 17:42:50.136+00", "updated_at": "2026-11-04 17:42:50.136+00", "config_md5": "64ed41ebe842a0782356553105f31ab0", "row_md5": "5be7248119aa513ad1e625959835d4b1"},
+        {"contest": "survivor", "season": 2026, "week": 6, "status": "locked", "revision": 2, "source_filename": "QA-PDF-E2E-Survivor-2026-W6-r2.pdf", "source_sha256": "8ee186b49dc6b52045ffc757ae2659e36f3b060f5254cf399338b12429af2180", "published_at": "2026-11-06 01:03:56.82+00", "updated_at": "2026-11-06 01:03:56.82+00", "config_md5": "9fef33e0766ba088a70c5cdd5528b6f1", "row_md5": "d72f571e2db127bf0d2cb5002e9ebff3"},
+        {"contest": "survivor", "season": 2026, "week": 9, "status": "locked", "revision": 1, "source_filename": "SYNTHETIC_QA_ONLY_20261104", "source_sha256": null, "published_at": "2026-11-04 16:15:11.147017+00", "updated_at": "2026-11-04 16:15:11.144809+00", "config_md5": "f5800e61c4e00cd28583fbbd2367fbab", "row_md5": "89001f98c86614f9ce1048126a99abff"}
+      ],
+      "other_rows_md5": {"nfl_contest_policies": ["2a11865ba6b40851364d03be485d17e4", "d417a94d6ed08a9d47d142a57ddf89a1"], "nfl_contests": ["4c0f0cade070d15ecd73ea79eea0170f", "618ad6b041e8ca889ae5a3fedcb483d6"], "nfl_incident_rulings": []},
+      "rls_policies": {"count": 17, "md5": "df72da5e579540575b8cfadc1434166a", "note": "11 original policies + 6 additive PR #29 qa_synthetic_publisher_* policies"},
+      "rls_flags_md5": "6f7b4d8074d0ff26648c10004451d7d2",
+      "table_grants": {"count": 45, "md5": "9d2ca9f53d633eaaa4fd248fac3365e6"},
+      "auth_users": {"count": 3, "md5": "b074783a0c5ebb50cea767ad6f41cdad", "synthetic": ["qa.pdf-e2e.publisher@example.com (role admin)", "qa.pdf-e2e.intruder@example.com (role user)"], "other": "1 non-synthetic identity inherited from the parent (redacted)"},
+      "public_functions": {"count": 5, "md5": "b480cf9130b3ef132b1b50fe15fec74f"},
+      "triggers": {"count": 9, "md5": "818588975cabc0c1ce225fcf5f931a79"},
+      "neon_auth_verification_rows": 0,
+      "data_api": {"url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1", "status": "active", "server_cors_allowed_origins": ["https://nfl-pool-personal-bce5bbld1-r88510179-collabs-projects.vercel.app", "https://nfl-pool-personal-git-test-pe-d82ed3-r88510179-collabs-projects.vercel.app", "https://nfl-pool-personal-93spk2k21-r88510179-collabs-projects.vercel.app", "http://localhost:8765"], "observed_at": "2026-11-06T16:41:10Z"},
+      "auth": {"provider": "better_auth", "base_url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth", "allow_localhost": true, "email_and_password_enabled": true}
+    }
+  }
+}
