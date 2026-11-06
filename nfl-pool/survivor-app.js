@@ -7,6 +7,9 @@ const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aw
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
 const ESPN_SCOREBOARD='https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
 const LOGO_CODE={WAS:'wsh'};
+// Owner-confirmed: the tracked family/group Survivor run ended in 2026. Historical publications remain readable.
+const GROUP_SURVIVOR_ARCHIVED_SEASON=2026;
+const groupSurvivorArchived=()=>cfg?.season===GROUP_SURVIVOR_ARCHIVED_SEASON;
 let cfg=null,resultsByWeek=[],nextWeekMatchups=[],nextWeekFetchedAt=0,nextWeekError='',anonToken=null,anonExpiresAt=0,anonRequest=null,refreshId=0,nextWeekRequestId=0,nextWeekController=null;
 // HDC-12: the contest's validated rules and rulings (null until the first load for the selected week) and the raw events
 // of each week, kept only to check an applied ruling against what the feed says now.
@@ -153,6 +156,7 @@ function renderDecision(summary,ruling=0,held=0,R=null){
   const box=$('svDecisionEntries');if(!box||!cfg)return;
   const nextWeekIndex=cfg.week,nextWeek=cfg.week+1,entries=allEntries();
   $('svDecisionWeek').textContent=`Week ${nextWeek}`;
+  if(groupSurvivorArchived()){$('svDecisionNote').textContent='Our group has finished Survivor; the historical archive remains available.';box.innerHTML='<div class="empty">GROUP ENDED · No upcoming Survivor selection or next-week follow-up is needed.</div>';return;}
   // HDC-12: without the contest's rules and rulings no entry can be proven alive, so there is no surviving field.
   if(R?.status==='hold'){$('svDecisionNote').textContent='Decision support is on hold: ruling data unavailable.';box.innerHTML='<div class="empty">ON HOLD · Ruling data unavailable. No entry can be proven alive until the contest rules and rulings load.</div>';return}
   if(summary.pending>0){$('svDecisionNote').textContent='Decision support is provisional until every current-week Survivor result is final.';box.innerHTML='<div class="empty">Waiting for the current week to settle before calculating the next-week surviving field.</div>';return}
@@ -302,7 +306,7 @@ async function updateScores(id){
     // Rulings kept from an earlier load (stale) still apply, and the feed status always says so.
     // HDC-15: a snapshot that could not be verified as the current publication is never LIVE.
     const R=rulingLookup(),flags=R?.status==='hold'?null:[...feedFlags(R),...(rulingData?.stale?['RULINGS STALE']:[])],lead=pubStale?'PUBLISHED DATA STALE':'LIVE';
-    $('svFeed').textContent=!flags?`ON HOLD · RULING DATA UNAVAILABLE${pubStale?' · PUBLISHED DATA STALE':''}`:flags.length?`${lead} · ${flags.join(' · ')}`:`${lead} · NFL results`;$('svFeed').className=`survivor-feed ${!flags||flags.length||pubStale?'warn':'ok'}`;shareFeed={cfg:scoreCfg,at:Date.now(),failed:false};render();void updateDecisionSchedule();
+    $('svFeed').textContent=!flags?`ON HOLD · RULING DATA UNAVAILABLE${pubStale?' · PUBLISHED DATA STALE':''}`:flags.length?`${lead} · ${flags.join(' · ')}`:`${lead} · NFL results`;$('svFeed').className=`survivor-feed ${!flags||flags.length||pubStale?'warn':'ok'}`;shareFeed={cfg:scoreCfg,at:Date.now(),failed:false};render();if(!groupSurvivorArchived())void updateDecisionSchedule();
   }catch(e){if(id!==refreshId||cfg!==scoreCfg)return;shareFeed={cfg:scoreCfg,at:shareFeed?.cfg===scoreCfg?shareFeed.at:null,failed:true};$('svFeed').textContent=`RESULT FEED UNAVAILABLE${pubStale?' · PUBLISHED DATA STALE':''}${rulingData?.stale?' · RULINGS STALE':''}`;$('svFeed').className='survivor-feed warn';render();console.warn(e)}
 }
 
@@ -386,6 +390,7 @@ async function switchWeek(season,week){
 // last refresh started HOME_REFRESH_MS ago (bounded: the Home dashboard summary), and never while another Pick'em view has
 // the page.
 function autoRefresh(){
+  if(groupSurvivorArchived())return;
   if(!cfg||document.visibilityState!=='visible'||switching||(running&&Date.now()-refreshStartedAt<STALL_MS))return;
   const view=document.body.dataset.view;
   if(view==='survivor'||(view==='home'&&Date.now()-refreshStartedAt>=HOME_REFRESH_MS))void refresh();
