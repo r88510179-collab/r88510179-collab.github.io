@@ -1,5 +1,5 @@
 import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';
-import {TARGETS,detectWeek,groupPdfTextItems,carryForwardWeekHints,parseDocumentGroups,chooseBestCandidate,validateConfig} from './parser-core.js?v=14';
+import {TARGETS,detectWeek,groupPdfTextItems,carryForwardWeekHints,parseDocumentGroups,chooseBestCandidate,validateConfig,easternKickoffDate} from './parser-core.js?v=15';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';
@@ -191,7 +191,7 @@ async function verifySchedule(config,typed=''){
     if(!eventId)throw new Error(`Schedule event for ${g.away} at ${g.home} is missing an event ID.`);
     if(usedEventIds.has(eventId))throw new Error(`Schedule event ${eventId} was matched to more than one pool game.`);
     usedEventIds.add(eventId);
-    return{...g,index:i,eventId,date:String(e.date||'').slice(0,10)};
+    return{...g,index:i,eventId,date:easternKickoffDate(e.date)};
   });
   for(const line of confirmations)if(!confirmed.has(line))throw new Error(`Absent-game confirmation "${line}" does not match a sheet game missing from the NFL Week ${config.week} feed. Correct or clear it, then read the sheet again.`);
   if(events.length<games.length-exceptions.length)throw new Error(`NFL feed has ${events.length} games but the sheet has ${games.length}.`);
