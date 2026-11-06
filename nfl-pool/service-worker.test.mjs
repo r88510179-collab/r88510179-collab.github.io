@@ -54,12 +54,34 @@ function restoreWeekSelector(path,text){
   }
   return text;
 }
+// Reconstruct the already-deployed page for immutable historical HDC tests only.
+// The current candidate HTML and worker are exercised separately below.
+// Every inverse is bounded to exactly one recently introduced presentation change.
+function restoreCloseoutIndex(path,text){
+  if(path!=='index.html')return text;
+  const swap=(before,after,label)=>{
+    assert.equal(text.split(before).length,2,'closeout inverse '+label);
+    text=text.replace(before,after);
+  };
+  const start=text.indexOf('<style>\n/* Closeout mobile touch targets');
+  const end=text.indexOf('</style>\n',start);
+  assert(start>=0&&end>start,'closeout stylesheet has an exact bounded span');
+  text=text.slice(0,start)+text.slice(end+'</style>\n'.length);
+  swap('<body data-survivor-archived="true">','<body>','archived marker');
+  swap('<div class="group-survivor-complete"><strong>Our Survivor run has ended</strong>All tracked group entries have been eliminated (owner-confirmed). No further Survivor updates are needed; published history remains in the archive. Pick&#39;em continues.</div>','','Home completion notice');
+  swap('<h1>Survivor · archive</h1><p>Historical published weeks only. Our group is no longer competing in Survivor.</p>','<h1>Survivor</h1><p>Weekly selections, attrition and live NFL outcome status across the full Survivor field.</p>','Survivor page title');
+  swap('      <div class="group-survivor-complete"><strong>Group Survivor tracking closed for 2026</strong>The last remaining group entrant was eliminated (owner-confirmed). We are no longer following future Survivor weeks. The archive reflects only official results published so far; no unpublished eliminations have been invented.</div>\n','','archive notice');
+  swap('class="card survivor-decision-card" style="margin-top:10px" hidden aria-hidden="true"','class="card survivor-decision-card" style="margin-top:10px"','archived decision tool');
+  swap('data-view-target="survivor"><span class="nav-icon">◉</span><span>Archive</span>','data-view-target="survivor"><span class="nav-icon">◉</span><span>Survivor</span>','archive tab');
+  return text;
+}
+
 const readFileSync=(url,encoding)=>{
   const pathname=new URL(url).pathname,path=pathname.split('/').pop();
   const raw=diskReadFileSync(url);
   let result=raw;
   if(['home-dashboard.js','home-dashboard.css','index.html','service-worker.js'].includes(path))
-    result=Buffer.from(restorePulse(path,restoreWeekSelector(path,raw.toString('utf8'))),'utf8');
+    result=Buffer.from(restorePulse(path,restoreWeekSelector(path,restoreCloseoutIndex(path,raw.toString('utf8')))),'utf8');
   return encoding==='utf8'?result.toString('utf8'):result;
 };
 const source=readFileSync(new URL('./service-worker.js',import.meta.url),'utf8');
