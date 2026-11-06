@@ -48,9 +48,9 @@ function restoreWeekSelector(path,text){
     return text.replace(SELECTOR_LINK,'');
   }
   if(path==='service-worker.js'){
-    assert(text.includes("const CACHE='pool-center-shell-v34'"),'selector fix uses a fresh worker cache');
+    assert(text.includes("const CACHE='pool-center-shell-v35'"),'selector fix uses a fresh worker cache');
     assert.equal(text.split(SELECTOR_WORKER).length,2,'only one new selector cache reference');
-    return text.replace("pool-center-shell-v34","pool-center-shell-v32").replace(SELECTOR_WORKER,'');
+    return text.replace("pool-center-shell-v35","pool-center-shell-v32").replace(SELECTOR_WORKER,'');
   }
   return text;
 }
@@ -2334,7 +2334,7 @@ assert.equal(hdFailures.length,0,`Home dashboard service-worker regressions fail
     assert.equal((currentPage.match(new RegExp(asset.replaceAll('.','\\.')+'\\?v=2','g'))||[]).length,1,`page references exactly one ${asset} v2`);
     assert.equal((currentWorker.match(new RegExp(asset.replaceAll('.','\\.')+'\\?v=2','g'))||[]).length,1,`worker precaches exactly one ${asset} v2`);
   }
-  assert.match(currentWorker,/const CACHE='pool-center-shell-v34'/);
+  assert.match(currentWorker,/const CACHE='pool-center-shell-v35'/);
   assert(!currentPage.includes('qa-read-routing')&&!currentWorker.includes('qa-read-routing'),
     'release candidate must never include staging-only fetch interception');
   assert(!currentWorker.includes('home-dashboard.js?v=1')&&!currentWorker.includes('home-dashboard.css?v=1'));
@@ -2371,7 +2371,7 @@ assert.equal(ssFailures.length,0,`Season record service-worker regressions faile
   const css=diskReadFileSync(new URL('./week-selector.css',import.meta.url),'utf8');
   assert.equal(actualPage.split(SELECTOR_LINK).length,2,'one loaded fix stylesheet');
   assert.equal(actualWorker.split(SELECTOR_WORKER).length,2,'one precached fix stylesheet');
-  assert.match(actualWorker,/const CACHE='pool-center-shell-v34'/);
+  assert.match(actualWorker,/const CACHE='pool-center-shell-v35'/);
   assert(css.includes('.week-strip > #weekSelect { flex:0 0 150px; width:150px; min-width:150px; max-width:150px; }'));
   assert(css.includes('.week-strip > .week-copy { flex:1 1 0; min-width:0; }'));
   assert(!css.includes('url(')&&!css.includes('@import')&&!css.includes('http:')&&!css.includes('https:'),'no remote CSS or request');
@@ -2380,7 +2380,32 @@ assert.equal(ssFailures.length,0,`Season record service-worker regressions faile
     assert(contentArea-150>=0,viewport+'px viewport still leaves room for the week description');
   }
   assert.equal(restoreWeekSelector('index.html',actualPage),diskReadFileSync(new URL('./index.html',import.meta.url),'utf8').replace(SELECTOR_LINK,''),'bounded HTML inverse');
-  assert.equal(restoreWeekSelector('service-worker.js',actualWorker),actualWorker.replace("pool-center-shell-v34","pool-center-shell-v32").replace(SELECTOR_WORKER,''),'bounded worker inverse');
+  assert.equal(restoreWeekSelector('service-worker.js',actualWorker),actualWorker.replace("pool-center-shell-v35","pool-center-shell-v32").replace(SELECTOR_WORKER,''),'bounded worker inverse');
+}
+
+// Closeout overlay: restoreCloseoutIndex removes this page-only <style> for the immutable historical byte checks above,
+// so it is checked here, on the actual page. It stays one bounded block that loads nothing; every class its 44px rules
+// name is one the app renders (a selector that matches nothing leaves its control undersized, as .picks-segment did),
+// and each archive rule applies only under the page's archived-group marker.
+{
+  const page=diskReadFileSync(new URL('./index.html',import.meta.url),'utf8');
+  const start=page.indexOf('<style>\n/* Closeout mobile touch targets'),end=page.indexOf('</style>\n',start);
+  assert(start>=0&&end>start,'one bounded closeout overlay');
+  assert.equal(page.split('<style').length-1,1,'the closeout overlay is the only inline stylesheet');
+  const css=page.slice(start,end),markup=page.slice(0,start)+page.slice(end);
+  assert(!/url\(|@import|https?:|expression\(|javascript:/i.test(css),'the overlay loads nothing');
+  const rendered=[markup,...['weekly-app.js','picks-mobile.js','home-dashboard.js','survivor-app.js','share-ui.js'].map(file=>diskReadFileSync(new URL('./'+file,import.meta.url),'utf8'))];
+  const targets=[...css.matchAll(/([^{}]+)\{[^}]*\b(?:min-height|height):44px[^}]*\}/g)].map(m=>m[1].replace(/\/\*[\s\S]*?\*\//g,''));
+  assert(targets.length>=4,'the 44px rules are present');
+  for(const cls of new Set(targets.flatMap(selectors=>[...selectors.matchAll(/\.([\w-]+)/g)].map(m=>m[1]))))
+    assert(rendered.some(text=>new RegExp(`class="[^"]*(?<![\\w-])${cls}(?![\\w-])`).test(text)),`.${cls} in a 44px rule matches a rendered control`);
+  for(const cls of ['pm-segment','pm-toggle','pm-slates-action','dash-tool','share-btn','week-select','brand-lockup'])
+    assert(targets.some(selectors=>selectors.split(',').some(s=>s.trim()==='.'+cls)),`.${cls} is a 44px target`);
+  assert(css.includes('.app-menu summary{width:44px;height:44px}'),'the settings control is 44px square');
+  const archive=css.slice(css.indexOf('body[data-survivor-archived'),css.indexOf('{display:none!important}'));
+  for(const selector of archive.split(','))assert(selector.trim().startsWith('body[data-survivor-archived="true"] '),`${selector.trim()} is scoped to the archived marker`);
+  assert.equal(markup.split('<body data-survivor-archived="true">').length-1,1,'the page carries the archived marker once');
+  for(const id of ['dashSurvivor','svFeed'])assert.equal(markup.split(`id="${id}"`).length-1,1,`#${id} exists once`);
 }
 
 console.log('service-worker precache graph (share-card, Home dashboard, V1.3 mobile UX, V1.4 compact Picks UX, V1.4 final polish, V1.4 collapsible slate groups, V1.4 multi-select slates and season record versions), fresh (cache:"reload") precache requests, all-or-nothing install, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');
