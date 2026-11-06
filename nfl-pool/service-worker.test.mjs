@@ -2437,7 +2437,7 @@ assert.equal(ssFailures.length,0,`Season record service-worker regressions faile
   assert(!/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|EventSource|localStorage|sessionStorage|indexedDB|eval\s*\(|https?:\/\//.test(js),'date display must remain read-only and offline');
   assert(js.includes("doc.addEventListener('poolcenter:update'"),'refresh reads the already-published Pick’em snapshot');
   assert(js.includes("'poolcenter:picks'"),'the display uses the existing picks snapshot, not a second data feed');
-  const {verifiedWeekRange,correctedWeekLine}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+  const {verifiedWeekRange,correctedWeekLine,bootVerifiedWeekDates}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
   const game=kickoff=>({kickoff});
   const example=[game('2026-11-01T18:00:00Z'),game('2026-11-03T01:15:00Z')];
   assert.equal(verifiedWeekRange(example),'Nov 1–Nov 2, 2026','UTC Tuesday is Monday night in Eastern time');
@@ -2453,6 +2453,36 @@ assert.equal(ssFailures.length,0,`Season record service-worker regressions faile
   assert.equal(correctedWeekLine('PUBLISHED DATA STALE · revision 1 · Nov 1–Nov 3, 2026 · D.C.',snapshot),
     'PUBLISHED DATA STALE · revision 1 · Nov 1–Nov 3, 2026 · D.C.','preserve stale-publication warnings');
   assert.equal(correctedWeekLine('Loading weekly pool…',snapshot),'Loading weekly pool…');
+
+  // Exercise the actual browser event contract without fetching any live data.
+  // The existing Pick'em app answers poolcenter:picks with its verified snapshot.
+  const weekLine={textContent:original},handlers=new Map();
+  let currentSnapshot=snapshot,reads=0;
+  const doc={
+    getElementById:id=>id==='weekLine'?weekLine:null,
+    addEventListener:(type,handler)=>{
+      const list=handlers.get(type)||[];list.push(handler);handlers.set(type,list);
+    },
+    dispatchEvent:event=>{
+      if(event.type==='poolcenter:picks'){reads++;event.detail.snapshot=currentSnapshot}
+      for(const handler of handlers.get(event.type)||[])handler(event);
+      return true;
+    }
+  };
+  bootVerifiedWeekDates(doc);
+  assert.equal(reads,1,'initial read uses exactly one existing snapshot request');
+  assert.equal(weekLine.textContent,'Week 8 · revision 1 · Nov 1–Nov 2, 2026 · D.C. · JC');
+  weekLine.textContent=original;
+  currentSnapshot={...snapshot,games:[game(null)]};
+  doc.dispatchEvent(new CustomEvent('poolcenter:update',{detail:{contest:'pickem'}}));
+  assert.equal(weekLine.textContent,'Week 8 · revision 1 · Kickoff dates unverified · D.C. · JC');
+  const count=reads;
+  doc.dispatchEvent(new CustomEvent('poolcenter:update',{detail:{contest:'survivor'}}));
+  assert.equal(reads,count,'Survivor updates never refresh the Pick’em date summary');
+  weekLine.textContent=original;
+  currentSnapshot={...snapshot,revision:2};
+  doc.dispatchEvent(new CustomEvent('poolcenter:update',{detail:{contest:'pickem'}}));
+  assert.equal(weekLine.textContent,original,'stale revision cannot change the displayed header');
 }
 
 console.log('service-worker precache graph (share-card, Home dashboard, V1.3 mobile UX, V1.4 compact Picks UX, V1.4 final polish, V1.4 collapsible slate groups, V1.4 multi-select slates and season record versions), fresh (cache:"reload") precache requests, all-or-nothing install, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');
