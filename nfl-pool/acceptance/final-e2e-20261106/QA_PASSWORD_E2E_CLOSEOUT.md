@@ -65,3 +65,7 @@ New **child-only** test rows are Pick'em W5 **locked r3** (`e23e44cba9922df8`) a
 - The previous original report remains a historical record of the earlier OTP-blocked run; **this later follow-up supersedes its BLOCKED verdict for isolated QA E2E**.
 - The confirmed display-only fix was separately extracted into [draft PR #35](https://github.com/r88510179-collab/r88510179-collab.github.io/pull/35) for production review, avoiding the large QA-only harness/evidence payload in PR #34.
 - **No merges, production releases, production data writes, or new production credentials were authorized or performed.** Explicit owner approval remains the release boundary for PR #35.
+
+### Post-acceptance privilege rollback
+
+After all tests passed, the newly created synthetic publisher was **downgraded from `admin` to `user` on the QA child** through the Neon Auth administration interface; an independent SQL read confirmed its `may_match_test_policies` predicate is `false`. The six additive child-only policies remain for audit, but all require `u.role = 'admin'` and therefore grant this test account no publication access. The synthetic QA publications remain locked for non-destructive acceptance evidence. No authentication settings or roles on the QA parent or production were changed.
