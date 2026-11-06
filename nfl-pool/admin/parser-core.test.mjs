@@ -4,7 +4,13 @@ import {readFileSync} from 'node:fs';
 
 const parserSource=readFileSync(new URL('./parser-core.js',import.meta.url),'utf8');
 const parserUrl='data:text/javascript;base64,'+Buffer.from(parserSource).toString('base64');
-const {carryForwardWeekHints,chooseBestCandidate,parseDocumentGroups,validateConfig}=await import(parserUrl);
+const {carryForwardWeekHints,chooseBestCandidate,parseDocumentGroups,validateConfig,easternKickoffDate}=await import(parserUrl);
+
+assert.equal(easternKickoffDate('2026-11-03T01:15:00Z'),'2026-11-02','Monday night kickoff must stay on Monday in ET');
+assert.equal(easternKickoffDate('2026-11-02T18:00:00Z'),'2026-11-02','early Sunday/Monday game should use Eastern date');
+assert.equal(easternKickoffDate('2026-11-01T00:30:00Z'),'2026-10-31','Saturday night across UTC midnight stays on Saturday in ET');
+assert.throws(()=>easternKickoffDate('not-a-date'),/Invalid NFL kickoff/);
+
 
 const matchups=[
   '1) Panthers at 2) Falcons','3) Saints at 4) Ravens','5) Vikings at 6) Bears','7) Bengals at 8) Texans','9) Steelers at 10) Patriots',
