@@ -45,12 +45,12 @@ const SELECTOR_WORKER="  './week-selector.css?v=1',\\n".replace('\\n','\n');
 function restoreWeekSelector(path,text){
   if(path==='index.html'){
     assert.equal(text.split(SELECTOR_LINK).length,2,'only one new selector stylesheet reference');
-    return text.replace(SELECTOR_LINK,'').replace("style.css?v=premium-v4","style.css?v=premium-v3");
+    return text.replace(SELECTOR_LINK,'');
   }
   if(path==='service-worker.js'){
     assert(text.includes("const CACHE='pool-center-shell-v34'"),'selector fix uses a fresh worker cache');
     assert.equal(text.split(SELECTOR_WORKER).length,2,'only one new selector cache reference');
-    return text.replace("pool-center-shell-v34","pool-center-shell-v32").replace(SELECTOR_WORKER,'').replace("style.css?v=premium-v4","style.css?v=premium-v3");
+    return text.replace("pool-center-shell-v34","pool-center-shell-v32").replace(SELECTOR_WORKER,'');
   }
   return text;
 }
@@ -2358,7 +2358,7 @@ assert.equal(ssFailures.length,0,`Season record service-worker regressions faile
     assert(contentArea-150>=0,viewport+'px viewport still leaves room for the week description');
   }
   assert.equal(restoreWeekSelector('index.html',actualPage),diskReadFileSync(new URL('./index.html',import.meta.url),'utf8').replace(SELECTOR_LINK,''),'bounded HTML inverse');
-  assert.equal(restoreWeekSelector('service-worker.js',actualWorker),actualWorker.replace("pool-center-shell-v34","pool-center-shell-v32").replace(SELECTOR_WORKER,'').replace("style.css?v=premium-v4","style.css?v=premium-v3"),'bounded worker inverse');
+  assert.equal(restoreWeekSelector('service-worker.js',actualWorker),actualWorker.replace("pool-center-shell-v34","pool-center-shell-v32").replace(SELECTOR_WORKER,''),'bounded worker inverse');
 }
 
 console.log('service-worker precache graph (share-card, Home dashboard, V1.3 mobile UX, V1.4 compact Picks UX, V1.4 final polish, V1.4 collapsible slate groups, V1.4 multi-select slates and season record versions), fresh (cache:"reload") precache requests, all-or-nothing install, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');
