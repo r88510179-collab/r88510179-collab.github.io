@@ -14,7 +14,7 @@ export const PREFERENCES_VERSION=1;
 export const SECTIONS=Object.freeze([
   Object.freeze({id:'overview',title:'Quick Overview',required:true,expanded:true}),
   Object.freeze({id:'standings',title:'Live Standings',required:false,expanded:true}),
-  Object.freeze({id:'survivor',title:'Survivor Archive',required:false,expanded:false}),
+  Object.freeze({id:'survivor',title:'Survivor Quick View',required:false,expanded:true}),
   Object.freeze({id:'pulse',title:'Pool Status',required:false,expanded:false}),
   Object.freeze({id:'scenarios',title:'Group Scenarios',required:false,expanded:false}),
   Object.freeze({id:'games',title:'Game Watch',required:false,expanded:false})
@@ -126,10 +126,9 @@ const pendingText=(contest,snapshot)=>contestStatus(contest,snapshot).label==='L
 export function sectionSummary(id,{pickem=null,survivor=null}={},{now=Date.now()}={}){
   const pk=pickem?.ready===true?pickem:null,sv=survivor?.ready===true?survivor:null;
   switch(id){
-    case'overview':return`Pick'em ${contestStatus('pickem',pickem,{now}).label} · Survivor group closed`;
+    case'overview':return`Pick'em ${contestStatus('pickem',pickem,{now}).label} · Survivor ${contestStatus('survivor',survivor,{now}).label}`;
     case'standings':return pk?leaderText(pk):pendingText('pickem',pickem);
     case'survivor':{
-      return 'Group eliminated · historical archive';
       if(!sv)return pendingText('survivor',survivor);
       const c=sv.counts,spot=(sv.tracked||[]).find(t=>t.name===SPOTLIGHT_ENTRANT);
       return[`${c.active} of ${sv.fieldSize} remaining`,c.pending?`${c.pending} pending`:'',spot?`${spot.name} ${spot.status}`:''].filter(Boolean).join(' · ');
@@ -168,13 +167,11 @@ export function overviewHtml({pickem=null,survivor=null}={},{now=Date.now()}={})
     svLine=`Week ${s.week} · revision ${s.revision} · results ${formatAge(s.feed.at,now)}`;
     svFacts=`<span>Remaining <b>${c.active}</b> of ${s.fieldSize}</span><span>Pending <b>${c.pending}</b></span>${spot?`<span>${esc(spot.name)} ${pill(spot.status)}</span>`:''}`;
   }
-  const archived={label:'GROUP ENDED',tone:'final',ready:true,detail:'Owner-confirmed: no tracked group entries remain in Survivor.'};
-  return panel('pickem',pk,pkLine,pkFacts)+panel('survivor',archived,'2026 season closed for our group','<span>Past official Survivor results remain available in the archive.</span>');
+  return panel('pickem',pk,pkLine,pkFacts)+panel('survivor',sv,svLine,svFacts);
 }
 // Survivor Quick View: the field's four counts, the tracked entrants as badge rows (compact) or with their reasons
 // (detailed), and the week's own status; unloaded results are never shown as zero.
 export function survivorQuickViewHtml(snapshot,{density='compact',now=Date.now()}={}){
-  return '<div class="dash-survivor-empty"><strong>Our Survivor run is finished.</strong><p>All group entrants were eliminated (owner-confirmed). Archived results can still be viewed; no further Survivor monitoring is needed.</p></div>';
   const st=contestStatus('survivor',snapshot,{now});
   if(!st.ready)return`<div class="dash-survivor-empty">${chip(st)}<p>${esc(st.detail)}</p></div>`;
   const s=snapshot,c=s.counts,detailed=density==='detailed';
@@ -221,10 +218,17 @@ export function boot(){
   }
   function renderData(){
     const now=Date.now(),contests=document.getElementById('dashContests'),survivor=document.getElementById('dashSurvivor'),fieldPulse=document.getElementById('homeFieldPulse');
-    if(contests)contests.innerHTML=overviewHtml(snapshots,{now});
-    if(survivor)survivor.innerHTML=survivorQuickViewHtml(snapshots.survivor,{density:prefs.density,now});
+    const archived=document.body?.dataset?.survivorArchived==='true';
+    if(contests){
+      contests.innerHTML=overviewHtml(snapshots,{now});
+      if(archived){
+        const panel=contests.querySelector('[data-dash-contest="survivor"]');
+        if(panel)panel.innerHTML='<div class="dash-contest-head"><span class="dash-contest-name">Survivor</span><span class="dash-status tone-final">GROUP ENDED</span></div><div class="dash-contest-line">Historical archive · no further tracking</div><div class="dash-contest-facts">All tracked members eliminated (owner-confirmed).</div>';
+      }
+    }
+    if(survivor)survivor.innerHTML=archived?'<div class="dash-survivor-empty"><strong>Our Survivor run is finished.</strong><p>All tracked members eliminated (owner-confirmed). Past published weeks remain readable; Pick’em continues.</p></div>':survivorQuickViewHtml(snapshots.survivor,{density:prefs.density,now});
     if(fieldPulse)fieldPulse.innerHTML=groupFieldPulseHtml(snapshots.pickem,{now});
-    for(const [id,node] of sections){const summary=node.querySelector('[data-dash-summary]');if(summary)summary.textContent=sectionSummary(id,snapshots,{now})}
+    for(const [id,node] of sections){const summary=node.querySelector('[data-dash-summary]');if(summary)summary.textContent=archived&&id==='survivor'?'Our group eliminated · archive':sectionSummary(id,snapshots,{now})}
   }
   function setCollapsed(id,collapsed){
     const set=new Set(prefs.collapsed);if(collapsed)set.add(id);else set.delete(id);
