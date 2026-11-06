@@ -87,6 +87,8 @@ function save(rec){
   const file=`e2e-${rec.scenario}${ONLY.length?`-rerun-${ONLY.join('_')}`:''}${process.env.QA_SHOT_TAG?`-${process.env.QA_SHOT_TAG}`:''}.json`;
   fs.writeFileSync(path.join(LOGS,file),text);
   console.log(`saved logs/${file}`,JSON.stringify(rec.summary));
+  // Evidence is always saved, but a failed step or a blocked/forbidden request must never let the run exit green.
+  if(rec.summary.fail||rec.summary.violations||rec.summary.refused)process.exitCode=1;
 }
 const shot=(page,name,opts={})=>page.screenshot({path:path.join(SHOTS,`${name}.jpg`),type:'jpeg',quality:72,fullPage:true,...opts}).then(()=>`screenshots/${name}.jpg`);
 
