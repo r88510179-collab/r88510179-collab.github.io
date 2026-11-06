@@ -1,0 +1,6 @@
+/* Personal Pool tracker only: keep the full two-digit Week 10–18
+   label visible in the native Pick'em dropdown, without widening the page.
+   QA measured 84px text in a 76px box; 150px gives >100px of content room.
+   Survivor uses a separate page-title select and is intentionally unchanged. */
+.week-strip > .week-copy { flex:1 1 0; min-width:0; }
+.week-strip > #weekSelect { flex:0 0 150px; width:150px; min-width:150px; max-width:150px; }
