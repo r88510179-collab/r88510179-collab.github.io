@@ -1,5 +1,5 @@
 /* Shareable cards (share-ui.js): the Share buttons and the preview dialog. The buttons stay hidden until share-ui.js runs. */
-.share-btn{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 13px;border:1px solid #d52d3466;border-radius:999px;background:#d52d3414;color:#ffd2d4;font-size:10px;font-weight:950;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;cursor:pointer;flex:0 0 auto}
+.share-btn{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:0 13px;border:1px solid #d52d3466;border-radius:999px;background:#d52d3414;color:#ffd2d4;font-size:10px;font-weight:950;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;cursor:pointer;flex:0 0 auto}
 .share-btn:hover{background:#d52d3426}.share-btn:focus-visible,.share-action:focus-visible,.share-close:focus-visible{outline:2px solid #ef5a61;outline-offset:2px}
 .share-btn svg{width:14px;height:14px;flex:0 0 auto}
 /* The meta line keeps its place on the right with the button after it; in Survivor the button sits under the status pill. */
