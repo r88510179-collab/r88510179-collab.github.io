@@ -2312,7 +2312,7 @@ assert.equal(hdFailures.length,0,`Home dashboard service-worker regressions fail
     assert.equal((currentPage.match(new RegExp(asset.replaceAll('.','\\.')+'\\?v=2','g'))||[]).length,1,`page references exactly one ${asset} v2`);
     assert.equal((currentWorker.match(new RegExp(asset.replaceAll('.','\\.')+'\\?v=2','g'))||[]).length,1,`worker precaches exactly one ${asset} v2`);
   }
-  assert.match(currentWorker,/const CACHE='pool-center-shell-v32'/);
+  assert.match(currentWorker,/const CACHE='pool-center-shell-v33'/);
   assert(!currentPage.includes('qa-read-routing')&&!currentWorker.includes('qa-read-routing'),
     'release candidate must never include staging-only fetch interception');
   assert(!currentWorker.includes('home-dashboard.js?v=1')&&!currentWorker.includes('home-dashboard.css?v=1'));
