@@ -2351,7 +2351,7 @@ assert.equal(hdFailures.length,0,`Home dashboard service-worker regressions fail
   for(const forbidden of ['qa-read-routing.js','qa/live-mobile.html','api/qa-read.js','api/qa-schedule.js'])
     assert(!currentPage.includes(forbidden)&&!currentWorker.includes(forbidden),
       `${forbidden} cannot be in release shell`);
-  assert.equal(restorePulse('index.html',restoreWeekSelector('index.html',currentPage)),index,'only approved Home and selector layers changed');
+  assert.equal(restorePulse('index.html',restoreWeekSelector('index.html',restoreCloseoutIndex('index.html',currentPage))),index,'only approved Home and selector layers changed');
   assert.equal(restorePulse('service-worker.js',restoreWeekSelector('service-worker.js',currentWorker)),source,'only Home versions and cache generation changed');
 }
 
