@@ -3,7 +3,7 @@ const CACHE='pool-center-shell-v34';
 const SHELL=[
   './',
   './index.html',
-  './style.css?v=premium-v4',
+  './style.css?v=premium-v3',
   './slate.css?v=slate-v1',
   './weekly.css?v=premium-v3',
   './weekly-app.js?v=weekly-v24',
