@@ -1,0 +1,297 @@
+{
+ "scenario": "pickem",
+ "startedAt": "2026-11-06T17:17:13.821Z",
+ "browser": "153.0.8010.12",
+ "steps": [
+  {
+   "id": "P00",
+   "title": "Publisher page loads the QA-retargeted current-main admin",
+   "start": "2026-11-06T17:17:13.865Z",
+   "result": "PASS",
+   "evidence": {
+    "authState": "SIGN IN REQUIRED",
+    "screenshot": "screenshots/pickem-00-signed-out.jpg"
+   },
+   "end": "2026-11-06T17:17:16.041Z"
+  },
+  {
+   "id": "P01",
+   "title": "Signed out: a valid sheet parses and previews, but Publish stays disabled",
+   "start": "2026-11-06T17:17:16.041Z",
+   "result": "PASS",
+   "evidence": {
+    "authState": "SIGN IN REQUIRED",
+    "message": "Week 5 parsed with 38 competition entries and matched to the NFL schedule. Review it before publishing.",
+    "messageClass": "notice success",
+    "reviewHidden": false,
+    "reviewTitle": "2026 · Week 5 · 15 games · 38 entries",
+    "publishDisabled": true,
+    "validation": "✓ Tracked rows valid\n✓ Four tracked entries found\n✓ Anonymous privacy allowlist enforced\n✓ Full-field regular Pick'em data validated · 38 entries\n✓ NFL schedule matched",
+    "screenshot": "screenshots/pickem-01-signed-out-preview-publish-disabled.jpg"
+   },
+   "end": "2026-11-06T17:17:16.979Z"
+  },
+  {
+   "id": "P02",
+   "title": "Email-code sign-in of the synthetic publisher (pickem)",
+   "start": "2026-11-06T17:17:16.980Z",
+   "result": "FAIL",
+   "error": "code file is not numeric",
+   "end": "2026-11-06T17:22:13.853Z"
+  }
+ ],
+ "writes": [],
+ "network": [
+  {
+   "t": "2026-11-06T17:17:13.900Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/admin/",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:13.904Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/style.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:13.907Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/slate.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:13.908Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/admin/admin.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:13.912Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/assets/pool-center-icon.svg",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:13.917Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/score-feed-proxy.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:13.917Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/admin/admin.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:13.917Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/pwa.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:13.938Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/admin/parser-core.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:14.269Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:14.311Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:14.402Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@neondatabase/auth@0.5.0-beta/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:14.561Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@neondatabase/auth@0.5.0-beta/react/adapters/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:14.561Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@neondatabase/auth@0.5.0-beta/vanilla/adapters/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:14.664Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/better-auth@1.6.23/client/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:14.664Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@supabase/auth-js@2.79.0/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:14.669Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/better-auth@1.6.23/client/plugins/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:14.711Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/zod@4.3.6/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:14.742Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@neondatabase/postgrest-js@0.2.0-beta/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:14.776Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/nanostores@1.4.0/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:14.779Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/jose@6.2.5/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:14.799Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@better-auth/core@1.6.23/utils/string/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:14.862Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/better-auth@1.6.23/react/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:14.879Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@better-auth/core@1.6.23/error/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:14.890Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@better-auth/core@1.6.23/env/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:14.917Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/defu@6.1.7/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:14.999Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/tslib@2.8.1/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:15.014Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@better-auth/core@1.6.23/utils/error-codes/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:15.020Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@supabase/postgrest-js@2.79.0/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:15.061Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@better-auth/core@1.6.23/utils/url/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:15.071Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@better-fetch/fetch@1.3.1/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:15.122Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/better-call@1.3.7/error/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:15.125Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/react@19.2.7/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:15.384Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/get-session",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:16.285Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:16.483Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:16.771Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=5&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:17:17.429Z",
+   "method": "POST",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/email-otp/send-verification-otp",
+   "status": 200
+  }
+ ],
+ "violations": [],
+ "refused": [],
+ "console": [
+  {
+   "t": "2026-11-06T17:17:15.145Z",
+   "page": "/nfl-pool/admin/",
+   "type": "warning",
+   "text": "Service Worker registration blocked by Playwright"
+  }
+ ],
+ "pageErrors": [],
+ "finishedAt": "2026-11-06T17:22:13.867Z",
+ "summary": {
+  "steps": 3,
+  "pass": 2,
+  "fail": 1,
+  "writes": 0,
+  "violations": 0,
+  "refused": 0,
+  "pageErrors": 0,
+  "consoleErrors": 0,
+  "consoleWarnings": 1
+ }
+}

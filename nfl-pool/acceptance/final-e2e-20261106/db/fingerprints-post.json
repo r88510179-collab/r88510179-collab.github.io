@@ -1,0 +1,45 @@
+{
+  "note": "Read-only fingerprints captured AFTER all browser runs, with the identical query used for fingerprints-pre.json (Neon MCP run_sql, SELECT only). Production project flat-cake-85432375 was never queried.",
+  "branches": {
+    "br-dawn-fire-bb923034": {
+      "captured_at": "2026-11-06 17:36:33.942346+00",
+      "session_timezone": "GMT",
+      "row_counts": {"nfl_pool_weeks": 1, "nfl_survivor_weeks": 2, "nfl_contests": 2, "nfl_contest_policies": 2, "nfl_incident_rulings": 0},
+      "publications_row_md5": {"pickem 2026 W9 r3": "9414137bf10cfe7c57d8b9b6078af1a9", "survivor 2026 W2 r2": "5be7248119aa513ad1e625959835d4b1", "survivor 2026 W9 r1": "89001f98c86614f9ce1048126a99abff"},
+      "publications_config_md5": {"pickem 2026 W9 r3": "d6d616b68a08f754778eb1798efd0299", "survivor 2026 W2 r2": "64ed41ebe842a0782356553105f31ab0", "survivor 2026 W9 r1": "f5800e61c4e00cd28583fbbd2367fbab"},
+      "other_rows_md5": {"nfl_contest_policies": ["2a11865ba6b40851364d03be485d17e4", "d417a94d6ed08a9d47d142a57ddf89a1"], "nfl_contests": ["4c0f0cade070d15ecd73ea79eea0170f", "618ad6b041e8ca889ae5a3fedcb483d6"], "nfl_incident_rulings": []},
+      "rls_policies": {"count": 11, "md5": "170a41ac2c198edf84ec7fb78ee060a8"},
+      "rls_flags_md5": "6f7b4d8074d0ff26648c10004451d7d2",
+      "table_grants": {"count": 45, "md5": "9d2ca9f53d633eaaa4fd248fac3365e6"},
+      "auth_users": {"count": 1, "md5": "05f14b42328111b9568eeaf7bbea3f48"},
+      "public_functions": {"count": 5, "md5": "b480cf9130b3ef132b1b50fe15fec74f"},
+      "triggers": {"count": 9, "md5": "818588975cabc0c1ce225fcf5f931a79"},
+      "data_api_cors_unchanged": true,
+      "data_api_observed_at": "2026-11-06T17:36:51Z",
+      "verdict": "IDENTICAL to fingerprints-pre.json in every field"
+    },
+    "br-damp-credit-bbn7d0zr": {
+      "captured_at": "2026-11-06 17:36:38.898479+00",
+      "session_timezone": "GMT",
+      "row_counts": {"nfl_pool_weeks": 2, "nfl_survivor_weeks": 3, "nfl_contests": 2, "nfl_contest_policies": 2, "nfl_incident_rulings": 0},
+      "publications_row_md5": {"pickem 2026 W9 r3": "9414137bf10cfe7c57d8b9b6078af1a9", "pickem 2026 W10 r2": "9cec7630b411a62e57d72389bbd12cce", "survivor 2026 W2 r2": "5be7248119aa513ad1e625959835d4b1", "survivor 2026 W6 r2": "d72f571e2db127bf0d2cb5002e9ebff3", "survivor 2026 W9 r1": "89001f98c86614f9ce1048126a99abff"},
+      "publications_config_md5": {"pickem 2026 W9 r3": "d6d616b68a08f754778eb1798efd0299", "pickem 2026 W10 r2": "a843be04b824410a21e99a46c55fbda3", "survivor 2026 W2 r2": "64ed41ebe842a0782356553105f31ab0", "survivor 2026 W6 r2": "9fef33e0766ba088a70c5cdd5528b6f1", "survivor 2026 W9 r1": "f5800e61c4e00cd28583fbbd2367fbab"},
+      "other_rows_md5": {"nfl_contest_policies": ["2a11865ba6b40851364d03be485d17e4", "d417a94d6ed08a9d47d142a57ddf89a1"], "nfl_contests": ["4c0f0cade070d15ecd73ea79eea0170f", "618ad6b041e8ca889ae5a3fedcb483d6"], "nfl_incident_rulings": []},
+      "rls_policies": {"count": 17, "md5": "df72da5e579540575b8cfadc1434166a"},
+      "rls_flags_md5": "6f7b4d8074d0ff26648c10004451d7d2",
+      "table_grants": {"count": 45, "md5": "9d2ca9f53d633eaaa4fd248fac3365e6"},
+      "auth_users": {"count": 3, "md5": "b074783a0c5ebb50cea767ad6f41cdad"},
+      "public_functions": {"count": 5, "md5": "b480cf9130b3ef132b1b50fe15fec74f"},
+      "triggers": {"count": 9, "md5": "818588975cabc0c1ce225fcf5f931a79"},
+      "data_api_cors_unchanged": true,
+      "data_api_observed_at": "2026-11-06T17:36:50Z",
+      "neon_auth_side_effects": {
+        "verification_rows": 1,
+        "unexpired_verification_rows": 0,
+        "detail": "One hashed sign-in-code record created by the publisher page's own 'Send sign-in code' request at 2026-11-06T17:17:17Z for the synthetic address; it expired unused at 17:22:17Z. The code was never available (stored hashed; the reserved example.com address has no mailbox).",
+        "sessions_created_after_2026-11-06T16:30Z": 0
+      },
+      "verdict": "IDENTICAL to fingerprints-pre.json in every fingerprinted field; no publication, policy, grant, identity or configuration changed"
+    }
+  }
+}

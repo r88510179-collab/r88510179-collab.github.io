@@ -100,3 +100,10 @@ All 107 completed games of weeks 1-7 were read from nfl.com/scores/2026/week-1 t
 - An official-reference CSV is assembled **ephemerally inside the read-only CI runner** from those 14 reviewed public score facts (not committed as a stand-alone customer or private data file). `--official` requires all 14 finalized games, rejects missing/incorrect/extra results, and exits nonzero on disagreement.
 - This official check covers **Week 8**. The October 29 run documented separate official coverage for Weeks 1–7; Week 9 remains future/current when this evidence was added. Review the newest live Actions result before marking the new official check PASS.
 - Official final-score parity does **not** verify the third-party contest operator's standings or any PDF/participant write-path.
+
+## November 6, 2026 final E2E run on current `main` (not a full PASS)
+
+- Report and evidence: [`final-e2e-20261106/REPORT.md`](final-e2e-20261106/REPORT.md). Current `main` (`756f2ac`) was driven in a real browser against the isolated QA child `br-damp-credit-bbn7d0zr`; the QA parent and every existing QA publication fingerprinted identical before and after; production was never contacted.
+- **PASS:** Pick'em and Survivor malformed/invalid import rejection (9/9, including the duplicate-team rule added after PR #29), valid parse/preview with Eastern kickoff dates, signed-out publish gate, read-back of existing QA weeks after a real final, positive group-vs-field pulse, FEED UNAVAILABLE / ON HOLD / PUBLISHED DATA STALE (injected faults), Survivor tie elimination, 375/390/430 layout, anonymous write refusal (403/42501).
+- **Fixed:** the PUBLISHED DATA STALE strip fell back to stored UTC dates; it now keeps the warning and shows only verified Eastern dates (`week-date-range.js?v=2`, cache v37).
+- **BLOCKED:** authenticated publish/revision/read-back of new synthetic weeks and in-browser Pick'em tie grading — no usable authorized synthetic publisher sign-in on QA (email codes are stored hashed and the synthetic address has no mailbox). Requires an owner decision on QA authentication; see the report.

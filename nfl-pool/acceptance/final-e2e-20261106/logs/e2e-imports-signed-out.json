@@ -1,0 +1,1135 @@
+{
+ "scenario": "imports-signed-out",
+ "startedAt": "2026-11-06T17:25:15.801Z",
+ "browser": "153.0.8010.12",
+ "steps": [
+  {
+   "id": "P03",
+   "title": "Malformed PDF bytes are rejected",
+   "start": "2026-11-06T17:25:18.152Z",
+   "result": "PASS",
+   "evidence": {
+    "file": "QA-FINAL-E2E-malformed.pdf",
+    "fixtureSha256": "c26968f57819e85b0d639abcc3ddcbe2d58a2d3a15093e9f84eb76f380b5ecee",
+    "message": "Invalid PDF structure.",
+    "publishDisabled": true,
+    "screenshot": "screenshots/imports-p03-malformed.jpg"
+   },
+   "end": "2026-11-06T17:25:19.053Z"
+  },
+  {
+   "id": "P04",
+   "title": "Tracked row with a missing pick is rejected",
+   "start": "2026-11-06T17:25:19.053Z",
+   "result": "PASS",
+   "evidence": {
+    "file": "QA-FINAL-E2E-Pickem-2026-W5-missing-picks.pdf",
+    "fixtureSha256": "84fbca24777c118943b4d88ac80c1a252f247976447d98273ebfb777c2bcdd85",
+    "message": "No complete tracked week was found. Week 5: JC: regular weekly row is structurally invalid",
+    "publishDisabled": true,
+    "screenshot": "screenshots/imports-p04-missing-picks.jpg"
+   },
+   "end": "2026-11-06T17:25:19.589Z"
+  },
+  {
+   "id": "P05",
+   "title": "Two rows for one tracked entry are rejected",
+   "start": "2026-11-06T17:25:19.589Z",
+   "result": "PASS",
+   "evidence": {
+    "file": "QA-FINAL-E2E-Pickem-2026-W5-duplicate-tracked.pdf",
+    "fixtureSha256": "cd6882085df2c0dbaef801910ba68fd2faf666fa9fadcdb0359376e4d2393a04",
+    "message": "No complete tracked week was found. Week 5: Multiple DJS rows found",
+    "publishDisabled": true,
+    "screenshot": "screenshots/imports-p05-duplicate-tracked.jpg"
+   },
+   "end": "2026-11-06T17:25:20.138Z"
+  },
+  {
+   "id": "P06",
+   "title": "A team in two matchups is rejected (validation added after PR #29)",
+   "start": "2026-11-06T17:25:20.138Z",
+   "result": "PASS",
+   "evidence": {
+    "file": "QA-FINAL-E2E-Pickem-2026-W5-duplicate-team.pdf",
+    "fixtureSha256": "c3c544fa548253213d31d261bf9650f91fe2827b4f7687151efc4383f29c0355",
+    "message": "Game 14: team GB appears again (game 10)",
+    "publishDisabled": true,
+    "screenshot": "screenshots/imports-p06-duplicate-team.jpg"
+   },
+   "end": "2026-11-06T17:25:20.576Z"
+  },
+  {
+   "id": "P07",
+   "title": "A matchup not on the NFL Week 5 schedule is rejected",
+   "start": "2026-11-06T17:25:20.577Z",
+   "result": "PASS",
+   "evidence": {
+    "file": "QA-FINAL-E2E-Pickem-2026-W5-invalid-schedule.pdf",
+    "fixtureSha256": "4a66b69eea7976572e97a0cf30bf328f0ef767fcc899a123cc84cd773326b3b0",
+    "message": "Schedule mismatch for BAL at KC. Found 0 matching NFL games.",
+    "publishDisabled": true,
+    "screenshot": "screenshots/imports-p07-invalid-schedule.jpg"
+   },
+   "end": "2026-11-06T17:25:21.319Z"
+  },
+  {
+   "id": "P08",
+   "title": "Valid sheet QA-FINAL-E2E-Pickem-2026-W5-r1.pdf: preview with NFL schedule match and Eastern kickoff dates; Publish disabled while signed out",
+   "start": "2026-11-06T17:25:21.319Z",
+   "result": "PASS",
+   "evidence": {
+    "file": "QA-FINAL-E2E-Pickem-2026-W5-r1.pdf",
+    "fixtureSha256": "9a5e65dfe318edf5ceccbd5cff213a1be96270f040daf8d9c98182b665a6747b",
+    "message": "Week 5 parsed with 38 competition entries and matched to the NFL schedule. Review it before publishing.",
+    "review": {
+     "title": "2026 · Week 5 · 15 games · 38 entries",
+     "games": [
+      [
+       "1",
+       "1 Buccaneers",
+       "at",
+       "2 Cowboys",
+       "2026-10-08"
+      ],
+      [
+       "2",
+       "3 Eagles",
+       "at",
+       "4 Jaguars",
+       "2026-10-11"
+      ],
+      [
+       "3",
+       "5 Bengals",
+       "at",
+       "6 Dolphins",
+       "2026-10-11"
+      ],
+      [
+       "4",
+       "7 Browns",
+       "at",
+       "8 Jets",
+       "2026-10-11"
+      ],
+      [
+       "5",
+       "9 Texans",
+       "at",
+       "10 Titans",
+       "2026-10-11"
+      ],
+      [
+       "6",
+       "11 Colts",
+       "at",
+       "12 Steelers",
+       "2026-10-11"
+      ],
+      [
+       "7",
+       "13 Raiders",
+       "at",
+       "14 Patriots",
+       "2026-10-11"
+      ],
+      [
+       "8",
+       "15 Vikings",
+       "at",
+       "16 Saints",
+       "2026-10-11"
+      ],
+      [
+       "9",
+       "17 Giants",
+       "at",
+       "18 Commanders",
+       "2026-10-11"
+      ],
+      [
+       "10",
+       "19 Bears",
+       "at",
+       "20 Packers",
+       "2026-10-11"
+      ],
+      [
+       "11",
+       "21 Broncos",
+       "at",
+       "22 Chargers",
+       "2026-10-11"
+      ],
+      [
+       "12",
+       "23 Lions",
+       "at",
+       "24 Cardinals",
+       "2026-10-11"
+      ],
+      [
+       "13",
+       "25 49ers",
+       "at",
+       "26 Seahawks",
+       "2026-10-11"
+      ],
+      [
+       "14",
+       "27 Ravens",
+       "at",
+       "28 Falcons",
+       "2026-10-11"
+      ],
+      [
+       "15",
+       "29 Bills",
+       "at",
+       "30 Rams",
+       "2026-10-12"
+      ]
+     ],
+     "entries": [
+      [
+       "D.C.",
+       "1 4 6 8 9 12 14 15 17 20 21 23 25 27 29",
+       "70"
+      ],
+      [
+       "JC",
+       "1 3 5 8 9 12 13 15 17 20 21 23 26 27 29",
+       "80"
+      ],
+      [
+       "DJS",
+       "1 4 5 8 9 12 14 15 18 20 21 24 25 27 29",
+       "75"
+      ],
+      [
+       "Thaddeus",
+       "2 4 5 8 9 12 14 15 18 20 21 23 25 27 30",
+       "68"
+      ]
+     ],
+     "validation": [
+      "✓ Tracked rows valid",
+      "✓ Four tracked entries found",
+      "✓ Anonymous privacy allowlist enforced",
+      "✓ Full-field regular Pick'em data validated · 38 entries",
+      "✓ NFL schedule matched"
+     ],
+     "tiebreakGame": "14"
+    },
+    "screenshot": "screenshots/imports-p08-preview-r1.jpg"
+   },
+   "end": "2026-11-06T17:25:22.154Z"
+  },
+  {
+   "id": "P08b",
+   "title": "Valid sheet QA-FINAL-E2E-Pickem-2026-W5-r2.pdf: preview with NFL schedule match and Eastern kickoff dates; Publish disabled while signed out",
+   "start": "2026-11-06T17:25:22.155Z",
+   "result": "PASS",
+   "evidence": {
+    "file": "QA-FINAL-E2E-Pickem-2026-W5-r2.pdf",
+    "fixtureSha256": "95cc4d5aaf28de0193a3226e5bfd69d40c8a1aa935c5b039a85c35a049d24a9c",
+    "message": "Week 5 parsed with 38 competition entries and matched to the NFL schedule. Review it before publishing.",
+    "review": {
+     "title": "2026 · Week 5 · 15 games · 38 entries",
+     "games": [
+      [
+       "1",
+       "1 Buccaneers",
+       "at",
+       "2 Cowboys",
+       "2026-10-08"
+      ],
+      [
+       "2",
+       "3 Eagles",
+       "at",
+       "4 Jaguars",
+       "2026-10-11"
+      ],
+      [
+       "3",
+       "5 Bengals",
+       "at",
+       "6 Dolphins",
+       "2026-10-11"
+      ],
+      [
+       "4",
+       "7 Browns",
+       "at",
+       "8 Jets",
+       "2026-10-11"
+      ],
+      [
+       "5",
+       "9 Texans",
+       "at",
+       "10 Titans",
+       "2026-10-11"
+      ],
+      [
+       "6",
+       "11 Colts",
+       "at",
+       "12 Steelers",
+       "2026-10-11"
+      ],
+      [
+       "7",
+       "13 Raiders",
+       "at",
+       "14 Patriots",
+       "2026-10-11"
+      ],
+      [
+       "8",
+       "15 Vikings",
+       "at",
+       "16 Saints",
+       "2026-10-11"
+      ],
+      [
+       "9",
+       "17 Giants",
+       "at",
+       "18 Commanders",
+       "2026-10-11"
+      ],
+      [
+       "10",
+       "19 Bears",
+       "at",
+       "20 Packers",
+       "2026-10-11"
+      ],
+      [
+       "11",
+       "21 Broncos",
+       "at",
+       "22 Chargers",
+       "2026-10-11"
+      ],
+      [
+       "12",
+       "23 Lions",
+       "at",
+       "24 Cardinals",
+       "2026-10-11"
+      ],
+      [
+       "13",
+       "25 49ers",
+       "at",
+       "26 Seahawks",
+       "2026-10-11"
+      ],
+      [
+       "14",
+       "27 Ravens",
+       "at",
+       "28 Falcons",
+       "2026-10-11"
+      ],
+      [
+       "15",
+       "29 Bills",
+       "at",
+       "30 Rams",
+       "2026-10-12"
+      ]
+     ],
+     "entries": [
+      [
+       "D.C.",
+       "1 4 6 8 9 12 14 15 17 20 21 23 25 27 29",
+       "70"
+      ],
+      [
+       "JC",
+       "1 4 5 8 9 12 13 15 17 20 21 23 26 27 29",
+       "80"
+      ],
+      [
+       "DJS",
+       "1 4 5 8 9 12 14 15 18 20 21 24 25 27 29",
+       "71"
+      ],
+      [
+       "Thaddeus",
+       "2 4 5 8 9 12 14 15 18 20 21 23 25 27 30",
+       "68"
+      ]
+     ],
+     "validation": [
+      "✓ Tracked rows valid",
+      "✓ Four tracked entries found",
+      "✓ Anonymous privacy allowlist enforced",
+      "✓ Full-field regular Pick'em data validated · 38 entries",
+      "✓ NFL schedule matched"
+     ],
+     "tiebreakGame": "14"
+    },
+    "screenshot": "screenshots/imports-p08b-preview-r2.jpg"
+   },
+   "end": "2026-11-06T17:25:22.852Z"
+  },
+  {
+   "id": "S01",
+   "title": "Malformed PDF bytes are rejected",
+   "start": "2026-11-06T17:25:24.442Z",
+   "result": "PASS",
+   "evidence": {
+    "file": "QA-FINAL-E2E-malformed.pdf",
+    "fixtureSha256": "c26968f57819e85b0d639abcc3ddcbe2d58a2d3a15093e9f84eb76f380b5ecee",
+    "message": "Invalid PDF structure.",
+    "screenshot": "screenshots/imports-s01-malformed.jpg"
+   },
+   "end": "2026-11-06T17:25:26.270Z"
+  },
+  {
+   "id": "S02",
+   "title": "Unknown team code is rejected",
+   "start": "2026-11-06T17:25:26.271Z",
+   "result": "PASS",
+   "evidence": {
+    "file": "QA-FINAL-E2E-Survivor-2026-W8-unknown-team.pdf",
+    "fixtureSha256": "bf241981e6bda2237031a4442d12ad6abd025d7f9214d30baffd15e61cd1b930",
+    "message": "DJS: unknown Week 4 team XYZ",
+    "screenshot": "screenshots/imports-s02-unknown-team.jpg"
+   },
+   "end": "2026-11-06T17:25:27.944Z"
+  },
+  {
+   "id": "S03",
+   "title": "Two rows for one tracked entry are rejected",
+   "start": "2026-11-06T17:25:27.944Z",
+   "result": "PASS",
+   "evidence": {
+    "file": "QA-FINAL-E2E-Survivor-2026-W8-duplicate-tracked.pdf",
+    "fixtureSha256": "105d9dcfd22d6af02e5219bfafbda78690a2ac1d559fe784ea50df693066746e",
+    "message": "Multiple DJS Survivor rows found",
+    "screenshot": "screenshots/imports-s03-duplicate-tracked.jpg"
+   },
+   "end": "2026-11-06T17:25:29.629Z"
+  },
+  {
+   "id": "S04",
+   "title": "A pick of a team on bye is rejected by NFL schedule verification",
+   "start": "2026-11-06T17:25:29.629Z",
+   "result": "PASS",
+   "evidence": {
+    "file": "QA-FINAL-E2E-Survivor-2026-W8-bye-pick.pdf",
+    "fixtureSha256": "51804ab0358bf828931dc91054b8fc3032920a5fe5add161771ec2a2ad1fafa5",
+    "message": "NFL schedule verification failed; this sheet cannot be published: Week 8: SF is not scheduled in verified NFL Week 8 (bye or invalid team) — 1 entry: Thaddeus. Check the sheet's Week 8 column for SF. (The same-week Pick'em slates could not be read to check for absent games: Could not read the published Pick'em slates for 2026: AuthRequiredError: Authentication required. A valid token is needed to access the resource..)",
+    "screenshot": "screenshots/imports-s04-bye-pick.jpg"
+   },
+   "end": "2026-11-06T17:25:32.343Z"
+  },
+  {
+   "id": "S05",
+   "title": "Valid Survivor Week 8 sheet: Weeks 1–8 schedule verified; publishing blocked until a publisher signs in",
+   "start": "2026-11-06T17:25:32.343Z",
+   "result": "PASS",
+   "evidence": {
+    "fixtureSha256": "0ffc19c5bac62510aa6b18bb986ed684e31e1be57e95477c6307de3fecc0e8fd",
+    "message": "Survivor Week 8 parsed and matched to the NFL schedule: 4 entries, 1 with a Week 8 pick. Sign in to compare it with published Survivor weeks before publishing.",
+    "messageClass": "notice success",
+    "reviewHidden": false,
+    "reviewTitle": "2026 · Week 8 · 4 entries · 1 with Week 8 pick",
+    "validation": [
+     "✓ Three tracked Survivor entries found",
+     "✓ Anonymous field privacy enforced",
+     "✓ Week columns and participant table validated",
+     "✓ 4 total entries",
+     "✓ NFL schedule verified for Weeks 1–8",
+     "✕ Publishing blocked — see below"
+    ],
+    "checks": "Publication checks\n\nBlocked:\n\nPublished Survivor weeks for this season have not been checked. Sign in; the comparison runs automatically.\n0 entries are proven alive entering Week 8 from verified Weeks 1–7 NFL results; 0 of them have a Week 8 pick.\nThe NFL feed did not identify its season/week for Weeks 1, 2, 3, 4, 5, 6, 7, 8; those games were matched by team structure only.\n14 of 14 NFL Week 8 games have kicked off.\n\nReview before publishing:\n\n1 entry already eliminated before Week 8 still shows a Week 8 pick (1 OUT by SF's Week 7 loss). The sheet may disagree with the NFL results; Survivor rules still treat it as OUT.\n\nText outside the participant table (not counted):\n\nQA Synthetic Survivor Pool - picks through Week 8 (page 1) — above the Week header\nSYNTHETIC QA FIXTURE ONLY - every entrant is fictitious - not a real pool (page 1) — above the Week header\n\nSheet geometry: Week column gap 34pt · pick text offset -6pt · row pitch 20pt · name x 30–30.",
+    "entries": [
+     [
+      "D.C.",
+      "W1 NE · W2 MIN · W3 SF · W4 GB · W5 DEN · W6 BUF · W7 — · W8 —",
+      "NO PICK"
+     ],
+     [
+      "DJS",
+      "W1 SF · W2 GB · W3 DET · W4 SEA · W5 NYG · W6 KC · W7 — · W8 —",
+      "NO PICK"
+     ],
+     [
+      "Thaddeus",
+      "W1 BUF · W2 PHI · W3 BAL · W4 KC · W5 DEN · W6 PIT · W7 SF · W8 GB",
+      "GB"
+     ]
+    ],
+    "confirmShown": false,
+    "confirmText": "I reviewed every item listed above and confirm this sheet is the final Survivor Week 8 submission set — no more Week 8 picks will be added.",
+    "publishDisabled": true,
+    "screenshot": "screenshots/imports-s05-survivor-preview-blocked-signed-out.jpg"
+   },
+   "end": "2026-11-06T17:25:34.219Z"
+  }
+ ],
+ "writes": [],
+ "network": [
+  {
+   "t": "2026-11-06T17:25:16.085Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/admin/",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:16.086Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/style.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:16.087Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/slate.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:16.091Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/admin/admin.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:16.146Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/assets/pool-center-icon.svg",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:16.146Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/pwa.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:16.146Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/score-feed-proxy.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:16.152Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/admin/admin.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:16.257Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/admin/parser-core.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:16.451Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:16.607Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:16.725Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@neondatabase/auth@0.5.0-beta/vanilla/adapters/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:16.751Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@neondatabase/auth@0.5.0-beta/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:16.859Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@neondatabase/auth@0.5.0-beta/react/adapters/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:16.872Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@neondatabase/postgrest-js@0.2.0-beta/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:16.952Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/better-auth@1.6.23/client/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:16.979Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@supabase/auth-js@2.79.0/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:16.987Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/jose@6.2.5/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:16.994Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/better-auth@1.6.23/client/plugins/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:17.053Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/better-auth@1.6.23/react/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:17.057Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@supabase/postgrest-js@2.79.0/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:17.072Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/zod@4.3.6/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:17.095Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/nanostores@1.4.0/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:17.097Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@better-auth/core@1.6.23/utils/string/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:17.103Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/defu@6.1.7/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:17.158Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@better-auth/core@1.6.23/error/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:17.171Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@better-auth/core@1.6.23/env/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:17.173Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@better-fetch/fetch@1.3.1/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:17.217Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@better-auth/core@1.6.23/utils/url/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:17.223Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/tslib@2.8.1/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:17.226Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@better-auth/core@1.6.23/utils/error-codes/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:17.235Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/react@19.2.7/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:17.267Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/better-call@1.3.7/error/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:17.651Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/get-session",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:18.499Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:18.745Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:19.321Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:19.877Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:20.401Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:20.823Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:21.118Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=5&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:21.631Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:21.761Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=5&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:22.447Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:22.581Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=5&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:22.895Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/admin/survivor.html",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:22.897Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/style.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:22.898Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/slate.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:22.900Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/admin/admin.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:22.905Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/assets/pool-center-icon.svg",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:22.907Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/score-feed-proxy.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:22.907Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/admin/survivor-admin.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:22.914Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/admin/survivor-parser.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:22.915Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/admin/survivor-publish-checks.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:22.920Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor-math.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.055Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.098Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.194Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@neondatabase/auth@0.5.0-beta/vanilla/adapters/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.201Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@neondatabase/auth@0.5.0-beta/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.300Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@neondatabase/auth@0.5.0-beta/react/adapters/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.305Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@neondatabase/postgrest-js@0.2.0-beta/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.313Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/better-auth@1.6.23/client/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.368Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@supabase/auth-js@2.79.0/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.381Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/jose@6.2.5/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.419Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/better-auth@1.6.23/client/plugins/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.428Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/better-auth@1.6.23/react/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.436Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/zod@4.3.6/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.459Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@supabase/postgrest-js@2.79.0/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.517Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/nanostores@1.4.0/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.519Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/defu@6.1.7/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.531Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@better-fetch/fetch@1.3.1/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.538Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@better-auth/core@1.6.23/error/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.553Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@better-auth/core@1.6.23/env/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.554Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@better-auth/core@1.6.23/utils/string/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.621Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@better-auth/core@1.6.23/utils/url/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.630Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/tslib@2.8.1/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.647Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/react@19.2.7/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.648Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/@better-auth/core@1.6.23/utils/error-codes/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.666Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/better-call@1.3.7/error/+esm",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:23.942Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/get-session",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:24.708Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:24.917Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:26.606Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:28.297Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:29.952Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:30.188Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=1&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:30.215Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=2&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:30.222Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=3&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:30.237Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=6&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:30.277Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=8&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:30.283Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=7&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:30.452Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=4&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:30.475Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=5&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:31.057Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/get-session",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:32.679Z",
+   "method": "GET",
+   "url": "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:32.796Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=6&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:32.803Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=3&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:32.812Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=4&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:32.823Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=2&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:32.825Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=5&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:32.857Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=7&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:32.858Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=1&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:32.885Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=8&_=…",
+   "status": 200
+  }
+ ],
+ "violations": [],
+ "refused": [],
+ "console": [
+  {
+   "t": "2026-11-06T17:25:17.320Z",
+   "page": "/nfl-pool/admin/",
+   "type": "warning",
+   "text": "Service Worker registration blocked by Playwright"
+  },
+  {
+   "t": "2026-11-06T17:25:18.779Z",
+   "page": "/nfl-pool/admin/",
+   "type": "log",
+   "text": "Warning: Indexing all PDF objects"
+  },
+  {
+   "t": "2026-11-06T17:25:24.948Z",
+   "page": "/nfl-pool/admin/survivor.html",
+   "type": "log",
+   "text": "Warning: Indexing all PDF objects"
+  }
+ ],
+ "pageErrors": [],
+ "finishedAt": "2026-11-06T17:25:34.228Z",
+ "summary": {
+  "steps": 12,
+  "pass": 12,
+  "fail": 0,
+  "writes": 0,
+  "violations": 0,
+  "refused": 0,
+  "pageErrors": 0,
+  "consoleErrors": 0,
+  "consoleWarnings": 1
+ }
+}

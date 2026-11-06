@@ -1,0 +1,514 @@
+{
+ "note": "Aggregated from every browser run log in this folder. Hosts are from the network allowlist recorder (requests that finished or failed). Console errors/warnings are attributed to the step that was running when they were logged.",
+ "runs": {
+  "e2e-imports-signed-out.json": {
+   "browser": "153.0.8010.12",
+   "startedAt": "2026-11-06T17:25:15.801Z",
+   "finishedAt": "2026-11-06T17:25:34.228Z",
+   "summary": {
+    "steps": 12,
+    "pass": 12,
+    "fail": 0,
+    "writes": 0,
+    "violations": 0,
+    "refused": 0,
+    "pageErrors": 0,
+    "consoleErrors": 0,
+    "consoleWarnings": 1
+   },
+   "steps": [
+    "P03 PASS",
+    "P04 PASS",
+    "P05 PASS",
+    "P06 PASS",
+    "P07 PASS",
+    "P08 PASS",
+    "P08b PASS",
+    "S01 PASS",
+    "S02 PASS",
+    "S03 PASS",
+    "S04 PASS",
+    "S05 PASS"
+   ],
+   "hosts": {
+    "localhost:8765": 38,
+    "a.espncdn.com": 2,
+    "cdn.jsdelivr.net": 60,
+    "ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech": 3
+   },
+   "writes": [],
+   "violations": [],
+   "refused": [],
+   "pageErrors": [],
+   "consoleByStep": {
+    "outside-steps warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    }
+   }
+  },
+  "e2e-pickem.json": {
+   "browser": "153.0.8010.12",
+   "startedAt": "2026-11-06T17:17:13.821Z",
+   "finishedAt": "2026-11-06T17:22:13.867Z",
+   "summary": {
+    "steps": 3,
+    "pass": 2,
+    "fail": 1,
+    "writes": 0,
+    "violations": 0,
+    "refused": 0,
+    "pageErrors": 0,
+    "consoleErrors": 0,
+    "consoleWarnings": 1
+   },
+   "steps": [
+    "P00 PASS",
+    "P01 PASS",
+    "P02 FAIL"
+   ],
+   "hosts": {
+    "localhost:8765": 10,
+    "cdn.jsdelivr.net": 25,
+    "a.espncdn.com": 1,
+    "ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech": 2
+   },
+   "writes": [],
+   "violations": [],
+   "refused": [],
+   "pageErrors": [],
+   "consoleByStep": {
+    "P00 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    }
+   }
+  },
+  "e2e-readback.json": {
+   "browser": "153.0.8010.12",
+   "startedAt": "2026-11-06T17:35:47.696Z",
+   "finishedAt": "2026-11-06T17:35:48.929Z",
+   "summary": {
+    "steps": 2,
+    "pass": 2,
+    "fail": 0,
+    "writes": 1,
+    "violations": 0,
+    "refused": 0,
+    "pageErrors": 0,
+    "consoleErrors": 1,
+    "consoleWarnings": 0
+   },
+   "steps": [
+    "R01 PASS",
+    "R02 PASS"
+   ],
+   "hosts": {
+    "localhost:8765": 1,
+    "ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech": 2,
+    "ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech": 5
+   },
+   "writes": [
+    {
+     "t": "2026-11-06T17:35:48.924Z",
+     "method": "POST",
+     "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks",
+     "status": 403
+    }
+   ],
+   "violations": [],
+   "refused": [],
+   "pageErrors": [],
+   "consoleByStep": {
+    "R02 error": {
+     "count": 1,
+     "samples": [
+      "Failed to load resource: the server responded with a status of 403 (Forbidden)"
+     ]
+    }
+   }
+  },
+  "e2e-smoke-signed-out.json": {
+   "browser": "153.0.8010.12",
+   "startedAt": "2026-11-06T17:16:44.151Z",
+   "finishedAt": "2026-11-06T17:16:56.730Z",
+   "summary": {
+    "steps": 3,
+    "pass": 3,
+    "fail": 0,
+    "writes": 0,
+    "violations": 0,
+    "refused": 0,
+    "pageErrors": 0,
+    "consoleErrors": 0,
+    "consoleWarnings": 2
+   },
+   "steps": [
+    "Z01 PASS",
+    "Z02 PASS",
+    "Z03 PASS"
+   ],
+   "hosts": {
+    "localhost:8765": 64,
+    "a.espncdn.com": 8,
+    "cdn.jsdelivr.net": 50,
+    "ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech": 5,
+    "ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech": 14
+   },
+   "writes": [],
+   "violations": [],
+   "refused": [],
+   "pageErrors": [],
+   "consoleByStep": {
+    "Z01 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    },
+    "Z03 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    }
+   }
+  },
+  "e2e-tracker-rerun-T01_T02_T06.json": {
+   "browser": "153.0.8010.12",
+   "startedAt": "2026-11-06T17:35:16.403Z",
+   "finishedAt": "2026-11-06T17:35:39.013Z",
+   "summary": {
+    "steps": 3,
+    "pass": 3,
+    "fail": 0,
+    "writes": 0,
+    "violations": 0,
+    "refused": 0,
+    "pageErrors": 0,
+    "consoleErrors": 1,
+    "consoleWarnings": 3
+   },
+   "steps": [
+    "T01 PASS",
+    "T02 PASS",
+    "T06 PASS"
+   ],
+   "hosts": {
+    "localhost:8765": 110,
+    "a.espncdn.com": 68,
+    "ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech": 9,
+    "ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech": 50
+   },
+   "writes": [],
+   "violations": [],
+   "refused": [],
+   "pageErrors": [],
+   "consoleByStep": {
+    "T01 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    },
+    "T02 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    },
+    "T06 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    },
+    "T06 error": {
+     "count": 1,
+     "samples": [
+      "Failed to load resource: net::ERR_FAILED"
+     ]
+    }
+   }
+  },
+  "e2e-tracker-rerun-T04_T06.json": {
+   "browser": "153.0.8010.12",
+   "startedAt": "2026-11-06T17:28:34.332Z",
+   "finishedAt": "2026-11-06T17:28:48.626Z",
+   "summary": {
+    "steps": 2,
+    "pass": 2,
+    "fail": 0,
+    "writes": 0,
+    "violations": 0,
+    "refused": 0,
+    "pageErrors": 0,
+    "consoleErrors": 12,
+    "consoleWarnings": 12
+   },
+   "steps": [
+    "T04 PASS",
+    "T06 PASS"
+   ],
+   "hosts": {
+    "localhost:8765": 73,
+    "a.espncdn.com": 62,
+    "ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech": 6,
+    "ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech": 36
+   },
+   "writes": [],
+   "violations": [],
+   "refused": [],
+   "pageErrors": [],
+   "consoleByStep": {
+    "T04 warning": {
+     "count": 11,
+     "samples": [
+      "Service Worker registration blocked by Playwright",
+      "Error: Week 1 score feed 502",
+      "Error: Week 2 score feed 502",
+      "Error: Week 3 score feed 502"
+     ]
+    },
+    "T04 error": {
+     "count": 11,
+     "samples": [
+      "Failed to load resource: the server responded with a status of 502 (Bad Gateway)"
+     ]
+    },
+    "T06 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    },
+    "T06 error": {
+     "count": 1,
+     "samples": [
+      "Failed to load resource: net::ERR_FAILED"
+     ]
+    }
+   }
+  },
+  "e2e-tracker-rerun-T06-fix.json": {
+   "browser": "153.0.8010.12",
+   "startedAt": "2026-11-06T17:39:54.703Z",
+   "finishedAt": "2026-11-06T17:40:01.493Z",
+   "summary": {
+    "steps": 1,
+    "pass": 1,
+    "fail": 0,
+    "writes": 0,
+    "violations": 0,
+    "refused": 0,
+    "pageErrors": 0,
+    "consoleErrors": 1,
+    "consoleWarnings": 1
+   },
+   "steps": [
+    "T06 PASS"
+   ],
+   "hosts": {
+    "localhost:8765": 37,
+    "a.espncdn.com": 31,
+    "ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech": 3,
+    "ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech": 18
+   },
+   "writes": [],
+   "violations": [],
+   "refused": [],
+   "pageErrors": [],
+   "consoleByStep": {
+    "T06 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    },
+    "T06 error": {
+     "count": 1,
+     "samples": [
+      "Failed to load resource: net::ERR_FAILED"
+     ]
+    }
+   }
+  },
+  "e2e-tracker-rerun-T06-main-756f2ac.json": {
+   "browser": "153.0.8010.12",
+   "startedAt": "2026-11-06T17:39:46.696Z",
+   "finishedAt": "2026-11-06T17:39:54.191Z",
+   "summary": {
+    "steps": 1,
+    "pass": 0,
+    "fail": 1,
+    "writes": 0,
+    "violations": 0,
+    "refused": 0,
+    "pageErrors": 0,
+    "consoleErrors": 1,
+    "consoleWarnings": 1
+   },
+   "steps": [
+    "T06 FAIL"
+   ],
+   "hosts": {
+    "localhost:8765": 37,
+    "a.espncdn.com": 31,
+    "ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech": 3,
+    "ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech": 18
+   },
+   "writes": [],
+   "violations": [],
+   "refused": [],
+   "pageErrors": [],
+   "consoleByStep": {
+    "T06 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    },
+    "T06 error": {
+     "count": 1,
+     "samples": [
+      "Failed to load resource: net::ERR_FAILED"
+     ]
+    }
+   }
+  },
+  "e2e-tracker.json": {
+   "browser": "153.0.8010.12",
+   "startedAt": "2026-11-06T17:25:41.708Z",
+   "finishedAt": "2026-11-06T17:27:56.255Z",
+   "summary": {
+    "steps": 9,
+    "pass": 7,
+    "fail": 2,
+    "writes": 0,
+    "violations": 0,
+    "refused": 0,
+    "pageErrors": 0,
+    "consoleErrors": 21,
+    "consoleWarnings": 21
+   },
+   "steps": [
+    "T01 PASS",
+    "T02 PASS",
+    "T03-375 PASS",
+    "T03-390 PASS",
+    "T03-430 PASS",
+    "T04 FAIL",
+    "T05 PASS",
+    "T06 FAIL",
+    "T07 PASS"
+   ],
+   "hosts": {
+    "localhost:8765": 365,
+    "a.espncdn.com": 107,
+    "ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech": 27,
+    "ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech": 178
+   },
+   "writes": [],
+   "violations": [],
+   "refused": [],
+   "pageErrors": [],
+   "consoleByStep": {
+    "T01 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    },
+    "T02 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    },
+    "T03-375 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    },
+    "T03-390 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    },
+    "T03-430 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    },
+    "T04 warning": {
+     "count": 11,
+     "samples": [
+      "Service Worker registration blocked by Playwright",
+      "Error: Week 1 score feed 502",
+      "Error: Week 2 score feed 502",
+      "Error: Week 3 score feed 502"
+     ]
+    },
+    "T04 error": {
+     "count": 11,
+     "samples": [
+      "Failed to load resource: the server responded with a status of 502 (Bad Gateway)"
+     ]
+    },
+    "T05 warning": {
+     "count": 3,
+     "samples": [
+      "Service Worker registration blocked by Playwright",
+      "TypeError: Failed to fetch"
+     ]
+    },
+    "T05 error": {
+     "count": 9,
+     "samples": [
+      "Failed to load resource: net::ERR_FAILED"
+     ]
+    },
+    "T06 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    },
+    "T06 error": {
+     "count": 1,
+     "samples": [
+      "Failed to load resource: net::ERR_FAILED"
+     ]
+    },
+    "T07 warning": {
+     "count": 1,
+     "samples": [
+      "Service Worker registration blocked by Playwright"
+     ]
+    }
+   }
+  }
+ },
+ "totals": {
+  "requests": 1559,
+  "violations": 0,
+  "refused": 0,
+  "writes": 1,
+  "pageErrors": 0,
+  "hosts": {
+   "localhost:8765": 735,
+   "a.espncdn.com": 310,
+   "cdn.jsdelivr.net": 135,
+   "ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech": 60,
+   "ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech": 319
+  }
+ },
+ "forbiddenHostsContacted": []
+}

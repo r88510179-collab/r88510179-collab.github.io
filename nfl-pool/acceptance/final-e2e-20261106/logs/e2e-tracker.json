@@ -1,0 +1,5137 @@
+{
+ "scenario": "tracker",
+ "startedAt": "2026-11-06T17:25:41.708Z",
+ "browser": "153.0.8010.12",
+ "steps": [
+  {
+   "id": "T01",
+   "title": "Fresh anonymous session: default week, published-week selector, switch to 2026 · Week 9",
+   "start": "2026-11-06T17:25:41.708Z",
+   "result": "PASS",
+   "evidence": {
+    "defaultWeek": "2026 · Week 10",
+    "defaultWeekLine": "Week 10 · revision 2 · Nov 12–Nov 16, 2026 · D.C. · JC · DJS · Thaddeus",
+    "options": [
+     "2026 · Week 9",
+     "2026 · Week 10"
+    ],
+    "afterSelect": {
+     "weekLine": "Week 9 · revision 3 · Nov 5–Nov 9, 2026 · D.C. · JC · DJS · Thaddeus",
+     "sync": "LIVE · data 0s old",
+     "finals": "1/15",
+     "url": "http://localhost:8765/nfl-pool/?season=2026&week=9"
+    },
+    "screenshots": [
+     "screenshots/tracker-01a-desktop-home-default-week10.jpg",
+     "screenshots/tracker-01b-desktop-home-week9.jpg"
+    ]
+   },
+   "end": "2026-11-06T17:25:49.810Z"
+  },
+  {
+   "id": "T02",
+   "title": "Week 9 r3 read-back after a real final: W–L, ranks, finals, positive group-vs-field pulse, Eastern header dates",
+   "start": "2026-11-06T17:25:49.810Z",
+   "result": "PASS",
+   "evidence": {
+    "weekLine": "Week 9 · revision 3 · Nov 5–Nov 9, 2026 · D.C. · JC · DJS · Thaddeus",
+    "sync": "LIVE · data 0s old",
+    "finals": "1/15",
+    "left": "14",
+    "leader": "JC / THADDEUS 1–0",
+    "fieldPulseState": "ready",
+    "fieldPulse": "BEST OVERALL\nT-1 of 5\nJC · Top 20%\nTOP 25% OF FIELD\n2 of 4 submitted\nYour tracked group\n\nRanks use the organizer’s published picks and final NFL results. In-progress scores do not count until final.",
+    "standings": [
+     [
+      "1",
+      "JC",
+      "T-1 Top 20% · 3 tied",
+      "1",
+      "0",
+      "14",
+      "—",
+      "#1 WIN CEILING · unresolved tiebreak not projected",
+      "45"
+     ],
+     [
+      "1",
+      "Thaddeus",
+      "T-1 Top 20% · 3 tied",
+      "1",
+      "0",
+      "14",
+      "—",
+      "#1 WIN CEILING · unresolved tiebreak not projected",
+      "34"
+     ],
+     [
+      "3",
+      "D.C.",
+      "T-4 Top 80% · 2 tied",
+      "0",
+      "1",
+      "14",
+      "1",
+      "#1 WIN CEILING · unresolved tiebreak not projected",
+      "42"
+     ],
+     [
+      "3",
+      "DJS",
+      "T-4 Top 80% · 2 tied",
+      "0",
+      "1",
+      "14",
+      "1",
+      "#1 WIN CEILING · unresolved tiebreak not projected",
+      "37"
+     ]
+    ],
+    "finalCard": "JAX JAX 33 FINAL 10 BAL BAL",
+    "footer": "Final NFL outcomes only · NFL ties = 1 loss for both picks · BUF–MIN tiebreak activates when that game is final. Full-field entries are stored without competitor names.",
+    "screenshots": [
+     "screenshots/tracker-02a-desktop-home-week9-field-pulse.jpg",
+     "screenshots/tracker-02b-desktop-standings-week9.jpg",
+     "screenshots/tracker-02c-desktop-games-week9.jpg",
+     "screenshots/tracker-02d-desktop-picks-week9.jpg"
+    ]
+   },
+   "end": "2026-11-06T17:25:57.736Z"
+  },
+  {
+   "id": "T03-375",
+   "title": "Mobile 375 CSS px: Week 10 (two-digit label) Home + Standings, Week 9 Picks, Survivor archive Week 6 — overflow, label and touch targets measured",
+   "start": "2026-11-06T17:25:57.737Z",
+   "result": "PASS",
+   "evidence": {
+    "measure": {
+     "home": {
+      "innerWidth": 375,
+      "innerHeight": 844,
+      "devicePixelRatio": 2,
+      "clientWidth": 375,
+      "scrollWidth": 375,
+      "bodyScrollWidth": 375,
+      "horizontalOverflow": false,
+      "weekSelect": {
+       "label": "2026 · Week 10",
+       "textWidth": 83.3,
+       "contentWidth": 100,
+       "boxWidth": 150,
+       "height": 44,
+       "fits": true
+      },
+      "touchTargets": {
+       ".app-menu summary": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 44
+       },
+       "#weekSelect": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 150
+       },
+       ".bottom-nav button": {
+        "count": 5,
+        "minHeight": 60,
+        "minWidth": 71.4
+       },
+       ".dash-tool": {
+        "count": 2,
+        "minHeight": 44,
+        "minWidth": 82.9
+       },
+       ".brand-lockup": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 183.5
+       }
+      }
+     },
+     "standings": {
+      "innerWidth": 375,
+      "innerHeight": 844,
+      "devicePixelRatio": 2,
+      "clientWidth": 375,
+      "scrollWidth": 375,
+      "bodyScrollWidth": 375,
+      "horizontalOverflow": false,
+      "weekSelect": {
+       "label": "2026 · Week 10",
+       "textWidth": 83.3,
+       "contentWidth": 100,
+       "boxWidth": 150,
+       "height": 44,
+       "fits": true
+      },
+      "touchTargets": {
+       ".app-menu summary": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 44
+       },
+       "#weekSelect": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 150
+       },
+       ".bottom-nav button": {
+        "count": 5,
+        "minHeight": 60,
+        "minWidth": 71.4
+       },
+       ".share-btn": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 86.9
+       },
+       ".brand-lockup": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 183.5
+       }
+      }
+     },
+     "picks": {
+      "innerWidth": 375,
+      "innerHeight": 844,
+      "devicePixelRatio": 2,
+      "clientWidth": 375,
+      "scrollWidth": 375,
+      "bodyScrollWidth": 375,
+      "horizontalOverflow": false,
+      "weekSelect": {
+       "label": "2026 · Week 9",
+       "textWidth": 78.1,
+       "contentWidth": 100,
+       "boxWidth": 150,
+       "height": 44,
+       "fits": true
+      },
+      "touchTargets": {
+       ".app-menu summary": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 44
+       },
+       "#weekSelect": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 150
+       },
+       ".bottom-nav button": {
+        "count": 5,
+        "minHeight": 60,
+        "minWidth": 71.4
+       },
+       ".pm-segment": {
+        "count": 4,
+        "minHeight": 44,
+        "minWidth": 82.8
+       },
+       ".pm-toggle": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 177.6
+       },
+       ".pm-slates-action": {
+        "count": 2,
+        "minHeight": 44,
+        "minWidth": 85.3
+       },
+       ".brand-lockup": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 183.5
+       }
+      }
+     },
+     "archive": {
+      "innerWidth": 375,
+      "innerHeight": 844,
+      "devicePixelRatio": 2,
+      "clientWidth": 375,
+      "scrollWidth": 375,
+      "bodyScrollWidth": 375,
+      "horizontalOverflow": false,
+      "weekSelect": null,
+      "touchTargets": {
+       ".app-menu summary": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 44
+       },
+       ".bottom-nav button": {
+        "count": 5,
+        "minHeight": 60,
+        "minWidth": 71.4
+       },
+       ".share-btn": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 86.9
+       },
+       ".brand-lockup": {
+        "count": 1,
+        "minHeight": 52,
+        "minWidth": 151
+       }
+      }
+     }
+    },
+    "weekLine": "Week 10 · revision 2 · Nov 12–Nov 16, 2026 · D.C. · JC · DJS · Thaddeus",
+    "sync": "LIVE · data 0s old",
+    "survivor": {
+     "selected": "2026 · Week 6",
+     "options": [
+      "2026 · Week 2",
+      "2026 · Week 6",
+      "2026 · Week 9"
+     ],
+     "meta": "Week 6 · revision 2",
+     "feed": "LIVE · NFL results",
+     "poolSize": "4",
+     "entered": "1",
+     "stillIn": "1",
+     "pending": "0",
+     "note": "3 eliminated before Week 6 · 1 eligible entering · 1 submitted · 1 legal picks · 0 eliminated this week so far.",
+     "tracked": "D.C. | W1 | NE | W2 | MIN | W3 | SF | W4 | GB | W5 | DEN | W6 | BUF | NE | OUT | NE lost in Week 1 | DJS | W1 | SF | W2 | GB | W3 | DET | W4 | SEA | W5 | NYG | W6 | KC | NYG | OUT | NFL tie eliminated entry in Week 5 | Thaddeus | W1 | BUF | W2 | PHI | W3 | BAL | W4 | KC | W5 | DEN | W6 | PIT | PIT | ALIVE | Alive through Week 6",
+     "progress": "Week 1 | 3 | 4 eligible · 4 submitted · 4 legal · 1 out | Week 2 | 3 | 3 eligible · 3 submitted · 3 legal · 0 out | Week 3 | 2 | 3 eligible · 3 submitted · 2 legal · 1 out | Week 4 | 2 | 2 eligible · 2 submitted · 2 legal · 0 out | Week 5 | 1 | 2 eligible · 2 submitted · 2 legal · 1 out | Week 6 | 1 | 1 eligible · 1 submitted · 1 legal · 0 out",
+     "error": "",
+     "archiveNotice": "Group Survivor tracking closed for 2026 The last remaining group entrant was eliminated (owner-confirmed). We are no longer following future Survivor weeks. The archive reflects only official results published so far; no unpublished eliminations have been invented."
+    },
+    "screenshots": [
+     "screenshots/tracker-03-mobile-375-home-week10.jpg",
+     "screenshots/tracker-03-mobile-375-standings-week10.jpg",
+     "screenshots/tracker-03-mobile-375-picks-week9.jpg",
+     "screenshots/tracker-03-mobile-375-archive-survivor-week6.jpg"
+    ]
+   },
+   "end": "2026-11-06T17:26:11.632Z"
+  },
+  {
+   "id": "T03-390",
+   "title": "Mobile 390 CSS px: Week 10 (two-digit label) Home + Standings, Week 9 Picks, Survivor archive Week 6 — overflow, label and touch targets measured",
+   "start": "2026-11-06T17:26:11.632Z",
+   "result": "PASS",
+   "evidence": {
+    "measure": {
+     "home": {
+      "innerWidth": 390,
+      "innerHeight": 844,
+      "devicePixelRatio": 2,
+      "clientWidth": 390,
+      "scrollWidth": 390,
+      "bodyScrollWidth": 390,
+      "horizontalOverflow": false,
+      "weekSelect": {
+       "label": "2026 · Week 10",
+       "textWidth": 83.3,
+       "contentWidth": 100,
+       "boxWidth": 150,
+       "height": 44,
+       "fits": true
+      },
+      "touchTargets": {
+       ".app-menu summary": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 44
+       },
+       "#weekSelect": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 150
+       },
+       ".bottom-nav button": {
+        "count": 5,
+        "minHeight": 60,
+        "minWidth": 74.4
+       },
+       ".dash-tool": {
+        "count": 2,
+        "minHeight": 44,
+        "minWidth": 82.9
+       },
+       ".brand-lockup": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 183.5
+       }
+      }
+     },
+     "standings": {
+      "innerWidth": 390,
+      "innerHeight": 844,
+      "devicePixelRatio": 2,
+      "clientWidth": 390,
+      "scrollWidth": 390,
+      "bodyScrollWidth": 390,
+      "horizontalOverflow": false,
+      "weekSelect": {
+       "label": "2026 · Week 10",
+       "textWidth": 83.3,
+       "contentWidth": 100,
+       "boxWidth": 150,
+       "height": 44,
+       "fits": true
+      },
+      "touchTargets": {
+       ".app-menu summary": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 44
+       },
+       "#weekSelect": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 150
+       },
+       ".bottom-nav button": {
+        "count": 5,
+        "minHeight": 60,
+        "minWidth": 74.4
+       },
+       ".share-btn": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 86.9
+       },
+       ".brand-lockup": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 183.5
+       }
+      }
+     },
+     "picks": {
+      "innerWidth": 390,
+      "innerHeight": 844,
+      "devicePixelRatio": 2,
+      "clientWidth": 390,
+      "scrollWidth": 390,
+      "bodyScrollWidth": 390,
+      "horizontalOverflow": false,
+      "weekSelect": {
+       "label": "2026 · Week 9",
+       "textWidth": 78.1,
+       "contentWidth": 100,
+       "boxWidth": 150,
+       "height": 44,
+       "fits": true
+      },
+      "touchTargets": {
+       ".app-menu summary": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 44
+       },
+       "#weekSelect": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 150
+       },
+       ".bottom-nav button": {
+        "count": 5,
+        "minHeight": 60,
+        "minWidth": 74.4
+       },
+       ".pm-segment": {
+        "count": 4,
+        "minHeight": 44,
+        "minWidth": 86.5
+       },
+       ".pm-toggle": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 177.6
+       },
+       ".pm-slates-action": {
+        "count": 2,
+        "minHeight": 44,
+        "minWidth": 85.3
+       },
+       ".brand-lockup": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 183.5
+       }
+      }
+     },
+     "archive": {
+      "innerWidth": 390,
+      "innerHeight": 844,
+      "devicePixelRatio": 2,
+      "clientWidth": 390,
+      "scrollWidth": 390,
+      "bodyScrollWidth": 390,
+      "horizontalOverflow": false,
+      "weekSelect": null,
+      "touchTargets": {
+       ".app-menu summary": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 44
+       },
+       ".bottom-nav button": {
+        "count": 5,
+        "minHeight": 60,
+        "minWidth": 74.4
+       },
+       ".share-btn": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 86.9
+       },
+       ".brand-lockup": {
+        "count": 1,
+        "minHeight": 52,
+        "minWidth": 166
+       }
+      }
+     }
+    },
+    "weekLine": "Week 10 · revision 2 · Nov 12–Nov 16, 2026 · D.C. · JC · DJS · Thaddeus",
+    "sync": "LIVE · data 0s old",
+    "survivor": {
+     "selected": "2026 · Week 6",
+     "options": [
+      "2026 · Week 2",
+      "2026 · Week 6",
+      "2026 · Week 9"
+     ],
+     "meta": "Week 6 · revision 2",
+     "feed": "LIVE · NFL results",
+     "poolSize": "4",
+     "entered": "1",
+     "stillIn": "1",
+     "pending": "0",
+     "note": "3 eliminated before Week 6 · 1 eligible entering · 1 submitted · 1 legal picks · 0 eliminated this week so far.",
+     "tracked": "D.C. | W1 | NE | W2 | MIN | W3 | SF | W4 | GB | W5 | DEN | W6 | BUF | NE | OUT | NE lost in Week 1 | DJS | W1 | SF | W2 | GB | W3 | DET | W4 | SEA | W5 | NYG | W6 | KC | NYG | OUT | NFL tie eliminated entry in Week 5 | Thaddeus | W1 | BUF | W2 | PHI | W3 | BAL | W4 | KC | W5 | DEN | W6 | PIT | PIT | ALIVE | Alive through Week 6",
+     "progress": "Week 1 | 3 | 4 eligible · 4 submitted · 4 legal · 1 out | Week 2 | 3 | 3 eligible · 3 submitted · 3 legal · 0 out | Week 3 | 2 | 3 eligible · 3 submitted · 2 legal · 1 out | Week 4 | 2 | 2 eligible · 2 submitted · 2 legal · 0 out | Week 5 | 1 | 2 eligible · 2 submitted · 2 legal · 1 out | Week 6 | 1 | 1 eligible · 1 submitted · 1 legal · 0 out",
+     "error": "",
+     "archiveNotice": "Group Survivor tracking closed for 2026 The last remaining group entrant was eliminated (owner-confirmed). We are no longer following future Survivor weeks. The archive reflects only official results published so far; no unpublished eliminations have been invented."
+    },
+    "screenshots": [
+     "screenshots/tracker-03-mobile-390-home-week10.jpg",
+     "screenshots/tracker-03-mobile-390-standings-week10.jpg",
+     "screenshots/tracker-03-mobile-390-picks-week9.jpg",
+     "screenshots/tracker-03-mobile-390-archive-survivor-week6.jpg"
+    ]
+   },
+   "end": "2026-11-06T17:26:25.116Z"
+  },
+  {
+   "id": "T03-430",
+   "title": "Mobile 430 CSS px: Week 10 (two-digit label) Home + Standings, Week 9 Picks, Survivor archive Week 6 — overflow, label and touch targets measured",
+   "start": "2026-11-06T17:26:25.116Z",
+   "result": "PASS",
+   "evidence": {
+    "measure": {
+     "home": {
+      "innerWidth": 430,
+      "innerHeight": 844,
+      "devicePixelRatio": 2,
+      "clientWidth": 430,
+      "scrollWidth": 430,
+      "bodyScrollWidth": 430,
+      "horizontalOverflow": false,
+      "weekSelect": {
+       "label": "2026 · Week 10",
+       "textWidth": 83.3,
+       "contentWidth": 100,
+       "boxWidth": 150,
+       "height": 44,
+       "fits": true
+      },
+      "touchTargets": {
+       ".app-menu summary": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 44
+       },
+       "#weekSelect": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 150
+       },
+       ".bottom-nav button": {
+        "count": 5,
+        "minHeight": 60,
+        "minWidth": 82.4
+       },
+       ".dash-tool": {
+        "count": 2,
+        "minHeight": 44,
+        "minWidth": 82.9
+       },
+       ".brand-lockup": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 183.5
+       }
+      }
+     },
+     "standings": {
+      "innerWidth": 430,
+      "innerHeight": 844,
+      "devicePixelRatio": 2,
+      "clientWidth": 430,
+      "scrollWidth": 430,
+      "bodyScrollWidth": 430,
+      "horizontalOverflow": false,
+      "weekSelect": {
+       "label": "2026 · Week 10",
+       "textWidth": 83.3,
+       "contentWidth": 100,
+       "boxWidth": 150,
+       "height": 44,
+       "fits": true
+      },
+      "touchTargets": {
+       ".app-menu summary": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 44
+       },
+       "#weekSelect": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 150
+       },
+       ".bottom-nav button": {
+        "count": 5,
+        "minHeight": 60,
+        "minWidth": 82.4
+       },
+       ".share-btn": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 86.9
+       },
+       ".brand-lockup": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 183.5
+       }
+      }
+     },
+     "picks": {
+      "innerWidth": 430,
+      "innerHeight": 844,
+      "devicePixelRatio": 2,
+      "clientWidth": 430,
+      "scrollWidth": 430,
+      "bodyScrollWidth": 430,
+      "horizontalOverflow": false,
+      "weekSelect": {
+       "label": "2026 · Week 9",
+       "textWidth": 78.1,
+       "contentWidth": 100,
+       "boxWidth": 150,
+       "height": 44,
+       "fits": true
+      },
+      "touchTargets": {
+       ".app-menu summary": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 44
+       },
+       "#weekSelect": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 150
+       },
+       ".bottom-nav button": {
+        "count": 5,
+        "minHeight": 60,
+        "minWidth": 82.4
+       },
+       ".pm-segment": {
+        "count": 4,
+        "minHeight": 44,
+        "minWidth": 96.5
+       },
+       ".pm-toggle": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 177.6
+       },
+       ".pm-slates-action": {
+        "count": 2,
+        "minHeight": 44,
+        "minWidth": 85.3
+       },
+       ".brand-lockup": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 183.5
+       }
+      }
+     },
+     "archive": {
+      "innerWidth": 430,
+      "innerHeight": 844,
+      "devicePixelRatio": 2,
+      "clientWidth": 430,
+      "scrollWidth": 430,
+      "bodyScrollWidth": 430,
+      "horizontalOverflow": false,
+      "weekSelect": null,
+      "touchTargets": {
+       ".app-menu summary": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 44
+       },
+       ".bottom-nav button": {
+        "count": 5,
+        "minHeight": 60,
+        "minWidth": 82.4
+       },
+       ".share-btn": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 86.9
+       },
+       ".brand-lockup": {
+        "count": 1,
+        "minHeight": 44,
+        "minWidth": 183.5
+       }
+      }
+     }
+    },
+    "weekLine": "Week 10 · revision 2 · Nov 12–Nov 16, 2026 · D.C. · JC · DJS · Thaddeus",
+    "sync": "LIVE · data 0s old",
+    "survivor": {
+     "selected": "2026 · Week 6",
+     "options": [
+      "2026 · Week 2",
+      "2026 · Week 6",
+      "2026 · Week 9"
+     ],
+     "meta": "Week 6 · revision 2",
+     "feed": "LIVE · NFL results",
+     "poolSize": "4",
+     "entered": "1",
+     "stillIn": "1",
+     "pending": "0",
+     "note": "3 eliminated before Week 6 · 1 eligible entering · 1 submitted · 1 legal picks · 0 eliminated this week so far.",
+     "tracked": "D.C. | W1 | NE | W2 | MIN | W3 | SF | W4 | GB | W5 | DEN | W6 | BUF | NE | OUT | NE lost in Week 1 | DJS | W1 | SF | W2 | GB | W3 | DET | W4 | SEA | W5 | NYG | W6 | KC | NYG | OUT | NFL tie eliminated entry in Week 5 | Thaddeus | W1 | BUF | W2 | PHI | W3 | BAL | W4 | KC | W5 | DEN | W6 | PIT | PIT | ALIVE | Alive through Week 6",
+     "progress": "Week 1 | 3 | 4 eligible · 4 submitted · 4 legal · 1 out | Week 2 | 3 | 3 eligible · 3 submitted · 3 legal · 0 out | Week 3 | 2 | 3 eligible · 3 submitted · 2 legal · 1 out | Week 4 | 2 | 2 eligible · 2 submitted · 2 legal · 0 out | Week 5 | 1 | 2 eligible · 2 submitted · 2 legal · 1 out | Week 6 | 1 | 1 eligible · 1 submitted · 1 legal · 0 out",
+     "error": "",
+     "archiveNotice": "Group Survivor tracking closed for 2026 The last remaining group entrant was eliminated (owner-confirmed). We are no longer following future Survivor weeks. The archive reflects only official results published so far; no unpublished eliminations have been invented."
+    },
+    "screenshots": [
+     "screenshots/tracker-03-mobile-430-home-week10.jpg",
+     "screenshots/tracker-03-mobile-430-standings-week10.jpg",
+     "screenshots/tracker-03-mobile-430-picks-week9.jpg",
+     "screenshots/tracker-03-mobile-430-archive-survivor-week6.jpg"
+    ]
+   },
+   "end": "2026-11-06T17:26:38.641Z"
+  },
+  {
+   "id": "T04",
+   "title": "Injected fault: score gateway answers 502 → FEED UNAVAILABLE and nothing graded; Refresh after recovery grades the final",
+   "start": "2026-11-06T17:26:38.641Z",
+   "result": "FAIL",
+   "error": "page.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('#refresh')\u001b[22m\n\u001b[2m    - locator resolved to <button class=\"btn\" id=\"refresh\" type=\"button\">Refresh</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is not visible\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is not visible\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    58 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m       - element is not visible\u001b[22m\n\u001b[2m     - retrying click action\u001b[22m\n\u001b[2m       - waiting 500ms\u001b[22m\n",
+   "end": "2026-11-06T17:27:12.036Z"
+  },
+  {
+   "id": "T05",
+   "title": "Injected fault: contest rules/rulings unreadable → ON HOLD; no game graded from the feed alone; field pulse withheld",
+   "start": "2026-11-06T17:27:12.036Z",
+   "result": "PASS",
+   "evidence": {
+    "sync": "ON HOLD · data 0s old",
+    "error": "ON HOLD · Ruling data unavailable (ruling data unavailable). Standings are on hold until the contest rules and rulings load; no game is graded from the NFL feed alone.",
+    "wl": {
+     "D.C.": "0-0",
+     "JC": "0-0",
+     "DJS": "0-0",
+     "Thaddeus": "0-0"
+    },
+    "fieldPulse": "GROUP VS FULL POOL\n\nStandings are on hold while contest rulings are unavailable.",
+    "screenshots": [
+     "screenshots/tracker-05a-on-hold-home.jpg",
+     "screenshots/tracker-05b-on-hold-standings.jpg"
+    ]
+   },
+   "end": "2026-11-06T17:27:17.457Z"
+  },
+  {
+   "id": "T06",
+   "title": "Injected fault: publication index unreadable on refresh → PUBLISHED DATA STALE; last verified revision kept",
+   "start": "2026-11-06T17:27:17.457Z",
+   "result": "FAIL",
+   "error": "page.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('#refresh')\u001b[22m\n\u001b[2m    - locator resolved to <button class=\"btn\" id=\"refresh\" type=\"button\">Refresh</button>\u001b[22m\n\u001b[2m  - attempting click action\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is not visible\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is not visible\u001b[22m\n\u001b[2m    - retrying click action\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    58 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m       - element is not visible\u001b[22m\n\u001b[2m     - retrying click action\u001b[22m\n\u001b[2m       - waiting 500ms\u001b[22m\n",
+   "end": "2026-11-06T17:27:49.974Z"
+  },
+  {
+   "id": "T07",
+   "title": "Survivor archive read-back (desktop): Week 6 r2 — loss, NFL tie and reused-team eliminations; Week 2 and Week 9 listed",
+   "start": "2026-11-06T17:27:49.974Z",
+   "result": "PASS",
+   "evidence": {
+    "selected": "2026 · Week 6",
+    "options": [
+     "2026 · Week 2",
+     "2026 · Week 6",
+     "2026 · Week 9"
+    ],
+    "meta": "Week 6 · revision 2",
+    "feed": "LIVE · NFL results",
+    "poolSize": "4",
+    "entered": "1",
+    "stillIn": "1",
+    "pending": "0",
+    "note": "3 eliminated before Week 6 · 1 eligible entering · 1 submitted · 1 legal picks · 0 eliminated this week so far.",
+    "tracked": "D.C. | W1 | NE | W2 | MIN | W3 | SF | W4 | GB | W5 | DEN | W6 | BUF | NE | OUT | NE lost in Week 1 | DJS | W1 | SF | W2 | GB | W3 | DET | W4 | SEA | W5 | NYG | W6 | KC | NYG | OUT | NFL tie eliminated entry in Week 5 | Thaddeus | W1 | BUF | W2 | PHI | W3 | BAL | W4 | KC | W5 | DEN | W6 | PIT | PIT | ALIVE | Alive through Week 6",
+    "progress": "Week 1 | 3 | 4 eligible · 4 submitted · 4 legal · 1 out | Week 2 | 3 | 3 eligible · 3 submitted · 3 legal · 0 out | Week 3 | 2 | 3 eligible · 3 submitted · 2 legal · 1 out | Week 4 | 2 | 2 eligible · 2 submitted · 2 legal · 0 out | Week 5 | 1 | 2 eligible · 2 submitted · 2 legal · 1 out | Week 6 | 1 | 1 eligible · 1 submitted · 1 legal · 0 out",
+    "error": "",
+    "archiveNotice": "Group Survivor tracking closed for 2026 The last remaining group entrant was eliminated (owner-confirmed). We are no longer following future Survivor weeks. The archive reflects only official results published so far; no unpublished eliminations have been invented.",
+    "screenshot": "screenshots/tracker-07-desktop-archive-survivor-week6.jpg"
+   },
+   "end": "2026-11-06T17:27:56.255Z"
+  }
+ ],
+ "writes": [],
+ "network": [
+  {
+   "t": "2026-11-06T17:25:41.806Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:41.810Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/style.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:41.840Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/home-dashboard.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:41.840Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/slate.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:41.841Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:41.841Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/season-record.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:41.844Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/week-selector.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:41.844Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:41.844Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/weekly.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:41.844Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/picks-mobile.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:41.890Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/assets/pool-center-icon.svg",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:41.890Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor-app.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:41.893Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/picks-mobile.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:41.893Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/season-record.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:41.893Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share-ui.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:41.894Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/weekly-app.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:41.894Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/home-dashboard.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:41.894Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/week-date-range.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:41.894Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/score-feed-proxy.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:41.895Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/pwa.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:42.001Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/public-math.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:42.002Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor-math.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:42.004Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/contest-rulings.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:42.013Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share-card.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:42.033Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:42.499Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:42.614Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:42.758Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:42.841Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:42.886Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.10&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:43.359Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:43.490Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:43.550Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=10&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:43.560Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:43.642Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=6&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:43.671Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=3&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:43.726Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=7&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:43.765Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/bal.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:43.766Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=8&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:43.775Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/ne.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:43.789Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:43.791Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/jax.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:43.794Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=5&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:43.831Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-survivor&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:43.838Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=2&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:43.841Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-survivor",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:43.845Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-survivor&week=lte.9&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:43.846Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=1&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:43.891Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&week=eq.10&order=chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:44.400Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=4&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:44.533Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=10&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:44.541Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/mia.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:44.584Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/phi.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:44.690Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:44.817Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:44.871Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:44.882Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:44.888Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:44.989Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:47.378Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:47.856Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:47.882Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:47.897Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:47.899Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&week=eq.9&order=chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:49.872Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/?season=2026&week=9",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:49.880Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/style.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:49.882Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/slate.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:49.882Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/weekly.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:49.882Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:49.883Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:49.883Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/home-dashboard.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:49.884Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/picks-mobile.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:49.888Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/season-record.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:49.891Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/week-selector.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:49.922Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/assets/pool-center-icon.svg",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:49.922Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share-ui.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:49.925Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor-app.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:49.925Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/home-dashboard.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:49.925Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/weekly-app.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:49.927Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/picks-mobile.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:49.932Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/week-date-range.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:49.932Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/score-feed-proxy.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:49.932Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/season-record.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:49.932Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/pwa.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:50.027Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:50.034Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/public-math.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:50.037Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/contest-rulings.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:50.046Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor-math.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:50.046Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share-card.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:50.209Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:50.228Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:50.311Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:50.351Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:50.411Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:50.846Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:50.938Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:50.953Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:50.972Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:50.987Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&week=eq.9&order=chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.284Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/bal.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.284Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/jax.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.297Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=6&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.297Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=7&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.297Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=1&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.298Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=4&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.298Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=8&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.298Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.300Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=3&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.303Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=2&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.304Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-survivor&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.342Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=5&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.346Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/ne.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.355Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-survivor",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.362Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-survivor&week=lte.9&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.425Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.446Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=10&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.552Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/mia.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.554Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.10&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.581Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/phi.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.585Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.592Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.625Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=10&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:51.828Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:55.308Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/cin.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:55.351Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/atl.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:55.379Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/cle.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:55.396Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/no.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:55.423Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/buf.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:55.463Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/lar.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:55.537Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/nyj.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:55.539Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/nyg.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:55.539Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/lac.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:55.560Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/det.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:56.040Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/sf.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:56.040Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/lv.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:56.040Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/ari.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:56.057Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/wsh.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:56.065Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/min.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:56.065Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/car.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:56.065Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/gb.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:56.065Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/tb.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:56.065Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/sea.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:56.065Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/kc.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:56.065Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/hou.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:56.065Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/chi.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:56.065Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/dal.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:56.065Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/den.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:56.065Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/ind.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.809Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.811Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/style.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.811Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/slate.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.817Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/weekly.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.827Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.827Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.827Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/home-dashboard.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.827Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/picks-mobile.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.828Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/season-record.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.828Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/week-selector.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.832Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/home-dashboard.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.834Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share-ui.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.834Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/weekly-app.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.834Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/season-record.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.835Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor-app.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.835Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/picks-mobile.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.836Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/assets/pool-center-icon.svg",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.905Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/score-feed-proxy.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.905Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/pwa.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.905Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/week-date-range.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.972Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/public-math.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.972Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/contest-rulings.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.972Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor-math.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.976Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share-card.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:57.982Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:58.080Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:58.136Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:58.178Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:58.272Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:58.311Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.10&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:58.827Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:58.921Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:58.929Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.016Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&week=eq.10&order=chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.043Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=10&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.596Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/bal.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.596Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/ne.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.596Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/jax.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.605Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-survivor",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.610Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=6&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.610Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=4&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.612Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=8&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.612Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=7&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.613Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=1&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.613Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-survivor&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.614Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=2&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.614Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.614Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=3&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.617Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=5&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.617Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-survivor&week=lte.9&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.713Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=10&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.748Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.774Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/mia.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.797Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/phi.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.846Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.858Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:25:59.931Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:00.111Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:00.150Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:03.636Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:04.132Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:04.147Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:04.150Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&week=eq.9&order=chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:04.241Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:07.405Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:07.513Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=8&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:07.517Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-survivor",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:07.519Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-survivor&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:07.575Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-survivor&week=lte.9&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:07.713Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:08.325Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.6&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:08.440Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=1&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:08.454Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/buf.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:08.473Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/kc.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:08.487Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=2&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:08.518Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/pit.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:08.519Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-survivor",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:08.669Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-survivor&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:08.673Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-survivor&week=lte.6&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:08.744Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=5&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:08.773Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=3&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:08.777Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=4&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:08.931Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=6&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:09.032Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=7&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:09.058Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/nyg.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:09.179Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/ari.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:09.186Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/car.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:09.236Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/atl.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:09.380Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/chi.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.697Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.697Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/style.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.697Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/slate.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.706Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/weekly.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.709Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.710Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.713Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/season-record.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.714Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/home-dashboard.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.717Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/picks-mobile.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.717Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/week-selector.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.746Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/assets/pool-center-icon.svg",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.748Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/weekly-app.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.753Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share-ui.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.754Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/home-dashboard.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.755Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor-app.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.756Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/week-date-range.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.759Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/season-record.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.759Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/picks-mobile.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.759Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/score-feed-proxy.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.759Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/pwa.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.795Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/public-math.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.808Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/contest-rulings.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.808Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor-math.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.808Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share-card.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.821Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:11.941Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:12.032Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:12.043Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:12.133Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:12.155Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.10&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:12.649Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:12.741Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:12.743Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=10&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:12.782Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:12.784Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=2&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:12.786Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=3&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:12.792Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=4&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:12.799Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=5&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:12.824Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&week=eq.10&order=chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:13.319Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/bal.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:13.320Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/jax.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:13.320Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/ne.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:13.338Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=6&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:13.338Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=8&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:13.339Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=7&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:13.340Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:13.341Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=1&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:13.341Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-survivor",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:13.341Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-survivor&week=lte.9&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:13.341Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-survivor&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:13.423Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=10&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:13.486Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/phi.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:13.489Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/mia.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:13.588Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:13.687Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:13.690Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:13.708Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:13.732Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:13.774Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:17.313Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:17.849Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:17.856Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:17.857Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:17.868Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&week=eq.9&order=chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:20.974Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:21.077Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-survivor&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:21.085Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=8&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:21.107Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-survivor",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:21.210Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:21.324Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-survivor&week=lte.9&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:21.875Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.6&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:22.013Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=2&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:22.015Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=1&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:22.017Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/buf.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:22.074Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/kc.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:22.079Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/pit.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:22.162Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=3&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:22.280Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-survivor",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:22.287Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-survivor&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:22.302Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=4&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:22.313Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-survivor&week=lte.6&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:22.335Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=6&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:22.358Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=5&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:22.459Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=7&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:22.546Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/nyg.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:22.569Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/car.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:22.581Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/ari.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:22.602Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/atl.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:22.826Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/chi.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.187Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.188Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/style.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.188Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/slate.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.191Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.203Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/weekly.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.203Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.203Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/home-dashboard.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.203Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/picks-mobile.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.203Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/season-record.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.203Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/week-selector.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.226Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/assets/pool-center-icon.svg",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.226Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor-app.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.227Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share-ui.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.227Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/weekly-app.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.227Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/home-dashboard.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.228Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/week-date-range.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.228Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/season-record.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.228Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/picks-mobile.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.228Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/score-feed-proxy.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.228Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/pwa.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.272Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/public-math.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.274Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor-math.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.276Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share-card.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.278Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/contest-rulings.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.312Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.429Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.488Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.529Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.596Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:25.637Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.10&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.093Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.196Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=10&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.198Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.199Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&week=eq.10&order=chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.212Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.685Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/bal.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.687Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/jax.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.687Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/ne.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.695Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=3&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.696Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=2&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.696Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=5&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.701Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=4&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.702Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=6&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.702Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=8&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.703Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=7&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.703Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.707Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-survivor",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.707Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-survivor&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.707Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-survivor&week=lte.9&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.707Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=1&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.812Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=10&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.844Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/phi.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.849Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/mia.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:26.975Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:27.077Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:27.078Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:27.082Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:27.083Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:27.171Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:30.747Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:31.313Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:31.313Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:31.319Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&week=eq.9&order=chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:31.387Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:34.538Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:34.644Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-survivor&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:34.646Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=8&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:34.659Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-survivor",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:34.660Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-survivor&week=lte.9&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:34.959Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:35.401Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.6&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:35.521Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=1&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:35.545Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/pit.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:35.545Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/kc.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:35.546Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=2&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:35.546Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/buf.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:35.738Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-survivor",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:35.767Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-survivor&week=lte.6&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:35.795Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-survivor&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:35.821Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=5&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:35.839Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=3&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:35.847Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=4&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:35.849Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=6&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:35.945Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=7&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:35.974Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/nyg.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:36.094Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/car.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:36.094Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/ari.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:36.113Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/atl.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:36.338Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/chi.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.705Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/?season=2026&week=9&view=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.717Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/style.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.721Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/slate.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.723Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.727Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.727Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/home-dashboard.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.727Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/picks-mobile.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.727Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/weekly.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.728Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/season-record.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.737Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/week-selector.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.775Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/assets/pool-center-icon.svg",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.779Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share-ui.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.785Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/weekly-app.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.785Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/home-dashboard.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.785Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor-app.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.785Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/score-feed-proxy.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.785Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/picks-mobile.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.785Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/season-record.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.785Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/week-date-range.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.785Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/pwa.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.872Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.889Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/public-math.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.920Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/contest-rulings.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.920Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor-math.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:38.920Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share-card.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:39.022Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:39.125Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:39.141Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:39.221Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:39.693Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:39.739Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 502
+  },
+  {
+   "t": "2026-11-06T17:26:39.782Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:39.782Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:39.785Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&week=eq.9&order=chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:40.189Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:40.250Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=1&_=…",
+   "status": 502
+  },
+  {
+   "t": "2026-11-06T17:26:40.255Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=2&_=…",
+   "status": 502
+  },
+  {
+   "t": "2026-11-06T17:26:40.255Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=3&_=…",
+   "status": 502
+  },
+  {
+   "t": "2026-11-06T17:26:40.255Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=4&_=…",
+   "status": 502
+  },
+  {
+   "t": "2026-11-06T17:26:40.257Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=5&_=…",
+   "status": 502
+  },
+  {
+   "t": "2026-11-06T17:26:40.258Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=6&_=…",
+   "status": 502
+  },
+  {
+   "t": "2026-11-06T17:26:40.258Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=7&_=…",
+   "status": 502
+  },
+  {
+   "t": "2026-11-06T17:26:40.259Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=8&_=…",
+   "status": 502
+  },
+  {
+   "t": "2026-11-06T17:26:40.259Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 502
+  },
+  {
+   "t": "2026-11-06T17:26:40.337Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/ne.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:40.342Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/bal.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:40.346Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/jax.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:40.360Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:40.451Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-survivor",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:40.454Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-survivor&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:40.459Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.10&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:40.463Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-survivor&week=lte.9&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:40.517Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=10&_=…",
+   "status": 502
+  },
+  {
+   "t": "2026-11-06T17:26:40.522Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:40.537Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:40.562Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:59.176Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:59.422Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=10&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:59.524Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:59.562Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:59.591Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&week=eq.9&order=chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:26:59.637Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.108Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/?season=2026&week=9",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.111Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/style.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.119Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/slate.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.119Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/weekly.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.119Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.119Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.127Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/picks-mobile.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.127Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/season-record.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.127Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/home-dashboard.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.127Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/week-selector.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.128Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/weekly-app.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.128Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor-app.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.159Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/assets/pool-center-icon.svg",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.164Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/home-dashboard.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.164Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share-ui.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.164Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/picks-mobile.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.164Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/score-feed-proxy.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.166Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/week-date-range.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.166Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/season-record.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.166Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/pwa.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.279Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/public-math.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.281Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor-math.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.284Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/contest-rulings.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.284Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share-card.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.493Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.691Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.720Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.823Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.852Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:12.935Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:13.434Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "failed": "net::ERR_FAILED"
+  },
+  {
+   "t": "2026-11-06T17:27:13.437Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "failed": "net::ERR_FAILED"
+  },
+  {
+   "t": "2026-11-06T17:27:13.437Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&week=eq.9&order=chain_seq.asc",
+   "failed": "net::ERR_FAILED"
+  },
+  {
+   "t": "2026-11-06T17:27:13.437Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:13.462Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-survivor",
+   "failed": "net::ERR_FAILED"
+  },
+  {
+   "t": "2026-11-06T17:27:13.462Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-survivor&order=revision.asc",
+   "failed": "net::ERR_FAILED"
+  },
+  {
+   "t": "2026-11-06T17:27:13.463Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-survivor&week=lte.9&order=week.asc,chain_seq.asc",
+   "failed": "net::ERR_FAILED"
+  },
+  {
+   "t": "2026-11-06T17:27:13.596Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/bal.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:13.658Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:14.093Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/jax.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:14.093Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/ne.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:14.108Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=6&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:14.108Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=7&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:14.108Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=5&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:14.108Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=1&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:14.108Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=2&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:14.108Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=3&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:14.108Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=4&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:14.108Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:14.108Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=8&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:14.242Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=10&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:14.367Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:14.376Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "failed": "net::ERR_FAILED"
+  },
+  {
+   "t": "2026-11-06T17:27:14.377Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "failed": "net::ERR_FAILED"
+  },
+  {
+   "t": "2026-11-06T17:27:14.378Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=week.asc,chain_seq.asc",
+   "failed": "net::ERR_FAILED"
+  },
+  {
+   "t": "2026-11-06T17:27:14.523Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.10&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:14.603Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=10&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.532Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/?season=2026&week=9&view=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.532Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/style.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.532Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/slate.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.532Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/weekly.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.532Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.538Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.539Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/home-dashboard.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.539Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/week-selector.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.545Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/weekly-app.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.546Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/season-record.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.553Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/picks-mobile.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.556Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/assets/pool-center-icon.svg",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.561Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share-ui.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.584Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor-app.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.584Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/home-dashboard.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.588Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/season-record.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.588Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/week-date-range.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.588Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/picks-mobile.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.588Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/score-feed-proxy.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.588Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/pwa.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.696Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.709Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/public-math.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.710Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/contest-rulings.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.722Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor-math.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.735Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share-card.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.828Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.839Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.946Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:17.987Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:18.066Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:18.557Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:18.642Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:18.645Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:18.651Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:18.664Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&week=eq.9&order=chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:18.999Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/ne.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.004Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=6&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.004Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=7&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.004Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=8&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.004Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=5&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.004Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.004Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-survivor",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.006Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-survivor&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.007Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=4&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.007Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-survivor&week=lte.9&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.007Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=1&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.008Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=2&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.018Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=3&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.029Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/jax.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.029Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/bal.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.092Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=10&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.152Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/phi.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.196Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/mia.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.251Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.363Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.10&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.367Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.370Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.395Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:19.438Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=10&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:37.719Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "failed": "net::ERR_FAILED"
+  },
+  {
+   "t": "2026-11-06T17:27:38.088Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:38.125Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:38.132Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&week=eq.9&order=chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:38.164Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=10&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:38.169Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.044Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/?view=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.051Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/style.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.051Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/slate.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.051Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/weekly.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.052Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.056Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/home-dashboard.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.057Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.058Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/picks-mobile.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.058Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/season-record.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.058Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/week-selector.css?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.068Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/assets/pool-center-icon.svg",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.086Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/weekly-app.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.086Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share-ui.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.089Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor-app.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.089Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/pwa.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.089Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/week-date-range.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.089Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/home-dashboard.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.089Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/season-record.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.091Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/score-feed-proxy.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.091Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/picks-mobile.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.204Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/public-math.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.206Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/contest-rulings.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.212Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/survivor-math.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.213Z",
+   "method": "GET",
+   "url": "http://localhost:8765/nfl-pool/share-card.js?v=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.451Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.674Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.674Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.838Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.842Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,revision,published_at,status&status=eq.locked&order=season.asc,week.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.943Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:50.991Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.10&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:51.461Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/jax.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:51.461Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/ne.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:51.472Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/bal.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:51.493Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-survivor",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:51.493Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-survivor&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:51.508Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=6&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:51.508Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=3&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:51.508Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=1&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:51.508Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=2&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:51.508Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=8&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:51.508Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=4&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:51.508Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=5&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:51.508Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-survivor&week=lte.9&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:51.508Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:51.508Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=7&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:51.525Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=10&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:51.574Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:51.595Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&week=eq.10&order=chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:51.607Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:52.116Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/mia.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:52.116Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/phi.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:52.121Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=10&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:52.310Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.neonauth.c-15.us-east-1.aws.neon.tech/nfl_pool/auth/token/anonymous",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:52.411Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:52.424Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_pool_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.9&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:52.428Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-pickem",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:52.428Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-pickem&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:52.518Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=9&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:53.228Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_survivor_weeks?select=season,week,status,revision,published_at,config&season=eq.2026&week=eq.6&status=eq.locked",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:53.308Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=6&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:53.319Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=3&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:53.324Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=2&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:53.336Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=5&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:53.357Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=1&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:53.372Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contests?select=contest_id,season,contest_type,display_name,starts_at,created_at&contest_id=eq.pool-center-2026-survivor",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:53.374Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/buf.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:53.374Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=4&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:53.412Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/pit.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:53.442Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/kc.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:53.519Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_contest_policies?select=contest_id,contest_type,revision,effective_week,halted_game_policy,public_note,created_at&contest_id=eq.pool-center-2026-survivor&order=revision.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:53.580Z",
+   "method": "GET",
+   "url": "https://ep-shiny-snow-bbx446zt.apirest.c-15.us-east-1.aws.neon.tech/nfl_pool/rest/v1/nfl_incident_rulings?select=ruling_id,contest_id,contest_type,week,away_team,home_team,policy_revision,chain_seq,parent_ruling_id,consequence,incident_status,event_id,evidence_source,public_note,created_at&contest_id=eq.pool-center-2026-survivor&week=lte.6&order=week.asc,chain_seq.asc",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:53.689Z",
+   "method": "GET",
+   "url": "http://localhost:8765/__qa-nflscores2/?season=2026&week=7&_=…",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:53.703Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/nyg.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:53.815Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/ari.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:53.820Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/atl.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:53.844Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/chi.png",
+   "status": 200
+  },
+  {
+   "t": "2026-11-06T17:27:53.856Z",
+   "method": "GET",
+   "url": "https://a.espncdn.com/i/teamlogos/nfl/500/car.png",
+   "status": 200
+  }
+ ],
+ "violations": [],
+ "refused": [],
+ "console": [
+  {
+   "t": "2026-11-06T17:25:42.032Z",
+   "page": "/nfl-pool/",
+   "type": "warning",
+   "text": "Service Worker registration blocked by Playwright"
+  },
+  {
+   "t": "2026-11-06T17:25:50.054Z",
+   "page": "/nfl-pool/?season=2026&week=9",
+   "type": "warning",
+   "text": "Service Worker registration blocked by Playwright"
+  },
+  {
+   "t": "2026-11-06T17:25:57.985Z",
+   "page": "/nfl-pool/",
+   "type": "warning",
+   "text": "Service Worker registration blocked by Playwright"
+  },
+  {
+   "t": "2026-11-06T17:26:11.821Z",
+   "page": "/nfl-pool/",
+   "type": "warning",
+   "text": "Service Worker registration blocked by Playwright"
+  },
+  {
+   "t": "2026-11-06T17:26:25.311Z",
+   "page": "/nfl-pool/",
+   "type": "warning",
+   "text": "Service Worker registration blocked by Playwright"
+  },
+  {
+   "t": "2026-11-06T17:26:38.934Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "warning",
+   "text": "Service Worker registration blocked by Playwright"
+  },
+  {
+   "t": "2026-11-06T17:26:39.693Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "error",
+   "text": "Failed to load resource: the server responded with a status of 502 (Bad Gateway)"
+  },
+  {
+   "t": "2026-11-06T17:26:40.200Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "error",
+   "text": "Failed to load resource: the server responded with a status of 502 (Bad Gateway)"
+  },
+  {
+   "t": "2026-11-06T17:26:40.207Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "error",
+   "text": "Failed to load resource: the server responded with a status of 502 (Bad Gateway)"
+  },
+  {
+   "t": "2026-11-06T17:26:40.207Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "error",
+   "text": "Failed to load resource: the server responded with a status of 502 (Bad Gateway)"
+  },
+  {
+   "t": "2026-11-06T17:26:40.207Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "error",
+   "text": "Failed to load resource: the server responded with a status of 502 (Bad Gateway)"
+  },
+  {
+   "t": "2026-11-06T17:26:40.208Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "error",
+   "text": "Failed to load resource: the server responded with a status of 502 (Bad Gateway)"
+  },
+  {
+   "t": "2026-11-06T17:26:40.208Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "error",
+   "text": "Failed to load resource: the server responded with a status of 502 (Bad Gateway)"
+  },
+  {
+   "t": "2026-11-06T17:26:40.208Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "error",
+   "text": "Failed to load resource: the server responded with a status of 502 (Bad Gateway)"
+  },
+  {
+   "t": "2026-11-06T17:26:40.208Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "error",
+   "text": "Failed to load resource: the server responded with a status of 502 (Bad Gateway)"
+  },
+  {
+   "t": "2026-11-06T17:26:40.208Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "error",
+   "text": "Failed to load resource: the server responded with a status of 502 (Bad Gateway)"
+  },
+  {
+   "t": "2026-11-06T17:26:40.464Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "warning",
+   "text": "Error: Week 1 score feed 502\n    at http://localhost:8765/nfl-pool/survivor-app.js?v=12:288:22"
+  },
+  {
+   "t": "2026-11-06T17:26:40.464Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "warning",
+   "text": "Error: Week 2 score feed 502\n    at http://localhost:8765/nfl-pool/survivor-app.js?v=12:288:22"
+  },
+  {
+   "t": "2026-11-06T17:26:40.464Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "warning",
+   "text": "Error: Week 3 score feed 502\n    at http://localhost:8765/nfl-pool/survivor-app.js?v=12:288:22"
+  },
+  {
+   "t": "2026-11-06T17:26:40.464Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "warning",
+   "text": "Error: Week 4 score feed 502\n    at http://localhost:8765/nfl-pool/survivor-app.js?v=12:288:22"
+  },
+  {
+   "t": "2026-11-06T17:26:40.464Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "warning",
+   "text": "Error: Week 5 score feed 502\n    at http://localhost:8765/nfl-pool/survivor-app.js?v=12:288:22"
+  },
+  {
+   "t": "2026-11-06T17:26:40.464Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "warning",
+   "text": "Error: Week 6 score feed 502\n    at http://localhost:8765/nfl-pool/survivor-app.js?v=12:288:22"
+  },
+  {
+   "t": "2026-11-06T17:26:40.464Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "warning",
+   "text": "Error: Week 7 score feed 502\n    at http://localhost:8765/nfl-pool/survivor-app.js?v=12:288:22"
+  },
+  {
+   "t": "2026-11-06T17:26:40.464Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "warning",
+   "text": "Error: Week 8 score feed 502\n    at http://localhost:8765/nfl-pool/survivor-app.js?v=12:288:22"
+  },
+  {
+   "t": "2026-11-06T17:26:40.464Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "warning",
+   "text": "Error: Week 9 score feed 502\n    at http://localhost:8765/nfl-pool/survivor-app.js?v=12:288:22"
+  },
+  {
+   "t": "2026-11-06T17:26:40.465Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "warning",
+   "text": "Error: Week 1 score feed 502\n    at http://localhost:8765/nfl-pool/survivor-app.js?v=12:288:22"
+  },
+  {
+   "t": "2026-11-06T17:26:40.466Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "error",
+   "text": "Failed to load resource: the server responded with a status of 502 (Bad Gateway)"
+  },
+  {
+   "t": "2026-11-06T17:27:12.493Z",
+   "page": "/nfl-pool/?season=2026&week=9",
+   "type": "warning",
+   "text": "Service Worker registration blocked by Playwright"
+  },
+  {
+   "t": "2026-11-06T17:27:13.434Z",
+   "page": "/nfl-pool/?season=2026&week=9",
+   "type": "error",
+   "text": "Failed to load resource: net::ERR_FAILED"
+  },
+  {
+   "t": "2026-11-06T17:27:13.437Z",
+   "page": "/nfl-pool/?season=2026&week=9",
+   "type": "error",
+   "text": "Failed to load resource: net::ERR_FAILED"
+  },
+  {
+   "t": "2026-11-06T17:27:13.437Z",
+   "page": "/nfl-pool/?season=2026&week=9",
+   "type": "error",
+   "text": "Failed to load resource: net::ERR_FAILED"
+  },
+  {
+   "t": "2026-11-06T17:27:13.462Z",
+   "page": "/nfl-pool/?season=2026&week=9",
+   "type": "error",
+   "text": "Failed to load resource: net::ERR_FAILED"
+  },
+  {
+   "t": "2026-11-06T17:27:13.462Z",
+   "page": "/nfl-pool/?season=2026&week=9",
+   "type": "error",
+   "text": "Failed to load resource: net::ERR_FAILED"
+  },
+  {
+   "t": "2026-11-06T17:27:13.463Z",
+   "page": "/nfl-pool/?season=2026&week=9",
+   "type": "error",
+   "text": "Failed to load resource: net::ERR_FAILED"
+  },
+  {
+   "t": "2026-11-06T17:27:13.658Z",
+   "page": "/nfl-pool/?season=2026&week=9",
+   "type": "warning",
+   "text": "TypeError: Failed to fetch\n    at window.fetch (http://localhost:8765/nfl-pool/score-feed-proxy.js?v=2:28:12)\n    at get (http://localhost:8765/nfl-pool/weekly-app.js?v=weekly-v24:96:35)\n    at loadRulings (http://localhost:8765/nfl-pool/weekly-app.js?v=weekly-v24:101:7)\n    at async Promise.allSettled (index 1)\n    at async update (http://localhost:8765/nfl-pool/weekly-app.js?v=weekly-v24:505:61)"
+  },
+  {
+   "t": "2026-11-06T17:27:14.109Z",
+   "page": "/nfl-pool/?season=2026&week=9",
+   "type": "warning",
+   "text": "TypeError: Failed to fetch\n    at window.fetch (http://localhost:8765/nfl-pool/score-feed-proxy.js?v=2:28:12)\n    at get (http://localhost:8765/nfl-pool/survivor-app.js?v=12:48:19)\n    at loadRulings (http://localhost:8765/nfl-pool/survivor-app.js?v=12:53:5)"
+  },
+  {
+   "t": "2026-11-06T17:27:14.376Z",
+   "page": "/nfl-pool/?season=2026&week=9",
+   "type": "error",
+   "text": "Failed to load resource: net::ERR_FAILED"
+  },
+  {
+   "t": "2026-11-06T17:27:14.378Z",
+   "page": "/nfl-pool/?season=2026&week=9",
+   "type": "error",
+   "text": "Failed to load resource: net::ERR_FAILED"
+  },
+  {
+   "t": "2026-11-06T17:27:14.378Z",
+   "page": "/nfl-pool/?season=2026&week=9",
+   "type": "error",
+   "text": "Failed to load resource: net::ERR_FAILED"
+  },
+  {
+   "t": "2026-11-06T17:27:17.743Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "warning",
+   "text": "Service Worker registration blocked by Playwright"
+  },
+  {
+   "t": "2026-11-06T17:27:37.719Z",
+   "page": "/nfl-pool/?season=2026&week=9&view=standings",
+   "type": "error",
+   "text": "Failed to load resource: net::ERR_FAILED"
+  },
+  {
+   "t": "2026-11-06T17:27:50.451Z",
+   "page": "/nfl-pool/?view=survivor",
+   "type": "warning",
+   "text": "Service Worker registration blocked by Playwright"
+  }
+ ],
+ "pageErrors": [],
+ "finishedAt": "2026-11-06T17:27:56.255Z",
+ "summary": {
+  "steps": 9,
+  "pass": 7,
+  "fail": 2,
+  "writes": 0,
+  "violations": 0,
+  "refused": 0,
+  "pageErrors": 0,
+  "consoleErrors": 21,
+  "consoleWarnings": 21
+ }
+}
