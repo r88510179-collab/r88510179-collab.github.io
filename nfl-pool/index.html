@@ -27,6 +27,11 @@
 .week-select,.btn,.refresh-btn,.header-actions button,.picks-segment button{min-height:44px}
 .menu-popover a,.menu-popover button{min-height:44px;display:flex;align-items:center}
 .share-btn{min-height:44px}
+/* An archived group should not show a live Survivor status chip or weekly call to action. */
+body[data-survivor-archived="true"] #dashSurvivor,
+body[data-survivor-archived="true"] #dashContests [data-dash-contest="survivor"],
+body[data-survivor-archived="true"] [data-dash-summary="survivor"],
+body[data-survivor-archived="true"] #svFeed{display:none!important}
 .group-survivor-complete{border:1px solid #4f745a;border-radius:12px;background:#153022;color:#e4f7e6;padding:12px 15px;margin:12px 0;font-size:14px;line-height:1.55}.group-survivor-complete strong{display:block;font-size:15px;margin-bottom:3px}.survivor-decision-card[hidden]{display:none!important}</style>
 </head>
 <body data-survivor-archived="true">
