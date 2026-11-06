@@ -76,12 +76,29 @@ function restoreCloseoutIndex(path,text){
   return text;
 }
 
+// Restore just the new verified-date presentation layer for immutable historical
+// PWA hash checks. The actual new module, cache and reference are tested below.
+const WEEK_DATE_SCRIPT='<script type="module" src="week-date-range.js?v=1"></script>\n';
+const WEEK_DATE_WORKER="  './week-date-range.js?v=1',\n";
+function restoreVerifiedDateLayer(path,text) {
+  if (path==='index.html') {
+    assert.equal(text.split(WEEK_DATE_SCRIPT).length,2,'exactly one date display module reference');
+    return text.replace(WEEK_DATE_SCRIPT,'');
+  }
+  if (path==='service-worker.js') {
+    assert(text.includes("const CACHE='pool-center-shell-v36'"),'date display uses fresh PWA cache v36');
+    assert.equal(text.split(WEEK_DATE_WORKER).length,2,'exactly one date display precache entry');
+    return text.replace("pool-center-shell-v36","pool-center-shell-v35").replace(WEEK_DATE_WORKER,'');
+  }
+  return text;
+}
+
 const readFileSync=(url,encoding)=>{
   const pathname=new URL(url).pathname,path=pathname.split('/').pop();
   const raw=diskReadFileSync(url);
   let result=raw;
   if(['home-dashboard.js','home-dashboard.css','index.html','service-worker.js'].includes(path))
-    result=Buffer.from(restorePulse(path,restoreWeekSelector(path,restoreCloseoutIndex(path,raw.toString('utf8')))),'utf8');
+    result=Buffer.from(restorePulse(path,restoreWeekSelector(path,restoreCloseoutIndex(path,restoreVerifiedDateLayer(path,raw.toString('utf8'))))),'utf8');
   return encoding==='utf8'?result.toString('utf8'):result;
 };
 const source=readFileSync(new URL('./service-worker.js',import.meta.url),'utf8');
@@ -2334,7 +2351,7 @@ assert.equal(hdFailures.length,0,`Home dashboard service-worker regressions fail
     assert.equal((currentPage.match(new RegExp(asset.replaceAll('.','\\.')+'\\?v=2','g'))||[]).length,1,`page references exactly one ${asset} v2`);
     assert.equal((currentWorker.match(new RegExp(asset.replaceAll('.','\\.')+'\\?v=2','g'))||[]).length,1,`worker precaches exactly one ${asset} v2`);
   }
-  assert.match(currentWorker,/const CACHE='pool-center-shell-v35'/);
+  assert.match(currentWorker,/const CACHE='pool-center-shell-v36'/);
   assert(!currentPage.includes('qa-read-routing')&&!currentWorker.includes('qa-read-routing'),
     'release candidate must never include staging-only fetch interception');
   assert(!currentWorker.includes('home-dashboard.js?v=1')&&!currentWorker.includes('home-dashboard.css?v=1'));
@@ -2351,8 +2368,8 @@ assert.equal(hdFailures.length,0,`Home dashboard service-worker regressions fail
   for(const forbidden of ['qa-read-routing.js','qa/live-mobile.html','api/qa-read.js','api/qa-schedule.js'])
     assert(!currentPage.includes(forbidden)&&!currentWorker.includes(forbidden),
       `${forbidden} cannot be in release shell`);
-  assert.equal(restorePulse('index.html',restoreWeekSelector('index.html',restoreCloseoutIndex('index.html',currentPage))),index,'only approved Home and selector layers changed');
-  assert.equal(restorePulse('service-worker.js',restoreWeekSelector('service-worker.js',currentWorker)),source,'only Home versions and cache generation changed');
+  assert.equal(restorePulse('index.html',restoreWeekSelector('index.html',restoreCloseoutIndex('index.html',restoreVerifiedDateLayer('index.html',currentPage)))),index,'only approved Home and selector layers changed');
+  assert.equal(restorePulse('service-worker.js',restoreWeekSelector('service-worker.js',restoreVerifiedDateLayer('service-worker.js',currentWorker))),source,'only Home versions and cache generation changed');
 }
 
 assert.equal(pmFailures.length,0,`V1.3 mobile UX service-worker regressions failed (${pmFailures.length}):\n  ${pmFailures.join('\n  ')}`);
@@ -2371,7 +2388,7 @@ assert.equal(ssFailures.length,0,`Season record service-worker regressions faile
   const css=diskReadFileSync(new URL('./week-selector.css',import.meta.url),'utf8');
   assert.equal(actualPage.split(SELECTOR_LINK).length,2,'one loaded fix stylesheet');
   assert.equal(actualWorker.split(SELECTOR_WORKER).length,2,'one precached fix stylesheet');
-  assert.match(actualWorker,/const CACHE='pool-center-shell-v35'/);
+  assert.match(actualWorker,/const CACHE='pool-center-shell-v36'/);
   assert(css.includes('.week-strip > #weekSelect { flex:0 0 150px; width:150px; min-width:150px; max-width:150px; }'));
   assert(css.includes('.week-strip > .week-copy { flex:1 1 0; min-width:0; }'));
   assert(!css.includes('url(')&&!css.includes('@import')&&!css.includes('http:')&&!css.includes('https:'),'no remote CSS or request');
@@ -2380,7 +2397,7 @@ assert.equal(ssFailures.length,0,`Season record service-worker regressions faile
     assert(contentArea-150>=0,viewport+'px viewport still leaves room for the week description');
   }
   assert.equal(restoreWeekSelector('index.html',actualPage),diskReadFileSync(new URL('./index.html',import.meta.url),'utf8').replace(SELECTOR_LINK,''),'bounded HTML inverse');
-  assert.equal(restoreWeekSelector('service-worker.js',actualWorker),actualWorker.replace("pool-center-shell-v35","pool-center-shell-v32").replace(SELECTOR_WORKER,''),'bounded worker inverse');
+  assert.equal(restoreWeekSelector('service-worker.js',restoreVerifiedDateLayer('service-worker.js',actualWorker)),actualWorker.replace("pool-center-shell-v36","pool-center-shell-v32").replace(WEEK_DATE_WORKER,'').replace(SELECTOR_WORKER,''),'bounded worker inverse');
 }
 
 // Closeout overlay: restoreCloseoutIndex removes this page-only <style> for the immutable historical byte checks above,
@@ -2406,6 +2423,66 @@ assert.equal(ssFailures.length,0,`Season record service-worker regressions faile
   for(const selector of archive.split(','))assert(selector.trim().startsWith('body[data-survivor-archived="true"] '),`${selector.trim()} is scoped to the archived marker`);
   assert.equal(markup.split('<body data-survivor-archived="true">').length-1,1,'the page carries the archived marker once');
   for(const id of ['dashSurvivor','svFeed'])assert.equal(markup.split(`id="${id}"`).length-1,1,`#${id} exists once`);
+}
+
+// Historical published date fields are UTC in some weeks. The new read-only
+// presentation module uses verified kickoff instants in America/New_York only.
+{
+  const actualPage=diskReadFileSync(new URL('./index.html',import.meta.url),'utf8');
+  const actualWorker=diskReadFileSync(new URL('./service-worker.js',import.meta.url),'utf8');
+  const js=diskReadFileSync(new URL('./week-date-range.js',import.meta.url),'utf8');
+  assert.equal(actualPage.split(WEEK_DATE_SCRIPT).length,2,'the current page loads the one date module');
+  assert.equal(actualWorker.split(WEEK_DATE_WORKER).length,2,'the current PWA caches the same versioned module');
+  assert.match(actualWorker,/const CACHE='pool-center-shell-v36'/);
+  assert(!/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|EventSource|localStorage|sessionStorage|indexedDB|eval\s*\(|https?:\/\//.test(js),'date display must remain read-only and offline');
+  assert(js.includes("doc.addEventListener('poolcenter:update'"),'refresh reads the already-published Pick’em snapshot');
+  assert(js.includes("'poolcenter:picks'"),'the display uses the existing picks snapshot, not a second data feed');
+  const {verifiedWeekRange,correctedWeekLine,bootVerifiedWeekDates}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+  const game=kickoff=>({kickoff});
+  const example=[game('2026-11-01T18:00:00Z'),game('2026-11-03T01:15:00Z')];
+  assert.equal(verifiedWeekRange(example),'Nov 1–Nov 2, 2026','UTC Tuesday is Monday night in Eastern time');
+  assert.equal(verifiedWeekRange([game('2026-11-03T01:15:00Z')]),'Nov 2, 2026');
+  assert.equal(verifiedWeekRange([game('2026-01-01T01:00:00Z'),game('2026-01-04T18:00:00Z')]),'Dec 31, 2025–Jan 4, 2026','cross-year labels use actual ET years');
+  assert.equal(verifiedWeekRange([game(null),game('2026-11-03T01:15:00Z')]),null,'one missing verification cannot invent a date range');
+  assert.equal(verifiedWeekRange([game('not-a-time')]),null,'malformed timestamps rejected');
+  const original='Week 8 · revision 1 · Nov 1–Nov 3, 2026 · D.C. · JC';
+  const snapshot={ready:true,season:2026,week:8,revision:1,games:example};
+  assert.equal(correctedWeekLine(original,snapshot),'Week 8 · revision 1 · Nov 1–Nov 2, 2026 · D.C. · JC');
+  assert.equal(correctedWeekLine(original,{...snapshot,games:[game(null)]}),'Week 8 · revision 1 · Kickoff dates unverified · D.C. · JC');
+  assert.equal(correctedWeekLine(original,{...snapshot,revision:2}),original,'a different publication revision must never be patched');
+  assert.equal(correctedWeekLine('PUBLISHED DATA STALE · revision 1 · Nov 1–Nov 3, 2026 · D.C.',snapshot),
+    'PUBLISHED DATA STALE · revision 1 · Nov 1–Nov 3, 2026 · D.C.','preserve stale-publication warnings');
+  assert.equal(correctedWeekLine('Loading weekly pool…',snapshot),'Loading weekly pool…');
+
+  // Exercise the actual browser event contract without fetching any live data.
+  // The existing Pick'em app answers poolcenter:picks with its verified snapshot.
+  const weekLine={textContent:original},handlers=new Map();
+  let currentSnapshot=snapshot,reads=0;
+  const doc={
+    getElementById:id=>id==='weekLine'?weekLine:null,
+    addEventListener:(type,handler)=>{
+      const list=handlers.get(type)||[];list.push(handler);handlers.set(type,list);
+    },
+    dispatchEvent:event=>{
+      if(event.type==='poolcenter:picks'){reads++;event.detail.snapshot=currentSnapshot}
+      for(const handler of handlers.get(event.type)||[])handler(event);
+      return true;
+    }
+  };
+  bootVerifiedWeekDates(doc);
+  assert.equal(reads,1,'initial read uses exactly one existing snapshot request');
+  assert.equal(weekLine.textContent,'Week 8 · revision 1 · Nov 1–Nov 2, 2026 · D.C. · JC');
+  weekLine.textContent=original;
+  currentSnapshot={...snapshot,games:[game(null)]};
+  doc.dispatchEvent(new CustomEvent('poolcenter:update',{detail:{contest:'pickem'}}));
+  assert.equal(weekLine.textContent,'Week 8 · revision 1 · Kickoff dates unverified · D.C. · JC');
+  const count=reads;
+  doc.dispatchEvent(new CustomEvent('poolcenter:update',{detail:{contest:'survivor'}}));
+  assert.equal(reads,count,'Survivor updates never refresh the Pick’em date summary');
+  weekLine.textContent=original;
+  currentSnapshot={...snapshot,revision:2};
+  doc.dispatchEvent(new CustomEvent('poolcenter:update',{detail:{contest:'pickem'}}));
+  assert.equal(weekLine.textContent,original,'stale revision cannot change the displayed header');
 }
 
 console.log('service-worker precache graph (share-card, Home dashboard, V1.3 mobile UX, V1.4 compact Picks UX, V1.4 final polish, V1.4 collapsible slate groups, V1.4 multi-select slates and season record versions), fresh (cache:"reload") precache requests, all-or-nothing install, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');
