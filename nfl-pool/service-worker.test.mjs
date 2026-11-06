@@ -2329,8 +2329,8 @@ assert.equal(hdFailures.length,0,`Home dashboard service-worker regressions fail
   for(const forbidden of ['qa-read-routing.js','qa/live-mobile.html','api/qa-read.js','api/qa-schedule.js'])
     assert(!currentPage.includes(forbidden)&&!currentWorker.includes(forbidden),
       `${forbidden} cannot be in release shell`);
-  assert.equal(restorePulse('index.html',currentPage),index,'only the approved new Home slot and asset versions changed');
-  assert.equal(restorePulse('service-worker.js',currentWorker),source,'only Home versions and cache generation changed');
+  assert.equal(restorePulse('index.html',restoreWeekSelector('index.html',currentPage)),index,'only approved Home and selector layers changed');
+  assert.equal(restorePulse('service-worker.js',restoreWeekSelector('service-worker.js',currentWorker)),source,'only Home versions and cache generation changed');
 }
 
 assert.equal(pmFailures.length,0,`V1.3 mobile UX service-worker regressions failed (${pmFailures.length}):\n  ${pmFailures.join('\n  ')}`);
@@ -2350,9 +2350,9 @@ assert.equal(ssFailures.length,0,`Season record service-worker regressions faile
   assert.equal(actualPage.split(SELECTOR_LINK).length,2,'one loaded fix stylesheet');
   assert.equal(actualWorker.split(SELECTOR_WORKER).length,2,'one precached fix stylesheet');
   assert.match(actualWorker,/const CACHE='pool-center-shell-v33'/);
-  assert.match(css,/\\.week-strip\\s*>\\s*#weekSelect\\s*\\{[^}]*flex:\\s*0 0 150px;[^}]*min-width:\\s*150px;/);
-  assert.match(css,/\\.week-strip\\s*>\\s*\\.week-copy\\s*\\{[^}]*min-width:\\s*0;/);
-  assert(!/url\\(|@import|https?:\\/\\//.test(css),'no remote CSS or request');
+  assert(css.includes('.week-strip > #weekSelect { flex:0 0 150px; width:150px; min-width:150px; max-width:150px; }'));
+  assert(css.includes('.week-strip > .week-copy { flex:1 1 0; min-width:0; }'));
+  assert(!css.includes('url(')&&!css.includes('@import')&&!css.includes('http:')&&!css.includes('https:'),'no remote CSS or request');
   for(const viewport of [320,375,390,430]){
     const contentArea=viewport-20/* shell */-20/* strip padding */-2/* borders */-14/* gap */;
     assert(contentArea-150>=0,viewport+'px viewport still leaves room for the week description');
