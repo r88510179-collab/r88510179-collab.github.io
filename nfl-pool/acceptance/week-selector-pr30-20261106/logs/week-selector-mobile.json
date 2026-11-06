@@ -1,0 +1,3671 @@
+{
+ "summary": {
+  "at": "2026-11-06T10:16:40.828Z",
+  "deployment": "dpl_B5FasHyJc66368k2Dmp5Cu6MUqEa",
+  "deploymentOrigin": "https://nfl-pool-personal-1vk5pbr6m-r88510179-collabs-projects.vercel.app",
+  "qaAppCommit": "68feca130fc81f3e5331b893861c61f52784bb1e",
+  "cssUnderTest": {
+   "commit": "34788854438144868fefe6f3c61aeb0676e9b5a6",
+   "path": "nfl-pool/week-selector.css",
+   "gitBlob": "11d45c360aeba22bed880eb6ac06b96e1809b5c6",
+   "sha256": "f9acb1e880a3e3e0cfd5a96a69a028c902109e76679ed8cc27a86060b7bb8bd9",
+   "bytes": 448
+  },
+  "reference": {
+   "pr29EvidenceCommit": "e39368f65b34372309c7fe7583bf59c1aa5bd431",
+   "file": "nfl-pool/acceptance/pdf-e2e-20261105/logs/tracker-mobile.json"
+  },
+  "environment": {
+   "playwright": "1.63.0",
+   "chromium": "153.0.8010.12",
+   "node": "v22.23.4",
+   "emulation": "headless Chromium; CSS viewport W x 844, DPR 2, isMobile, hasTouch; service workers blocked"
+  },
+  "global": {
+   "servedCssEqualsMain": true,
+   "servedIndexEqualsQaAppCommit": true,
+   "noForbiddenRequests": true,
+   "noDirectNeonFromBrowser": true,
+   "noWriteRequests": true,
+   "controlReproducesPr29ClipAtAllWidths": true
+  },
+  "servedCss": {
+   "style.css?v=premium-v3": {
+    "served": "83cce4ed122a251791d3f272b9cf5bed94c849dac9a0ad74d39bef784dcdf815",
+    "main": "83cce4ed122a251791d3f272b9cf5bed94c849dac9a0ad74d39bef784dcdf815"
+   },
+   "slate.css?v=slate-v1": {
+    "served": "58f87ea913d974f98f9bab54c1c3d74bd608f723b47fe491128d96016937abdb",
+    "main": "58f87ea913d974f98f9bab54c1c3d74bd608f723b47fe491128d96016937abdb"
+   },
+   "survivor.css?v=4": {
+    "served": "ec104e2e22394460c9a0ee473e84d47d87eb5e72eb7cf1f67135f626978b4938",
+    "main": "ec104e2e22394460c9a0ee473e84d47d87eb5e72eb7cf1f67135f626978b4938"
+   },
+   "weekly.css?v=premium-v3": {
+    "served": "fe917b9123af034c887fc3290e052c07ba6d1a7ed72ff0e9286a6f53ea6a1f44",
+    "main": "fe917b9123af034c887fc3290e052c07ba6d1a7ed72ff0e9286a6f53ea6a1f44"
+   },
+   "season-record.css?v=1": {
+    "served": "b68dafa0ac5193a653dc1babff1dd9fcb33f083d64f38adf1474cc6fbe91d0f6",
+    "main": "b68dafa0ac5193a653dc1babff1dd9fcb33f083d64f38adf1474cc6fbe91d0f6"
+   },
+   "picks-mobile.css?v=5": {
+    "served": "870d2fb477ac88ec6054763c3424f2d31955205ecddf53cbe34114f8836cc255",
+    "main": "870d2fb477ac88ec6054763c3424f2d31955205ecddf53cbe34114f8836cc255"
+   },
+   "home-dashboard.css?v=2": {
+    "served": "519d32d97f59c820dbc3141b9e81532ab47f66cc725f609beae1b6d716291355",
+    "main": "519d32d97f59c820dbc3141b9e81532ab47f66cc725f609beae1b6d716291355"
+   },
+   "share.css?v=1": {
+    "served": "32beaa9657dcae9ac5ff899261ee64f6188011f8e82e3de8de606721964f5dd4",
+    "main": "32beaa9657dcae9ac5ff899261ee64f6188011f8e82e3de8de606721964f5dd4"
+   }
+  },
+  "widths": [
+   {
+    "width": 375,
+    "pass": true,
+    "checks": {
+     "viewportIsRequestedWidth": true,
+     "noDocumentOverflow": true,
+     "injectedCssIsExactPr30File": true,
+     "pr30RulesApplied": true,
+     "week10LabelSelected": true,
+     "week10LabelFullyVisible": true,
+     "week10to18LabelsFit": true,
+     "week10DataMatchesPr29ReadBack": true,
+     "weekSummaryShowsWeekAndRevision": true,
+     "stripLayoutContained": true,
+     "selectorUsable": true,
+     "gatewayChildOnly": true,
+     "noBrokenImages": true,
+     "noBrowserErrors": true
+    },
+    "control": {
+     "select": 126,
+     "contentBox": 76,
+     "label": "2026 · Week 10",
+     "textWidth": 83.32,
+     "fits": false
+    },
+    "pr30": {
+     "select": 150,
+     "contentBox": 100,
+     "label": "2026 · Week 10",
+     "textWidth": 83.32,
+     "headroom": 16.68,
+     "widestWeek10to18": 83.32,
+     "probeFonts": [
+      {
+       "family": "DejaVu Sans",
+       "widestTwoDigitLabel": 95.57,
+       "fits": true
+      },
+      {
+       "family": "Liberation Sans",
+       "widestTwoDigitLabel": 78.07,
+       "fits": true
+      },
+      {
+       "family": "FreeSans",
+       "widestTwoDigitLabel": 78.18,
+       "fits": true
+      }
+     ],
+     "innerWidth": 375,
+     "clientWidth": 375,
+     "scrollWidth": 375,
+     "bodyScrollWidth": 375,
+     "maxScrollX": 0,
+     "weekLineVisible": "Week 10 · revision 2 · Nov 13–Nov…"
+    },
+    "browserErrors": {
+     "app": 0,
+     "pageErrors": 0,
+     "failedRequests": 0,
+     "httpErrors": 0,
+     "harnessOnly": 3,
+     "abortedByNavigation": 0
+    }
+   },
+   {
+    "width": 390,
+    "pass": true,
+    "checks": {
+     "viewportIsRequestedWidth": true,
+     "noDocumentOverflow": true,
+     "injectedCssIsExactPr30File": true,
+     "pr30RulesApplied": true,
+     "week10LabelSelected": true,
+     "week10LabelFullyVisible": true,
+     "week10to18LabelsFit": true,
+     "week10DataMatchesPr29ReadBack": true,
+     "weekSummaryShowsWeekAndRevision": true,
+     "stripLayoutContained": true,
+     "selectorUsable": true,
+     "gatewayChildOnly": true,
+     "noBrokenImages": true,
+     "noBrowserErrors": true
+    },
+    "control": {
+     "select": 126,
+     "contentBox": 76,
+     "label": "2026 · Week 10",
+     "textWidth": 83.32,
+     "fits": false
+    },
+    "pr30": {
+     "select": 150,
+     "contentBox": 100,
+     "label": "2026 · Week 10",
+     "textWidth": 83.32,
+     "headroom": 16.68,
+     "widestWeek10to18": 83.32,
+     "probeFonts": [
+      {
+       "family": "DejaVu Sans",
+       "widestTwoDigitLabel": 95.57,
+       "fits": true
+      },
+      {
+       "family": "Liberation Sans",
+       "widestTwoDigitLabel": 78.07,
+       "fits": true
+      },
+      {
+       "family": "FreeSans",
+       "widestTwoDigitLabel": 78.18,
+       "fits": true
+      }
+     ],
+     "innerWidth": 390,
+     "clientWidth": 390,
+     "scrollWidth": 390,
+     "bodyScrollWidth": 390,
+     "maxScrollX": 0,
+     "weekLineVisible": "Week 10 · revision 2 · Nov 13–Nov 17,…"
+    },
+    "browserErrors": {
+     "app": 0,
+     "pageErrors": 0,
+     "failedRequests": 0,
+     "httpErrors": 0,
+     "harnessOnly": 3,
+     "abortedByNavigation": 0
+    }
+   },
+   {
+    "width": 430,
+    "pass": true,
+    "checks": {
+     "viewportIsRequestedWidth": true,
+     "noDocumentOverflow": true,
+     "injectedCssIsExactPr30File": true,
+     "pr30RulesApplied": true,
+     "week10LabelSelected": true,
+     "week10LabelFullyVisible": true,
+     "week10to18LabelsFit": true,
+     "week10DataMatchesPr29ReadBack": true,
+     "weekSummaryShowsWeekAndRevision": true,
+     "stripLayoutContained": true,
+     "selectorUsable": true,
+     "gatewayChildOnly": true,
+     "noBrokenImages": true,
+     "noBrowserErrors": true
+    },
+    "control": {
+     "select": 126,
+     "contentBox": 76,
+     "label": "2026 · Week 10",
+     "textWidth": 83.32,
+     "fits": false
+    },
+    "pr30": {
+     "select": 150,
+     "contentBox": 100,
+     "label": "2026 · Week 10",
+     "textWidth": 83.32,
+     "headroom": 16.68,
+     "widestWeek10to18": 83.32,
+     "probeFonts": [
+      {
+       "family": "DejaVu Sans",
+       "widestTwoDigitLabel": 95.57,
+       "fits": true
+      },
+      {
+       "family": "Liberation Sans",
+       "widestTwoDigitLabel": 78.07,
+       "fits": true
+      },
+      {
+       "family": "FreeSans",
+       "widestTwoDigitLabel": 78.18,
+       "fits": true
+      }
+     ],
+     "innerWidth": 430,
+     "clientWidth": 430,
+     "scrollWidth": 430,
+     "bodyScrollWidth": 430,
+     "maxScrollX": 0,
+     "weekLineVisible": "Week 10 · revision 2 · Nov 13–Nov 17, 2026 ·…"
+    },
+    "browserErrors": {
+     "app": 0,
+     "pageErrors": 0,
+     "failedRequests": 0,
+     "httpErrors": 0,
+     "harnessOnly": 3,
+     "abortedByNavigation": 0
+    }
+   }
+  ],
+  "forbiddenRequests": 0,
+  "directNeonRequestsFromBrowser": 0,
+  "writeRequests": 0,
+  "pass": true
+ },
+ "results": [
+  {
+   "width": 375,
+   "checks": {
+    "viewportIsRequestedWidth": true,
+    "noDocumentOverflow": true,
+    "injectedCssIsExactPr30File": true,
+    "pr30RulesApplied": true,
+    "week10LabelSelected": true,
+    "week10LabelFullyVisible": true,
+    "week10to18LabelsFit": true,
+    "week10DataMatchesPr29ReadBack": true,
+    "weekSummaryShowsWeekAndRevision": true,
+    "stripLayoutContained": true,
+    "selectorUsable": true,
+    "gatewayChildOnly": true,
+    "noBrokenImages": true,
+    "noBrowserErrors": true
+   },
+   "pass": true,
+   "control": {
+    "ready": true,
+    "label": {
+     "text": "2026 · Week 10",
+     "width": 83.32,
+     "textWidthCeil": 84,
+     "contentBoxFloor": 76,
+     "fits": false,
+     "headroom": -7.32
+    },
+    "select": {
+     "box": {
+      "left": 228,
+      "right": 354,
+      "width": 126,
+      "top": 88,
+      "height": 38
+     },
+     "contentBoxWidth": 76,
+     "computedMinWidth": "126px"
+    },
+    "reproducesPr29Clip": true,
+    "dataMatchesPr29ReadBack": true,
+    "noDocumentOverflow": true,
+    "injectionAbsent": true
+   },
+   "usable": {
+    "visible": true,
+    "enabled": true,
+    "trialTap": true,
+    "week9Loaded": true,
+    "week10Reloaded": true
+   },
+   "measured": {
+    "control": {
+     "innerWidth": 375,
+     "innerHeight": 844,
+     "devicePixelRatio": 2,
+     "clientWidth": 375,
+     "scrollWidth": 375,
+     "bodyScrollWidth": 375,
+     "maxScrollX": 0,
+     "view": "standings",
+     "url": "/nfl-pool/?view=standings&season=2026&week=10",
+     "sync": "LIVE · data 0s old",
+     "weekLine": "Week 10 · revision 2 · Nov 13–Nov 17, 2026 · D.C. · JC · DJS · Thaddeus",
+     "weekLineVisible": "Week 10 · revision 2 · Nov 13–Nov 17, 2…",
+     "weekLineTruncated": true,
+     "weekSelected": "2026 · Week 10",
+     "weekValue": "2026-10",
+     "weekOptions": [
+      "2026 · Week 9",
+      "2026 · Week 10"
+     ],
+     "standings": [
+      [
+       "1",
+       "D.C.",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "35"
+      ],
+      [
+       "1",
+       "JC",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "37"
+      ],
+      [
+       "1",
+       "DJS",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "55"
+      ],
+      [
+       "1",
+       "Thaddeus",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "41"
+      ]
+     ],
+     "brokenImages": 0,
+     "select": {
+      "box": {
+       "left": 228,
+       "right": 354,
+       "width": 126,
+       "top": 88,
+       "height": 38
+      },
+      "clientWidth": 124,
+      "paddingLeft": 12,
+      "paddingRight": 36,
+      "borderLeft": 1,
+      "borderRight": 1,
+      "contentBoxWidth": 76,
+      "font": "850 11px Inter, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif",
+      "letterSpacing": "normal",
+      "disabled": false,
+      "computed": {
+       "width": "126px",
+       "minWidth": "126px",
+       "maxWidth": "none",
+       "flexGrow": "0",
+       "flexShrink": "1",
+       "flexBasis": "auto"
+      }
+     },
+     "label": {
+      "text": "2026 · Week 10",
+      "width": 83.32,
+      "textWidthCeil": 84,
+      "contentBoxFloor": 76,
+      "fits": false,
+      "headroom": -7.32
+     },
+     "twoDigitLabels": {
+      "widest": 83.32,
+      "allFit": false
+     },
+     "probeFonts": [
+      {
+       "family": "DejaVu Sans",
+       "widestTwoDigitLabel": 95.57,
+       "fits": false
+      },
+      {
+       "family": "Liberation Sans",
+       "widestTwoDigitLabel": 78.07,
+       "fits": false
+      },
+      {
+       "family": "FreeSans",
+       "widestTwoDigitLabel": 78.18,
+       "fits": false
+      }
+     ],
+     "copy": {
+      "box": {
+       "left": 21,
+       "right": 214,
+       "width": 193,
+       "top": 94.5,
+       "height": 25
+      },
+      "computed": {
+       "flexGrow": "0",
+       "flexShrink": "1",
+       "flexBasis": "auto",
+       "minWidth": "0px"
+      }
+     },
+     "line": {
+      "box": {
+       "left": 21,
+       "right": 214,
+       "width": 193,
+       "top": 107.5,
+       "height": 12
+      },
+      "clientWidth": 193,
+      "scrollWidth": 333
+     },
+     "strip": {
+      "box": {
+       "left": 10,
+       "right": 365,
+       "width": 355,
+       "top": 78,
+       "height": 58
+      },
+      "contentRight": 354,
+      "count": 1
+     },
+     "layout": {
+      "stripInsideViewport": true,
+      "selectInsideStrip": true,
+      "copyEndsBeforeSelect": true
+     },
+     "hitTest": [
+      true,
+      true,
+      true
+     ],
+     "injection": {
+      "present": false
+     },
+     "stylesheets": [
+      "style.css?v=premium-v3",
+      "slate.css?v=slate-v1",
+      "weekly.css?v=premium-v3",
+      "survivor.css?v=4",
+      "share.css?v=1",
+      "home-dashboard.css?v=2",
+      "picks-mobile.css?v=5",
+      "season-record.css?v=1"
+     ]
+    },
+    "pr30": {
+     "innerWidth": 375,
+     "innerHeight": 844,
+     "devicePixelRatio": 2,
+     "clientWidth": 375,
+     "scrollWidth": 375,
+     "bodyScrollWidth": 375,
+     "maxScrollX": 0,
+     "view": "standings",
+     "url": "/nfl-pool/?view=standings&season=2026&week=10",
+     "sync": "LIVE · data 0s old",
+     "weekLine": "Week 10 · revision 2 · Nov 13–Nov 17, 2026 · D.C. · JC · DJS · Thaddeus",
+     "weekLineVisible": "Week 10 · revision 2 · Nov 13–Nov…",
+     "weekLineTruncated": true,
+     "weekSelected": "2026 · Week 10",
+     "weekValue": "2026-10",
+     "weekOptions": [
+      "2026 · Week 9",
+      "2026 · Week 10"
+     ],
+     "standings": [
+      [
+       "1",
+       "D.C.",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "35"
+      ],
+      [
+       "1",
+       "JC",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "37"
+      ],
+      [
+       "1",
+       "DJS",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "55"
+      ],
+      [
+       "1",
+       "Thaddeus",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "41"
+      ]
+     ],
+     "brokenImages": 0,
+     "select": {
+      "box": {
+       "left": 204,
+       "right": 354,
+       "width": 150,
+       "top": 88,
+       "height": 38
+      },
+      "clientWidth": 148,
+      "paddingLeft": 12,
+      "paddingRight": 36,
+      "borderLeft": 1,
+      "borderRight": 1,
+      "contentBoxWidth": 100,
+      "font": "850 11px Inter, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif",
+      "letterSpacing": "normal",
+      "disabled": false,
+      "computed": {
+       "width": "150px",
+       "minWidth": "150px",
+       "maxWidth": "150px",
+       "flexGrow": "0",
+       "flexShrink": "0",
+       "flexBasis": "150px"
+      }
+     },
+     "label": {
+      "text": "2026 · Week 10",
+      "width": 83.32,
+      "textWidthCeil": 84,
+      "contentBoxFloor": 100,
+      "fits": true,
+      "headroom": 16.68
+     },
+     "twoDigitLabels": {
+      "widest": 83.32,
+      "allFit": true
+     },
+     "probeFonts": [
+      {
+       "family": "DejaVu Sans",
+       "widestTwoDigitLabel": 95.57,
+       "fits": true
+      },
+      {
+       "family": "Liberation Sans",
+       "widestTwoDigitLabel": 78.07,
+       "fits": true
+      },
+      {
+       "family": "FreeSans",
+       "widestTwoDigitLabel": 78.18,
+       "fits": true
+      }
+     ],
+     "copy": {
+      "box": {
+       "left": 21,
+       "right": 190,
+       "width": 169,
+       "top": 94.5,
+       "height": 25
+      },
+      "computed": {
+       "flexGrow": "1",
+       "flexShrink": "1",
+       "flexBasis": "0px",
+       "minWidth": "0px"
+      }
+     },
+     "line": {
+      "box": {
+       "left": 21,
+       "right": 190,
+       "width": 169,
+       "top": 107.5,
+       "height": 12
+      },
+      "clientWidth": 169,
+      "scrollWidth": 333
+     },
+     "strip": {
+      "box": {
+       "left": 10,
+       "right": 365,
+       "width": 355,
+       "top": 78,
+       "height": 58
+      },
+      "contentRight": 354,
+      "count": 1
+     },
+     "layout": {
+      "stripInsideViewport": true,
+      "selectInsideStrip": true,
+      "copyEndsBeforeSelect": true
+     },
+     "hitTest": [
+      true,
+      true,
+      true
+     ],
+     "injection": {
+      "present": true,
+      "inHead": true,
+      "afterSeasonRecordLink": true,
+      "matched": {
+       "weekCopy": 1,
+       "weekSelect": 1
+      },
+      "laterStylesheets": []
+     },
+     "stylesheets": [
+      "style.css?v=premium-v3",
+      "slate.css?v=slate-v1",
+      "weekly.css?v=premium-v3",
+      "survivor.css?v=4",
+      "share.css?v=1",
+      "home-dashboard.css?v=2",
+      "picks-mobile.css?v=5",
+      "season-record.css?v=1",
+      "inline:pr30-week-selector"
+     ]
+    },
+    "week9": {
+     "innerWidth": 375,
+     "innerHeight": 844,
+     "devicePixelRatio": 2,
+     "clientWidth": 375,
+     "scrollWidth": 375,
+     "bodyScrollWidth": 375,
+     "maxScrollX": 0,
+     "view": "standings",
+     "url": "/nfl-pool/?view=standings&season=2026&week=9",
+     "sync": "LIVE · data 0s old",
+     "weekLine": "Week 9 · revision 3 · Nov 6–Nov 10, 2026 · D.C. · JC · DJS · Thaddeus",
+     "weekLineVisible": "Week 9 · revision 3 · Nov 6–Nov 1…",
+     "weekLineTruncated": true,
+     "weekSelected": "2026 · Week 9",
+     "weekValue": "2026-9",
+     "weekOptions": [
+      "2026 · Week 9",
+      "2026 · Week 10"
+     ],
+     "standings": [
+      [
+       "1",
+       "JC",
+       "T-1 Top 20% · 3 tied",
+       "1",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "45"
+      ],
+      [
+       "1",
+       "Thaddeus",
+       "T-1 Top 20% · 3 tied",
+       "1",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "34"
+      ],
+      [
+       "3",
+       "D.C.",
+       "T-4 Top 80% · 2 tied",
+       "0",
+       "1",
+       "14",
+       "1",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "42"
+      ],
+      [
+       "3",
+       "DJS",
+       "T-4 Top 80% · 2 tied",
+       "0",
+       "1",
+       "14",
+       "1",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "37"
+      ]
+     ],
+     "brokenImages": 0,
+     "select": {
+      "box": {
+       "left": 204,
+       "right": 354,
+       "width": 150,
+       "top": 88,
+       "height": 38
+      },
+      "clientWidth": 148,
+      "paddingLeft": 12,
+      "paddingRight": 36,
+      "borderLeft": 1,
+      "borderRight": 1,
+      "contentBoxWidth": 100,
+      "font": "850 11px Inter, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif",
+      "letterSpacing": "normal",
+      "disabled": false,
+      "computed": {
+       "width": "150px",
+       "minWidth": "150px",
+       "maxWidth": "150px",
+       "flexGrow": "0",
+       "flexShrink": "0",
+       "flexBasis": "150px"
+      }
+     },
+     "label": {
+      "text": "2026 · Week 9",
+      "width": 78.13,
+      "textWidthCeil": 79,
+      "contentBoxFloor": 100,
+      "fits": true,
+      "headroom": 21.87
+     },
+     "twoDigitLabels": {
+      "widest": 83.32,
+      "allFit": true
+     },
+     "probeFonts": [
+      {
+       "family": "DejaVu Sans",
+       "widestTwoDigitLabel": 95.57,
+       "fits": true
+      },
+      {
+       "family": "Liberation Sans",
+       "widestTwoDigitLabel": 78.07,
+       "fits": true
+      },
+      {
+       "family": "FreeSans",
+       "widestTwoDigitLabel": 78.18,
+       "fits": true
+      }
+     ],
+     "copy": {
+      "box": {
+       "left": 21,
+       "right": 190,
+       "width": 169,
+       "top": 94.5,
+       "height": 25
+      },
+      "computed": {
+       "flexGrow": "1",
+       "flexShrink": "1",
+       "flexBasis": "0px",
+       "minWidth": "0px"
+      }
+     },
+     "line": {
+      "box": {
+       "left": 21,
+       "right": 190,
+       "width": 169,
+       "top": 107.5,
+       "height": 12
+      },
+      "clientWidth": 169,
+      "scrollWidth": 327
+     },
+     "strip": {
+      "box": {
+       "left": 10,
+       "right": 365,
+       "width": 355,
+       "top": 78,
+       "height": 58
+      },
+      "contentRight": 354,
+      "count": 1
+     },
+     "layout": {
+      "stripInsideViewport": true,
+      "selectInsideStrip": true,
+      "copyEndsBeforeSelect": true
+     },
+     "hitTest": [
+      true,
+      true,
+      true
+     ],
+     "injection": {
+      "present": true,
+      "inHead": true,
+      "afterSeasonRecordLink": true,
+      "matched": {
+       "weekCopy": 1,
+       "weekSelect": 1
+      },
+      "laterStylesheets": []
+     },
+     "stylesheets": [
+      "style.css?v=premium-v3",
+      "slate.css?v=slate-v1",
+      "weekly.css?v=premium-v3",
+      "survivor.css?v=4",
+      "share.css?v=1",
+      "home-dashboard.css?v=2",
+      "picks-mobile.css?v=5",
+      "season-record.css?v=1",
+      "inline:pr30-week-selector"
+     ]
+    },
+    "week10AfterSwitch": {
+     "innerWidth": 375,
+     "innerHeight": 844,
+     "devicePixelRatio": 2,
+     "clientWidth": 375,
+     "scrollWidth": 375,
+     "bodyScrollWidth": 375,
+     "maxScrollX": 0,
+     "view": "standings",
+     "url": "/nfl-pool/?view=standings&season=2026&week=10",
+     "sync": "LIVE · data 0s old",
+     "weekLine": "Week 10 · revision 2 · Nov 13–Nov 17, 2026 · D.C. · JC · DJS · Thaddeus",
+     "weekLineVisible": "Week 10 · revision 2 · Nov 13–Nov…",
+     "weekLineTruncated": true,
+     "weekSelected": "2026 · Week 10",
+     "weekValue": "2026-10",
+     "weekOptions": [
+      "2026 · Week 9",
+      "2026 · Week 10"
+     ],
+     "standings": [
+      [
+       "1",
+       "D.C.",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "35"
+      ],
+      [
+       "1",
+       "JC",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "37"
+      ],
+      [
+       "1",
+       "DJS",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "55"
+      ],
+      [
+       "1",
+       "Thaddeus",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "41"
+      ]
+     ],
+     "brokenImages": 0,
+     "select": {
+      "box": {
+       "left": 204,
+       "right": 354,
+       "width": 150,
+       "top": 88,
+       "height": 38
+      },
+      "clientWidth": 148,
+      "paddingLeft": 12,
+      "paddingRight": 36,
+      "borderLeft": 1,
+      "borderRight": 1,
+      "contentBoxWidth": 100,
+      "font": "850 11px Inter, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif",
+      "letterSpacing": "normal",
+      "disabled": false,
+      "computed": {
+       "width": "150px",
+       "minWidth": "150px",
+       "maxWidth": "150px",
+       "flexGrow": "0",
+       "flexShrink": "0",
+       "flexBasis": "150px"
+      }
+     },
+     "label": {
+      "text": "2026 · Week 10",
+      "width": 83.32,
+      "textWidthCeil": 84,
+      "contentBoxFloor": 100,
+      "fits": true,
+      "headroom": 16.68
+     },
+     "twoDigitLabels": {
+      "widest": 83.32,
+      "allFit": true
+     },
+     "probeFonts": [
+      {
+       "family": "DejaVu Sans",
+       "widestTwoDigitLabel": 95.57,
+       "fits": true
+      },
+      {
+       "family": "Liberation Sans",
+       "widestTwoDigitLabel": 78.07,
+       "fits": true
+      },
+      {
+       "family": "FreeSans",
+       "widestTwoDigitLabel": 78.18,
+       "fits": true
+      }
+     ],
+     "copy": {
+      "box": {
+       "left": 21,
+       "right": 190,
+       "width": 169,
+       "top": 94.5,
+       "height": 25
+      },
+      "computed": {
+       "flexGrow": "1",
+       "flexShrink": "1",
+       "flexBasis": "0px",
+       "minWidth": "0px"
+      }
+     },
+     "line": {
+      "box": {
+       "left": 21,
+       "right": 190,
+       "width": 169,
+       "top": 107.5,
+       "height": 12
+      },
+      "clientWidth": 169,
+      "scrollWidth": 333
+     },
+     "strip": {
+      "box": {
+       "left": 10,
+       "right": 365,
+       "width": 355,
+       "top": 78,
+       "height": 58
+      },
+      "contentRight": 354,
+      "count": 1
+     },
+     "layout": {
+      "stripInsideViewport": true,
+      "selectInsideStrip": true,
+      "copyEndsBeforeSelect": true
+     },
+     "hitTest": [
+      true,
+      true,
+      true
+     ],
+     "injection": {
+      "present": true,
+      "inHead": true,
+      "afterSeasonRecordLink": true,
+      "matched": {
+       "weekCopy": 1,
+       "weekSelect": 1
+      },
+      "laterStylesheets": []
+     },
+     "stylesheets": [
+      "style.css?v=premium-v3",
+      "slate.css?v=slate-v1",
+      "weekly.css?v=premium-v3",
+      "survivor.css?v=4",
+      "share.css?v=1",
+      "home-dashboard.css?v=2",
+      "picks-mobile.css?v=5",
+      "season-record.css?v=1",
+      "inline:pr30-week-selector"
+     ]
+    }
+   },
+   "gateway": [
+    {
+     "phase": "control-main-css",
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    }
+   ],
+   "browser": {
+    "appConsole": [],
+    "harnessConsole": [
+     {
+      "phase": "control-main-css",
+      "text": "warning: Service Worker registration blocked by Playwright"
+     },
+     {
+      "phase": "control-main-css",
+      "text": "warning: Service Worker registration blocked by Playwright"
+     },
+     {
+      "phase": "pr30-css",
+      "text": "warning: Service Worker registration blocked by Playwright"
+     }
+    ],
+    "pageErrors": [],
+    "failedRequests": [],
+    "abortedRequests": [],
+    "httpErrors": []
+   }
+  },
+  {
+   "width": 390,
+   "checks": {
+    "viewportIsRequestedWidth": true,
+    "noDocumentOverflow": true,
+    "injectedCssIsExactPr30File": true,
+    "pr30RulesApplied": true,
+    "week10LabelSelected": true,
+    "week10LabelFullyVisible": true,
+    "week10to18LabelsFit": true,
+    "week10DataMatchesPr29ReadBack": true,
+    "weekSummaryShowsWeekAndRevision": true,
+    "stripLayoutContained": true,
+    "selectorUsable": true,
+    "gatewayChildOnly": true,
+    "noBrokenImages": true,
+    "noBrowserErrors": true
+   },
+   "pass": true,
+   "control": {
+    "ready": true,
+    "label": {
+     "text": "2026 · Week 10",
+     "width": 83.32,
+     "textWidthCeil": 84,
+     "contentBoxFloor": 76,
+     "fits": false,
+     "headroom": -7.32
+    },
+    "select": {
+     "box": {
+      "left": 243,
+      "right": 369,
+      "width": 126,
+      "top": 88,
+      "height": 38
+     },
+     "contentBoxWidth": 76,
+     "computedMinWidth": "126px"
+    },
+    "reproducesPr29Clip": true,
+    "dataMatchesPr29ReadBack": true,
+    "noDocumentOverflow": true,
+    "injectionAbsent": true
+   },
+   "usable": {
+    "visible": true,
+    "enabled": true,
+    "trialTap": true,
+    "week9Loaded": true,
+    "week10Reloaded": true
+   },
+   "measured": {
+    "control": {
+     "innerWidth": 390,
+     "innerHeight": 844,
+     "devicePixelRatio": 2,
+     "clientWidth": 390,
+     "scrollWidth": 390,
+     "bodyScrollWidth": 390,
+     "maxScrollX": 0,
+     "view": "standings",
+     "url": "/nfl-pool/?view=standings&season=2026&week=10",
+     "sync": "LIVE · data 0s old",
+     "weekLine": "Week 10 · revision 2 · Nov 13–Nov 17, 2026 · D.C. · JC · DJS · Thaddeus",
+     "weekLineVisible": "Week 10 · revision 2 · Nov 13–Nov 17, 202…",
+     "weekLineTruncated": true,
+     "weekSelected": "2026 · Week 10",
+     "weekValue": "2026-10",
+     "weekOptions": [
+      "2026 · Week 9",
+      "2026 · Week 10"
+     ],
+     "standings": [
+      [
+       "1",
+       "D.C.",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "35"
+      ],
+      [
+       "1",
+       "JC",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "37"
+      ],
+      [
+       "1",
+       "DJS",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "55"
+      ],
+      [
+       "1",
+       "Thaddeus",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "41"
+      ]
+     ],
+     "brokenImages": 0,
+     "select": {
+      "box": {
+       "left": 243,
+       "right": 369,
+       "width": 126,
+       "top": 88,
+       "height": 38
+      },
+      "clientWidth": 124,
+      "paddingLeft": 12,
+      "paddingRight": 36,
+      "borderLeft": 1,
+      "borderRight": 1,
+      "contentBoxWidth": 76,
+      "font": "850 11px Inter, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif",
+      "letterSpacing": "normal",
+      "disabled": false,
+      "computed": {
+       "width": "126px",
+       "minWidth": "126px",
+       "maxWidth": "none",
+       "flexGrow": "0",
+       "flexShrink": "1",
+       "flexBasis": "auto"
+      }
+     },
+     "label": {
+      "text": "2026 · Week 10",
+      "width": 83.32,
+      "textWidthCeil": 84,
+      "contentBoxFloor": 76,
+      "fits": false,
+      "headroom": -7.32
+     },
+     "twoDigitLabels": {
+      "widest": 83.32,
+      "allFit": false
+     },
+     "probeFonts": [
+      {
+       "family": "DejaVu Sans",
+       "widestTwoDigitLabel": 95.57,
+       "fits": false
+      },
+      {
+       "family": "Liberation Sans",
+       "widestTwoDigitLabel": 78.07,
+       "fits": false
+      },
+      {
+       "family": "FreeSans",
+       "widestTwoDigitLabel": 78.18,
+       "fits": false
+      }
+     ],
+     "copy": {
+      "box": {
+       "left": 21,
+       "right": 229,
+       "width": 208,
+       "top": 94.5,
+       "height": 25
+      },
+      "computed": {
+       "flexGrow": "0",
+       "flexShrink": "1",
+       "flexBasis": "auto",
+       "minWidth": "0px"
+      }
+     },
+     "line": {
+      "box": {
+       "left": 21,
+       "right": 229,
+       "width": 208,
+       "top": 107.5,
+       "height": 12
+      },
+      "clientWidth": 208,
+      "scrollWidth": 333
+     },
+     "strip": {
+      "box": {
+       "left": 10,
+       "right": 380,
+       "width": 370,
+       "top": 78,
+       "height": 58
+      },
+      "contentRight": 369,
+      "count": 1
+     },
+     "layout": {
+      "stripInsideViewport": true,
+      "selectInsideStrip": true,
+      "copyEndsBeforeSelect": true
+     },
+     "hitTest": [
+      true,
+      true,
+      true
+     ],
+     "injection": {
+      "present": false
+     },
+     "stylesheets": [
+      "style.css?v=premium-v3",
+      "slate.css?v=slate-v1",
+      "weekly.css?v=premium-v3",
+      "survivor.css?v=4",
+      "share.css?v=1",
+      "home-dashboard.css?v=2",
+      "picks-mobile.css?v=5",
+      "season-record.css?v=1"
+     ]
+    },
+    "pr30": {
+     "innerWidth": 390,
+     "innerHeight": 844,
+     "devicePixelRatio": 2,
+     "clientWidth": 390,
+     "scrollWidth": 390,
+     "bodyScrollWidth": 390,
+     "maxScrollX": 0,
+     "view": "standings",
+     "url": "/nfl-pool/?view=standings&season=2026&week=10",
+     "sync": "LIVE · data 0s old",
+     "weekLine": "Week 10 · revision 2 · Nov 13–Nov 17, 2026 · D.C. · JC · DJS · Thaddeus",
+     "weekLineVisible": "Week 10 · revision 2 · Nov 13–Nov 17,…",
+     "weekLineTruncated": true,
+     "weekSelected": "2026 · Week 10",
+     "weekValue": "2026-10",
+     "weekOptions": [
+      "2026 · Week 9",
+      "2026 · Week 10"
+     ],
+     "standings": [
+      [
+       "1",
+       "D.C.",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "35"
+      ],
+      [
+       "1",
+       "JC",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "37"
+      ],
+      [
+       "1",
+       "DJS",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "55"
+      ],
+      [
+       "1",
+       "Thaddeus",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "41"
+      ]
+     ],
+     "brokenImages": 0,
+     "select": {
+      "box": {
+       "left": 219,
+       "right": 369,
+       "width": 150,
+       "top": 88,
+       "height": 38
+      },
+      "clientWidth": 148,
+      "paddingLeft": 12,
+      "paddingRight": 36,
+      "borderLeft": 1,
+      "borderRight": 1,
+      "contentBoxWidth": 100,
+      "font": "850 11px Inter, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif",
+      "letterSpacing": "normal",
+      "disabled": false,
+      "computed": {
+       "width": "150px",
+       "minWidth": "150px",
+       "maxWidth": "150px",
+       "flexGrow": "0",
+       "flexShrink": "0",
+       "flexBasis": "150px"
+      }
+     },
+     "label": {
+      "text": "2026 · Week 10",
+      "width": 83.32,
+      "textWidthCeil": 84,
+      "contentBoxFloor": 100,
+      "fits": true,
+      "headroom": 16.68
+     },
+     "twoDigitLabels": {
+      "widest": 83.32,
+      "allFit": true
+     },
+     "probeFonts": [
+      {
+       "family": "DejaVu Sans",
+       "widestTwoDigitLabel": 95.57,
+       "fits": true
+      },
+      {
+       "family": "Liberation Sans",
+       "widestTwoDigitLabel": 78.07,
+       "fits": true
+      },
+      {
+       "family": "FreeSans",
+       "widestTwoDigitLabel": 78.18,
+       "fits": true
+      }
+     ],
+     "copy": {
+      "box": {
+       "left": 21,
+       "right": 205,
+       "width": 184,
+       "top": 94.5,
+       "height": 25
+      },
+      "computed": {
+       "flexGrow": "1",
+       "flexShrink": "1",
+       "flexBasis": "0px",
+       "minWidth": "0px"
+      }
+     },
+     "line": {
+      "box": {
+       "left": 21,
+       "right": 205,
+       "width": 184,
+       "top": 107.5,
+       "height": 12
+      },
+      "clientWidth": 184,
+      "scrollWidth": 333
+     },
+     "strip": {
+      "box": {
+       "left": 10,
+       "right": 380,
+       "width": 370,
+       "top": 78,
+       "height": 58
+      },
+      "contentRight": 369,
+      "count": 1
+     },
+     "layout": {
+      "stripInsideViewport": true,
+      "selectInsideStrip": true,
+      "copyEndsBeforeSelect": true
+     },
+     "hitTest": [
+      true,
+      true,
+      true
+     ],
+     "injection": {
+      "present": true,
+      "inHead": true,
+      "afterSeasonRecordLink": true,
+      "matched": {
+       "weekCopy": 1,
+       "weekSelect": 1
+      },
+      "laterStylesheets": []
+     },
+     "stylesheets": [
+      "style.css?v=premium-v3",
+      "slate.css?v=slate-v1",
+      "weekly.css?v=premium-v3",
+      "survivor.css?v=4",
+      "share.css?v=1",
+      "home-dashboard.css?v=2",
+      "picks-mobile.css?v=5",
+      "season-record.css?v=1",
+      "inline:pr30-week-selector"
+     ]
+    },
+    "week9": {
+     "innerWidth": 390,
+     "innerHeight": 844,
+     "devicePixelRatio": 2,
+     "clientWidth": 390,
+     "scrollWidth": 390,
+     "bodyScrollWidth": 390,
+     "maxScrollX": 0,
+     "view": "standings",
+     "url": "/nfl-pool/?view=standings&season=2026&week=9",
+     "sync": "LIVE · data 0s old",
+     "weekLine": "Week 9 · revision 3 · Nov 6–Nov 10, 2026 · D.C. · JC · DJS · Thaddeus",
+     "weekLineVisible": "Week 9 · revision 3 · Nov 6–Nov 10, 2…",
+     "weekLineTruncated": true,
+     "weekSelected": "2026 · Week 9",
+     "weekValue": "2026-9",
+     "weekOptions": [
+      "2026 · Week 9",
+      "2026 · Week 10"
+     ],
+     "standings": [
+      [
+       "1",
+       "JC",
+       "T-1 Top 20% · 3 tied",
+       "1",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "45"
+      ],
+      [
+       "1",
+       "Thaddeus",
+       "T-1 Top 20% · 3 tied",
+       "1",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "34"
+      ],
+      [
+       "3",
+       "D.C.",
+       "T-4 Top 80% · 2 tied",
+       "0",
+       "1",
+       "14",
+       "1",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "42"
+      ],
+      [
+       "3",
+       "DJS",
+       "T-4 Top 80% · 2 tied",
+       "0",
+       "1",
+       "14",
+       "1",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "37"
+      ]
+     ],
+     "brokenImages": 0,
+     "select": {
+      "box": {
+       "left": 219,
+       "right": 369,
+       "width": 150,
+       "top": 88,
+       "height": 38
+      },
+      "clientWidth": 148,
+      "paddingLeft": 12,
+      "paddingRight": 36,
+      "borderLeft": 1,
+      "borderRight": 1,
+      "contentBoxWidth": 100,
+      "font": "850 11px Inter, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif",
+      "letterSpacing": "normal",
+      "disabled": false,
+      "computed": {
+       "width": "150px",
+       "minWidth": "150px",
+       "maxWidth": "150px",
+       "flexGrow": "0",
+       "flexShrink": "0",
+       "flexBasis": "150px"
+      }
+     },
+     "label": {
+      "text": "2026 · Week 9",
+      "width": 78.13,
+      "textWidthCeil": 79,
+      "contentBoxFloor": 100,
+      "fits": true,
+      "headroom": 21.87
+     },
+     "twoDigitLabels": {
+      "widest": 83.32,
+      "allFit": true
+     },
+     "probeFonts": [
+      {
+       "family": "DejaVu Sans",
+       "widestTwoDigitLabel": 95.57,
+       "fits": true
+      },
+      {
+       "family": "Liberation Sans",
+       "widestTwoDigitLabel": 78.07,
+       "fits": true
+      },
+      {
+       "family": "FreeSans",
+       "widestTwoDigitLabel": 78.18,
+       "fits": true
+      }
+     ],
+     "copy": {
+      "box": {
+       "left": 21,
+       "right": 205,
+       "width": 184,
+       "top": 94.5,
+       "height": 25
+      },
+      "computed": {
+       "flexGrow": "1",
+       "flexShrink": "1",
+       "flexBasis": "0px",
+       "minWidth": "0px"
+      }
+     },
+     "line": {
+      "box": {
+       "left": 21,
+       "right": 205,
+       "width": 184,
+       "top": 107.5,
+       "height": 12
+      },
+      "clientWidth": 184,
+      "scrollWidth": 327
+     },
+     "strip": {
+      "box": {
+       "left": 10,
+       "right": 380,
+       "width": 370,
+       "top": 78,
+       "height": 58
+      },
+      "contentRight": 369,
+      "count": 1
+     },
+     "layout": {
+      "stripInsideViewport": true,
+      "selectInsideStrip": true,
+      "copyEndsBeforeSelect": true
+     },
+     "hitTest": [
+      true,
+      true,
+      true
+     ],
+     "injection": {
+      "present": true,
+      "inHead": true,
+      "afterSeasonRecordLink": true,
+      "matched": {
+       "weekCopy": 1,
+       "weekSelect": 1
+      },
+      "laterStylesheets": []
+     },
+     "stylesheets": [
+      "style.css?v=premium-v3",
+      "slate.css?v=slate-v1",
+      "weekly.css?v=premium-v3",
+      "survivor.css?v=4",
+      "share.css?v=1",
+      "home-dashboard.css?v=2",
+      "picks-mobile.css?v=5",
+      "season-record.css?v=1",
+      "inline:pr30-week-selector"
+     ]
+    },
+    "week10AfterSwitch": {
+     "innerWidth": 390,
+     "innerHeight": 844,
+     "devicePixelRatio": 2,
+     "clientWidth": 390,
+     "scrollWidth": 390,
+     "bodyScrollWidth": 390,
+     "maxScrollX": 0,
+     "view": "standings",
+     "url": "/nfl-pool/?view=standings&season=2026&week=10",
+     "sync": "LIVE · data 0s old",
+     "weekLine": "Week 10 · revision 2 · Nov 13–Nov 17, 2026 · D.C. · JC · DJS · Thaddeus",
+     "weekLineVisible": "Week 10 · revision 2 · Nov 13–Nov 17,…",
+     "weekLineTruncated": true,
+     "weekSelected": "2026 · Week 10",
+     "weekValue": "2026-10",
+     "weekOptions": [
+      "2026 · Week 9",
+      "2026 · Week 10"
+     ],
+     "standings": [
+      [
+       "1",
+       "D.C.",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "35"
+      ],
+      [
+       "1",
+       "JC",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "37"
+      ],
+      [
+       "1",
+       "DJS",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "55"
+      ],
+      [
+       "1",
+       "Thaddeus",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "41"
+      ]
+     ],
+     "brokenImages": 0,
+     "select": {
+      "box": {
+       "left": 219,
+       "right": 369,
+       "width": 150,
+       "top": 88,
+       "height": 38
+      },
+      "clientWidth": 148,
+      "paddingLeft": 12,
+      "paddingRight": 36,
+      "borderLeft": 1,
+      "borderRight": 1,
+      "contentBoxWidth": 100,
+      "font": "850 11px Inter, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif",
+      "letterSpacing": "normal",
+      "disabled": false,
+      "computed": {
+       "width": "150px",
+       "minWidth": "150px",
+       "maxWidth": "150px",
+       "flexGrow": "0",
+       "flexShrink": "0",
+       "flexBasis": "150px"
+      }
+     },
+     "label": {
+      "text": "2026 · Week 10",
+      "width": 83.32,
+      "textWidthCeil": 84,
+      "contentBoxFloor": 100,
+      "fits": true,
+      "headroom": 16.68
+     },
+     "twoDigitLabels": {
+      "widest": 83.32,
+      "allFit": true
+     },
+     "probeFonts": [
+      {
+       "family": "DejaVu Sans",
+       "widestTwoDigitLabel": 95.57,
+       "fits": true
+      },
+      {
+       "family": "Liberation Sans",
+       "widestTwoDigitLabel": 78.07,
+       "fits": true
+      },
+      {
+       "family": "FreeSans",
+       "widestTwoDigitLabel": 78.18,
+       "fits": true
+      }
+     ],
+     "copy": {
+      "box": {
+       "left": 21,
+       "right": 205,
+       "width": 184,
+       "top": 94.5,
+       "height": 25
+      },
+      "computed": {
+       "flexGrow": "1",
+       "flexShrink": "1",
+       "flexBasis": "0px",
+       "minWidth": "0px"
+      }
+     },
+     "line": {
+      "box": {
+       "left": 21,
+       "right": 205,
+       "width": 184,
+       "top": 107.5,
+       "height": 12
+      },
+      "clientWidth": 184,
+      "scrollWidth": 333
+     },
+     "strip": {
+      "box": {
+       "left": 10,
+       "right": 380,
+       "width": 370,
+       "top": 78,
+       "height": 58
+      },
+      "contentRight": 369,
+      "count": 1
+     },
+     "layout": {
+      "stripInsideViewport": true,
+      "selectInsideStrip": true,
+      "copyEndsBeforeSelect": true
+     },
+     "hitTest": [
+      true,
+      true,
+      true
+     ],
+     "injection": {
+      "present": true,
+      "inHead": true,
+      "afterSeasonRecordLink": true,
+      "matched": {
+       "weekCopy": 1,
+       "weekSelect": 1
+      },
+      "laterStylesheets": []
+     },
+     "stylesheets": [
+      "style.css?v=premium-v3",
+      "slate.css?v=slate-v1",
+      "weekly.css?v=premium-v3",
+      "survivor.css?v=4",
+      "share.css?v=1",
+      "home-dashboard.css?v=2",
+      "picks-mobile.css?v=5",
+      "season-record.css?v=1",
+      "inline:pr30-week-selector"
+     ]
+    }
+   },
+   "gateway": [
+    {
+     "phase": "control-main-css",
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    }
+   ],
+   "browser": {
+    "appConsole": [],
+    "harnessConsole": [
+     {
+      "phase": "control-main-css",
+      "text": "warning: Service Worker registration blocked by Playwright"
+     },
+     {
+      "phase": "control-main-css",
+      "text": "warning: Service Worker registration blocked by Playwright"
+     },
+     {
+      "phase": "pr30-css",
+      "text": "warning: Service Worker registration blocked by Playwright"
+     }
+    ],
+    "pageErrors": [],
+    "failedRequests": [],
+    "abortedRequests": [],
+    "httpErrors": []
+   }
+  },
+  {
+   "width": 430,
+   "checks": {
+    "viewportIsRequestedWidth": true,
+    "noDocumentOverflow": true,
+    "injectedCssIsExactPr30File": true,
+    "pr30RulesApplied": true,
+    "week10LabelSelected": true,
+    "week10LabelFullyVisible": true,
+    "week10to18LabelsFit": true,
+    "week10DataMatchesPr29ReadBack": true,
+    "weekSummaryShowsWeekAndRevision": true,
+    "stripLayoutContained": true,
+    "selectorUsable": true,
+    "gatewayChildOnly": true,
+    "noBrokenImages": true,
+    "noBrowserErrors": true
+   },
+   "pass": true,
+   "control": {
+    "ready": true,
+    "label": {
+     "text": "2026 · Week 10",
+     "width": 83.32,
+     "textWidthCeil": 84,
+     "contentBoxFloor": 76,
+     "fits": false,
+     "headroom": -7.32
+    },
+    "select": {
+     "box": {
+      "left": 283,
+      "right": 409,
+      "width": 126,
+      "top": 88,
+      "height": 38
+     },
+     "contentBoxWidth": 76,
+     "computedMinWidth": "126px"
+    },
+    "reproducesPr29Clip": true,
+    "dataMatchesPr29ReadBack": true,
+    "noDocumentOverflow": true,
+    "injectionAbsent": true
+   },
+   "usable": {
+    "visible": true,
+    "enabled": true,
+    "trialTap": true,
+    "week9Loaded": true,
+    "week10Reloaded": true
+   },
+   "measured": {
+    "control": {
+     "innerWidth": 430,
+     "innerHeight": 844,
+     "devicePixelRatio": 2,
+     "clientWidth": 430,
+     "scrollWidth": 430,
+     "bodyScrollWidth": 430,
+     "maxScrollX": 0,
+     "view": "standings",
+     "url": "/nfl-pool/?view=standings&season=2026&week=10",
+     "sync": "LIVE · data 0s old",
+     "weekLine": "Week 10 · revision 2 · Nov 13–Nov 17, 2026 · D.C. · JC · DJS · Thaddeus",
+     "weekLineVisible": "Week 10 · revision 2 · Nov 13–Nov 17, 2026 · D.C. ·…",
+     "weekLineTruncated": true,
+     "weekSelected": "2026 · Week 10",
+     "weekValue": "2026-10",
+     "weekOptions": [
+      "2026 · Week 9",
+      "2026 · Week 10"
+     ],
+     "standings": [
+      [
+       "1",
+       "D.C.",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "35"
+      ],
+      [
+       "1",
+       "JC",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "37"
+      ],
+      [
+       "1",
+       "DJS",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "55"
+      ],
+      [
+       "1",
+       "Thaddeus",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "41"
+      ]
+     ],
+     "brokenImages": 0,
+     "select": {
+      "box": {
+       "left": 283,
+       "right": 409,
+       "width": 126,
+       "top": 88,
+       "height": 38
+      },
+      "clientWidth": 124,
+      "paddingLeft": 12,
+      "paddingRight": 36,
+      "borderLeft": 1,
+      "borderRight": 1,
+      "contentBoxWidth": 76,
+      "font": "850 11px Inter, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif",
+      "letterSpacing": "normal",
+      "disabled": false,
+      "computed": {
+       "width": "126px",
+       "minWidth": "126px",
+       "maxWidth": "none",
+       "flexGrow": "0",
+       "flexShrink": "1",
+       "flexBasis": "auto"
+      }
+     },
+     "label": {
+      "text": "2026 · Week 10",
+      "width": 83.32,
+      "textWidthCeil": 84,
+      "contentBoxFloor": 76,
+      "fits": false,
+      "headroom": -7.32
+     },
+     "twoDigitLabels": {
+      "widest": 83.32,
+      "allFit": false
+     },
+     "probeFonts": [
+      {
+       "family": "DejaVu Sans",
+       "widestTwoDigitLabel": 95.57,
+       "fits": false
+      },
+      {
+       "family": "Liberation Sans",
+       "widestTwoDigitLabel": 78.07,
+       "fits": false
+      },
+      {
+       "family": "FreeSans",
+       "widestTwoDigitLabel": 78.18,
+       "fits": false
+      }
+     ],
+     "copy": {
+      "box": {
+       "left": 21,
+       "right": 269,
+       "width": 248,
+       "top": 94.5,
+       "height": 25
+      },
+      "computed": {
+       "flexGrow": "0",
+       "flexShrink": "1",
+       "flexBasis": "auto",
+       "minWidth": "0px"
+      }
+     },
+     "line": {
+      "box": {
+       "left": 21,
+       "right": 269,
+       "width": 248,
+       "top": 107.5,
+       "height": 12
+      },
+      "clientWidth": 248,
+      "scrollWidth": 333
+     },
+     "strip": {
+      "box": {
+       "left": 10,
+       "right": 420,
+       "width": 410,
+       "top": 78,
+       "height": 58
+      },
+      "contentRight": 409,
+      "count": 1
+     },
+     "layout": {
+      "stripInsideViewport": true,
+      "selectInsideStrip": true,
+      "copyEndsBeforeSelect": true
+     },
+     "hitTest": [
+      true,
+      true,
+      true
+     ],
+     "injection": {
+      "present": false
+     },
+     "stylesheets": [
+      "style.css?v=premium-v3",
+      "slate.css?v=slate-v1",
+      "weekly.css?v=premium-v3",
+      "survivor.css?v=4",
+      "share.css?v=1",
+      "home-dashboard.css?v=2",
+      "picks-mobile.css?v=5",
+      "season-record.css?v=1"
+     ]
+    },
+    "pr30": {
+     "innerWidth": 430,
+     "innerHeight": 844,
+     "devicePixelRatio": 2,
+     "clientWidth": 430,
+     "scrollWidth": 430,
+     "bodyScrollWidth": 430,
+     "maxScrollX": 0,
+     "view": "standings",
+     "url": "/nfl-pool/?view=standings&season=2026&week=10",
+     "sync": "LIVE · data 0s old",
+     "weekLine": "Week 10 · revision 2 · Nov 13–Nov 17, 2026 · D.C. · JC · DJS · Thaddeus",
+     "weekLineVisible": "Week 10 · revision 2 · Nov 13–Nov 17, 2026 ·…",
+     "weekLineTruncated": true,
+     "weekSelected": "2026 · Week 10",
+     "weekValue": "2026-10",
+     "weekOptions": [
+      "2026 · Week 9",
+      "2026 · Week 10"
+     ],
+     "standings": [
+      [
+       "1",
+       "D.C.",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "35"
+      ],
+      [
+       "1",
+       "JC",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "37"
+      ],
+      [
+       "1",
+       "DJS",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "55"
+      ],
+      [
+       "1",
+       "Thaddeus",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "41"
+      ]
+     ],
+     "brokenImages": 0,
+     "select": {
+      "box": {
+       "left": 259,
+       "right": 409,
+       "width": 150,
+       "top": 88,
+       "height": 38
+      },
+      "clientWidth": 148,
+      "paddingLeft": 12,
+      "paddingRight": 36,
+      "borderLeft": 1,
+      "borderRight": 1,
+      "contentBoxWidth": 100,
+      "font": "850 11px Inter, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif",
+      "letterSpacing": "normal",
+      "disabled": false,
+      "computed": {
+       "width": "150px",
+       "minWidth": "150px",
+       "maxWidth": "150px",
+       "flexGrow": "0",
+       "flexShrink": "0",
+       "flexBasis": "150px"
+      }
+     },
+     "label": {
+      "text": "2026 · Week 10",
+      "width": 83.32,
+      "textWidthCeil": 84,
+      "contentBoxFloor": 100,
+      "fits": true,
+      "headroom": 16.68
+     },
+     "twoDigitLabels": {
+      "widest": 83.32,
+      "allFit": true
+     },
+     "probeFonts": [
+      {
+       "family": "DejaVu Sans",
+       "widestTwoDigitLabel": 95.57,
+       "fits": true
+      },
+      {
+       "family": "Liberation Sans",
+       "widestTwoDigitLabel": 78.07,
+       "fits": true
+      },
+      {
+       "family": "FreeSans",
+       "widestTwoDigitLabel": 78.18,
+       "fits": true
+      }
+     ],
+     "copy": {
+      "box": {
+       "left": 21,
+       "right": 245,
+       "width": 224,
+       "top": 94.5,
+       "height": 25
+      },
+      "computed": {
+       "flexGrow": "1",
+       "flexShrink": "1",
+       "flexBasis": "0px",
+       "minWidth": "0px"
+      }
+     },
+     "line": {
+      "box": {
+       "left": 21,
+       "right": 245,
+       "width": 224,
+       "top": 107.5,
+       "height": 12
+      },
+      "clientWidth": 224,
+      "scrollWidth": 333
+     },
+     "strip": {
+      "box": {
+       "left": 10,
+       "right": 420,
+       "width": 410,
+       "top": 78,
+       "height": 58
+      },
+      "contentRight": 409,
+      "count": 1
+     },
+     "layout": {
+      "stripInsideViewport": true,
+      "selectInsideStrip": true,
+      "copyEndsBeforeSelect": true
+     },
+     "hitTest": [
+      true,
+      true,
+      true
+     ],
+     "injection": {
+      "present": true,
+      "inHead": true,
+      "afterSeasonRecordLink": true,
+      "matched": {
+       "weekCopy": 1,
+       "weekSelect": 1
+      },
+      "laterStylesheets": []
+     },
+     "stylesheets": [
+      "style.css?v=premium-v3",
+      "slate.css?v=slate-v1",
+      "weekly.css?v=premium-v3",
+      "survivor.css?v=4",
+      "share.css?v=1",
+      "home-dashboard.css?v=2",
+      "picks-mobile.css?v=5",
+      "season-record.css?v=1",
+      "inline:pr30-week-selector"
+     ]
+    },
+    "week9": {
+     "innerWidth": 430,
+     "innerHeight": 844,
+     "devicePixelRatio": 2,
+     "clientWidth": 430,
+     "scrollWidth": 430,
+     "bodyScrollWidth": 430,
+     "maxScrollX": 0,
+     "view": "standings",
+     "url": "/nfl-pool/?view=standings&season=2026&week=9",
+     "sync": "LIVE · data 0s old",
+     "weekLine": "Week 9 · revision 3 · Nov 6–Nov 10, 2026 · D.C. · JC · DJS · Thaddeus",
+     "weekLineVisible": "Week 9 · revision 3 · Nov 6–Nov 10, 2026 · D.…",
+     "weekLineTruncated": true,
+     "weekSelected": "2026 · Week 9",
+     "weekValue": "2026-9",
+     "weekOptions": [
+      "2026 · Week 9",
+      "2026 · Week 10"
+     ],
+     "standings": [
+      [
+       "1",
+       "JC",
+       "T-1 Top 20% · 3 tied",
+       "1",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "45"
+      ],
+      [
+       "1",
+       "Thaddeus",
+       "T-1 Top 20% · 3 tied",
+       "1",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "34"
+      ],
+      [
+       "3",
+       "D.C.",
+       "T-4 Top 80% · 2 tied",
+       "0",
+       "1",
+       "14",
+       "1",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "42"
+      ],
+      [
+       "3",
+       "DJS",
+       "T-4 Top 80% · 2 tied",
+       "0",
+       "1",
+       "14",
+       "1",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "37"
+      ]
+     ],
+     "brokenImages": 0,
+     "select": {
+      "box": {
+       "left": 259,
+       "right": 409,
+       "width": 150,
+       "top": 88,
+       "height": 38
+      },
+      "clientWidth": 148,
+      "paddingLeft": 12,
+      "paddingRight": 36,
+      "borderLeft": 1,
+      "borderRight": 1,
+      "contentBoxWidth": 100,
+      "font": "850 11px Inter, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif",
+      "letterSpacing": "normal",
+      "disabled": false,
+      "computed": {
+       "width": "150px",
+       "minWidth": "150px",
+       "maxWidth": "150px",
+       "flexGrow": "0",
+       "flexShrink": "0",
+       "flexBasis": "150px"
+      }
+     },
+     "label": {
+      "text": "2026 · Week 9",
+      "width": 78.13,
+      "textWidthCeil": 79,
+      "contentBoxFloor": 100,
+      "fits": true,
+      "headroom": 21.87
+     },
+     "twoDigitLabels": {
+      "widest": 83.32,
+      "allFit": true
+     },
+     "probeFonts": [
+      {
+       "family": "DejaVu Sans",
+       "widestTwoDigitLabel": 95.57,
+       "fits": true
+      },
+      {
+       "family": "Liberation Sans",
+       "widestTwoDigitLabel": 78.07,
+       "fits": true
+      },
+      {
+       "family": "FreeSans",
+       "widestTwoDigitLabel": 78.18,
+       "fits": true
+      }
+     ],
+     "copy": {
+      "box": {
+       "left": 21,
+       "right": 245,
+       "width": 224,
+       "top": 94.5,
+       "height": 25
+      },
+      "computed": {
+       "flexGrow": "1",
+       "flexShrink": "1",
+       "flexBasis": "0px",
+       "minWidth": "0px"
+      }
+     },
+     "line": {
+      "box": {
+       "left": 21,
+       "right": 245,
+       "width": 224,
+       "top": 107.5,
+       "height": 12
+      },
+      "clientWidth": 224,
+      "scrollWidth": 327
+     },
+     "strip": {
+      "box": {
+       "left": 10,
+       "right": 420,
+       "width": 410,
+       "top": 78,
+       "height": 58
+      },
+      "contentRight": 409,
+      "count": 1
+     },
+     "layout": {
+      "stripInsideViewport": true,
+      "selectInsideStrip": true,
+      "copyEndsBeforeSelect": true
+     },
+     "hitTest": [
+      true,
+      true,
+      true
+     ],
+     "injection": {
+      "present": true,
+      "inHead": true,
+      "afterSeasonRecordLink": true,
+      "matched": {
+       "weekCopy": 1,
+       "weekSelect": 1
+      },
+      "laterStylesheets": []
+     },
+     "stylesheets": [
+      "style.css?v=premium-v3",
+      "slate.css?v=slate-v1",
+      "weekly.css?v=premium-v3",
+      "survivor.css?v=4",
+      "share.css?v=1",
+      "home-dashboard.css?v=2",
+      "picks-mobile.css?v=5",
+      "season-record.css?v=1",
+      "inline:pr30-week-selector"
+     ]
+    },
+    "week10AfterSwitch": {
+     "innerWidth": 430,
+     "innerHeight": 844,
+     "devicePixelRatio": 2,
+     "clientWidth": 430,
+     "scrollWidth": 430,
+     "bodyScrollWidth": 430,
+     "maxScrollX": 0,
+     "view": "standings",
+     "url": "/nfl-pool/?view=standings&season=2026&week=10",
+     "sync": "LIVE · data 0s old",
+     "weekLine": "Week 10 · revision 2 · Nov 13–Nov 17, 2026 · D.C. · JC · DJS · Thaddeus",
+     "weekLineVisible": "Week 10 · revision 2 · Nov 13–Nov 17, 2026 ·…",
+     "weekLineTruncated": true,
+     "weekSelected": "2026 · Week 10",
+     "weekValue": "2026-10",
+     "weekOptions": [
+      "2026 · Week 9",
+      "2026 · Week 10"
+     ],
+     "standings": [
+      [
+       "1",
+       "D.C.",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "35"
+      ],
+      [
+       "1",
+       "JC",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "37"
+      ],
+      [
+       "1",
+       "DJS",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "55"
+      ],
+      [
+       "1",
+       "Thaddeus",
+       "T-1 Top 3% · 43 tied",
+       "0",
+       "0",
+       "14",
+       "—",
+       "#1 WIN CEILING · unresolved tiebreak not projected",
+       "41"
+      ]
+     ],
+     "brokenImages": 0,
+     "select": {
+      "box": {
+       "left": 259,
+       "right": 409,
+       "width": 150,
+       "top": 88,
+       "height": 38
+      },
+      "clientWidth": 148,
+      "paddingLeft": 12,
+      "paddingRight": 36,
+      "borderLeft": 1,
+      "borderRight": 1,
+      "contentBoxWidth": 100,
+      "font": "850 11px Inter, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif",
+      "letterSpacing": "normal",
+      "disabled": false,
+      "computed": {
+       "width": "150px",
+       "minWidth": "150px",
+       "maxWidth": "150px",
+       "flexGrow": "0",
+       "flexShrink": "0",
+       "flexBasis": "150px"
+      }
+     },
+     "label": {
+      "text": "2026 · Week 10",
+      "width": 83.32,
+      "textWidthCeil": 84,
+      "contentBoxFloor": 100,
+      "fits": true,
+      "headroom": 16.68
+     },
+     "twoDigitLabels": {
+      "widest": 83.32,
+      "allFit": true
+     },
+     "probeFonts": [
+      {
+       "family": "DejaVu Sans",
+       "widestTwoDigitLabel": 95.57,
+       "fits": true
+      },
+      {
+       "family": "Liberation Sans",
+       "widestTwoDigitLabel": 78.07,
+       "fits": true
+      },
+      {
+       "family": "FreeSans",
+       "widestTwoDigitLabel": 78.18,
+       "fits": true
+      }
+     ],
+     "copy": {
+      "box": {
+       "left": 21,
+       "right": 245,
+       "width": 224,
+       "top": 94.5,
+       "height": 25
+      },
+      "computed": {
+       "flexGrow": "1",
+       "flexShrink": "1",
+       "flexBasis": "0px",
+       "minWidth": "0px"
+      }
+     },
+     "line": {
+      "box": {
+       "left": 21,
+       "right": 245,
+       "width": 224,
+       "top": 107.5,
+       "height": 12
+      },
+      "clientWidth": 224,
+      "scrollWidth": 333
+     },
+     "strip": {
+      "box": {
+       "left": 10,
+       "right": 420,
+       "width": 410,
+       "top": 78,
+       "height": 58
+      },
+      "contentRight": 409,
+      "count": 1
+     },
+     "layout": {
+      "stripInsideViewport": true,
+      "selectInsideStrip": true,
+      "copyEndsBeforeSelect": true
+     },
+     "hitTest": [
+      true,
+      true,
+      true
+     ],
+     "injection": {
+      "present": true,
+      "inHead": true,
+      "afterSeasonRecordLink": true,
+      "matched": {
+       "weekCopy": 1,
+       "weekSelect": 1
+      },
+      "laterStylesheets": []
+     },
+     "stylesheets": [
+      "style.css?v=premium-v3",
+      "slate.css?v=slate-v1",
+      "weekly.css?v=premium-v3",
+      "survivor.css?v=4",
+      "share.css?v=1",
+      "home-dashboard.css?v=2",
+      "picks-mobile.css?v=5",
+      "season-record.css?v=1",
+      "inline:pr30-week-selector"
+     ]
+    }
+   },
+   "gateway": [
+    {
+     "phase": "control-main-css",
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "control-main-css",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_survivor_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "anonymous",
+     "status": 200,
+     "backend": null,
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_pool_weeks",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_contest_policies",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_contests",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    },
+    {
+     "phase": "pr30-css-switch",
+     "resource": "nfl_incident_rulings",
+     "status": 200,
+     "backend": "ep-shiny-snow-bbx446zt",
+     "readOnly": "1"
+    }
+   ],
+   "browser": {
+    "appConsole": [],
+    "harnessConsole": [
+     {
+      "phase": "control-main-css",
+      "text": "warning: Service Worker registration blocked by Playwright"
+     },
+     {
+      "phase": "control-main-css",
+      "text": "warning: Service Worker registration blocked by Playwright"
+     },
+     {
+      "phase": "pr30-css",
+      "text": "warning: Service Worker registration blocked by Playwright"
+     }
+    ],
+    "pageErrors": [],
+    "failedRequests": [],
+    "abortedRequests": [],
+    "httpErrors": []
+   }
+  }
+ ]
+}
