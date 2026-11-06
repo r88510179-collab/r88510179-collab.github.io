@@ -1964,7 +1964,7 @@ async function atInstant(iso,run){
     assert(field,'an #absenceConfirm textarea');
     assert.match(adminHtml,/<label for="absenceConfirm">Absent games/);
     assert.match(adminHtml,/WEEK N AWAY @ HOME ABSENT/,'the help text names the exact confirmation format');
-    assert.match(adminHtml,/<script type="module" src="admin\.js\?v=14"><\/script>/);
+    assert.match(adminHtml,/<script type="module" src="admin\.js\?v=15"><\/script>/);
   });
   await regression('without a typed exception, an absent sheet game still blocks: the old error plus the exact phrase to type',async()=>{
     const t=await readWith();
@@ -2031,7 +2031,7 @@ async function atInstant(iso,run){
   await regression('a team the sheet names in two games is never published as absent, even with both phrases typed',async()=>{
     const teams=['PIT','NE','LAR'],feed=feedOf(BASE.filter(([a,h])=>!teams.includes(a)&&!teams.includes(h)));
     const t=await readWith({feed:week=>week===2?feed:{events:[]},text:'WEEK 2 PIT @ NE ABSENT\nWEEK 2 PIT @ LAR ABSENT',sheet:'twice.pdf'});
-    assert.equal(t.$('message').textContent,OLD_MISMATCH);assert.equal(t.$('review').hidden,true);
+    assert.match(t.$('message').textContent,/team PIT appears again/, 'a duplicate-team sheet is refused before feed exceptions');assert.equal(t.$('review').hidden,true);
     await t.publish();assert.equal(t.writes(),0);
   });
   await regression('generic missing data is never an absence: an empty Week 2 feed still blocks with the typed exception',async()=>{
