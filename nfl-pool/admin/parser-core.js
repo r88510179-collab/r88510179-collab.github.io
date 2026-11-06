@@ -13,6 +13,16 @@ const clean=s=>String(s??'').replace(/\s+/g,' ').trim();
 const escapeRegex=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 const normalizeTeamCode=x=>{const code=String(x??'').toUpperCase();return({JAC:'JAX',WSH:'WAS'}[code]||code)};
 const exactName=s=>clean(s).toLowerCase();
+/** Calendar date at the NFL's eastern local kickoff, not the UTC date of ESPN's timestamp. */
+export function easternKickoffDate(value){
+  const d=new Date(value);
+  if(!Number.isFinite(d.getTime()))throw new Error('Invalid NFL kickoff timestamp');
+  const parts=Object.fromEntries(new Intl.DateTimeFormat('en-US',{
+    timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'
+  }).formatToParts(d).filter(p=>p.type!=='literal').map(p=>[p.type,p.value]));
+  return parts.year+'-'+parts.month+'-'+parts.day;
+}
+
 
 export function teamAbbr(name){
   const raw=clean(name).toLowerCase().replace(/[.]/g,'');
@@ -618,10 +628,16 @@ export function validateConfig(config){
   if(!games.length)errors.push('No games found');
   if(participants.length!==TARGETS.length)errors.push('Expected '+TARGETS.length+' tracked entries');
   if(!Number.isInteger(config.tiebreakGameIndex)||config.tiebreakGameIndex<0||config.tiebreakGameIndex>=games.length)errors.push('Invalid tiebreak game');
-  const nums=new Map(),teamPairs=new Set();
+  const nums=new Map(),teamPairs=new Set(),usedTeams=new Map();
   games.forEach((g,i)=>{
-    const teamKey=normalizeTeamCode(g?.away)+'-'+normalizeTeamCode(g?.home);
+    const away=normalizeTeamCode(g?.away),home=normalizeTeamCode(g?.home);
+    const teamKey=away+'-'+home;
     if(teamPairs.has(teamKey))errors.push('Duplicate matchup teams '+teamKey);else teamPairs.add(teamKey);
+    if(away===home)errors.push('Game '+(i+1)+': a team cannot play itself');
+    for(const code of [away,home]){
+      if(usedTeams.has(code))errors.push('Game '+(i+1)+': team '+code+' appears again (game '+usedTeams.get(code)+')');
+      else usedTeams.set(code,i+1);
+    }
     for(const n of [g.awayNumber,g.homeNumber]){if(!Number.isInteger(n))errors.push('Game '+(i+1)+': invalid number');else if(nums.has(n))errors.push('Duplicate number '+n);else nums.set(n,i)}
   });
   const validateEntry=(p,label,{allowNoPick=false,maxNoPicks=1,allowMissingTiebreak=false}={})=>{
