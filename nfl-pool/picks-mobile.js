@@ -205,7 +205,8 @@ export function statusCounts(games){
 // afterwards, so nothing is ever closed under the reader. A new week starts afresh and a slate that leaves the schedule is
 // forgotten. Nothing here changes which games a slate lists, their order, their status or their grading.
 export function slateHasLive(group){return(group?.games||[]).some(x=>kindOf(x?.game)==='live')}
-export function defaultSlateOpen(group,alone=false){return alone===true||slateHasLive(group)}
+export function slateFullySettled(group){const games=group?.games||[];return games.length>0&&games.every(x=>['final','tie','void'].includes(kindOf(x?.game)))}
+export function defaultSlateOpen(group,alone=false){return alone===true||slateHasLive(group)||slateFullySettled(group)}
 const slateStateOf=(states,key)=>states instanceof Map?states.get(key):states&&typeof states==='object'?states[key]:undefined;
 // Whether a slate is open on the board: a manual state ({open, manual:true}) or a bare boolean as given; an automatic state
 // ({open} without manual) open, or opened while the slate is the one chosen (alone); without a state, its default.
@@ -222,7 +223,7 @@ export function nextSlateStates(previous,groups,{keys=null}={}){
   for(const [key,s] of previous instanceof Map?previous:[])if(typeof key==='string'&&(!keep||keep.has(key))&&s&&typeof s==='object')next.set(key,{open:s.open===true,manual:s.manual===true});
   for(const group of groups||[]){
     if(typeof group?.key!=='string')continue;
-    const live=slateHasLive(group),s=next.get(group.key);
+    const live=slateHasLive(group)||slateFullySettled(group),s=next.get(group.key);
     if(!s)next.set(group.key,{open:live,manual:false});
     else if(!s.manual&&live&&!s.open)s.open=true;
   }
