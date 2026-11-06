@@ -48,18 +48,40 @@ function restoreWeekSelector(path,text){
     return text.replace(SELECTOR_LINK,'');
   }
   if(path==='service-worker.js'){
-    assert(text.includes("const CACHE='pool-center-shell-v33'"),'selector fix uses a fresh worker cache');
+    assert(text.includes("const CACHE='pool-center-shell-v34'"),'selector fix uses a fresh worker cache');
     assert.equal(text.split(SELECTOR_WORKER).length,2,'only one new selector cache reference');
-    return text.replace("pool-center-shell-v33","pool-center-shell-v32").replace(SELECTOR_WORKER,'');
+    return text.replace("pool-center-shell-v34","pool-center-shell-v32").replace(SELECTOR_WORKER,'');
   }
   return text;
 }
+// Reconstruct the already-deployed page for immutable historical HDC tests only.
+// The current candidate HTML and worker are exercised separately below.
+// Every inverse is bounded to exactly one recently introduced presentation change.
+function restoreCloseoutIndex(path,text){
+  if(path!=='index.html')return text;
+  const swap=(before,after,label)=>{
+    assert.equal(text.split(before).length,2,'closeout inverse '+label);
+    text=text.replace(before,after);
+  };
+  const start=text.indexOf('<style>\n/* Closeout mobile touch targets');
+  const end=text.indexOf('</style>\n',start);
+  assert(start>=0&&end>start,'closeout stylesheet has an exact bounded span');
+  text=text.slice(0,start)+text.slice(end+'</style>\n'.length);
+  swap('<body data-survivor-archived="true">','<body>','archived marker');
+  swap('<div class="group-survivor-complete"><strong>Our Survivor run has ended</strong>All tracked group entries have been eliminated (owner-confirmed). No further Survivor updates are needed; published history remains in the archive. Pick&#39;em continues.</div>','','Home completion notice');
+  swap('<h1>Survivor · archive</h1><p>Historical published weeks only. Our group is no longer competing in Survivor.</p>','<h1>Survivor</h1><p>Weekly selections, attrition and live NFL outcome status across the full Survivor field.</p>','Survivor page title');
+  swap('      <div class="group-survivor-complete"><strong>Group Survivor tracking closed for 2026</strong>The last remaining group entrant was eliminated (owner-confirmed). We are no longer following future Survivor weeks. The archive reflects only official results published so far; no unpublished eliminations have been invented.</div>\n','','archive notice');
+  swap('class="card survivor-decision-card" style="margin-top:10px" hidden aria-hidden="true"','class="card survivor-decision-card" style="margin-top:10px"','archived decision tool');
+  swap('data-view-target="survivor"><span class="nav-icon">◉</span><span>Archive</span>','data-view-target="survivor"><span class="nav-icon">◉</span><span>Survivor</span>','archive tab');
+  return text;
+}
+
 const readFileSync=(url,encoding)=>{
   const pathname=new URL(url).pathname,path=pathname.split('/').pop();
   const raw=diskReadFileSync(url);
   let result=raw;
   if(['home-dashboard.js','home-dashboard.css','index.html','service-worker.js'].includes(path))
-    result=Buffer.from(restorePulse(path,restoreWeekSelector(path,raw.toString('utf8'))),'utf8');
+    result=Buffer.from(restorePulse(path,restoreWeekSelector(path,restoreCloseoutIndex(path,raw.toString('utf8')))),'utf8');
   return encoding==='utf8'?result.toString('utf8'):result;
 };
 const source=readFileSync(new URL('./service-worker.js',import.meta.url),'utf8');
@@ -2312,7 +2334,7 @@ assert.equal(hdFailures.length,0,`Home dashboard service-worker regressions fail
     assert.equal((currentPage.match(new RegExp(asset.replaceAll('.','\\.')+'\\?v=2','g'))||[]).length,1,`page references exactly one ${asset} v2`);
     assert.equal((currentWorker.match(new RegExp(asset.replaceAll('.','\\.')+'\\?v=2','g'))||[]).length,1,`worker precaches exactly one ${asset} v2`);
   }
-  assert.match(currentWorker,/const CACHE='pool-center-shell-v33'/);
+  assert.match(currentWorker,/const CACHE='pool-center-shell-v34'/);
   assert(!currentPage.includes('qa-read-routing')&&!currentWorker.includes('qa-read-routing'),
     'release candidate must never include staging-only fetch interception');
   assert(!currentWorker.includes('home-dashboard.js?v=1')&&!currentWorker.includes('home-dashboard.css?v=1'));
@@ -2329,7 +2351,7 @@ assert.equal(hdFailures.length,0,`Home dashboard service-worker regressions fail
   for(const forbidden of ['qa-read-routing.js','qa/live-mobile.html','api/qa-read.js','api/qa-schedule.js'])
     assert(!currentPage.includes(forbidden)&&!currentWorker.includes(forbidden),
       `${forbidden} cannot be in release shell`);
-  assert.equal(restorePulse('index.html',restoreWeekSelector('index.html',currentPage)),index,'only approved Home and selector layers changed');
+  assert.equal(restorePulse('index.html',restoreWeekSelector('index.html',restoreCloseoutIndex('index.html',currentPage))),index,'only approved Home and selector layers changed');
   assert.equal(restorePulse('service-worker.js',restoreWeekSelector('service-worker.js',currentWorker)),source,'only Home versions and cache generation changed');
 }
 
@@ -2349,7 +2371,7 @@ assert.equal(ssFailures.length,0,`Season record service-worker regressions faile
   const css=diskReadFileSync(new URL('./week-selector.css',import.meta.url),'utf8');
   assert.equal(actualPage.split(SELECTOR_LINK).length,2,'one loaded fix stylesheet');
   assert.equal(actualWorker.split(SELECTOR_WORKER).length,2,'one precached fix stylesheet');
-  assert.match(actualWorker,/const CACHE='pool-center-shell-v33'/);
+  assert.match(actualWorker,/const CACHE='pool-center-shell-v34'/);
   assert(css.includes('.week-strip > #weekSelect { flex:0 0 150px; width:150px; min-width:150px; max-width:150px; }'));
   assert(css.includes('.week-strip > .week-copy { flex:1 1 0; min-width:0; }'));
   assert(!css.includes('url(')&&!css.includes('@import')&&!css.includes('http:')&&!css.includes('https:'),'no remote CSS or request');
@@ -2358,7 +2380,7 @@ assert.equal(ssFailures.length,0,`Season record service-worker regressions faile
     assert(contentArea-150>=0,viewport+'px viewport still leaves room for the week description');
   }
   assert.equal(restoreWeekSelector('index.html',actualPage),diskReadFileSync(new URL('./index.html',import.meta.url),'utf8').replace(SELECTOR_LINK,''),'bounded HTML inverse');
-  assert.equal(restoreWeekSelector('service-worker.js',actualWorker),actualWorker.replace("pool-center-shell-v33","pool-center-shell-v32").replace(SELECTOR_WORKER,''),'bounded worker inverse');
+  assert.equal(restoreWeekSelector('service-worker.js',actualWorker),actualWorker.replace("pool-center-shell-v34","pool-center-shell-v32").replace(SELECTOR_WORKER,''),'bounded worker inverse');
 }
 
 console.log('service-worker precache graph (share-card, Home dashboard, V1.3 mobile UX, V1.4 compact Picks UX, V1.4 final polish, V1.4 collapsible slate groups, V1.4 multi-select slates and season record versions), fresh (cache:"reload") precache requests, all-or-nothing install, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');

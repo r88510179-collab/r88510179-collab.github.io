@@ -4,7 +4,13 @@ import {readFileSync} from 'node:fs';
 
 const parserSource=readFileSync(new URL('./parser-core.js',import.meta.url),'utf8');
 const parserUrl='data:text/javascript;base64,'+Buffer.from(parserSource).toString('base64');
-const {carryForwardWeekHints,chooseBestCandidate,parseDocumentGroups,validateConfig}=await import(parserUrl);
+const {carryForwardWeekHints,chooseBestCandidate,parseDocumentGroups,validateConfig,easternKickoffDate}=await import(parserUrl);
+
+assert.equal(easternKickoffDate('2026-11-03T01:15:00Z'),'2026-11-02','Monday night kickoff must stay on Monday in ET');
+assert.equal(easternKickoffDate('2026-11-02T18:00:00Z'),'2026-11-02','early Sunday/Monday game should use Eastern date');
+assert.equal(easternKickoffDate('2026-11-01T00:30:00Z'),'2026-10-31','Saturday night across UTC midnight stays on Saturday in ET');
+assert.throws(()=>easternKickoffDate('not-a-date'),/Invalid NFL kickoff/);
+
 
 const matchups=[
   '1) Panthers at 2) Falcons','3) Saints at 4) Ravens','5) Vikings at 6) Bears','7) Bengals at 8) Texans','9) Steelers at 10) Patriots',
@@ -1958,7 +1964,7 @@ async function atInstant(iso,run){
     assert(field,'an #absenceConfirm textarea');
     assert.match(adminHtml,/<label for="absenceConfirm">Absent games/);
     assert.match(adminHtml,/WEEK N AWAY @ HOME ABSENT/,'the help text names the exact confirmation format');
-    assert.match(adminHtml,/<script type="module" src="admin\.js\?v=14"><\/script>/);
+    assert.match(adminHtml,/<script type="module" src="admin\.js\?v=15"><\/script>/);
   });
   await regression('without a typed exception, an absent sheet game still blocks: the old error plus the exact phrase to type',async()=>{
     const t=await readWith();
@@ -2025,7 +2031,7 @@ async function atInstant(iso,run){
   await regression('a team the sheet names in two games is never published as absent, even with both phrases typed',async()=>{
     const teams=['PIT','NE','LAR'],feed=feedOf(BASE.filter(([a,h])=>!teams.includes(a)&&!teams.includes(h)));
     const t=await readWith({feed:week=>week===2?feed:{events:[]},text:'WEEK 2 PIT @ NE ABSENT\nWEEK 2 PIT @ LAR ABSENT',sheet:'twice.pdf'});
-    assert.equal(t.$('message').textContent,OLD_MISMATCH);assert.equal(t.$('review').hidden,true);
+    assert.match(t.$('message').textContent,/team PIT appears again/, 'a duplicate-team sheet is refused before feed exceptions');assert.equal(t.$('review').hidden,true);
     await t.publish();assert.equal(t.writes(),0);
   });
   await regression('generic missing data is never an absence: an empty Week 2 feed still blocks with the typed exception',async()=>{
