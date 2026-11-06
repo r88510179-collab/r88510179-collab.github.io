@@ -23,7 +23,7 @@
       "write_authorization": "nfl_pool_weeks / nfl_survivor_weeks INSERT/UPDATE policies authorize only the real production publisher identity (role admin). No synthetic identity is authorized, so a synthetic browser publish here is impossible without altering its authentication protections."
     },
     "br-damp-credit-bbn7d0zr": {
-      "role": "Existing QA child of br-dawn-fire-bb923034 (name qa-pr23-personal-pdf-e2e-20261105, created 2026-11-05 for PR #29), endpoint ep-shiny-snow-bbx446zt; the only write target of this run",
+      "role": "Existing QA child of br-dawn-fire-bb923034 (name qa-pr23-personal-pdf-e2e-20261105, created 2026-11-05 for PR #29), endpoint ep-shiny-snow-bbx446zt; the only intended write target of this run (no publication write occurred: publishing was blocked at sign-in)",
       "captured_at": "2026-11-06 17:02:14.093992+00",
       "session_timezone": "GMT",
       "row_counts": {"nfl_pool_weeks": 2, "nfl_survivor_weeks": 3, "nfl_contests": 2, "nfl_contest_policies": 2, "nfl_incident_rulings": 0},
