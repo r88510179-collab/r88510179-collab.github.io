@@ -1176,9 +1176,11 @@ async function bootAdmin({rows=[]}={}){
   assert.equal(t.$('review').hidden,false,t.$('message').textContent);
   assert.match(t.$('validation').innerHTML,new RegExp(countMismatch(6,5)));
   assert.match(t.$('message').textContent,new RegExp(countMismatch(6,5)));
+  assert.equal(t.$('publishBtn').disabled,true,'mismatched PDF cannot be published as tracked-only');
   await t.publish();
-  const row=t.db.rows.find(r=>r.week===2);
-  assert.equal(row.config.fullFieldReady,false);assert.equal(row.config.fieldEntries,undefined);
+  assert.equal(t.writes(),0,'full-field mismatch blocks server write');
+  assert.equal(t.db.rows.length,0,'no incomplete locked week is created');
+  assert.match(t.$('message').textContent,/Publish blocked:/);
   // The same sheet where "Winning Picks" is a real entrant: six entries validate.
   const u=await bootAdmin();
   await u.count('6');await u.choose('summary.pdf');await u.parse();
@@ -1700,12 +1702,12 @@ async function atInstant(iso,run){
     assert.equal(t.writes(),2);assert.equal(table.length,1);assert.equal(table[0].revision,4);assert.equal(table[0].source_sha256,sheetDigest('six.pdf'));
   }
   {
-    // The attempt had landed; another configuration of the sheet (tracked-only) is a real replacement of revision 4. A
-    // blank count now sizes the field from the sheet (the same configuration), so a disagreeing count makes it tracked-only.
-    const {table,t}=await unknownOutcome(true);
+    // An attempted regression from a complete field to tracked-only is now blocked even after a valid revision 4.
+    const {table,t}=await unknownOutcome(true),preserved=structuredClone(table[0]);
     await t.count('7');await t.parse();t.$('replaceLocked').checked=true;await t.publish();await adminFlush();
-    assert.equal(t.$('message').textContent,'Week 2 published and locked successfully. Revision 5.');
-    assert.equal(t.writes(),2);assert.equal(table.length,1);assert.equal(table[0].revision,5);assert.equal(table[0].config.fullFieldReady,false);
+    assert.match(t.$('message').textContent,/Publish blocked:/);
+    assert.equal(t.writes(),1);assert.equal(table.length,1);assert.deepEqual(table[0],preserved);
+    assert.equal(table[0].config.fullFieldReady,true);
   }
 }
 {
@@ -1756,11 +1758,11 @@ async function atInstant(iso,run){
   // as stored, and B must read and validate again.
   const instant='2026-09-25T18:00:00.000Z';
   const anotherTiebreak=async b=>{await b.count('6');await b.choose('six.pdf');await b.parse();b.$('tiebreakGame').value='3';b.$('tiebreakGame').onchange()};
-  // A blank count sizes the field automatically; a count that disagrees with the sheet leaves only the tracked entries.
-  const trackedOnly=async b=>{await b.count('7');await b.choose('six.pdf');await b.parse()};
+  // A second legitimate configuration with a different tiebreak still exercises same-revision identity conflicts.
+  const anotherValidTiebreak=async b=>{await b.count('6');await b.choose('six.pdf');await b.parse();b.$('tiebreakGame').value='4';b.$('tiebreakGame').onchange()};
   const variants=[
     ['replacement, another tiebreak game',lockedWeek2(3),anotherTiebreak,(theirs,mine)=>{assert.equal(theirs.tiebreakGameIndex,14);assert.equal(mine.tiebreakGameIndex,3)}],
-    ['replacement, tracked-only instead of the full field',lockedWeek2(3),trackedOnly,(theirs,mine)=>{assert.equal(theirs.fullFieldReady,true);assert.equal(mine.fullFieldReady,false)}],
+    ['replacement, different validated tiebreak',lockedWeek2(3),anotherValidTiebreak,(theirs,mine)=>{assert.equal(theirs.tiebreakGameIndex,14);assert.equal(mine.tiebreakGameIndex,4)}],
     ['new week, another tiebreak game',null,anotherTiebreak,(theirs,mine)=>{assert.equal(theirs.tiebreakGameIndex,14);assert.equal(mine.tiebreakGameIndex,3)}]
   ];
   for(const [label,before,prepareB,differ] of variants){
