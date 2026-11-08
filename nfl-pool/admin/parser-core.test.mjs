@@ -1021,6 +1021,7 @@ const adminPatched=(()=>{
   let s=adminSource;
   const swap=(from,to)=>{assert(s.includes(from),`admin harness expects: ${from}`);s=s.split(from).join(to)};
   swap("import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';","const {createClient}=globalThis.__pickemTest.neonModule;");
+  swap("from './publication-guard.js?v=1';",`from '${new URL('./publication-guard.js?v=1',import.meta.url).href}';`);
   const parserImport=s.match(/from '\.\/parser-core\.js\?v=(\d+)';/);
   assert(parserImport,'admin harness expects a versioned parser-core import');
   swap(parserImport[0],`from '${new URL(`./parser-core.js?v=${parserImport[1]}`,import.meta.url).href}';`);
@@ -1175,9 +1176,11 @@ async function bootAdmin({rows=[]}={}){
   assert.equal(t.$('review').hidden,false,t.$('message').textContent);
   assert.match(t.$('validation').innerHTML,new RegExp(countMismatch(6,5)));
   assert.match(t.$('message').textContent,new RegExp(countMismatch(6,5)));
+  assert.equal(t.$('publishBtn').disabled,true,'mismatched PDF cannot be published as tracked-only');
   await t.publish();
-  const row=t.db.rows.find(r=>r.week===2);
-  assert.equal(row.config.fullFieldReady,false);assert.equal(row.config.fieldEntries,undefined);
+  assert.equal(t.writes(),0,'full-field mismatch blocks server write');
+  assert.equal(t.db.rows.length,0,'no incomplete locked week is created');
+  assert.match(t.$('message').textContent,/Publish blocked:/);
   // The same sheet where "Winning Picks" is a real entrant: six entries validate.
   const u=await bootAdmin();
   await u.count('6');await u.choose('summary.pdf');await u.parse();
@@ -1699,12 +1702,12 @@ async function atInstant(iso,run){
     assert.equal(t.writes(),2);assert.equal(table.length,1);assert.equal(table[0].revision,4);assert.equal(table[0].source_sha256,sheetDigest('six.pdf'));
   }
   {
-    // The attempt had landed; another configuration of the sheet (tracked-only) is a real replacement of revision 4. A
-    // blank count now sizes the field from the sheet (the same configuration), so a disagreeing count makes it tracked-only.
-    const {table,t}=await unknownOutcome(true);
+    // An attempted regression from a complete field to tracked-only is now blocked even after a valid revision 4.
+    const {table,t}=await unknownOutcome(true),preserved=structuredClone(table[0]);
     await t.count('7');await t.parse();t.$('replaceLocked').checked=true;await t.publish();await adminFlush();
-    assert.equal(t.$('message').textContent,'Week 2 published and locked successfully. Revision 5.');
-    assert.equal(t.writes(),2);assert.equal(table.length,1);assert.equal(table[0].revision,5);assert.equal(table[0].config.fullFieldReady,false);
+    assert.match(t.$('message').textContent,/Publish blocked:/);
+    assert.equal(t.writes(),1);assert.equal(table.length,1);assert.deepEqual(table[0],preserved);
+    assert.equal(table[0].config.fullFieldReady,true);
   }
 }
 {
@@ -1755,11 +1758,11 @@ async function atInstant(iso,run){
   // as stored, and B must read and validate again.
   const instant='2026-09-25T18:00:00.000Z';
   const anotherTiebreak=async b=>{await b.count('6');await b.choose('six.pdf');await b.parse();b.$('tiebreakGame').value='3';b.$('tiebreakGame').onchange()};
-  // A blank count sizes the field automatically; a count that disagrees with the sheet leaves only the tracked entries.
-  const trackedOnly=async b=>{await b.count('7');await b.choose('six.pdf');await b.parse()};
+  // A second legitimate configuration with a different tiebreak still exercises same-revision identity conflicts.
+  const anotherValidTiebreak=async b=>{await b.count('6');await b.choose('six.pdf');await b.parse();b.$('tiebreakGame').value='4';b.$('tiebreakGame').onchange()};
   const variants=[
     ['replacement, another tiebreak game',lockedWeek2(3),anotherTiebreak,(theirs,mine)=>{assert.equal(theirs.tiebreakGameIndex,14);assert.equal(mine.tiebreakGameIndex,3)}],
-    ['replacement, tracked-only instead of the full field',lockedWeek2(3),trackedOnly,(theirs,mine)=>{assert.equal(theirs.fullFieldReady,true);assert.equal(mine.fullFieldReady,false)}],
+    ['replacement, different validated tiebreak',lockedWeek2(3),anotherValidTiebreak,(theirs,mine)=>{assert.equal(theirs.tiebreakGameIndex,14);assert.equal(mine.tiebreakGameIndex,4)}],
     ['new week, another tiebreak game',null,anotherTiebreak,(theirs,mine)=>{assert.equal(theirs.tiebreakGameIndex,14);assert.equal(mine.tiebreakGameIndex,3)}]
   ];
   for(const [label,before,prepareB,differ] of variants){
@@ -1964,7 +1967,7 @@ async function atInstant(iso,run){
     assert(field,'an #absenceConfirm textarea');
     assert.match(adminHtml,/<label for="absenceConfirm">Absent games/);
     assert.match(adminHtml,/WEEK N AWAY @ HOME ABSENT/,'the help text names the exact confirmation format');
-    assert.match(adminHtml,/<script type="module" src="admin\.js\?v=15"><\/script>/);
+    assert.match(adminHtml,/<script type="module" src="admin\.js\?v=16"><\/script>/);
   });
   await regression('without a typed exception, an absent sheet game still blocks: the old error plus the exact phrase to type',async()=>{
     const t=await readWith();
@@ -2100,3 +2103,21 @@ async function atInstant(iso,run){
 }
 
 console.log('parser-core regular-table region, continuation, fail-closed field, duplicate, privacy, and publication write-integrity regressions passed');
+
+
+// Release regression: the publisher must not silently degrade a complete pool PDF to four entries.
+const guardSource=readFileSync(new URL('./publication-guard.js',import.meta.url),'utf8');
+const {publicationPreflight}=await import('data:text/javascript;base64,'+Buffer.from(guardSource).toString('base64'));
+const completeField={config:{
+  fullFieldReady:true,participants:[{id:'dc'},{id:'jc'},{id:'djs'},{id:'thaddeus'}],
+  fieldEntries:[{id:'field-001',pickNumbers:Array(14).fill(1),tiebreak:42}],
+  fullFieldEntryCount:1,competitionSize:5
+}};
+assert.deepEqual(publicationPreflight(completeField),[],'complete field permits publication');
+const incompleteField={config:{...completeField.config,fullFieldReady:false,fieldEntries:[],competitionSize:undefined},fullFieldIssues:['PDF page continuity not proven']};
+assert.ok(publicationPreflight(incompleteField).some(s=>s.includes('Complete pool field not validated')),'tracked-only PDF must block publish');
+assert.ok(publicationPreflight({config:{...completeField.config,fieldEntries:[]}}).length,'empty anonymized pool must block publish');
+assert.ok(publicationPreflight({config:{...completeField.config,competitionSize:6}}).length,'mismatched pool total must block publish');
+const adminPublisherSource=readFileSync(new URL('./admin.js',import.meta.url),'utf8');
+assert.match(adminPublisherSource,/publicationPreflight\(candidate\)/,'publish UI must reject incomplete field');
+assert.match(adminPublisherSource,/publicationPreflight\(publishCandidate\)/,'publish handler must reject incomplete field');
