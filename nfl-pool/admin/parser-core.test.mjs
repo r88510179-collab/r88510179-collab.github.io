@@ -1021,6 +1021,7 @@ const adminPatched=(()=>{
   let s=adminSource;
   const swap=(from,to)=>{assert(s.includes(from),`admin harness expects: ${from}`);s=s.split(from).join(to)};
   swap("import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';","const {createClient}=globalThis.__pickemTest.neonModule;");
+  swap("from './publication-guard.js?v=1';",`from '${new URL('./publication-guard.js?v=1',import.meta.url).href}';`);
   const parserImport=s.match(/from '\.\/parser-core\.js\?v=(\d+)';/);
   assert(parserImport,'admin harness expects a versioned parser-core import');
   swap(parserImport[0],`from '${new URL(`./parser-core.js?v=${parserImport[1]}`,import.meta.url).href}';`);
@@ -2101,7 +2102,8 @@ async function atInstant(iso,run){
 
 console.log('parser-core regular-table region, continuation, fail-closed field, duplicate, privacy, and publication write-integrity regressions passed');
 
-\n// Release regression: the publisher must not silently degrade a complete pool PDF to four entries.
+
+// Release regression: the publisher must not silently degrade a complete pool PDF to four entries.
 const guardSource=readFileSync(new URL('./publication-guard.js',import.meta.url),'utf8');
 const {publicationPreflight}=await import('data:text/javascript;base64,'+Buffer.from(guardSource).toString('base64'));
 const completeField={config:{
