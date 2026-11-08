@@ -1,5 +1,6 @@
 import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';
 import {publicationPreflight} from './publication-guard.js?v=1';
+import {recoverCompletePdfField} from './pdf-field-recovery.js?v=1';
 import {TARGETS,detectWeek,groupPdfTextItems,carryForwardWeekHints,parseDocumentGroups,chooseBestCandidate,validateConfig,easternKickoffDate} from './parser-core.js?v=15';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
@@ -130,13 +131,18 @@ $('parseBtn').addEventListener('click',async()=>{
   try{
     const expectedCompetitionSize=selectedCompetitionSize(),typedAbsences=absenceText();
     const groups=await fileGroups(sourceFile);assertFileContext(sourceFile,sourceGeneration,operation);
-    const season=selectedSeason(),localCandidates=parseDocumentGroups(groups,{filename:sourceFile.name,season,expectedCompetitionSize});assertFileContext(sourceFile,sourceGeneration,operation);
+    const season=selectedSeason(),parsedCandidates=parseDocumentGroups(groups,{filename:sourceFile.name,season,expectedCompetitionSize});assertFileContext(sourceFile,sourceGeneration,operation);
+    // Automatically recover only from the same, still-selected PDF and only when
+    // independent column geometry proves every source row. Any doubt stays blocked.
+    const localCandidates=parsedCandidates.map(c=>recoverCompletePdfField(
+      groups.filter(g=>g.week===c.week),c,expectedCompetitionSize
+    )||c);assertFileContext(sourceFile,sourceGeneration,operation);
     const valid=localCandidates.filter(c=>!c.errors.length&&c.config.participants.length===TARGETS.length);
     if(!valid.length){const details=localCandidates.map(c=>`Week ${c.week}: ${c.errors.join('; ')||'not all tracked entries found'}`).join(' | ');throw new Error(`No complete tracked week was found. ${details}`)}
     const selected=chooseBestCandidate(localCandidates);assertFileContext(sourceFile,sourceGeneration,operation);
     candidates=localCandidates;candidate=selected;candidateFile=sourceFile;candidateFileGeneration=sourceGeneration;candidateCompetitionSize=expectedCompetitionSize;renderCandidateSelector(valid,sourceFile,sourceGeneration);
     await prepareCandidate(candidate,sourceFile,sourceGeneration,operation,typedAbsences);assertFileContext(sourceFile,sourceGeneration,operation);
-    message(`${candidate.config.fullFieldReady===true?`Week ${candidate.week} parsed with ${candidate.config.competitionSize} competition entries and matched to the NFL schedule. Review it before publishing.`:`Week ${candidate.week} tracked entries parsed, but PUBLISHING BLOCKED: full-field validation failed — ${fieldUnavailableReason(candidate)}. Fix the source/validation before publishing.`}${absentNote(candidate.config)}`,candidate.config.fullFieldReady===true?'success':'error');
+    message(`${candidate.config.fullFieldReady===true?`Week ${candidate.week} parsed with ${candidate.config.competitionSize} competition entries and matched to the NFL schedule.${candidate.recovery?` Automatic PDF recovery verified ${candidate.recovery.anonymousEntries} anonymous submissions across ${candidate.recovery.pages} pages; ${candidate.recovery.invalidCells+candidate.recovery.missingCells} missing/invalid pick cells remain unscored.`:''} Review it before publishing.`:`Week ${candidate.week} tracked entries parsed, but PUBLISHING BLOCKED: full-field validation failed — ${fieldUnavailableReason(candidate)}. Fix the source/validation before publishing.`}${absentNote(candidate.config)}`,candidate.config.fullFieldReady===true?'success':'error');
   }catch(e){
     if(e?.name==='StaleFileContext')return;
     if(fileContextCurrent(sourceFile,sourceGeneration)&&operation===parseGeneration){message(e.message||String(e),'error');invalidateParsedState()}
@@ -208,7 +214,7 @@ function renderReview(){
   $('gameReview').innerHTML=cfg.games.map((g,i)=>`<tr><td>${i+1}</td><td><b>${g.awayNumber}</b> ${esc(g.awayName||g.away)}</td><td>at</td><td><b>${g.homeNumber}</b> ${esc(g.homeName||g.home)}</td><td>${esc(g.date||'—')}</td></tr>`).join('');
   $('entryReview').innerHTML=cfg.participants.map(p=>{const blank=trackedNoSubmission(p);return`<tr><td>${esc(p.displayName)}</td><td class="nums">${blank?'NO PICKS SUBMITTED':p.pickNumbers.join(' ')}</td><td><b>${blank?'—':esc(p.tiebreak)}</b></td></tr>`}).join('');
   const tb=$('tiebreakGame');tb.innerHTML=cfg.games.map((g,i)=>`<option value="${i}">${i+1}. ${g.away} at ${g.home}</option>`).join('');tb.value=String(cfg.tiebreakGameIndex);tb.onchange=()=>{cfg.tiebreakGameIndex=Number(tb.value)};
-  const fieldWarning=cfg.fullFieldReady===true?`<span class="check">✓ Full-field regular Pick'em data validated · ${cfg.competitionSize} entries</span>`:`<span class="field-warn">⚠ PUBLISHING BLOCKED — ${esc(fieldUnavailableReason(candidate))}. Do not publish this incomplete pool sheet.</span>`;
+  const fieldWarning=cfg.fullFieldReady===true?`<span class="check">✓ Full-field regular Pick'em data validated · ${cfg.competitionSize} entries${candidate?.recovery?' · safely recovered from PDF':''}</span>`:`<span class="field-warn">⚠ PUBLISHING BLOCKED — ${esc(fieldUnavailableReason(candidate))}. Do not publish this incomplete pool sheet.</span>`;
   const absent=(cfg.publicationExceptions||[]).map(x=>`<span class="field-warn">⚠ ${esc(x.away)} at ${esc(x.home)}: ABSENT FROM WEEK ${esc(x.week)} FEED — published by your typed absence exception; no NFL event is recorded for it, and it is ruled on separately</span>`).join('');
   $('validation').innerHTML=scheduleVerified?`<span class="check">✓ Tracked rows valid</span><span class="check">✓ Four tracked entries found</span><span class="check">✓ Anonymous privacy allowlist enforced</span>${fieldWarning}<span class="check">✓ NFL schedule matched</span>${absent}`:'<span class="bad">Schedule verification required</span>';
   $('publishBtn').disabled=!canPublish();
