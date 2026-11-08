@@ -5,7 +5,7 @@ const median = items => { const values = items.slice().sort((a,b)=>a-b); const n
 const norm = value => strip(value).toLowerCase();
 const WIDTH_TOLERANCE=8;
 const NAME_TOLERANCE=14;
-const pickFor=(column,raw)=>raw===2*column+1||raw===2*column+2;
+const pickFor=(games,column,raw)=>raw===games[column].awayNumber||raw===games[column].homeNumber;
 
 function tokensFor(row){
   if(!Array.isArray(row?.parts))return [];
@@ -23,7 +23,8 @@ function extractName(tokens,firstPickX){
   const lead=tokens.filter(t=>t.x<firstPickX-WIDTH_TOLERANCE);
   return {lead,name:strip(lead.map(t=>t.value).join(' '))};
 }
-function classifyRow(row,ref,gameCount){
+function classifyRow(row,ref,games){
+  const gameCount=games.length;
   const tokens=tokensFor(row);
   if(!tokens.length)return {kind:'other'};
   const {lead,name}=extractName(tokens,ref.numbers[0]);
@@ -54,7 +55,7 @@ function classifyRow(row,ref,gameCount){
   for(let i=0;i<gameCount;i++){
     const number=columns[i];
     if(number===null){picks.push(0);continue;}
-    if(!pickFor(i,number)){invalid++;picks.push(0);continue;}
+    if(!pickFor(games,i,number)){invalid++;picks.push(0);continue;}
     picks.push(number);
   }
   if(invalid>2)return {kind:'unproven',name};
@@ -101,7 +102,8 @@ function reflowSplitRows(sourceRows,ref,gameCount){
   const isNameOnly=row=>{const tokens=cells(row);return tokens.length>0&&tokens.every(t=>t.x<firstX-WIDTH_TOLERANCE)};
   const isNumericOnly=row=>{
     const tokens=cells(row);
-    return tokens.length>=gameCount&&tokens.every(t=>t.x>=firstX-WIDTH_TOLERANCE&&/^\d+$/.test(t.value));
+    return tokens.length>=1&&tokens.every(t=>t.x>=firstX-WIDTH_TOLERANCE&&/^\d+$/.test(t.value)&&
+      ref.numbers.some(x=>Math.abs(x-t.x)<=WIDTH_TOLERANCE));
   };
   for(let i=0;i<rows.length;i++){
     if(consumed.has(i))continue;
@@ -129,7 +131,7 @@ export function recoverCompletePdfField(groups,candidate,expectedCompetitionSize
   const pages=groups.map(g=>g.pageNumber),firstPage=pages[0];
   if(!Number.isInteger(firstPage)||new Set(pages).size!==groups.length||pages.some((p,i)=>p!==firstPage+i))return null;
   const fingerprints=groups.map(g=>g.pageFingerprint).filter(Boolean);
-  if(new Set(fingerprints).size!==fingerprints.length)return null;
+  if(fingerprints.length!==groups.length||new Set(fingerprints).size!==fingerprints.length)return null;
   const ref=geometryFromTracked(groups,cfg.participants,gameCount);
   if(!ref)return null;
   const trackedNames=new Set(cfg.participants.map(p=>norm(p.sourceName)));
@@ -140,7 +142,7 @@ export function recoverCompletePdfField(groups,candidate,expectedCompetitionSize
     const rows=(group.sourceRows||[]).slice().sort((a,b)=>(a.rowIndex??0)-(b.rowIndex??0));
     for(const row of reflowSplitRows(rows,ref,gameCount)){
       if(row._unpairedNumeric)return null;
-      const result=classifyRow(row,ref,gameCount);
+      const result=classifyRow(row,ref,cfg.games);
       if(result.kind==='unproven')return null;
       if(result.kind==='other'){
         const numericTokens=strip(row.text).split(' ').filter(t=>/^\d+$/.test(t));
