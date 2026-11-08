@@ -1022,6 +1022,7 @@ const adminPatched=(()=>{
   const swap=(from,to)=>{assert(s.includes(from),`admin harness expects: ${from}`);s=s.split(from).join(to)};
   swap("import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';","const {createClient}=globalThis.__pickemTest.neonModule;");
   swap("from './publication-guard.js?v=1';",`from '${new URL('./publication-guard.js?v=1',import.meta.url).href}';`);
+  swap("from './pdf-field-recovery.js?v=1';",`from '${new URL('./pdf-field-recovery.js?v=1',import.meta.url).href}';`);
   const parserImport=s.match(/from '\.\/parser-core\.js\?v=(\d+)';/);
   assert(parserImport,'admin harness expects a versioned parser-core import');
   swap(parserImport[0],`from '${new URL(`./parser-core.js?v=${parserImport[1]}`,import.meta.url).href}';`);
@@ -2121,3 +2122,78 @@ assert.ok(publicationPreflight({config:{...completeField.config,competitionSize:
 const adminPublisherSource=readFileSync(new URL('./admin.js',import.meta.url),'utf8');
 assert.match(adminPublisherSource,/publicationPreflight\(candidate\)/,'publish UI must reject incomplete field');
 assert.match(adminPublisherSource,/publicationPreflight\(publishCandidate\)/,'publish handler must reject incomplete field');
+
+
+// SELF-RECOVERY — deterministic second pass for an otherwise blocked PDF.
+// No real participant names, file bytes, or full source sheet are committed as fixtures.
+const recoverSource=readFileSync(new URL('./pdf-field-recovery.js',import.meta.url),'utf8');
+const {recoverCompletePdfField}=await import('data:text/javascript;base64,'+Buffer.from(recoverSource).toString('base64'));
+{
+  const gameCount=14, xs=Array.from({length:gameCount},(_,i)=>160+i*20).concat([470,505]);
+  const row=(name,picks,tb,w,page,rowIndex,{missingName=false,y=null}={})=>{
+    const parts=[];
+    if(!missingName)parts.push({x:20,text:name});
+    picks.forEach((v,i)=>{if(v!==null)parts.push({x:xs[i],text:String(v)})});
+    if(tb!==null)parts.push({x:xs[gameCount],text:String(tb)});
+    parts.push({x:xs[gameCount+1],text:String(w)});
+    return{kind:'pdf',pageNumber:page,rowIndex,y:y??(700-rowIndex*16),text:parts.map(p=>p.text).join(' '),parts};
+  };
+  const odd=Array.from({length:gameCount},(_,i)=>i*2+1),even=odd.map(x=>x+1);
+  const entrants=[
+    {id:'dc',sourceName:'D.C.',pickNumbers:odd,tiebreak:41},
+    {id:'jc',sourceName:'JC',pickNumbers:even,tiebreak:42},
+    {id:'djs',sourceName:'DJS',pickNumbers:odd.map((x,i)=>i%2?x+1:x),tiebreak:43},
+    {id:'thaddeus',sourceName:'Thaddius',pickNumbers:Array(gameCount).fill(null),tiebreak:null}
+  ];
+  const modified=odd.slice();modified[6]=99;
+  const blank=even.slice();blank[5]=null;
+  const anon=[
+    row('Alpha',odd,44,0,1,3),
+    row('Beta',even,45,0,1,4),
+    row('Gamma',modified,46,0,1,5),
+    row('Delta',blank,null,1,2,0),
+    row('Epsilon',odd,48,0,2,3,{missingName:true,y:653})
+  ];
+  const page1=[
+    row('D.C.',odd,41,0,1,0),
+    row('JC',even,42,0,1,1),
+    row('DJS',entrants[2].pickNumbers,43,0,1,2),
+    ...anon.slice(0,3),
+    row('Thaddius',Array(gameCount).fill(null),null,gameCount,1,6)
+  ];
+  const page2=[
+    row('Inactive',Array(gameCount).fill(null),null,gameCount,2,0),
+    anon[3],
+    {kind:'pdf',pageNumber:2,rowIndex:2,y:652,text:'Epsilon',parts:[{x:20,text:'Epsilon'}]},
+    anon[4]
+  ];
+  const groups=[
+    {week:9,pageNumber:1,pageFingerprint:'synthetic-page-one',sourceRows:page1},
+    {week:9,pageNumber:2,pageFingerprint:'synthetic-page-two',sourceRows:page2}
+  ];
+  const partial={
+    week:9,errors:[],fullFieldIssues:['PDF participant table region cannot be chained'],
+    config:{games:Array.from({length:gameCount},(_,i)=>({awayNumber:2*i+1,homeNumber:2*i+2})),
+      participants:entrants,fullFieldReady:false}
+  };
+  const recovered=recoverCompletePdfField(groups,partial,9);
+  assert(recovered,'verified PDF geometry should recover every independently positioned entrant');
+  assert.equal(recovered.config.fullFieldReady,true);
+  assert.equal(recovered.config.competitionSize,9);
+  assert.equal(recovered.config.fieldEntries.length,5);
+  assert.equal(recovered.recovery.noSubmissions,2);
+  assert.equal(recovered.recovery.invalidCells,1);
+  assert.equal(recovered.recovery.missingCells,1);
+  assert.equal(recovered.config.fieldEntries[2].pickNumbers[6],0,'out-of-range selection remains no-pick');
+  assert.equal(recovered.config.fieldEntries[3].pickNumbers[5],0,'missing selection remains no-pick');
+  assert.equal(recovered.config.fieldEntries[3].tiebreak,null,'no fabricated tiebreak');
+  assert.deepEqual(recovered.config.participants,entrants,'tracked entries are not edited');
+  assert.deepEqual(Object.keys(recovered.config.fieldEntries[0]).sort(),['id','pickNumbers','tiebreak'],'no names stored');
+  assert.equal(recoverCompletePdfField(groups,partial,10),null,'wrong independent count blocks recovery');
+  const duplicated=structuredClone(groups);duplicated[1].pageFingerprint=duplicated[0].pageFingerprint;
+  assert.equal(recoverCompletePdfField(duplicated,partial,9),null,'duplicate source page blocks recovery');
+  const torn=structuredClone(groups);torn[1].sourceRows=torn[1].sourceRows.filter(r=>r.text!=='Epsilon');
+  assert.equal(recoverCompletePdfField(torn,partial,9),null,'orphan numeric row blocks recovery');
+  const stale=structuredClone(partial);stale.errors=['Tracked pick mismatch'];
+  assert.equal(recoverCompletePdfField(groups,stale,9),null,'tracked-row failure cannot be auto-repaired');
+}
