@@ -2100,3 +2100,20 @@ async function atInstant(iso,run){
 }
 
 console.log('parser-core regular-table region, continuation, fail-closed field, duplicate, privacy, and publication write-integrity regressions passed');
+
+\n// Release regression: the publisher must not silently degrade a complete pool PDF to four entries.
+const guardSource=readFileSync(new URL('./publication-guard.js',import.meta.url),'utf8');
+const {publicationPreflight}=await import('data:text/javascript;base64,'+Buffer.from(guardSource).toString('base64'));
+const completeField={config:{
+  fullFieldReady:true,participants:[{id:'dc'},{id:'jc'},{id:'djs'},{id:'thaddeus'}],
+  fieldEntries:[{id:'field-001',pickNumbers:Array(14).fill(1),tiebreak:42}],
+  fullFieldEntryCount:1,competitionSize:5
+}};
+assert.deepEqual(publicationPreflight(completeField),[],'complete field permits publication');
+const incompleteField={config:{...completeField.config,fullFieldReady:false,fieldEntries:[],competitionSize:undefined},fullFieldIssues:['PDF page continuity not proven']};
+assert.ok(publicationPreflight(incompleteField).some(s=>s.includes('Complete pool field not validated')),'tracked-only PDF must block publish');
+assert.ok(publicationPreflight({config:{...completeField.config,fieldEntries:[]}}).length,'empty anonymized pool must block publish');
+assert.ok(publicationPreflight({config:{...completeField.config,competitionSize:6}}).length,'mismatched pool total must block publish');
+const adminPublisherSource=readFileSync(new URL('./admin.js',import.meta.url),'utf8');
+assert.match(adminPublisherSource,/publicationPreflight\(candidate\)/,'publish UI must reject incomplete field');
+assert.match(adminPublisherSource,/publicationPreflight\(publishCandidate\)/,'publish handler must reject incomplete field');
