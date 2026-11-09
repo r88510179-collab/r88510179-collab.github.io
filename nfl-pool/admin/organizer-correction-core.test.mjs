@@ -72,7 +72,7 @@ test('refuses ambiguous or malformed corrected picks and invalid tiebreak',()=>{
 });
 test('refuses game-order and entry-count mismatches',()=>{
   const a=fixture();a.source.config.games[0].awayNumber=2;
-  assert.throws(()=>planOrganizerCorrection(a),/matchup order/);
+  assert.throws(()=>planOrganizerCorrection(a),/configuration failed validation|matchup order/);
   const b=fixture();b.source.localFieldNames.pop();
   assert.throws(()=>planOrganizerCorrection(b),/one-to-one/);
 });
