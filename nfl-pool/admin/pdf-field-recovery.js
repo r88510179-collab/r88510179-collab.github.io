@@ -178,7 +178,7 @@ export function attemptPdfFieldRecovery(groups,candidate,expectedCompetitionSize
   const ref=geometryFromTracked(groups,cfg.participants,gameCount);
   if(!ref)return refuse('the pick, Pts and W columns could not be verified from at least two complete tracked rows');
   const trackedNames=new Set(cfg.participants.map(p=>norm(p.sourceName)));
-  const seen=new Set(),anonymous=[],tables=[];
+  const seen=new Set(),anonymous=[],localFieldNames=[],tables=[];
   let nonsubmissions=0,invalidCells=0,missingCells=0;
   for(const group of groups){
     const page=group.pageNumber,table=[],nameOnly=[],headers=[];
@@ -216,6 +216,7 @@ export function attemptPdfFieldRecovery(groups,candidate,expectedCompetitionSize
         continue;
       }
       invalidCells+=result.invalid;missingCells+=result.missing;
+      localFieldNames.push(result.name); // transient only; never stored in config
       anonymous.push({id:'field-'+String(anonymous.length+1).padStart(3,'0'),pickNumbers:result.pickNumbers,tiebreak:result.tiebreak});
     }
     tables.push({page,table,nameOnly,headers});
@@ -276,7 +277,7 @@ export function attemptPdfFieldRecovery(groups,candidate,expectedCompetitionSize
   return {reason:null,candidate:{
     ...candidate,
     config:{...cfg,fullFieldReady:true,fieldEntries:anonymous,fullFieldEntryCount:anonymous.length,competitionSize},
-    fullFieldIssues:[],competitionSize,recovery
+    fullFieldIssues:[],competitionSize,recovery,localFieldNames
   }};
 }
 
