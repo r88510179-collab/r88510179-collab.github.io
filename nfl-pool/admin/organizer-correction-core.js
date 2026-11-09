@@ -9,8 +9,8 @@ const integer=v=>/^(0|[1-9]\d*)$/.test(String(v??'').trim())?Number(v):NaN;
 function requireState(ok,message){if(!ok)throw new Error(message);}
 function currentEntryMatchesSource(now,original,history){
   if(now?.id===original?.id&&same(now.pickNumbers,original.pickNumbers)&&now.tiebreak===original.tiebreak)return true;
-  return history.some(c=>c?.entryId===now?.id &&
-    same(c.correctedPickNumbers,now?.pickNumbers) && c.correctedTiebreak===now?.tiebreak);
+  const last=history.filter(c=>c?.entryId===now?.id).at(-1);
+  return !!last&&same(last.correctedPickNumbers,now.pickNumbers)&&last.correctedTiebreak===now.tiebreak;
 }
 export function planOrganizerCorrection({published,source,digest,participantName,picksText,tiebreakText,sourceType='organizer-email',noticeSubject='Organizer correction'}){
   const cfg=published?.config,src=source?.config;
@@ -55,6 +55,7 @@ export function planOrganizerCorrection({published,source,digest,participantName
   requireState(['organizer-email','organizer-spreadsheet','organizer-notice'].includes(sourceType),'Unsupported organizer notice type.');
   const subject=String(noticeSubject??'').trim();
   requireState(subject.length>0&&subject.length<=120&&/^[^\r\n]*$/.test(subject),'Enter a short notice reference (up to 120 characters). Do not include names or contact details.');
+  requireState(!normalizeName(subject).includes(name)&&!/[\w.+-]+@[\w.-]+\.[a-z]{2,}/i.test(subject),'Notice reference must not contain a participant name or an email address.');
   requireState(!same(before.pickNumbers,picks)||before.tiebreak!==tiebreak,'The published entry already matches this correction. No new revision is needed.');
   const afterConfig=JSON.parse(JSON.stringify(cfg));
   afterConfig.fieldEntries[index]={id:before.id,pickNumbers:picks,tiebreak};
