@@ -2,9 +2,10 @@
 # HDC-13 SQL behavior gate. Starts a throwaway PostgreSQL 17.11 container (the pinned image below), emulates the production
 # Neon shape (neon-shape.sql), applies migrations 001, 002, 003, 004 and 005 in order as nfl_pool_owner exactly as the files
 # are in this checkout (003 with its kickoff supplied explicitly), checks that migration 005 refuses a second application and
-# any other role, loads fixtures.sql, then runs the behavior suite (behavior.sql) and the race suite (races.sh). No Neon, no
-# secrets, no network but the image pull. Exits 0 only when every migration applied, every behavior assertion of the plan
-# passed and every race assertion passed.
+# any other role, applies the full-field publication guard (twice: it is idempotent), loads fixtures.sql, then runs the
+# full-field guard checks (full-field-guard.sql), the behavior suite (behavior.sql) and the race suite (races.sh). No Neon,
+# no secrets, no network but the image pull. Exits 0 only when every migration applied, every guard and behavior assertion
+# of its plan passed and every race assertion passed.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -81,8 +82,29 @@ else
   problem "migration $m5 is missing: the HDC-14 absent-game write path does not exist"
 fi
 
+# PR #36 full-field publication guard (a CHECK constraint, safe to re-run): applied after 005 so every later suite runs
+# with the constraint production has, and then exercised by full-field-guard.sql.
+guard=20261108_full_field_publish_guard.sql
+if [ -f "$migrations/$guard" ]; then
+  if psql_as nfl_pool_owner nfl_pool < "$migrations/$guard" && psql_as nfl_pool_owner nfl_pool < "$migrations/$guard"; then
+    echo "applied $guard (and re-applied: idempotent)"
+  else problem "migration $guard failed"; fi
+else
+  problem "migration $guard is missing: the full-field publication guard does not exist"
+fi
+
 echo "== Fixtures"
 psql_as postgres nfl_pool < "$here/fixtures.sql" || { echo "::error::fixtures.sql failed"; exit 1; }
+
+echo "== Full-field publication guard"
+psql_as postgres nfl_pool < "$here/full-field-guard.sql" > "$log/guard.out" 2>&1
+guard_status=$?
+grep -E '^NOTICE:  GUARD-TEST ' "$log/guard.out" | sed 's/^NOTICE:  //'
+guard_ok="$(grep -c '^NOTICE:  GUARD-TEST ok: ' "$log/guard.out")"
+guard_plan="$(sed -n 's/^GUARD-PLAN \([0-9][0-9]*\)$/\1/p' "$log/guard.out")"
+[ "$guard_status" -eq 0 ] || { tail -20 "$log/guard.out"; problem "full-field-guard.sql stopped with exit code $guard_status"; }
+[ -n "$guard_plan" ] && [ "$guard_ok" -eq "$guard_plan" ] || problem "full-field guard: $guard_ok passed, plan ${guard_plan:-missing}"
+echo "Full-field guard: $guard_ok passed, plan ${guard_plan:-missing}"
 
 echo "== Behavior suite"
 psql_as postgres nfl_pool < "$here/behavior.sql" > "$log/behavior.out" 2>&1
@@ -105,6 +127,6 @@ races_status=$?
 cat "$log/races.out"
 [ "$races_status" -eq 0 ] || problem "race suite failed (exit $races_status)"
 
-echo "PostgreSQL $version · behavior $behavior_ok/${plan:-?} · $(grep -o 'races=[0-9]* passed=[0-9]* failed=[0-9]*' "$log/races.out" || echo 'races: no summary')"
+echo "PostgreSQL $version · behavior $behavior_ok/${plan:-?} · full-field guard $guard_ok/${guard_plan:-?} · $(grep -o 'races=[0-9]* passed=[0-9]* failed=[0-9]*' "$log/races.out" || echo 'races: no summary')"
 if [ "$problems" -ne 0 ]; then echo "HDC-13 SQL gate FAILED ($problems problem(s))"; exit 1; fi
 echo "HDC-13 SQL gate passed"

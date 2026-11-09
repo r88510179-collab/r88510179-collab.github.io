@@ -1,5 +1,6 @@
 import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';
 import {publicationPreflight} from './publication-guard.js?v=1';
+import {pdfRecoveryApplies,attemptPdfFieldRecovery} from './pdf-field-recovery.js?v=2';
 import {TARGETS,detectWeek,groupPdfTextItems,carryForwardWeekHints,parseDocumentGroups,chooseBestCandidate,validateConfig,easternKickoffDate} from './parser-core.js?v=15';
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
@@ -39,6 +40,14 @@ function totalEntriesState(){const {raw,badInput}=totalEntriesInput;if(badInput)
 function selectedCompetitionSize(){acceptTotalEntries();const s=totalEntriesState();if(!s.ok)throw new Error(`Total pool entries must be a whole number of at least ${TARGETS.length}, or left blank.`);return s.value}
 function competitionSizeCurrent(value){const s=totalEntriesState();return s.ok&&s.value===value}
 const fieldUnavailableReason=c=>(c?.fullFieldIssues||[]).join('; ')||'regular competition field could not be validated';
+// Which path validated the field, in the publisher's terms. The (sticky) status line stays short; the review shows what
+// automatic PDF recovery proved. Missing or invalid cells stay unscored and missing tiebreaks stay blank: nothing is guessed.
+const recoveryNote=c=>c?.recovery?' Automatic PDF recovery verified the full table (the standard parse could not chain it); see the review for details.':'';
+const plural=(n,one,many)=>`${n} ${n===1?one:many}`;
+function recoveryDetails(c){
+  const r=c?.recovery;if(!r)return'';
+  return `✓ Automatic PDF recovery: ${plural(r.anonymousEntries,'anonymous entry','anonymous entries')} and ${plural(r.noSubmissions,'no-submission row','no-submission rows')} verified on ${plural(r.pages,'page','pages')}, no gaps or missing pages · ${plural(r.invalidCells+r.missingCells,'pick cell','pick cells')} left unscored · ${plural(r.missingTiebreaks||0,'tiebreak','tiebreaks')} left blank`;
+}
 const trackedNoSubmission=p=>Array.isArray(p?.pickNumbers)&&p.pickNumbers.length>0&&p.pickNumbers.every(n=>n===null)&&p.tiebreak===null;
 function message(text,type='info'){$('message').className=`notice ${type}`;$('message').textContent=text;$('message').hidden=!text}
 function fileContextCurrent(file,generation){return !!file&&currentFile===file&&fileGeneration===generation}
@@ -104,7 +113,10 @@ $('drop').addEventListener('drop',e=>{e.preventDefault();$('drop').classList.rem
 async function pdfGroups(file){
   const pdfjs=await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs');
   pdfjs.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs';
-  const data=new Uint8Array(await file.arrayBuffer()),pdf=await pdfjs.getDocument({data}).promise,groups=[];
+  const data=new Uint8Array(await file.arrayBuffer());let pdf;
+  try{pdf=await pdfjs.getDocument({data}).promise}
+  catch(e){throw new Error(`This PDF could not be read (${e?.message||e}). Nothing was changed. Download the organizer's sheet again and select the new copy, or ask the organizer for a fresh PDF export.`)}
+  const groups=[];
   for(let n=1;n<=pdf.numPages;n++){
     const page=await pdf.getPage(n),content=await page.getTextContent(),sourceRows=groupPdfTextItems(content.items).map(r=>({...r,kind:'pdf',pageNumber:n})),lines=sourceRows.map(r=>r.text),week=lines.map(detectWeek).find(Boolean)||null;
     groups.push({week,lines,sourceRows,pageNumber:n,pageFingerprint:lines.join('\n').replace(/\s+/g,' ').trim().toLowerCase()});
@@ -130,13 +142,23 @@ $('parseBtn').addEventListener('click',async()=>{
   try{
     const expectedCompetitionSize=selectedCompetitionSize(),typedAbsences=absenceText();
     const groups=await fileGroups(sourceFile);assertFileContext(sourceFile,sourceGeneration,operation);
-    const season=selectedSeason(),localCandidates=parseDocumentGroups(groups,{filename:sourceFile.name,season,expectedCompetitionSize});assertFileContext(sourceFile,sourceGeneration,operation);
+    const season=selectedSeason(),parsedCandidates=parseDocumentGroups(groups,{filename:sourceFile.name,season,expectedCompetitionSize});assertFileContext(sourceFile,sourceGeneration,operation);
+    // Automatically recover only from the same, still-selected PDF and only when independent column geometry and an
+    // unbroken table prove every source row. Any doubt stays blocked, with the specific reason shown to the publisher.
+    const localCandidates=[];
+    for(const c of parsedCandidates){
+      const weekGroups=groups.filter(g=>g.week===c.week);
+      if(!pdfRecoveryApplies(weekGroups,c)){localCandidates.push(c);continue}
+      const options=expectedCompetitionSize===null?await previousFieldEvidence(season,c.week):{};assertFileContext(sourceFile,sourceGeneration,operation);
+      const {candidate:recovered,reason}=attemptPdfFieldRecovery(weekGroups,c,expectedCompetitionSize,options);
+      localCandidates.push(recovered||(reason?{...c,fullFieldIssues:[`Automatic PDF recovery could not prove the full field: ${reason}`,...c.fullFieldIssues.map(x=>`first pass: ${x}`)]}:c));
+    }
     const valid=localCandidates.filter(c=>!c.errors.length&&c.config.participants.length===TARGETS.length);
     if(!valid.length){const details=localCandidates.map(c=>`Week ${c.week}: ${c.errors.join('; ')||'not all tracked entries found'}`).join(' | ');throw new Error(`No complete tracked week was found. ${details}`)}
     const selected=chooseBestCandidate(localCandidates);assertFileContext(sourceFile,sourceGeneration,operation);
     candidates=localCandidates;candidate=selected;candidateFile=sourceFile;candidateFileGeneration=sourceGeneration;candidateCompetitionSize=expectedCompetitionSize;renderCandidateSelector(valid,sourceFile,sourceGeneration);
     await prepareCandidate(candidate,sourceFile,sourceGeneration,operation,typedAbsences);assertFileContext(sourceFile,sourceGeneration,operation);
-    message(`${candidate.config.fullFieldReady===true?`Week ${candidate.week} parsed with ${candidate.config.competitionSize} competition entries and matched to the NFL schedule. Review it before publishing.`:`Week ${candidate.week} tracked entries parsed, but PUBLISHING BLOCKED: full-field validation failed — ${fieldUnavailableReason(candidate)}. Fix the source/validation before publishing.`}${absentNote(candidate.config)}`,candidate.config.fullFieldReady===true?'success':'error');
+    message(`${candidate.config.fullFieldReady===true?`Week ${candidate.week} parsed with ${candidate.config.competitionSize} competition entries and matched to the NFL schedule.${recoveryNote(candidate)} Review it before publishing.`:`Week ${candidate.week} tracked entries parsed, but PUBLISHING BLOCKED: full-field validation failed — ${fieldUnavailableReason(candidate)}. Fix the source/validation before publishing.`}${absentNote(candidate.config)}`,candidate.config.fullFieldReady===true?'success':'error');
   }catch(e){
     if(e?.name==='StaleFileContext')return;
     if(fileContextCurrent(sourceFile,sourceGeneration)&&operation===parseGeneration){message(e.message||String(e),'error');invalidateParsedState()}
@@ -208,7 +230,7 @@ function renderReview(){
   $('gameReview').innerHTML=cfg.games.map((g,i)=>`<tr><td>${i+1}</td><td><b>${g.awayNumber}</b> ${esc(g.awayName||g.away)}</td><td>at</td><td><b>${g.homeNumber}</b> ${esc(g.homeName||g.home)}</td><td>${esc(g.date||'—')}</td></tr>`).join('');
   $('entryReview').innerHTML=cfg.participants.map(p=>{const blank=trackedNoSubmission(p);return`<tr><td>${esc(p.displayName)}</td><td class="nums">${blank?'NO PICKS SUBMITTED':p.pickNumbers.join(' ')}</td><td><b>${blank?'—':esc(p.tiebreak)}</b></td></tr>`}).join('');
   const tb=$('tiebreakGame');tb.innerHTML=cfg.games.map((g,i)=>`<option value="${i}">${i+1}. ${g.away} at ${g.home}</option>`).join('');tb.value=String(cfg.tiebreakGameIndex);tb.onchange=()=>{cfg.tiebreakGameIndex=Number(tb.value)};
-  const fieldWarning=cfg.fullFieldReady===true?`<span class="check">✓ Full-field regular Pick'em data validated · ${cfg.competitionSize} entries</span>`:`<span class="field-warn">⚠ PUBLISHING BLOCKED — ${esc(fieldUnavailableReason(candidate))}. Do not publish this incomplete pool sheet.</span>`;
+  const fieldWarning=cfg.fullFieldReady===true?`<span class="check">✓ Full-field regular Pick'em data validated · ${cfg.competitionSize} entries${candidate?.recovery?' · automatic PDF recovery':' · standard parse'}</span>${candidate?.recovery?`<span class="check">${esc(recoveryDetails(candidate))}</span>`:''}`:`<span class="field-warn">⚠ PUBLISHING BLOCKED — ${esc(fieldUnavailableReason(candidate))}. Do not publish this incomplete pool sheet.</span>`;
   const absent=(cfg.publicationExceptions||[]).map(x=>`<span class="field-warn">⚠ ${esc(x.away)} at ${esc(x.home)}: ABSENT FROM WEEK ${esc(x.week)} FEED — published by your typed absence exception; no NFL event is recorded for it, and it is ruled on separately</span>`).join('');
   $('validation').innerHTML=scheduleVerified?`<span class="check">✓ Tracked rows valid</span><span class="check">✓ Four tracked entries found</span><span class="check">✓ Anonymous privacy allowlist enforced</span>${fieldWarning}<span class="check">✓ NFL schedule matched</span>${absent}`:'<span class="bad">Schedule verification required</span>';
   $('publishBtn').disabled=!canPublish();
@@ -225,6 +247,16 @@ async function readWeek(season,week){
   const {data,error}=await neon.from('nfl_pool_weeks').select('season,week,status,revision,source_sha256,updated_at,config').eq('season',season).eq('week',week);if(error)throw error;
   if(!Array.isArray(data)||data.length>1||data.some(r=>r?.season!==season||r?.week!==week))throw new Error(`The database returned an unreadable result for Week ${week}.`);
   return data[0]||null;
+}
+// Evidence for automatic PDF recovery's pool-size cross-check: the published size of the week before, read through the
+// signed-in publisher's session (read only). A cleanly removed PDF page leaves no trace in the document itself.
+async function previousFieldEvidence(season,week){
+  if(week<=1)return{previous:null};
+  if(!session)return{unavailable:'sign in first, then read the sheet again'};
+  try{
+    const row=await readWeek(season,week-1),cfg=row?.status==='locked'?row.config:null;
+    return{previous:{week:week-1,competitionSize:cfg?.fullFieldReady===true&&Number.isSafeInteger(cfg?.competitionSize)?cfg.competitionSize:null}};
+  }catch(e){return{unavailable:`Week ${week-1} could not be read: ${e?.message||e}`}}
 }
 // A configuration compared as the JSON a write sends: object keys sorted at every depth, arrays in their own order, so
 // the key order a database returns (a JSONB column keeps none) never decides a comparison. A value that is not JSON has

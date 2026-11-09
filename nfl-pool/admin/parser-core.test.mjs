@@ -1022,6 +1022,7 @@ const adminPatched=(()=>{
   const swap=(from,to)=>{assert(s.includes(from),`admin harness expects: ${from}`);s=s.split(from).join(to)};
   swap("import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';","const {createClient}=globalThis.__pickemTest.neonModule;");
   swap("from './publication-guard.js?v=1';",`from '${new URL('./publication-guard.js?v=1',import.meta.url).href}';`);
+  swap("from './pdf-field-recovery.js?v=2';",`from '${new URL('./pdf-field-recovery.js?v=2',import.meta.url).href}';`);
   const parserImport=s.match(/from '\.\/parser-core\.js\?v=(\d+)';/);
   assert(parserImport,'admin harness expects a versioned parser-core import');
   swap(parserImport[0],`from '${new URL(`./parser-core.js?v=${parserImport[1]}`,import.meta.url).href}';`);
@@ -1133,6 +1134,45 @@ async function bootAdmin({rows=[]}={}){
   assert.match(adminHtml,/Leave blank to count the validated pool entries automatically from the weekly sheet/);
   assert.equal(/\b282\b/.test(adminHtml)||/\b282\b/.test(adminSource),false,'no hardcoded pool size');
   for(const [,id] of adminSource.matchAll(/\$\('([A-Za-z]+)'\)/g))assert(adminHtml.includes(`id="${id}"`),`index.html lacks #${id}`);
+}
+{
+  // ADMIN RECOVERY — a sheet the first pass cannot chain (one long name sits 2 points below its numbers) is recovered by
+  // the PDF geometry pass through admin.js itself, cross-checked against the published week before, and named as a
+  // recovery to the publisher; the published row still carries only the anonymous allowlist.
+  const items=[],put=(x,y,str)=>items.push({str,transform:[1,0,0,1,x,y]});
+  put(10,760,'Week 2 Pick Sheet');matchups.forEach((m,i)=>put(10,748-i*12,m));
+  put(520,568,'Pts');put(544,568,'W');
+  [...tracked,anonA,anonB].forEach((line,i)=>{
+    const y=556-i*12,t=line.split(' ');
+    put(10,line===anonB?y-2:y,t.slice(0,-17).join(' '));t.slice(-17).forEach((v,k)=>put(160+k*24,y,v));
+  });
+  ADMIN_SHEETS['recover.pdf']=[items];
+  const week1=size=>({season:2026,week:1,status:'locked',revision:1,source_sha256:'w1',updated_at:'2026-09-14T00:00:00.000Z',
+    config:{season:2026,week:1,fullFieldReady:true,competitionSize:size}});
+  const t=await bootAdmin({rows:[week1(6)]});
+  await t.choose('recover.pdf');await t.parse();
+  assert.equal(t.$('message').textContent,'Week 2 parsed with 6 competition entries and matched to the NFL schedule. Automatic PDF recovery verified the full table (the standard parse could not chain it); see the review for details. Review it before publishing.');
+  assert.match(t.$('validation').innerHTML,/Full-field regular Pick'em data validated · 6 entries · automatic PDF recovery<\/span><span class="check">✓ Automatic PDF recovery: 2 anonymous entries and 0 no-submission rows verified on 1 page, no gaps or missing pages · 0 pick cells left unscored · 0 tiebreaks left blank<\/span>/);
+  assert.deepEqual(t.db.log,['select'],'the cross-check only reads the published week before');
+  assert.equal(t.$('publishBtn').disabled,false);
+  await t.publish();
+  const row=t.db.rows.find(r=>r.week===2);
+  assert.equal(row.config.fullFieldReady,true);assert.equal(row.config.competitionSize,6);assert.equal(row.config.fieldEntries.length,2);
+  assert.equal(/Alpha|Beta/.test(JSON.stringify(row.config)),false,'no recovered names are stored');
+  assert.equal(t.db.rows.find(r=>r.week===1).config.competitionSize,6,'the week read for the cross-check is unchanged');
+  // A pool that suddenly shrinks against the published week before is refused, by page-level reason, with no write.
+  const u=await bootAdmin({rows:[week1(40)]});
+  await u.choose('recover.pdf');await u.parse();
+  assert.match(u.$('message').textContent,/PUBLISHING BLOCKED: full-field validation failed — Automatic PDF recovery could not prove the full field: the PDF's rows add up to 6 entries, 34 fewer than Week 1 \(40\)\. A page may be missing from this PDF/);
+  assert.equal(u.$('publishBtn').disabled,true);await u.publish();assert.equal(u.writes(),0,'nothing is written');
+  // ... unless the publisher types the organizer's total, which replaces the cross-check with an exact match.
+  await u.count('6');await u.parse();
+  assert.match(u.$('validation').innerHTML,/validated · 6 entries · automatic PDF recovery/);
+  // Signed out, recovery cannot read the cross-check and says how to proceed.
+  const v=await bootAdmin({rows:[week1(6)]});v.db.session=null;await v.$('signOut').dispatch('click');
+  await v.choose('recover.pdf');await v.parse();
+  assert.match(v.$('message').textContent,/could not be cross-checked against the previous published week: sign in first, then read the sheet again/);
+  assert.equal(v.$('publishBtn').disabled,true);
 }
 {
   // ADMIN 1/7 — blank count: the weekly sheet automatically provides the validated full-field size.
@@ -1967,7 +2007,7 @@ async function atInstant(iso,run){
     assert(field,'an #absenceConfirm textarea');
     assert.match(adminHtml,/<label for="absenceConfirm">Absent games/);
     assert.match(adminHtml,/WEEK N AWAY @ HOME ABSENT/,'the help text names the exact confirmation format');
-    assert.match(adminHtml,/<script type="module" src="admin\.js\?v=16"><\/script>/);
+    assert.match(adminHtml,/<script type="module" src="admin\.js\?v=18"><\/script>/);
   });
   await regression('without a typed exception, an absent sheet game still blocks: the old error plus the exact phrase to type',async()=>{
     const t=await readWith();
@@ -2121,3 +2161,147 @@ assert.ok(publicationPreflight({config:{...completeField.config,competitionSize:
 const adminPublisherSource=readFileSync(new URL('./admin.js',import.meta.url),'utf8');
 assert.match(adminPublisherSource,/publicationPreflight\(candidate\)/,'publish UI must reject incomplete field');
 assert.match(adminPublisherSource,/publicationPreflight\(publishCandidate\)/,'publish handler must reject incomplete field');
+
+
+// SELF-RECOVERY — deterministic second pass for an otherwise blocked PDF.
+// No real participant names, file bytes, or full source sheet are committed as fixtures.
+const recoverSource=readFileSync(new URL('./pdf-field-recovery.js',import.meta.url),'utf8');
+const {recoverCompletePdfField,attemptPdfFieldRecovery,pdfRecoveryApplies,recoveredFieldSizeIssue}=await import('data:text/javascript;base64,'+Buffer.from(recoverSource).toString('base64'));
+{
+  const gameCount=14, xs=Array.from({length:gameCount},(_,i)=>160+i*20).concat([470,505]);
+  const row=(name,picks,tb,w,page,rowIndex,{missingName=false,y=null}={})=>{
+    const parts=[];
+    if(!missingName)parts.push({x:20,text:name});
+    picks.forEach((v,i)=>{if(v!==null)parts.push({x:xs[i],text:String(v)})});
+    if(tb!==null)parts.push({x:xs[gameCount],text:String(tb)});
+    parts.push({x:xs[gameCount+1],text:String(w)});
+    return{kind:'pdf',pageNumber:page,rowIndex,y:y??(700-rowIndex*16),text:parts.map(p=>p.text).join(' '),parts};
+  };
+  const odd=Array.from({length:gameCount},(_,i)=>i*2+1),even=odd.map(x=>x+1);
+  const entrants=[
+    {id:'dc',sourceName:'D.C.',pickNumbers:odd,tiebreak:41},
+    {id:'jc',sourceName:'JC',pickNumbers:even,tiebreak:42},
+    {id:'djs',sourceName:'DJS',pickNumbers:odd.map((x,i)=>i%2?x+1:x),tiebreak:43},
+    {id:'thaddeus',sourceName:'Thaddius',pickNumbers:Array(gameCount).fill(null),tiebreak:null}
+  ];
+  const modified=odd.slice();modified[6]=99;
+  const blank=even.slice();blank[5]=null;
+  const anon=[
+    row('Alpha',odd,44,0,1,3),
+    row('Beta',even,45,0,1,4),
+    row('Gamma',modified,46,0,1,5),
+    row('Delta',blank,null,1,2,1),
+    // Split row: the long name sits 2 PDF points below its numbers, so text grouping keeps them apart.
+    row('Epsilon',odd,48,0,2,2,{missingName:true,y:668})
+  ];
+  const header={kind:'pdf',pageNumber:1,rowIndex:-1,y:716,text:'Pts W',parts:[{x:470,text:'Pts'},{x:505,text:'W'}]};
+  const page1=[
+    header,
+    row('D.C.',odd,41,0,1,0),
+    row('JC',even,42,0,1,1),
+    row('DJS',entrants[2].pickNumbers,43,0,1,2),
+    ...anon.slice(0,3),
+    row('Thaddius',Array(gameCount).fill(null),null,gameCount,1,6)
+  ];
+  const page2=[
+    row('Inactive',Array(gameCount).fill(null),null,gameCount,2,0),
+    anon[3],
+    anon[4],
+    {kind:'pdf',pageNumber:2,rowIndex:3,y:666,text:'Epsilon',parts:[{x:20,text:'Epsilon'}]}
+  ];
+  const groups=[
+    {week:9,pageNumber:1,pageFingerprint:'synthetic-page-one',sourceRows:page1},
+    {week:9,pageNumber:2,pageFingerprint:'synthetic-page-two',sourceRows:page2}
+  ];
+  const partial={
+    week:9,errors:[],fullFieldIssues:['PDF participant table region cannot be chained'],
+    config:{games:Array.from({length:gameCount},(_,i)=>({awayNumber:2*i+1,homeNumber:2*i+2})),
+      participants:entrants,fullFieldReady:false}
+  };
+  const recovered=recoverCompletePdfField(groups,partial,9);
+  assert(recovered,'verified PDF geometry should recover every independently positioned entrant');
+  assert.equal(recovered.config.fullFieldReady,true);
+  assert.equal(recovered.config.competitionSize,9);
+  assert.equal(recovered.config.fieldEntries.length,5);
+  assert.equal(recovered.recovery.noSubmissions,2);
+  assert.equal(recovered.recovery.invalidCells,1);
+  assert.equal(recovered.recovery.missingCells,1);
+  assert.equal(recovered.config.fieldEntries[2].pickNumbers[6],0,'out-of-range selection remains no-pick');
+  assert.equal(recovered.config.fieldEntries[3].pickNumbers[5],0,'missing selection remains no-pick');
+  assert.equal(recovered.config.fieldEntries[3].tiebreak,null,'no fabricated tiebreak');
+  assert.deepEqual(recovered.config.participants,entrants,'tracked entries are not edited');
+  assert.deepEqual(Object.keys(recovered.config.fieldEntries[0]).sort(),['id','pickNumbers','tiebreak'],'no names stored');
+  assert.equal(recoverCompletePdfField(groups,partial,10),null,'wrong independent count blocks recovery');
+  const duplicated=structuredClone(groups);duplicated[1].pageFingerprint=duplicated[0].pageFingerprint;
+  assert.equal(recoverCompletePdfField(duplicated,partial,9),null,'duplicate source page blocks recovery');
+  const torn=structuredClone(groups);torn[1].sourceRows=torn[1].sourceRows.filter(r=>r.text!=='Epsilon');
+  assert.equal(recoverCompletePdfField(torn,partial,9),null,'orphan numeric row blocks recovery');
+  const stale=structuredClone(partial);stale.errors=['Tracked pick mismatch'];
+  assert.equal(recoverCompletePdfField(groups,stale,9),null,'tracked-row failure cannot be auto-repaired');
+
+  // COMPLETENESS PROOFS (added after real-PDF acceptance): recovery must never present an incomplete table as the pool.
+  const why=(g,c=partial,expected=9,options={})=>{const a=attemptPdfFieldRecovery(g,c,expected,options);assert.equal(a.candidate,null,'refused');return a.reason};
+  const rowsOf=(g,p)=>g.find(x=>x.pageNumber===p).sourceRows;
+  assert.equal(pdfRecoveryApplies(groups,partial),true);
+  assert.equal(pdfRecoveryApplies(groups,stale),false,'tracked errors are never repaired');
+  assert.equal(pdfRecoveryApplies(groups,{...partial,config:{...partial.config,fullFieldReady:true}}),false,'a validated field is left alone');
+  assert.equal(pdfRecoveryApplies([{week:9,sourceRows:[{kind:'spreadsheet'}]}],partial),false,'spreadsheets are never PDF-recovered');
+  assert.deepEqual(attemptPdfFieldRecovery(groups,stale,9),{candidate:null,reason:null},'not applicable is not a refusal');
+  // The original split-row order (name row listed before its numbers) still pairs once, and only once.
+  const nameFirst=structuredClone(groups);rowsOf(nameFirst,2).sort((a,b)=>(a.text==='Epsilon'?-1:0)-(b.text==='Epsilon'?-1:0));
+  rowsOf(nameFirst,2).forEach((r,i)=>{r.rowIndex=i});
+  assert.deepEqual(recoverCompletePdfField(nameFirst,partial,9)?.config.fieldEntries,recovered.config.fieldEntries,'split-row pairing is order independent');
+  // A participant row missing inside a page leaves room for a row: blocked, with the page and rows named.
+  const gapped=structuredClone(groups);rowsOf(gapped,1).splice(rowsOf(gapped,1).findIndex(r=>r.text.startsWith('Beta ')),1);
+  assert.match(why(gapped),/^PDF page 1: between table rows 4 and 5 there is room for 1 more row\(s\), so a participant row may be missing/);
+  // A name whose cells are missing from the PDF text is not silently dropped.
+  const nameOnly=structuredClone(groups);const alpha=rowsOf(nameOnly,1).find(r=>r.text.startsWith('Alpha '));alpha.parts=[{x:20,text:'Alpha'}];alpha.text='Alpha';
+  assert.match(why(nameOnly),/^PDF page 1, table row 4: a participant name has no pick, Pts or W cells/);
+  // Without the Pts/W header directly above it, rows lost at the top of the first page cannot be ruled out.
+  const headless=structuredClone(groups);rowsOf(headless,1).shift();
+  assert.match(why(headless),/^PDF page 1: the Pts\/W header is not directly above the first participant row/);
+  // A row of numbers in the pick columns with no participant name beside it.
+  const orphan=structuredClone(groups);rowsOf(orphan,2).pop();
+  assert.match(why(orphan),/^PDF page 2, table row 3: a row of pick numbers has no participant name beside it/);
+  // Three-page variant: every page but the last must reach the common table bottom, every page but the first the top.
+  // Page 2 continues below its split row (y 668) down to page 1's bottom (y 604); page 3 starts at the common top.
+  const extra=(name,rowIndex,page,y)=>row(name,odd,50+rowIndex,0,page,rowIndex,{y});
+  const three=structuredClone(groups);
+  rowsOf(three,2).push(extra('Zeta',4,2,652),extra('Eta',5,2,636),extra('Theta',6,2,620),extra('Iota',7,2,604));
+  three.push({week:9,pageNumber:3,pageFingerprint:'synthetic-page-three',sourceRows:[extra('Kappa',0,3,700),extra('Lambda',1,3,684)]});
+  const full=recoverCompletePdfField(three,partial,15);
+  assert.equal(full?.config.competitionSize,15,'a complete three-page table recovers');
+  assert.equal(full.recovery.rowsPerFullPage,7);
+  const shortMiddle=structuredClone(three);rowsOf(shortMiddle,2).splice(-2,2);
+  assert.match(why(shortMiddle,partial,13),/^PDF page 2: the participant table stops about 2 row\(s\) higher than on page 1, so rows may be missing from page 2/);
+  // The first page may end less than one row from the others (its rows follow the title and header), never a full row.
+  const lowFirst=structuredClone(three);for(const r of rowsOf(lowFirst,1))r.y-=12;
+  assert.equal(recoverCompletePdfField(lowFirst,partial,15)?.config.competitionSize,15,'first page ending 3/4 row lower is natural');
+  const shortFirst=structuredClone(three);rowsOf(shortFirst,1).forEach(r=>{r.y+=16});
+  assert.match(why(shortFirst,partial,15),/^PDF page 1: the participant table stops about 1 row\(s\) higher than on page 2/);
+  const lateTop=structuredClone(three);rowsOf(lateTop,3).shift();
+  assert.match(why(lateTop,partial,14),/^PDF page 3: the participant table starts about 1 row\(s\) below the top of the other pages/);
+  const keyOnlyLast=structuredClone(three);keyOnlyLast[2].sourceRows=[{kind:'pdf',pageNumber:3,rowIndex:0,y:700,text:'1) Bengals at 2) Falcons',parts:[{x:165,text:'1)'},{x:180,text:'Bengals'},{x:290,text:'at'},{x:340,text:'2)'},{x:355,text:'Falcons'}]}];
+  assert.equal(recoverCompletePdfField(keyOnlyLast,partial,13)?.config.competitionSize,13,'a last page holding only the matchup key is not a table page');
+  const nameOnlyLast=structuredClone(three);nameOnlyLast[2].sourceRows=[{kind:'pdf',pageNumber:3,rowIndex:0,y:700,text:'Kappa',parts:[{x:20,text:'Kappa'}]}];
+  assert.match(why(nameOnlyLast,partial,13),/^PDF page 3, table row 1: a participant name has no pick, Pts or W cells/,'a lone name on a page without table rows is not dropped');
+  const blankMiddle=structuredClone(three);blankMiddle[1].sourceRows=[];blankMiddle[1].pageFingerprint='blank-page';
+  assert.match(why(blankMiddle,partial,9),/^PDF page 2 has no readable participant rows/);
+  // A typed total must match exactly; the refusal names the verified count, not the first pass's.
+  assert.match(why(groups,partial,10),/verified rows add up to 9 entries \(5 anonymous and 4 tracked\), but Total pool entries says 10/);
+  // Without a typed total, a cleanly removed page can only be caught by the previous published week's pool size.
+  const prior=size=>({previous:{week:8,competitionSize:size}});
+  assert.deepEqual(recoverCompletePdfField(groups,partial,null,prior(9))?.config.fieldEntries,recovered.config.fieldEntries,'same pool size recovers');
+  assert(recoverCompletePdfField(groups,partial,null,prior(13)),'normal weekly churn (less than half a page) recovers');
+  assert(recoverCompletePdfField(groups,partial,null,prior(5)),'a larger pool is not a missing-page signature');
+  assert.match(why(groups,partial,null,prior(14)),/9 entries, 5 fewer than Week 8 \(14\)\. A page may be missing from this PDF.*type 9 in Total pool entries/);
+  assert.match(why(groups,partial,null,{previous:null}),/no earlier week this season to cross-check the recovered pool size of 9 entries/);
+  assert.match(why(groups,partial,null,prior(null)),/Week 8 is not a published full-field week/);
+  assert.match(why(groups,partial,null,{}),/could not be cross-checked against the previous published week\. Read the sheet again, or type/);
+  assert.match(why(groups,partial,null,{unavailable:'sign in first, then read the sheet again'}),/previous published week: sign in first, then read the sheet again\. Or type the organizer's total in Total pool entries/);
+  assert.equal(recoveredFieldSizeIssue({rowsPerFullPage:51},269,{week:8,competitionSize:276}),null,'the real Week 8 to Week 9 change (-7) is ordinary churn');
+  assert.match(recoveredFieldSizeIssue({rowsPerFullPage:51},220,{week:8,competitionSize:276}),/56 fewer than Week 8 \(276\)/,'a removed 51-row page is caught');
+  assert.equal(recoveredFieldSizeIssue({rowsPerFullPage:51},252,{week:8,competitionSize:276}),null,'less than half a page (24) is churn');
+  assert.match(recoveredFieldSizeIssue({rowsPerFullPage:51},251,{week:8,competitionSize:276}),/25 fewer/,'half a page (25) is refused');
+  assert.equal(recovered.recovery.missingTiebreaks,1,'the blank tiebreak is counted, not filled');
+}

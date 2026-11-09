@@ -72,8 +72,9 @@ button{font:inherit}
   .admin-wrap{width:min(100% - 18px,1180px);padding-top:12px}
   .admin-top{display:block}.admin-brand{align-items:flex-start}.admin-brand-icon{width:48px;height:48px}
   .admin-actions{justify-content:flex-start;margin-top:12px}
-  .review-grid{grid-template-columns:1fr}.auth-row{align-items:flex-start;flex-direction:column}
+  .review-grid{grid-template-columns:minmax(0,1fr)}.auth-row{align-items:flex-start;flex-direction:column}
   .auth-controls,.otp-wrap{width:100%;align-items:stretch;flex-direction:column}.auth-row button,.auth-input{width:100%}
   .primary,.publish{width:100%}.row-actions{align-items:stretch;flex-direction:column}.games-scroll{max-height:340px}
+  #entryReview .nums{white-space:normal;min-width:0}
 }
 @media(display-mode:standalone){.admin-wrap{padding-top:max(12px,env(safe-area-inset-top))}}
