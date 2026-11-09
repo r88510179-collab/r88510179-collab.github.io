@@ -46,6 +46,18 @@ The Picks slate grouping already uses kickoff times in Eastern time. The top dat
 
 If the external organizer has published Week 8 but not Week 9, the app correctly displays **Week 8** even if NFL Week 9 games are underway. The feed can be healthy while the tracker lacks new Week 9 picks. The solution is to receive and validate the real Week 9 sheet, **not** create placeholder picks or edit the database by hand.
 
+### Organizer-issued single-entry corrections
+
+Use **Weekly Admin → Organizer Corrections** for an email/screenshot notice that changes a participant's picks or tiebreaker but provides no replacement full sheet.
+
+1. Sign in as the authorized publisher, choose the published season/week, and load its locked revision.
+2. Select **the exact original PDF or Excel workbook** used for that week. It stays in the browser and its SHA-256 must match the published source fingerprint. The page validates the complete field and reconstructs the participant's original name-to-anonymous-ID association locally; names are never saved to the database.
+3. Enter the participant name as shown in the original organizer sheet; paste the notice's numbered picks in matchup order and type the corrected tiebreaker. Supply a short reference such as "Week 9 correction" (never store names or contact information in it).
+4. Preview the precise before/after game changes, then explicitly approve. The protected compare-and-swap update replaces **one anonymous row only**, increments the locked publication revision, retains counts and the original file fingerprint, writes anonymous correction history, and confirms the result by read-back. If the revision/source/identity cannot be verified, the correction fails closed.
+5. Confirm the public week and group-versus-field standings. If the organizer issues another correction, reload the new revision; stored anonymous history preserves the previous values needed to reverse a mistake.
+
+**Source file requirement:** A standalone screenshot or notice is not sufficient to map a participant name to an anonymous row. The original full sheet (PDF, XLSX, XLS or XLSM) is required. Existing weekly Excel import uses the same strict local-sheet validator and may refuse incompatible spreadsheet layouts. No correction is automatically published, and no source names/images/workbooks are uploaded or kept by the app.
+
 ## 4. Publishing a genuine new Pick'em week — restricted operation
 
 **You need:** The original authorized organizer sheet, access to the existing approved publisher account, and an appropriate backup/recovery position. This is not a normal viewer task.
