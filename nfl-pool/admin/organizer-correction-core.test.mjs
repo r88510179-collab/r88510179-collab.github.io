@@ -1,3 +1,4 @@
+import {readFileSync} from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {planOrganizerCorrection,finalizeOrganizerCorrection} from './organizer-correction-core.js';
@@ -79,4 +80,10 @@ test('refuses game-order and entry-count mismatches',()=>{
 test('refuses source name being appended to persistent anonymous field entries',()=>{
   const a=fixture();a.source.config.fieldEntries[1].sourceName='Mackpool';
   assert.throws(()=>planOrganizerCorrection(a),/validation|reconciled/);
+});
+
+test('whole-sheet publisher refuses to erase recorded organizer corrections',()=>{
+  const source=readFileSync(new URL('./admin.js',import.meta.url),'utf8');
+  assert.match(source,/existing\.config\?\.organizerCorrections/);
+  assert.match(source,/Full-sheet replacement is blocked because it would lose correction history/);
 });
