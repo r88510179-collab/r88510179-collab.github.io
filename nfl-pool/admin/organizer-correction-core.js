@@ -16,6 +16,7 @@ export function planOrganizerCorrection({published,source,digest,participantName
   const cfg=published?.config,src=source?.config;
   requireState(published?.status==='locked'&&Number.isSafeInteger(published?.revision)&&published.revision>0,'A locked published week with a known revision is required.');
   requireState(cfg?.fullFieldReady===true&&src?.fullFieldReady===true,'Both the published week and original source must have validated complete fields.');
+  requireState(validateConfig(cfg).length===0&&validateConfig(src).length===0,'Original or published configuration failed validation.');
   requireState(published.season===src.season&&published.week===src.week,'Original source season/week does not match the published week.');
   requireState(typeof digest==='string'&&/^[a-f0-9]{64}$/.test(digest)&&
     published.source_sha256===digest&&cfg?.source?.sha256===digest,
