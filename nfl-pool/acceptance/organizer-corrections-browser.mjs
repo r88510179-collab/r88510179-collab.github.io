@@ -118,12 +118,6 @@ try{
 
   await page.locator('#picks').fill('2 4');await page.locator('#preview').click();
   await page.locator('#review').waitFor({state:'visible',timeout:20000});
-  await page.evaluate(()=>{window.__testDb.row.revision=5});
-  await page.locator('#confirm').check();await page.locator('#publish').click();
-  await page.getByText(/changed after preview/i).waitFor({timeout:20000});
-  assert.equal(await page.evaluate(()=>window.__testDb.writes),1);
-  console.log('PASS: stale revision refused');
-  assert.deepEqual(errors,[],'No browser errors');
   for(const width of [375,390,430]){
     await page.setViewportSize({width,height:820});
     const m=await page.evaluate(()=>({
@@ -135,6 +129,13 @@ try{
     assert(m.preview>=44&&m.publish>=44,'Touch control height below 44px at '+width);
     console.log('PASS mobile '+width+'px: measured scroll='+m.scroll);
   }
+
+  await page.evaluate(()=>{window.__testDb.row.revision=5});
+  await page.locator('#confirm').check();await page.locator('#publish').click();
+  await page.getByText(/changed after preview/i).waitFor({timeout:20000});
+  assert.equal(await page.evaluate(()=>window.__testDb.writes),1);
+  console.log('PASS: stale revision refused');
+  assert.deepEqual(errors,[],'No browser errors');
   console.log('PASS synthetic Chromium E2E: no real data services contacted');
 }finally{
   if(browser)await browser.close().catch(()=>{});
