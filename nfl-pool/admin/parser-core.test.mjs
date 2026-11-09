@@ -105,6 +105,18 @@ function assertFieldReady(c,competitionSize){
 }
 
 {
+  // Correction lookup: names align with anonymous IDs only in browser memory, never in stored config.
+  const originalPdf=parse([...matchups,...tracked,anonA,anonB],{expectedCompetitionSize:6});
+  assertFieldReady(originalPdf,6);
+  assert.deepEqual(originalPdf.localFieldNames,['Alpha','Beta']);
+  assert.equal(JSON.stringify(originalPdf.config).includes('Alpha'),false);
+  const originalExcel=sheetParse([...tracked,anonA,anonB],[],6);
+  assertFieldReady(originalExcel,6);
+  assert.deepEqual(originalExcel.localFieldNames,['Alpha','Beta']);
+  assert.equal(JSON.stringify(originalExcel.config).includes('Alpha'),false);
+}
+
+{
   const c=parse([...matchups,...tracked,anonA],{expectedCompetitionSize:5});
   assert.deepEqual(c.errors,[]);
   assert.equal(c.config.fullFieldReady,true);
