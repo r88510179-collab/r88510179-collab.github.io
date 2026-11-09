@@ -8,7 +8,7 @@ const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const integer=v=>/^(0|[1-9]\d*)$/.test(String(v??'').trim())?Number(v):NaN;
 function requireState(ok,message){if(!ok)throw new Error(message);}
 function currentEntryMatchesSource(now,original,history){
-  if(same(now,original))return true;
+  if(now?.id===original?.id&&same(now.pickNumbers,original.pickNumbers)&&now.tiebreak===original.tiebreak)return true;
   return history.some(c=>c?.entryId===now?.id &&
     same(c.correctedPickNumbers,now?.pickNumbers) && c.correctedTiebreak===now?.tiebreak);
 }
