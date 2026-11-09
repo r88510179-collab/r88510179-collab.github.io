@@ -94,8 +94,8 @@ try{
   await page.locator('#picks').fill('1 4');await page.locator('#tiebreak').fill('51');
   await page.locator('#noticeSubject').fill('Week 9 correction');
   await page.locator('#preview').click();await page.locator('#review').waitFor({state:'visible',timeout:20000});
-  assert.match(await page.locator('#reviewSummary').innerText(),/1 changed game pick/);
-  assert.equal(await page.locator('#changes tr').count(),1);
+  assert.match(await page.locator('#reviewSummary').innerText(),/2 changed game pick/);
+  assert.equal(await page.locator('#changes tr').count(),2);
   await page.locator('#confirm').check();await page.locator('#publish').click();
   await page.getByText(/published and read-back verified/i).waitFor({timeout:20000});
   const saved=await page.evaluate(()=>window.__testDb);
