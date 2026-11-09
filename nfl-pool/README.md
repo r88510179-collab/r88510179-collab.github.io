@@ -56,6 +56,8 @@ Use **Weekly Admin → Organizer Corrections** for an email/screenshot notice th
 4. Preview the precise before/after game changes, then explicitly approve. The protected compare-and-swap update replaces **one anonymous row only**, increments the locked publication revision, retains counts and the original file fingerprint, writes anonymous correction history, and confirms the result by read-back. If the revision/source/identity cannot be verified, the correction fails closed.
 5. Confirm the public week and group-versus-field standings. If the organizer issues another correction, reload the new revision; stored anonymous history preserves the previous values needed to reverse a mistake.
 
+**Audit preservation:** Once a week contains individual organizer corrections, the old Weekly Admin whole-sheet replacement action refuses to overwrite that week, because it would discard the correction history and could silently restore superseded picks. Use the individual correction page or separately review a history-preserving full-sheet migration.
+
 **Source file requirement:** A standalone screenshot or notice is not sufficient to map a participant name to an anonymous row. The original full sheet (PDF, XLSX, XLS or XLSM) is required. Existing weekly Excel import uses the same strict local-sheet validator and may refuse incompatible spreadsheet layouts. No correction is automatically published, and no source names/images/workbooks are uploaded or kept by the app.
 
 ## 4. Publishing a genuine new Pick'em week — restricted operation
