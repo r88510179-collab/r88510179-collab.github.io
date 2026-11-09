@@ -43,6 +43,17 @@ for(const id of ['sourceFile','participantName','picks','tiebreak','noticeType',
 }
 for(const id of ['season','week'])$(id).addEventListener('change',()=>{invalidate();published=null;$('weekDetails').textContent='';$('history').hidden=true;setBusy(false)});
 $('confirm').addEventListener('change',()=>{$('publish').disabled=!session||!plan||!$('confirm').checked||busy});
+// Compare PostgreSQL JSONB values by meaning, not property insertion order.
+function canonical(value){
+  if(Array.isArray(value))return '['+value.map(canonical).join(',')+']';
+  if(value!==null&&typeof value==='object')return '{'+Object.keys(value).sort().map(k=>JSON.stringify(k)+':'+canonical(value[k])).join(',')+'}';
+  return JSON.stringify(value);
+}
+function exactCorrectionLanded(row,previous,expected){
+  return !!row&&row.season===previous.season&&row.week===previous.week&&
+    row.revision===previous.revision+1&&row.status==='locked'&&
+    row.source_sha256===previous.source_sha256&&canonical(row.config)===canonical(expected);
+}
 async function readWeek(season,week){
   const {data,error}=await neon.from('nfl_pool_weeks').select('season,week,revision,status,config,source_sha256,updated_at').eq('season',season).eq('week',week);
   if(error)throw error;
@@ -140,7 +151,9 @@ $('publish').addEventListener('click',async()=>{
   let attempted=false;
   try{
     const current=await readWeek(previous.season,previous.week);
-    if(current.revision!==previous.revision||current.source_sha256!==previous.source_sha256)
+    if(current.revision!==previous.revision||current.status!=='locked'||
+       current.source_sha256!==previous.source_sha256||
+       canonical(current.config)!==canonical(previous.config))
       throw new Error('This week changed after preview. No write attempted. Reload and preview again.');
     if(operation!==operationAtClick)throw new Error('Correction inputs changed. Preview again.');
     const timestamp=new Date().toISOString(),cfg=finalizeOrganizerCorrection(approved,previous,timestamp);
@@ -155,17 +168,14 @@ $('publish').addEventListener('click',async()=>{
     if(!Array.isArray(data)||data.length!==1||data[0]?.revision!==newRevision)
       throw new Error('Correction write was not confirmed: the previous revision may have changed.');
     const verified=await readWeek(previous.season,previous.week);
-    const row=verified.config?.fieldEntries?.[approved.index];
-    if(verified.revision!==newRevision||row?.id!==approved.entryId||
-       JSON.stringify(row.pickNumbers)!==JSON.stringify(approved.correctedPicks)||
-       row.tiebreak!==approved.correctedTiebreak)
-      throw new Error('The new revision could not be verified by read-back.');
+    if(!exactCorrectionLanded(verified,previous,cfg))
+      throw new Error('The complete updated week and correction history could not be verified by read-back.');
     published=verified;invalidate();showHistory();$('weekDetails').textContent=`Season ${verified.season}, Week ${verified.week} · revision ${verified.revision} · ${verified.config.competitionSize} entries`;
     message(`Official correction published and read-back verified as Week ${verified.week} revision ${newRevision}. Other entries were preserved.`,'success');
   }catch(e){
     if(attempted){
-      try{const latest=await readWeek(previous.season,previous.week);const row=latest.config?.fieldEntries?.[approved.index];
-        if(latest.revision===previous.revision+1&&row?.id===approved.entryId&&JSON.stringify(row.pickNumbers)===JSON.stringify(approved.correctedPicks)&&row.tiebreak===approved.correctedTiebreak){
+      try{const latest=await readWeek(previous.season,previous.week);
+        if(exactCorrectionLanded(latest,previous,cfg)){
           published=latest;invalidate();showHistory();message('Correction did reach the database; confirmed by read-back. Reload the public week.','success');return;
         }
       }catch{}
