@@ -7,12 +7,20 @@ const normalizeName=v=>String(v??'').normalize('NFKC').replace(/\s+/g,' ').trim(
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const integer=v=>/^(0|[1-9]\d*)$/.test(String(v??'').trim())?Number(v):NaN;
 function requireState(ok,message){if(!ok)throw new Error(message);}
+export function organizerNoticeLabel(sourceType){
+  switch(sourceType){
+    case 'organizer-email':return 'Organizer email';
+    case 'organizer-spreadsheet':return 'Organizer spreadsheet';
+    case 'organizer-notice':return 'Organizer notice';
+    default:return '';
+  }
+}
 function currentEntryMatchesSource(now,original,history){
   if(now?.id===original?.id&&same(now.pickNumbers,original.pickNumbers)&&now.tiebreak===original.tiebreak)return true;
   const last=history.filter(c=>c?.entryId===now?.id).at(-1);
   return !!last&&same(last.correctedPickNumbers,now.pickNumbers)&&last.correctedTiebreak===now.tiebreak;
 }
-export function planOrganizerCorrection({published,source,digest,participantName,picksText,tiebreakText,sourceType='organizer-email',noticeSubject='Organizer correction'}){
+export function planOrganizerCorrection({published,source,digest,participantName,picksText,tiebreakText,sourceType='organizer-email'}){
   const cfg=published?.config,src=source?.config;
   requireState(published?.status==='locked'&&Number.isSafeInteger(published?.revision)&&published.revision>0,'A locked published week with a known revision is required.');
   requireState(cfg?.fullFieldReady===true&&src?.fullFieldReady===true,'Both the published week and original source must have validated complete fields.');
@@ -52,10 +60,7 @@ export function planOrganizerCorrection({published,source,digest,participantName
   }
   const tiebreak=integer(tiebreakText);
   requireState(Number.isSafeInteger(tiebreak)&&tiebreak<=999,'Enter a valid, nonnegative whole-number tiebreaker (0–999).');
-  requireState(['organizer-email','organizer-spreadsheet','organizer-notice'].includes(sourceType),'Unsupported organizer notice type.');
-  const subject=String(noticeSubject??'').trim();
-  requireState(subject.length>0&&subject.length<=120&&/^[^\r\n]*$/.test(subject),'Enter a short notice reference (up to 120 characters). Do not include names or contact details.');
-  requireState(!normalizeName(subject).includes(name)&&!/[\w.+-]+@[\w.-]+\.[a-z]{2,}/i.test(subject),'Notice reference must not contain a participant name or an email address.');
+  requireState(organizerNoticeLabel(sourceType),'Unsupported organizer notice type.');
   requireState(!same(before.pickNumbers,picks)||before.tiebreak!==tiebreak,'The published entry already matches this correction. No new revision is needed.');
   const afterConfig=JSON.parse(JSON.stringify(cfg));
   afterConfig.fieldEntries[index]={id:before.id,pickNumbers:picks,tiebreak};
@@ -66,19 +71,22 @@ export function planOrganizerCorrection({published,source,digest,participantName
   }).filter(Boolean);
   return{entryId:before.id,index,priorRevision:published.revision,previousPicks:[...before.pickNumbers],
     correctedPicks:picks,previousTiebreak:before.tiebreak,correctedTiebreak:tiebreak,
-    changes,sourceType,noticeSubject:subject,afterConfig};
+    changes,sourceType,afterConfig};
 }
 export function finalizeOrganizerCorrection(plan,published,recordedAt){
   requireState(plan?.priorRevision===published?.revision&&published?.status==='locked','The published revision changed. Preview again.');
-  requireState(!Number.isNaN(Date.parse(recordedAt)),'Correction timestamp is invalid.');
+  const timestamp=Date.parse(recordedAt);
+  requireState(Number.isFinite(timestamp),'Correction timestamp is invalid.');
+  const noticeSubject=organizerNoticeLabel(plan.sourceType);
+  requireState(noticeSubject,'Unsupported organizer notice type.');
   const cfg=JSON.parse(JSON.stringify(plan.afterConfig));
   const history=Array.isArray(cfg.organizerCorrections)?cfg.organizerCorrections:[];
   cfg.organizerCorrections=[...history,{
-    version:1,entryId:plan.entryId,sourceType:plan.sourceType,noticeSubject:plan.noticeSubject,
+    version:1,entryId:plan.entryId,sourceType:plan.sourceType,noticeSubject,
     sourceWeek:published.week,priorRevision:published.revision,
     priorPickNumbers:plan.previousPicks,correctedPickNumbers:plan.correctedPicks,
     priorTiebreak:plan.previousTiebreak,correctedTiebreak:plan.correctedTiebreak,
-    recordedAt
+    recordedAt:new Date(timestamp).toISOString()
   }];
   const errors=validateConfig(cfg);requireState(errors.length===0,'Final correction is invalid: '+errors.join(' · '));
   return cfg;

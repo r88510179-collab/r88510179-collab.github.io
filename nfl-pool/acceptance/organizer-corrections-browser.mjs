@@ -27,7 +27,7 @@ const candidate=parseDocumentGroups([{week:9,lines:sourceRows.map(x=>x.text),sou
 assert.equal(candidate?.config?.fullFieldReady,true,JSON.stringify(candidate?.fullFieldIssues||candidate?.errors));
 assert.deepEqual(candidate.localFieldNames,['Mackpool','Other Entrant']);
 const sha=createHash('sha256').update(readFileSync(file)).digest('hex');
-const initial={season:2026,week:9,revision:3,status:'locked',source_sha256:sha,
+const initial={season:2026,week:9,revision:3,status:'locked',source_sha256:sha,source_filename:'qa-week-9.xlsx',
   config:{...candidate.config,source:{kind:'weekly-upload',filename:'qa-week-9.xlsx',sha256:sha}},
   updated_at:'2026-11-09T12:00:00Z'};
 const neonStub=`
@@ -55,6 +55,8 @@ export function createClient(){
             db.row={...db.row,...copy(this.rowPatch)};
             db.writes++;
             data=[{season:db.row.season,week:db.row.week,revision:db.row.revision}];
+            if(db.writeMode==='lose-response')return Promise.reject(Error('Synthetic lost PATCH response')).then(ok,fail);
+            if(db.writeMode==='different-timestamp')db.row.updated_at='2026-11-09T12:00:00Z';
           }else if(this.op==='read'&&matches)data=[copy(db.row)];
           return Promise.resolve({data,error:null}).then(ok,fail);
         }
@@ -92,7 +94,7 @@ try{
   await page.locator('#sourceFile').setInputFiles(file);
   await page.locator('#participantName').fill('Mackpool');
   await page.locator('#picks').fill('1 4');await page.locator('#tiebreak').fill('51');
-  await page.locator('#noticeSubject').fill('Week 9 correction');
+  assert.equal(await page.locator('#noticeSubject').count(),0,'No free-text audit reference is exposed');
   await page.locator('#preview').click();await page.locator('#review').waitFor({state:'visible',timeout:20000});
   assert.match(await page.locator('#reviewSummary').innerText(),/2 changed game pick/);
   assert.equal(await page.locator('#changes tr').count(),2);
@@ -104,8 +106,11 @@ try{
   assert.equal(saved.row.config.competitionSize,6);
   assert.deepEqual(saved.row.config.fieldEntries.map(e=>e.pickNumbers),[[1,4],[1,4]]);
   assert.equal(saved.row.config.organizerCorrections.length,1);
+  assert.equal(saved.row.config.organizerCorrections[0].noticeSubject,'Organizer email');
   assert.equal(saved.row.source_sha256,sha);
-  assert(!JSON.stringify(saved.row.config).includes('Mackpool'),'Participant name cannot be stored');
+  for(const name of candidate.localFieldNames){
+    assert(!JSON.stringify(saved.row.config).includes(name),'Source participant names cannot be stored');
+  }
   console.log('PASS: synthetic Excel, unique name mapping, reviewed one-entry CAS update and readback');
 
   await page.locator('#sourceFile').setInputFiles(file);
@@ -118,16 +123,19 @@ try{
 
   await page.locator('#picks').fill('2 4');await page.locator('#preview').click();
   await page.locator('#review').waitFor({state:'visible',timeout:20000});
-  for(const width of [375,390,430]){
+  for(const width of [375,390,430,1280]){
     await page.setViewportSize({width,height:820});
     const m=await page.evaluate(()=>({
       inner:innerWidth,scroll:document.documentElement.scrollWidth,
       preview:document.querySelector('#preview').getBoundingClientRect().height,
-      publish:document.querySelector('#publish').getBoundingClientRect().height
+      publish:document.querySelector('#publish').getBoundingClientRect().height,
+      load:document.querySelector('#loadWeek').getBoundingClientRect().height,
+      confirm:document.querySelector('label:has(#confirm)').getBoundingClientRect().height,
+      weeklyAdmin:document.querySelector('.admin-actions .back').getBoundingClientRect().height
     }));
     assert.equal(m.inner,width);assert(m.scroll<=width,'Horizontal overflow at '+width);
-    assert(m.preview>=44&&m.publish>=44,'Touch control height below 44px at '+width);
-    console.log('PASS mobile '+width+'px: measured scroll='+m.scroll);
+    assert(Math.min(m.preview,m.publish,m.load,m.confirm,m.weeklyAdmin)>=44,'Touch control height below 44px at '+width);
+    console.log('PASS viewport '+width+'px: '+JSON.stringify(m));
   }
 
   await page.evaluate(()=>{window.__testDb.row.revision=5});
@@ -135,6 +143,26 @@ try{
   await page.getByText(/changed after preview/i).waitFor({timeout:20000});
   assert.equal(await page.evaluate(()=>window.__testDb.writes),1);
   console.log('PASS: stale revision refused');
+
+  await page.locator('#loadWeek').click();
+  await page.locator('#weekDetails').getByText('revision 5',{exact:false}).waitFor();
+  await page.evaluate(()=>{window.__testDb.writeMode='lose-response'});
+  await page.locator('#preview').click();
+  await page.locator('#confirm').check();
+  await page.locator('#publish').click();
+  await page.getByText(/did reach the database; confirmed by read-back/i).waitFor();
+  assert.equal(await page.evaluate(()=>window.__testDb.writes),2);
+  assert.match(await page.locator('#weekDetails').innerText(),/revision 6/);
+  console.log('PASS: lost response confirmed by complete read-back without retrying');
+
+  await page.evaluate(()=>{window.__testDb.writeMode='different-timestamp'});
+  await page.locator('#picks').fill('1 3');
+  await page.locator('#preview').click();
+  await page.locator('#confirm').check();
+  await page.locator('#publish').click();
+  await page.getByText(/write result is not confirmed/i).waitFor();
+  assert.equal(await page.evaluate(()=>window.__testDb.writes),3);
+  console.log('PASS: matching picks and history with different publication metadata cannot report success');
   assert.deepEqual(errors,[],'No browser errors');
   console.log('PASS synthetic Chromium E2E: no real data services contacted');
 }finally{

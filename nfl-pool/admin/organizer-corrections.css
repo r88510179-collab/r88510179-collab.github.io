@@ -7,5 +7,7 @@
 .history p{margin:6px 0}
 #reviewSummary{overflow-wrap:anywhere}
 #review .admin-table{white-space:normal}
-#review .replace{align-items:flex-start;font-size:13px}
+#review .replace{align-items:center;min-height:44px;font-size:13px}
+.admin-actions .back{min-height:44px}
+#noticeType{max-width:354px}
 @media(max-width:600px){.correction-form-grid{grid-template-columns:1fr}.correction-input,.correction-textarea{width:100%}}

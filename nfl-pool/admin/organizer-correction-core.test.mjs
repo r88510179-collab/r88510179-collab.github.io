@@ -20,7 +20,7 @@ function fixture(){
     fullFieldEntryCount:3,competitionSize:7,tiebreakGameIndex:1,source:{kind:'weekly-upload',sha256:sha,filename:'source.xlsx'}};
   const published={season:2026,week:9,revision:3,status:'locked',source_sha256:sha,config:clone(cfg)};
   const source={config:clone(cfg),localFieldNames:['Alpha','Mackpool','Gamma']};
-  return{published,source,digest:sha,participantName:' mACKpool ',picksText:'1 4',tiebreakText:'51',sourceType:'organizer-email',noticeSubject:'Week 9 correction'};
+  return{published,source,digest:sha,participantName:' mACKpool ',picksText:'1 4',tiebreakText:'51',sourceType:'organizer-email'};
 }
 test('matches exact original source name and produces minimal anonymous single-entry correction',()=>{
   const args=fixture(),plan=planOrganizerCorrection(args);
@@ -36,6 +36,7 @@ test('matches exact original source name and produces minimal anonymous single-e
   assert.equal(result.organizerCorrections.length,1);
   assert.equal(result.organizerCorrections[0].entryId,'field-002');
   assert.equal(result.organizerCorrections[0].priorRevision,3);
+  assert.equal(result.organizerCorrections[0].noticeSubject,'Organizer email');
   assert.deepEqual(result.organizerCorrections[0].priorPickNumbers,[2,4]);
   assert.deepEqual(result.organizerCorrections[0].correctedPickNumbers,[1,4]);
   assert.equal(JSON.stringify(result).includes('Mackpool'),false);
@@ -48,7 +49,9 @@ test('accepts a later correction only when prior anonymous change has recorded p
   assert.equal(next.entryId,'field-002');
   assert.deepEqual(next.previousPicks,[1,4]);
   assert.deepEqual(next.correctedPicks,[2,3]);
-  assert.equal(finalizeOrganizerCorrection(next,later.published,'2026-11-09T16:01:00Z').organizerCorrections.length,2);
+  const history=finalizeOrganizerCorrection(next,later.published,'2026-11-09T16:01:00Z').organizerCorrections;
+  assert.equal(history.length,2);
+  assert.deepEqual(history[0],config.organizerCorrections[0]);
 });
 test('refuses wrong source fingerprint',()=>{
   const a=fixture();a.digest='b'.repeat(64);
@@ -80,6 +83,29 @@ test('refuses game-order and entry-count mismatches',()=>{
 test('refuses source name being appended to persistent anonymous field entries',()=>{
   const a=fixture();a.source.config.fieldEntries[1].sourceName='Mackpool';
   assert.throws(()=>planOrganizerCorrection(a),/validation|reconciled/);
+});
+
+test('new public history cannot contain free-form references or private source content',()=>{
+  const privateValues=[
+    'Mackpool','Organizer correction, same email as Alpha','participant@example.test',
+    'private-source-for-Alpha.xlsm','alpha-email-screenshot.png','data:image/png;base64,PRIVATE',
+    'Forwarded message with a private phone number 555-0100'
+  ];
+  for(const value of privateValues){
+    const args=fixture();
+    args.noticeSubject=value;
+    args.noticeAttachment=value;
+    args.source.config.source.filename=value;
+    args.source.fileContents=value;
+    args.source.screenshot=value;
+    const plan=planOrganizerCorrection(args);
+    const result=finalizeOrganizerCorrection({...plan,noticeSubject:value},args.published,'2026-11-09T16:00:00Z');
+    assert.equal(result.organizerCorrections[0].noticeSubject,'Organizer email');
+    assert.deepEqual(result.source,args.published.config.source);
+    assert(!JSON.stringify(result).includes(value));
+    assert.throws(()=>planOrganizerCorrection({...args,sourceType:value}),/Unsupported organizer notice type/);
+    assert.throws(()=>finalizeOrganizerCorrection({...plan,sourceType:value},args.published,'2026-11-09T16:00:00Z'),/Unsupported organizer notice type/);
+  }
 });
 
 test('whole-sheet publisher refuses to erase recorded organizer corrections',()=>{

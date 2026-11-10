@@ -52,7 +52,7 @@ Use **Weekly Admin → Organizer Corrections** for an email/screenshot notice th
 
 1. Sign in as the authorized publisher, choose the published season/week, and load its locked revision.
 2. Select **the exact original PDF or Excel workbook** used for that week. It stays in the browser and its SHA-256 must match the published source fingerprint. The page validates the complete field and reconstructs the participant's original name-to-anonymous-ID association locally; names are never saved to the database.
-3. Enter the participant name as shown in the original organizer sheet; paste the notice's numbered picks in matchup order and type the corrected tiebreaker. Supply a short reference such as "Week 9 correction" (never store names or contact information in it).
+3. Enter the participant name as shown in the original organizer sheet, paste the numbered picks in matchup order, and enter the corrected tiebreaker. Select the organizer notice type. The history uses a standard label based on that choice.
 4. Preview the precise before/after game changes, then explicitly approve. The protected compare-and-swap update replaces **one anonymous row only**, increments the locked publication revision, retains counts and the original file fingerprint, writes anonymous correction history, and confirms the result by read-back. If the revision/source/identity cannot be verified, the correction fails closed.
 5. Confirm the public week and group-versus-field standings. If the organizer issues another correction, reload the new revision; stored anonymous history preserves the previous values needed to reverse a mistake.
 

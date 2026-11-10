@@ -1,7 +1,7 @@
 import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';
 import {detectWeek,groupPdfTextItems,carryForwardWeekHints,parseDocumentGroups,validateConfig} from './parser-core.js?v=16';
 import {pdfRecoveryApplies,attemptPdfFieldRecovery} from './pdf-field-recovery.js?v=3';
-import {planOrganizerCorrection,finalizeOrganizerCorrection} from './organizer-correction-core.js?v=1';
+import {planOrganizerCorrection,finalizeOrganizerCorrection,organizerNoticeLabel} from './organizer-correction-core.js?v=2';
 
 const ADMIN_EMAIL='djsmokke@gmail.com';
 const neon=createClient({auth:{url:'https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth'},
@@ -11,8 +11,8 @@ let session=null,published=null,plan=null,operation=0,busy=false;
 const now=new Date();$('season').value=String(now.getUTCMonth()<2?now.getUTCFullYear()-1:now.getUTCFullYear());
 function message(s,type='info'){$('message').className='notice '+type;$('message').textContent=s;$('message').hidden=!s}
 function invalidate(){operation++;plan=null;$('review').hidden=true;$('confirm').checked=false;$('publish').disabled=true}
-function setBusy(v){busy=v;for(const id of ['sendCode','verifyCode','loadWeek','preview','publish'])$(id).disabled=v;
-  for(const id of ['sourceFile','season','week','participantName','picks','tiebreak','noticeSubject','noticeType','confirm'])$(id).disabled=v;
+function setBusy(v){busy=v;for(const id of ['sendCode','verifyCode','signOut','loadWeek','preview','publish'])$(id).disabled=v;
+  for(const id of ['sourceFile','season','week','participantName','picks','tiebreak','noticeType','confirm'])$(id).disabled=v;
   if(!v){$('loadWeek').disabled=!session;$('preview').disabled=!session||!published;$('publish').disabled=!session||!plan||!$('confirm').checked;}}
 async function refreshSession(){
   const result=await neon.auth.getSession();const data=result?.data;
@@ -38,7 +38,7 @@ $('verifyCode').addEventListener('click',async()=>{
 });
 $('signOut').addEventListener('click',async()=>{await neon.auth.signOut();session=null;published=null;invalidate();$('weekDetails').textContent='';$('history').hidden=true;await refreshSession();message('Signed out.')});
 $('otp').addEventListener('keydown',e=>{if(e.key==='Enter')$('verifyCode').click()});
-for(const id of ['sourceFile','participantName','picks','tiebreak','noticeType','noticeSubject']){
+for(const id of ['sourceFile','participantName','picks','tiebreak','noticeType']){
   $(id).addEventListener('input',invalidate);$(id).addEventListener('change',invalidate);
 }
 for(const id of ['season','week'])$(id).addEventListener('change',()=>{invalidate();published=null;$('weekDetails').textContent='';$('history').hidden=true;setBusy(false)});
@@ -49,13 +49,17 @@ function canonical(value){
   if(value!==null&&typeof value==='object')return '{'+Object.keys(value).sort().map(k=>JSON.stringify(k)+':'+canonical(value[k])).join(',')+'}';
   return JSON.stringify(value);
 }
-function exactCorrectionLanded(row,previous,expected){
-  return !!row&&row.season===previous.season&&row.week===previous.week&&
-    row.revision===previous.revision+1&&row.status==='locked'&&
-    row.source_sha256===previous.source_sha256&&canonical(row.config)===canonical(expected);
+function exactCorrectionLanded(row,attempt){
+  return !!row&&row.season===attempt.season&&row.week===attempt.week&&
+    row.revision===attempt.revision&&row.status==='locked'&&
+    row.source_sha256===attempt.source_sha256&&row.source_filename===attempt.source_filename&&
+    Date.parse(row.published_at)===Date.parse(attempt.published_at)&&
+    Date.parse(row.locked_at)===Date.parse(attempt.locked_at)&&
+    Date.parse(row.updated_at)===Date.parse(attempt.updated_at)&&
+    canonical(row.config)===canonical(attempt.config);
 }
 async function readWeek(season,week){
-  const {data,error}=await neon.from('nfl_pool_weeks').select('season,week,revision,status,config,source_sha256,updated_at').eq('season',season).eq('week',week);
+  const {data,error}=await neon.from('nfl_pool_weeks').select('season,week,revision,status,config,source_filename,source_sha256,published_at,locked_at,updated_at').eq('season',season).eq('week',week);
   if(error)throw error;
   if(!Array.isArray(data)||data.length!==1)throw new Error('Expected exactly one published week; stop and verify the season/week.');
   return data[0];
@@ -66,7 +70,7 @@ function showHistory(){
   $('history').replaceChildren();
   if(history.length){const heading=document.createElement('strong');heading.textContent=history.length+' organizer correction(s) recorded';$('history').append(heading);
     for(const c of history.slice(-5).reverse()){
-      const p=document.createElement('p');p.textContent=`Revision ${c.priorRevision} → ${Number(c.priorRevision)+1} · ${c.entryId} · ${c.noticeSubject||c.sourceType||'Organizer notice'} · ${c.recordedAt||''}`;
+      const p=document.createElement('p');p.textContent=`Revision ${c.priorRevision} → ${Number(c.priorRevision)+1} · ${c.entryId} · ${organizerNoticeLabel(c.sourceType)||'Organizer notice'} · ${c.recordedAt||''}`;
       $('history').append(p);
     }
   }
@@ -138,7 +142,7 @@ $('preview').addEventListener('click',async()=>{
     if(source.errors.length||source.fullFieldIssues.length||!source.config.fullFieldReady)
       throw new Error('Original sheet field validation failed. '+[...source.errors,...source.fullFieldIssues].join(' · '));
     const next=planOrganizerCorrection({published,source,digest:sha,participantName:$('participantName').value,
-      picksText:$('picks').value,tiebreakText:$('tiebreak').value,sourceType:$('noticeType').value,noticeSubject:$('noticeSubject').value});
+      picksText:$('picks').value,tiebreakText:$('tiebreak').value,sourceType:$('noticeType').value});
     if(generation!==operation)throw new Error('Inputs changed during validation; preview again.');
     plan=next;showPlan(plan);message('Correction validated. Review each changed game, then explicitly approve the new revision.','success');
   }catch(e){if(generation===operation){invalidate();message(e?.message||String(e),'error')}}
@@ -148,18 +152,19 @@ $('publish').addEventListener('click',async()=>{
   if(busy||!session||!published||!plan||!$('confirm').checked)return;
   const approved=plan,previous=published,operationAtClick=operation;
   setBusy(true);message('');
-  let attempted=false;
+  let attempt=null;
   try{
     const current=await readWeek(previous.season,previous.week);
     if(current.revision!==previous.revision||current.status!=='locked'||
-       current.source_sha256!==previous.source_sha256||
+       current.source_sha256!==previous.source_sha256||current.source_filename!==previous.source_filename||
        canonical(current.config)!==canonical(previous.config))
       throw new Error('This week changed after preview. No write attempted. Reload and preview again.');
     if(operation!==operationAtClick)throw new Error('Correction inputs changed. Preview again.');
     const timestamp=new Date().toISOString(),cfg=finalizeOrganizerCorrection(approved,previous,timestamp);
     const newRevision=previous.revision+1;
     const write={revision:newRevision,config:cfg,published_at:timestamp,locked_at:timestamp,updated_at:timestamp};
-    attempted=true;
+    attempt={...write,season:previous.season,week:previous.week,
+      source_sha256:previous.source_sha256,source_filename:previous.source_filename};
     const {data,error}=await neon.from('nfl_pool_weeks').update(write)
       .eq('season',previous.season).eq('week',previous.week).eq('revision',previous.revision)
       .eq('status','locked').eq('source_sha256',previous.source_sha256)
@@ -168,15 +173,17 @@ $('publish').addEventListener('click',async()=>{
     if(!Array.isArray(data)||data.length!==1||data[0]?.revision!==newRevision)
       throw new Error('Correction write was not confirmed: the previous revision may have changed.');
     const verified=await readWeek(previous.season,previous.week);
-    if(!exactCorrectionLanded(verified,previous,cfg))
+    if(!exactCorrectionLanded(verified,attempt))
       throw new Error('The complete updated week and correction history could not be verified by read-back.');
     published=verified;invalidate();showHistory();$('weekDetails').textContent=`Season ${verified.season}, Week ${verified.week} · revision ${verified.revision} · ${verified.config.competitionSize} entries`;
     message(`Official correction published and read-back verified as Week ${verified.week} revision ${newRevision}. Other entries were preserved.`,'success');
   }catch(e){
-    if(attempted){
+    if(attempt){
       try{const latest=await readWeek(previous.season,previous.week);
-        if(exactCorrectionLanded(latest,previous,cfg)){
-          published=latest;invalidate();showHistory();message('Correction did reach the database; confirmed by read-back. Reload the public week.','success');return;
+        if(exactCorrectionLanded(latest,attempt)){
+          published=latest;invalidate();showHistory();
+          $('weekDetails').textContent=`Season ${latest.season}, Week ${latest.week} · revision ${latest.revision} · ${latest.config.competitionSize} entries`;
+          message('Correction did reach the database; confirmed by read-back. Reload the public week.','success');return;
         }
       }catch{}
       invalidate();message('Write result is not confirmed: '+(e?.message||e)+'. Do NOT retry without loading the latest week and validating again.','error');
