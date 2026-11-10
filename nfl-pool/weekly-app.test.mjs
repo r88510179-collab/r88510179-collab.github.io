@@ -2491,3 +2491,71 @@ console.log('weekly Home dashboard regressions passed: every view change announc
 }
 
 console.log('weekly V1.3 mobile UX regressions passed: the Picks snapshot is the table’s own grading, kickoffs ride with verified events, VOID/HOLD/UNDER REVIEW and ownership agree with the page, nothing is answered while a week loads, and the rules model is the card’s own');
+
+
+// Week 9 full-field acceptance regression: 35 entrants had already scored 13 on Sunday.
+// D.C. / DJS could reach only 12, JC only 11, and a no-submission entry cannot win.
+{
+  const pairs=[
+    ['CIN','ATL'],['DEN','CAR'],['DAL','IND'],['NYJ','KC'],
+    ['DET','MIA'],['CLE','NO'],['NYG','PHI'],['LAR','WAS'],
+    ['HOU','LAC'],['LV','SF'],['GB','NE'],['ARI','SEA'],
+    ['TB','CHI'],['BUF','MIN']
+  ];
+  const winners=[1,3,5,8,9,12,13,15,17,20,21,24,26,27];
+  const games=pairs.map(([away,home],i)=>({away,home,awayNumber:2*i+1,homeNumber:2*i+2,date:i===13?'2026-11-09':'2026-11-08'}));
+  const tracked=[
+    {id:'dc',displayName:'D.C.',pickNumbers:[1,4,5,8,9,12,13,15,17,20,22,24,26,27],tiebreak:41},
+    {id:'jc',displayName:'JC',pickNumbers:[2,3,5,8,9,11,13,15,17,20,21,24,25,27],tiebreak:44},
+    {id:'djs',displayName:'DJS',pickNumbers:[1,3,6,8,9,12,13,15,17,20,22,24,26,27],tiebreak:40},
+    {id:'thaddeus',displayName:'Thaddeus',pickNumbers:Array(14).fill(null),tiebreak:null}
+  ];
+  const fieldEntries=Array.from({length:35},(_,i)=>({
+    id:'field-'+String(i+1).padStart(3,'0'),
+    pickNumbers:winners.map((n,j)=>j===13&&i>=33?28:n),
+    tiebreak:36+i
+  }));
+  const cfg={schemaVersion:1,season:2026,week:9,tiebreakGameIndex:13,
+    games,participants:tracked,fieldEntries,fullFieldReady:true,
+    competitionSize:39,fullFieldEntryCount:35};
+  const monday=(final=false)=>{const e=game({week:9,away:'BUF',home:'MIN',awayScore:'16',homeScore:'13'});if(!final)e.status={type:{state:'pre',completed:false,shortDetail:'Scheduled'}};return e};
+  const sundays=pairs.slice(0,13).map(([away,home],i)=>game({
+    week:9,away,home,awayScore:winners[i]===2*i+1?'27':'10',homeScore:winners[i]===2*i+2?'27':'10'
+  }));
+  const v=await view({weekConfig:cfg,initialScorePayload:{events:[...sundays,monday()]}});
+  assert.equal(v.$('fieldSummary').textContent,'39 entries · field names anonymized');
+  assert.match(v.$('standings').innerHTML,/ELIMINATED/);
+  assert.equal((v.$('standings').innerHTML.match(/ELIMINATED/g)||[]).length,3,'all three submitters are out against 35 leaders with 13 wins');
+  assert.match(v.$('standings').innerHTML,/Max 12 wins/);
+  assert.match(v.$('standings').innerHTML,/Max 11 wins/);
+  assert.match(v.$('standings').innerHTML,/NO PICKS/);
+  assert.match(v.$('homeStandings').innerHTML,/ELIMINATED/,'Home uses the same full-field verdict');
+  assert.match(v.$('leaderNote').textContent,/ELIMINATED/,'Home group leader cannot imply a field win');
+  assert.doesNotMatch(v.html(),/WIN CEILING|win ceiling/,'no winning-ceiling claim survives');
+
+  v.setFailure(true);await v.refresh();
+  assert.equal((v.$('standings').innerHTML.match(/NOT VERIFIED/g)||[]).length,3,'a failed score refresh suppresses projections');
+  assert.doesNotMatch(v.$('homeStandings').innerHTML,/ELIMINATED|1ST POSSIBLE/,'Home projections pause on feed failure');
+
+  v.setFailure(false);v.setPayload({events:[...sundays,monday(true)]});await v.refresh();
+  assert.equal((v.$('standings').innerHTML.match(/ELIMINATED/g)||[]).length,3,'completed Week 9 remains eliminated');
+  assert.match(v.$('standings').innerHTML,/NO PICKS/);
+  assert.equal(v.$('bestWins').textContent,'14');
+}
+
+// A wins tie does not establish a first-place finish before the designated tiebreak is final.
+{
+  const cfg={schemaVersion:1,season:2026,week:3,tiebreakGameIndex:0,fullFieldReady:true,
+    competitionSize:3,fullFieldEntryCount:1,
+    games:[{away:'DEN',home:'KC',awayNumber:1,homeNumber:2,date:'2026-09-27'}],
+    participants:[
+      {id:'dc',displayName:'D.C.',pickNumbers:[1],tiebreak:41},
+      {id:'djs',displayName:'DJS',pickNumbers:[2],tiebreak:44}
+    ],fieldEntries:[{id:'field-001',pickNumbers:[1],tiebreak:42}]};
+  const before=game({away:'DEN',home:'KC'});before.status={type:{state:'pre',completed:false,shortDetail:'Scheduled'}};
+  const v=await view({weekConfig:cfg,initialScorePayload:{events:[before]}});
+  assert.match(v.$('standings').innerHTML,/TB PENDING/,'a tied best-case wins score is not a confirmed win');
+  v.setPayload({events:[game({away:'DEN',home:'KC',awayScore:'24',homeScore:'17'})]});await v.refresh();
+  assert.match(v.$('standings').innerHTML,/FIELD WINNER/,'a verified final tiebreak can decide actual first place');
+}
+console.log('Week 9 full-field elimination, outage and tiebreak regressions passed');
