@@ -399,7 +399,9 @@ function render(){
   const r=rows(),lead=r[0],f=nflFinals+voids,live=G.filter(g=>g.state==='in'&&!g.completed).length,t=tiebreak(),finalWinners=f===M.length?finalWinnerIndices(G,t):[],race=raceStatus(),field=fieldSnapshot();
   LAST_RACE=race;
   let rank=1;
-  $('fieldSummary').textContent=field?`${allCompetitionEntries().filter(p=>p.picks.some(Boolean)).length} submitted · ${field.size} published rows · field names anonymized`:'Full-field data unavailable for this week.';
+  const storedSubmitted=field?allCompetitionEntries().filter(p=>p.picks.some(Boolean)).length:0;
+  $('fieldSummary').textContent=field?`${storedSubmitted} submitted · ${field.size-storedSubmitted} without picks · ${field.size} stored entries`:'Full-field data unavailable for this week.';
+  $('fieldSummary').title=field?'Overall rank and Top % use stored entries; the organizer may list additional names without submitted picks that were not stored.':'';
   $('standings').innerHTML=r.map((p,i)=>{
     if(i&&!tiedWith(p,r[i-1],t))rank=i+1;
     const leadTie=tiedWith(p,lead,t),fm=field?.metrics.get(p.id),overall=fm?fieldRankLabel(fm):'—',back=fm?(fm.behind?fm.behind:'—'):'—',ceiling=fm?fullFieldOutlookLabel(fm):'—';
