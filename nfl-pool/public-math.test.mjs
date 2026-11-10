@@ -69,9 +69,11 @@ import {competitionRanks,ownershipShare,scoreEntry,tiebreakState} from './public
   // How many anonymous no-picks the public validator accepts depends on the config's validation version, so it is
   // covered by behavior in weekly-app.test.mjs rather than pinned to source text here.
   assert(source.includes("ties>1?'Tracked leaders':'Group leader'"),'live tracked ties must not render a singular group leader');
-  assert(source.includes('WIN CEILING'));
-  assert(source.includes('unresolved tiebreak not projected'));
-  assert(!source.includes("'best possible'"));
+  assert(!source.includes('WIN CEILING'),'an apparent winning ceiling must not be advertised as a win chance');
+  assert(source.includes('fullFieldProjectionVerified'),'first-place projections require verified feed/rulings/publication');
+  assert(source.includes("outlook='ELIMINATED'"),'full-field elimination must be an explicit state');
+  assert(source.includes("outlook='TIEBREAK UNKNOWN'"),'unresolved tiebreak must not imply a win');
+  assert(source.includes('No picks submitted'),'a no-submission row must not gain a first-place projection');
   const scenarioStart=source.indexOf('function swingIndexes');
   const scenarioEnd=source.indexOf('function renderRace',scenarioStart);
   assert(scenarioStart>=0&&scenarioEnd>scenarioStart,'tracked scenario/race block must be identifiable');
@@ -80,4 +82,4 @@ import {competitionRanks,ownershipShare,scoreEntry,tiebreakState} from './public
   assert.doesNotMatch(scenarioBlock,/\bF\b|allCompetitionEntries\s*\(|rankCompetition\s*\(|fieldSnapshot\s*\(/,'anonymous full-field entries must not enter the tracked scenario/race engine');
 }
 
-console.log('public competition rank, tiebreak, ownership denominator, tracked scenario scope, and ceiling wording regressions passed');
+console.log('public competition rank, tiebreak, ownership denominator, tracked scenario scope, and full-field eligibility wording regressions passed');
