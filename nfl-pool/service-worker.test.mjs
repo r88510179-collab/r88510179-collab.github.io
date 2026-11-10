@@ -97,7 +97,11 @@ function restoreVerifiedDateLayer(path,text) {
 // Invert only this release's three wording changes and PWA version bumps for
 // historical byte-for-byte tests. Current deployed references are verified below.
 function restoreFieldOutlook(path,text){
+  // Undo only the roster-label release layer (v26/v39) before the prior
+  // full-field v25/v38 inverse, preserving all immutable historical baselines.
   if(path==='index.html'){
+    assert.equal(text.split('weekly-app.js?v=weekly-v26').length,2,'one roster-label JS load');
+    text=text.replace('weekly-app.js?v=weekly-v26','weekly-app.js?v=weekly-v25');
     const changes=[
       ['Only your four entries are shown; overall rank and first-place eligibility are calculated against the entire published field. Projections pause when results cannot be verified.',
        'Only your four entries are shown. Overall rank, percentile, gap and ceiling use every valid entry from the uploaded pool sheet.'],
@@ -111,6 +115,11 @@ function restoreFieldOutlook(path,text){
       text=text.replace(from,to);
     }
   }else if(path==='service-worker.js'){
+    for(const [from,to] of [["const CACHE='pool-center-shell-v39'","const CACHE='pool-center-shell-v38'"],
+      ["weekly-app.js?v=weekly-v26","weekly-app.js?v=weekly-v25"]]){
+      assert.equal(text.split(from).length,2,'bounded roster-label PWA inverse: '+from);
+      text=text.replace(from,to);
+    }
     for(const [from,to] of [["const CACHE='pool-center-shell-v38'","const CACHE='pool-center-shell-v37'"],
       ["weekly-app.js?v=weekly-v25","weekly-app.js?v=weekly-v24"]]){
       assert.equal(text.split(from).length,2,'bounded full-field PWA inverse: '+from);
@@ -2378,7 +2387,7 @@ assert.equal(hdFailures.length,0,`Home dashboard service-worker regressions fail
     assert.equal((currentPage.match(new RegExp(asset.replaceAll('.','\\.')+'\\?v=2','g'))||[]).length,1,`page references exactly one ${asset} v2`);
     assert.equal((currentWorker.match(new RegExp(asset.replaceAll('.','\\.')+'\\?v=2','g'))||[]).length,1,`worker precaches exactly one ${asset} v2`);
   }
-  assert.match(currentWorker,/const CACHE='pool-center-shell-v38'/);
+  assert.match(currentWorker,/const CACHE='pool-center-shell-v39'/);
   assert(!currentPage.includes('qa-read-routing')&&!currentWorker.includes('qa-read-routing'),
     'release candidate must never include staging-only fetch interception');
   assert(!currentWorker.includes('home-dashboard.js?v=1')&&!currentWorker.includes('home-dashboard.css?v=1'));
@@ -2415,7 +2424,7 @@ assert.equal(ssFailures.length,0,`Season record service-worker regressions faile
   const css=diskReadFileSync(new URL('./week-selector.css',import.meta.url),'utf8');
   assert.equal(actualPage.split(SELECTOR_LINK).length,2,'one loaded fix stylesheet');
   assert.equal(actualWorker.split(SELECTOR_WORKER).length,2,'one precached fix stylesheet');
-  assert.match(actualWorker,/const CACHE='pool-center-shell-v38'/);
+  assert.match(actualWorker,/const CACHE='pool-center-shell-v39'/);
   assert(css.includes('.week-strip > #weekSelect { flex:0 0 150px; width:150px; min-width:150px; max-width:150px; }'));
   assert(css.includes('.week-strip > .week-copy { flex:1 1 0; min-width:0; }'));
   assert(!css.includes('url(')&&!css.includes('@import')&&!css.includes('http:')&&!css.includes('https:'),'no remote CSS or request');
@@ -2457,10 +2466,10 @@ assert.equal(ssFailures.length,0,`Season record service-worker regressions faile
 {
   const page=diskReadFileSync(new URL('./index.html',import.meta.url),'utf8');
   const worker=diskReadFileSync(new URL('./service-worker.js',import.meta.url),'utf8');
-  assert.equal(page.split('weekly-app.js?v=weekly-v25').length,2,'current page loads weekly-v25 once');
-  assert.equal(worker.split('weekly-app.js?v=weekly-v25').length,2,'current worker caches weekly-v25 once');
-  assert.match(worker,/const CACHE='pool-center-shell-v38'/,'fresh PWA cache generation');
-  assert(!page.includes('weekly-app.js?v=weekly-v24')&&!worker.includes('weekly-app.js?v=weekly-v24'),'do not load obsolete cached app');
+  assert.equal(page.split('weekly-app.js?v=weekly-v26').length,2,'current page loads weekly-v26 once');
+  assert.equal(worker.split('weekly-app.js?v=weekly-v26').length,2,'current worker caches weekly-v26 once');
+  assert.match(worker,/const CACHE='pool-center-shell-v39'/,'fresh PWA cache generation');
+  assert(!page.includes('weekly-app.js?v=weekly-v25')&&!worker.includes('weekly-app.js?v=weekly-v25'),'do not load obsolete cached app');
   assert(!worker.includes('qa-read-routing'),'do not precache private QA routing');
 }
 
@@ -2472,7 +2481,7 @@ assert.equal(ssFailures.length,0,`Season record service-worker regressions faile
   const js=diskReadFileSync(new URL('./week-date-range.js',import.meta.url),'utf8');
   assert.equal(actualPage.split(WEEK_DATE_SCRIPT).length,2,'the current page loads the one date module');
   assert.equal(actualWorker.split(WEEK_DATE_WORKER).length,2,'the current PWA caches the same versioned module');
-  assert.match(actualWorker,/const CACHE='pool-center-shell-v38'/);
+  assert.match(actualWorker,/const CACHE='pool-center-shell-v39'/);
   assert(!/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|EventSource|localStorage|sessionStorage|indexedDB|eval\s*\(|https?:\/\//.test(js),'date display must remain read-only and offline');
   assert(js.includes("doc.addEventListener('poolcenter:update'"),'refresh reads the already-published Pick’em snapshot');
   assert(js.includes("'poolcenter:picks'"),'the display uses the existing picks snapshot, not a second data feed');
