@@ -2523,7 +2523,7 @@ console.log('weekly V1.3 mobile UX regressions passed: the Picks snapshot is the
     week:9,away,home,awayScore:winners[i]===2*i+1?'27':'10',homeScore:winners[i]===2*i+2?'27':'10'
   }));
   const v=await view({weekConfig:cfg,initialScorePayload:{events:[...sundays,monday()]}});
-  assert.equal(v.$('fieldSummary').textContent,'39 entries · field names anonymized');
+  assert.equal(v.$('fieldSummary').textContent,'38 submitted · 39 published rows · field names anonymized');
   assert.match(v.$('standings').innerHTML,/ELIMINATED/);
   assert.equal((v.$('standings').innerHTML.match(/ELIMINATED/g)||[]).length,3,'all three submitters are out against 35 leaders with 13 wins');
   assert.match(v.$('standings').innerHTML,/Max 12 wins/);
