@@ -603,7 +603,8 @@ function parseWeekGroup(week,weekGroups,filename,season,expectedCompetitionSize)
   const games=matchups.map((g,index)=>({index,awayNumber:g.awayNumber,homeNumber:g.homeNumber,away:g.away,home:g.home,awayName:g.awayName,homeName:g.homeName}));
   const config={schemaVersion:1,season,week,label:'Week '+week,tiePoints:0,tiebreakGameIndex:Math.max(0,games.length-1),games,participants,fullFieldReady,fullFieldValidationVersion:4,source:{kind:'weekly-upload',filename}};
   if(fullFieldReady){config.fieldEntries=fieldEntries;config.fullFieldEntryCount=fieldEntries.length;config.competitionSize=participants.length+fieldEntries.length}
-  return{week,gameCount,errors,fullFieldIssues:[...new Set(fullFieldIssues)],competitionSize:fullFieldReady?config.competitionSize:participants.length,config};
+  // Source identities are private, in-memory lookup only. They must NEVER enter config or the database.
+  return{week,gameCount,errors,fullFieldIssues:[...new Set(fullFieldIssues)],competitionSize:fullFieldReady?config.competitionSize:participants.length,config,localFieldNames:fullFieldReady?temporary.map(r=>r.sourceName):[]};
 }
 
 export function parseDocumentGroups(groups,{filename='weekly-picks',season=2026,expectedCompetitionSize=null}={}){

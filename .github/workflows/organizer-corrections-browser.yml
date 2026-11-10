@@ -1,0 +1,31 @@
+name: Organizer Correction Browser Acceptance
+
+on:
+  pull_request:
+    paths:
+      - 'nfl-pool/admin/**'
+      - 'nfl-pool/acceptance/organizer-corrections-browser.mjs'
+      - '.github/workflows/organizer-corrections-browser.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  chromium-synthetic-e2e:
+    name: Chromium synthetic corrections
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Install ephemeral browser test dependencies
+        run: npm install --no-save --no-package-lock --no-audit --no-fund playwright@1.56.1 xlsx@0.18.5
+      - name: Verify Chromium installed on runner
+        run: command -v google-chrome-stable || command -v google-chrome || command -v chromium
+      - name: Browser acceptance with isolated in-memory data
+        run: node nfl-pool/acceptance/organizer-corrections-browser.mjs

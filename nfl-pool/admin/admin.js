@@ -322,6 +322,10 @@ $('publishBtn').addEventListener('click',async()=>{
     const earlier=lastAttempt?.season===cfg.season&&lastAttempt.week===cfg.week?lastAttempt:null;
     if(earlier){lastAttempt=null;if(attemptLanded(existing,earlier)&&earlier.config===canonicalJson(cfg)){markPublished({...earlier,file:publishFile,generation:publishGeneration},' The earlier attempt of this publication had been written after all, so nothing new was written.');return}}
     if(existing?.status==='locked'&&!replaceLocked)throw new Error(`Week ${cfg.week} is already locked. Check “replace locked week” only if you intentionally need to correct it.`);
+    // Individual organizer corrections are versioned evidence. A full-sheet replacement would otherwise
+    // drop that history and may reintroduce picks that the organizer already corrected. Fail closed.
+    if(existing?.status==='locked'&&replaceLocked&&Array.isArray(existing.config?.organizerCorrections)&&existing.config.organizerCorrections.length)
+      throw new Error(`Week ${cfg.week} has individually verified organizer corrections. Full-sheet replacement is blocked because it would lose correction history. Use Organizer Corrections, or perform a separately reviewed history-preserving migration.`);
     if(existing&&!(Number.isSafeInteger(existing.revision)&&existing.revision>0))throw new Error(`Week ${cfg.week} has an unexpected revision value. Nothing was written.`);
     const nowIso=new Date().toISOString(),revision=(existing?.revision||0)+1;
     const row={season:cfg.season,week:cfg.week,status:'locked',config:cfg,source_filename:publishFile.name,source_sha256:digest,revision,published_at:nowIso,locked_at:nowIso,updated_at:nowIso};

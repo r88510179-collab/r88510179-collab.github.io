@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0e13">
+<title>Pool Center · Organizer Corrections</title>
+<link rel="icon" href="../assets/pool-center-icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css?v=premium-v3">
+<link rel="stylesheet" href="../slate.css?v=slate-v1">
+<link rel="stylesheet" href="admin.css?v=premium-v4">
+<link rel="stylesheet" href="organizer-corrections.css?v=2">
+</head>
+<body>
+<main class="admin-wrap">
+<header class="admin-top">
+  <div class="admin-brand"><img src="../assets/pool-center-icon.svg" class="admin-brand-icon" alt=""><div>
+    <div class="admin-league">Pool Center · Secure Publisher</div>
+    <h1>Organizer Corrections</h1>
+    <p>Apply one official correction without replacing the organizer's whole weekly file.</p>
+  </div></div>
+  <div class="admin-actions"><span id="authState" class="pill warn">SIGN IN REQUIRED</span>
+    <a href="index.html" class="back">Weekly Admin</a><a href="../" class="back">← Pool Center</a>
+  </div>
+</header>
+<section class="admin-card">
+  <div class="section-head"><div><h2>1. Authorized publisher</h2><p>Only the approved publisher can save a correction.</p></div></div>
+  <div id="signedOut" class="auth-row"><div>Sign in with your existing publisher email.</div>
+    <div class="auth-controls"><button id="sendCode" class="primary">Send sign-in code</button>
+      <div id="otpWrap" class="otp-wrap" hidden><input id="otp" class="auth-input" autocomplete="one-time-code" inputmode="numeric" maxlength="10" placeholder="Email code" aria-label="Email sign-in code"><button id="verifyCode" class="ghost">Verify code</button></div>
+    </div></div>
+  <div id="signedIn" class="auth-row" hidden><span id="signedEmail" class="muted"></span><button id="signOut" class="ghost">Sign out</button></div>
+</section>
+<section class="admin-card">
+  <div class="section-head"><div><h2>2. Select published week</h2><p>Loads the current revision and preserves all existing entries.</p></div></div>
+  <div class="correction-form-grid">
+    <div class="field"><label for="season">NFL season</label><input id="season" class="season-input" type="number" min="2020" max="2100" step="1" required></div>
+    <div class="field"><label for="week">Week</label><input id="week" class="season-input" type="number" min="1" max="22" step="1" required></div>
+  </div>
+  <button id="loadWeek" class="primary">Load published week</button>
+  <p id="weekDetails" class="muted" aria-live="polite"></p>
+  <div id="history" class="history" hidden></div>
+</section>
+<section class="admin-card">
+  <div class="section-head"><div><h2>3. Verify participant against original sheet</h2>
+    <p>Use the same original PDF or Excel workbook that was first published. The file is read locally and checked against its published SHA-256 fingerprint. Do not upload the email screenshot here.</p></div></div>
+  <div class="field"><label for="sourceFile">Original weekly PDF or Excel sheet</label>
+    <input id="sourceFile" type="file" accept=".pdf,.xlsx,.xls,.xlsm,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></div>
+  <div class="field"><label for="participantName">Contest entry name</label><input id="participantName" class="correction-input" type="text" autocomplete="off" spellcheck="false" placeholder="As shown on original sheet" maxlength="120"><small>Matched only in browser memory. The name is never saved with the correction.</small></div>
+</section>
+<section class="admin-card">
+  <div class="section-head"><div><h2>4. Enter the organizer's corrected row</h2>
+    <p>Type or paste the numbered picks exactly as the organizer sent them, in game order. Include the tiebreaker separately.</p></div></div>
+  <div class="field"><label for="picks">Corrected pick numbers</label><textarea id="picks" class="correction-textarea" rows="3" spellcheck="false" placeholder="1 3 5 8 9 11 ..."></textarea></div>
+  <div class="field"><label for="tiebreak">Corrected tiebreaker</label><input id="tiebreak" class="season-input" type="number" min="0" max="999" step="1"></div>
+  <div class="field"><label for="noticeType">Organizer notice type</label>
+    <select id="noticeType" class="correction-input"><option value="organizer-email">Email or screenshot</option><option value="organizer-spreadsheet">Revised Excel sheet</option><option value="organizer-notice">Other written notice</option></select>
+    <small>The correction history uses a standard label for this notice type.</small>
+  </div>
+  <button id="preview" class="primary" disabled>Validate & preview correction</button>
+</section>
+<section id="review" class="admin-card" hidden>
+  <div class="section-head"><div><h2>5. Review exact changes</h2><p id="reviewSummary"></p></div></div>
+  <div class="table-scroll"><table class="admin-table"><thead><tr><th>Game</th><th>Before</th><th>After</th></tr></thead><tbody id="changes"></tbody></table></div>
+  <p id="tieChange" class="muted"></p>
+  <p class="muted">Only this anonymous entry changes. The original sheet, other picks, field counts and NFL game data are retained. The write creates the next locked revision and an in-database correction history record.</p>
+  <label class="replace"><input type="checkbox" id="confirm"> I verified this against the organizer's official notice and approve a new locked revision.</label>
+  <button id="publish" class="publish" disabled>Publish this correction</button>
+</section>
+<div id="message" class="notice" role="status" aria-live="polite" hidden></div>
+<footer class="admin-foot">The correction history records anonymous before/after values and a standard notice label. The original file and entry names stay in your browser.</footer>
+</main>
+<script type="module" src="organizer-corrections.js?v=2"></script>
+</body>
+</html>

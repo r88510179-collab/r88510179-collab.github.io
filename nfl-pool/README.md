@@ -27,7 +27,8 @@ The week dropdown shows **published weeks**, not the entire NFL calendar. A miss
 - **W–L:** Wins and losses for the selected week's actual picks, using the game's accepted official outcome. A completed NFL tie counts as a **loss for either team selected** under this pool's accepted rule.
 - **Left / Final:** How many selected games are still waiting and how many are complete. A commissioner-confirmed void is separately marked and is not scored as a normal NFL win.
 - **Overall / Top %:** Our entry's place in the **full field**, available only if the validated publication includes the anonymized other pool entries. Otherwise it should say unavailable; it does not pretend four participants are the entire pool.
-- **Field outlook:** First-place eligibility is evaluated against **every published entry**, not just the four tracked entries. ELIMINATED means the best remaining outcome cannot reach first. TB PENDING means a favorable wins scenario still needs an unresolved tiebreak. NOT VERIFIED means the app is withholding projections until score feed, contest rulings and publication are verified. A no-submission entry is NO PICKS. Best-case rank is not a win guarantee.\n- **Group winner / scenarios:** Relative standing or possible outcomes among **our tracked entries**, not control of the actual organizer's contest. A group ALIVE/WINNER status must never be read as eligibility to win the entire field.
+- **Field outlook:** First-place eligibility is evaluated against **every published entry**, not just the four tracked entries. ELIMINATED means the best remaining outcome cannot reach first. TB PENDING means a favorable wins scenario still needs an unresolved tiebreak. NOT VERIFIED means the app is withholding projections until score feed, contest rulings and publication are verified. A no-submission entry is NO PICKS. Best-case rank is not a win guarantee.
+- **Group winner / scenarios:** Relative standing or possible outcomes among **our tracked entries**, not control of the actual organizer's contest. A group ALIVE/WINNER status must never be read as eligibility to win the entire field.
 - **Tiebreak (TB):** The designated published matchup's combined final points, compared with each entry's prediction, when the contest rules make the tiebreak applicable.
 - **LIVE / DELAYED / FEED UNAVAILABLE:** Whether an NFL score update was retrieved recently. **PUBLISHED DATA STALE** means the currently installed pool-sheet revision could not be reverified. **ON HOLD** indicates insufficient verified ruling information; do not interpret it as a new loss.
 - **Date range in the top strip:** A display summary, not a score or stored official record. The historical-date fix uses verified NFL kickoff instants in **America/New_York**. Until all selected matchups have verified kickoff times, it displays **Kickoff dates unverified** rather than trusting UTC dates from old PDFs. On a stale publication it keeps the PUBLISHED DATA STALE warning and still shows only the verified Eastern range (or Kickoff dates unverified).
@@ -45,6 +46,20 @@ The Picks slate grouping already uses kickoff times in Eastern time. The top dat
 ### A simple example
 
 If the external organizer has published Week 8 but not Week 9, the app correctly displays **Week 8** even if NFL Week 9 games are underway. The feed can be healthy while the tracker lacks new Week 9 picks. The solution is to receive and validate the real Week 9 sheet, **not** create placeholder picks or edit the database by hand.
+
+### Organizer-issued single-entry corrections
+
+Use **Weekly Admin → Organizer Corrections** for an email/screenshot notice that changes a participant's picks or tiebreaker but provides no replacement full sheet.
+
+1. Sign in as the authorized publisher, choose the published season/week, and load its locked revision.
+2. Select **the exact original PDF or Excel workbook** used for that week. It stays in the browser and its SHA-256 must match the published source fingerprint. The page validates the complete field and reconstructs the participant's original name-to-anonymous-ID association locally; names are never saved to the database.
+3. Enter the participant name as shown in the original organizer sheet, paste the numbered picks in matchup order, and enter the corrected tiebreaker. Select the organizer notice type. The history uses a standard label based on that choice.
+4. Preview the precise before/after game changes, then explicitly approve. The protected compare-and-swap update replaces **one anonymous row only**, increments the locked publication revision, retains counts and the original file fingerprint, writes anonymous correction history, and confirms the result by read-back. If the revision/source/identity cannot be verified, the correction fails closed.
+5. Confirm the public week and group-versus-field standings. If the organizer issues another correction, reload the new revision; stored anonymous history preserves the previous values needed to reverse a mistake.
+
+**Audit preservation:** Once a week contains individual organizer corrections, the old Weekly Admin whole-sheet replacement action refuses to overwrite that week, because it would discard the correction history and could silently restore superseded picks. Use the individual correction page or separately review a history-preserving full-sheet migration.
+
+**Source file requirement:** A standalone screenshot or notice is not sufficient to map a participant name to an anonymous row. The original full sheet (PDF, XLSX, XLS or XLSM) is required. Existing weekly Excel import uses the same strict local-sheet validator and may refuse incompatible spreadsheet layouts. No correction is automatically published, and no source names/images/workbooks are uploaded or kept by the app.
 
 ## 4. Publishing a genuine new Pick'em week — restricted operation
 
@@ -96,7 +111,7 @@ A revision is an explicit replacement of the same week. The current system reche
 
 Use **GitHub → Actions** in this repository. Look for:
 
-- **NFL Pool Tests:** 17 approved Node.js test suites (the job label still says “12-suite” for historical branch-protection reasons), SQL behavior/race checks on disposable PostgreSQL 17.11 (including the full-field publication guard that refuses a four-entry-only locked week from any client, even a stale cached Admin page), and syntax checks. No production database writes.
+- **NFL Pool Tests:** 18 approved Node.js test suites (the job label still says “12-suite” for historical branch-protection reasons), SQL behavior/race checks on disposable PostgreSQL 17.11 (including the full-field publication guard that refuses a four-entry-only locked week from any client, even a stale cached Admin page), and syntax checks. No production database writes.
 - **Pool live score parity (read-only):** Manually run for the actual season and week range; compares deployed \`nflscores2\` with fresh ESPN final scores. This checks feed parity, not whether ESPN itself is infallible.
 - **Smokke Cloud Monitor:** Runs approximately every 15 minutes on GitHub's best-effort cron and checks public availability of multiple websites plus the score function. It is **not** Survivor tracking, authentication testing, a publication scheduler or a backup.
 
