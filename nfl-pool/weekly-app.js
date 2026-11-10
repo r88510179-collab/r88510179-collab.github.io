@@ -258,27 +258,65 @@ function rankCompetition(games=G){
   const ranked=competitionRanks(all.map(p=>({...p,...stats(p,games),diff:tiebreakDiff(p,t)})),{tiebreakFinal:t.final});
   return{rows:ranked,byId:new Map(ranked.map(p=>[p.id,p])),size:ranked.length,bestWins:ranked[0]?.w??0,t};
 }
+// Full-field eligibility is separate from the tracked-group race. A theoretical high score is not a win.
+// Without a verified score/ruling/publication snapshot, do not display a first-place projection.
+function fullFieldProjectionVerified(){
+  const feed=SHARE_FEED?.cfg===CFG?SHARE_FEED:null;
+  return !!feed?.fetchedAt&&!feed.failed&&!PUB_STALE&&!rulingsUnavailable()&&!rulingsStale()&&
+    !FEED_ISSUES.some(reportableIssue)&&
+    !SLOTS.some(slot=>slot?.effect?.kind==='hold'||!!slot?.effect?.underReview);
+}
 function fieldSnapshot(games=G){
   const base=rankCompetition(games);if(!base)return null;
+  const reliable=fullFieldProjectionVerified(),t=tiebreak(games),allFinal=games.every(g=>g.completed);
   const metrics=new Map();
   for(const p of P){
     const current=base.byId.get(p.id);
-    const ceilingGames=games.map((g,i)=>g.completed?g:{...g,state:'post',completed:true,winner:p.picks[i],awayScore:null,homeScore:null,detail:'Ceiling simulation'});
-    const ceiling=rankCompetition(ceilingGames)?.byId.get(p.id)||current;
+    let ceilingRank=null,ceilingTieCount=0,maxWins=null,outlook='UNVERIFIED';
+    if(p.noSubmission){outlook='NO SUBMISSION'}
+    else if(reliable){
+      // A missing pick cannot earn a win. A completed tie cannot earn either side a win.
+      maxWins=current.w+games.reduce((n,g,i)=>n+(!g.completed&&p.picks[i]!==null?1:0),0);
+      // The favorable-outcome simulation scores *all* published competitors, not the tracked four.
+      // Null picks use a hypothetical NFL tie (zero wins), never a fictitious selected winner.
+      const ceilingGames=games.map((g,i)=>g.completed?g:{...g,state:'post',completed:true,winner:p.picks[i],awayScore:null,homeScore:null,detail:'Best-case simulation'});
+      const best=rankCompetition(ceilingGames)?.byId.get(p.id)||current;
+      ceilingRank=best.rank;ceilingTieCount=best.tieCount;
+      if(maxWins<base.bestWins||best.rank>1)outlook='ELIMINATED';
+      else if(!t.final&&!tiebreakVoid(games)&&best.tieCount>1)outlook='TIEBREAK UNKNOWN';
+      else outlook=allFinal?'FIELD WINNER':'FIRST POSSIBLE';
+    }
     metrics.set(p.id,{
-      rank:current.rank,
-      tieCount:current.tieCount,
+      rank:current.rank,tieCount:current.tieCount,
       topPercent:Math.max(1,Math.ceil(current.rank/base.size*100)),
       behind:Math.max(0,base.bestWins-current.w),
-      ceilingRank:ceiling.rank,
-      ceilingTieCount:ceiling.tieCount,
-      aliveForFirst:ceiling.rank===1
+      ceilingRank,ceilingTieCount,maxWins,outlook,
+      aliveForFirst:outlook==='FIRST POSSIBLE'||outlook==='FIELD WINNER'
     });
   }
-  return{...base,metrics};
+  return{...base,metrics,reliable};
 }
 function fieldRankLabel(metric){if(!metric)return'—';return`${metric.tieCount>1?'T-':'#'}${metric.rank}`}
-function ceilingRankLabel(metric){if(!metric)return'—';return`${metric.ceilingTieCount>1?'T-':'#'}${metric.ceilingRank}`}
+function ceilingRankLabel(metric){if(!metric||metric.ceilingRank===null)return'—';return`${metric.ceilingTieCount>1?'T-':'#'}${metric.ceilingRank}`}
+function fullFieldOutlookLabel(metric){
+  if(!metric)return'—';
+  if(metric.outlook==='NO SUBMISSION')return'NO PICKS';
+  if(metric.outlook==='UNVERIFIED')return'NOT VERIFIED';
+  if(metric.outlook==='ELIMINATED')return'ELIMINATED';
+  if(metric.outlook==='TIEBREAK UNKNOWN')return'TB PENDING';
+  if(metric.outlook==='FIELD WINNER')return'FIELD WINNER';
+  return'1ST POSSIBLE';
+}
+function fullFieldOutlookDetail(metric){
+  if(!metric)return'';
+  if(metric.outlook==='NO SUBMISSION')return'No picks submitted';
+  if(metric.outlook==='UNVERIFIED')return'Awaiting verified scores, rulings and publication';
+  const best=ceilingRankLabel(metric);
+  if(metric.outlook==='ELIMINATED')return`Max ${metric.maxWins} wins · best-case rank ${best}`;
+  if(metric.outlook==='TIEBREAK UNKNOWN')return`Best-case rank ${best} · tiebreak not projected`;
+  if(metric.outlook==='FIELD WINNER')return`Final field rank ${best}`;
+  return`Best-case rank ${best} · max ${metric.maxWins} wins`;
+}
 function fieldShare(gameIndex,team){
   if(!fieldAvailable())return null;
   return ownershipShare(allCompetitionEntries(),gameIndex,team,M[gameIndex]||[]);
@@ -360,14 +398,13 @@ function render(){
   const nflFinals=G.filter(g=>g.completed&&!g.void).length,voids=G.filter(g=>g.void).length,onHold=rulingsUnavailable(),tbVoid=tiebreakVoid();
   const r=rows(),lead=r[0],f=nflFinals+voids,live=G.filter(g=>g.state==='in'&&!g.completed).length,t=tiebreak(),finalWinners=f===M.length?finalWinnerIndices(G,t):[],race=raceStatus(),field=fieldSnapshot();
   LAST_RACE=race;
-  const unprojected=tbVoid?' · no tiebreak this week (tiebreak game void)':t.final?'':' · unresolved tiebreak not projected';
   let rank=1;
   $('fieldSummary').textContent=field?`${field.size} entries · field names anonymized`:'Full-field data unavailable for this week.';
   $('standings').innerHTML=r.map((p,i)=>{
     if(i&&!tiedWith(p,r[i-1],t))rank=i+1;
-    const leadTie=tiedWith(p,lead,t),fm=field?.metrics.get(p.id),overall=fm?fieldRankLabel(fm):'—',back=fm?(fm.behind?fm.behind:'—'):'—',ceiling=fm?ceilingRankLabel(fm):'—';
+    const leadTie=tiedWith(p,lead,t),fm=field?.metrics.get(p.id),overall=fm?fieldRankLabel(fm):'—',back=fm?(fm.behind?fm.behind:'—'):'—',ceiling=fm?fullFieldOutlookLabel(fm):'—';
     const overallSub=fm?`<span class="standing-sub">Top ${fm.topPercent}% · ${fm.tieCount>1?`${fm.tieCount} tied`:'solo'}</span>`:'<span class="standing-sub">field unavailable</span>';
-    const ceilingSub=fm?`<span class="standing-sub">WIN CEILING${unprojected}</span>`:'';
+    const ceilingSub=fm?`<span class="standing-sub">${esc(fullFieldOutlookDetail(fm))}</span>`:'';
     const tb=Number.isInteger(p.mnf)?String(p.mnf):'—',tbDelta=Number.isFinite(p.diff)?`<span class="standing-sub">Δ ${p.diff}</span>`:'';return`<tr class="${leadTie?'leadrow':''}"><td>${rank}</td><td class="entry">${esc(p.name)}</td><td class="c"><span class="standing-overall">${overall}</span>${overallSub}</td><td class="c w">${p.w}</td><td class="c l">${p.l}</td><td class="c">${p.left}</td><td class="c">${back}</td><td class="c"><span class="standing-overall">${ceiling}</span>${ceilingSub}</td><td class="c">${tb}${tbDelta}</td></tr>`;
   }).join('');
 
@@ -376,7 +413,7 @@ function render(){
     $('homeStandings').innerHTML=r.map((p,i)=>{
       if(i&&!tiedWith(p,r[i-1],t))hrank=i+1;
       const leadTie=tiedWith(p,lead,t),fm=field?.metrics.get(p.id);
-      const fieldHtml=fm?`<span class="home-field"><b>${fieldRankLabel(fm)} / ${field.size}</b><small>Top ${fm.topPercent}% · ${fm.behind?`${fm.behind} back`:'field lead'} · win ceiling ${ceilingRankLabel(fm)}${unprojected}</small></span>`:`<span class="home-left">${p.left} left</span>`;
+      const fieldHtml=fm?`<span class="home-field"><b>${fieldRankLabel(fm)} / ${field.size}</b><small>Top ${fm.topPercent}% · ${fm.behind?`${fm.behind} back`:'field lead'} · ${fullFieldOutlookLabel(fm)} · ${fullFieldOutlookDetail(fm)}</small></span>`:`<span class="home-left">${p.left} left</span>`;
       return`<div class="home-standing-row ${leadTie?'lead':''}"><span class="home-rank">${hrank}</span><span class="home-entry">${esc(p.name)}</span><span class="home-record">${p.w}–${p.l}</span>${fieldHtml}</div>`;
     }).join('');
   }
@@ -406,7 +443,7 @@ function render(){
   }else{
     const tiedLeaders=lead?r.filter(x=>tiedWith(x,lead,t)):[],ties=tiedLeaders.length,fm=lead&&field?field.metrics.get(lead.id):null;
     $('leaderName').textContent=ties>1?tiedLeaders.map(x=>x.name).join(' / '):(lead?.name||'—');$('leaderRecord').textContent=lead?`${lead.w}–${lead.l}`:'0–0';$('leaderKicker').textContent=f===M.length?'Group winner':ties>1?'Tracked leaders':'Group leader';
-    $('leaderNote').textContent=fm?`${ties>1?`${ties} tracked entries tied · `:''}Overall ${fieldRankLabel(fm)} of ${field.size} · Top ${fm.topPercent}% · ${fm.behind?`${fm.behind} back`:'at the field lead'} · win ceiling ${ceilingRankLabel(fm)}${unprojected}.`:ties>1&&!t.final?`${ties} tracked entries are tied${tbVoid?' and there is no tiebreak this week (tiebreak game void)':''}. Full-field data is not published for this week.`:`${nflFinals} of ${M.length} games are final${voids?` · ${voids} void by commissioner ruling`:''}. Full-field data is not published for this week.`;
+    $('leaderNote').textContent=fm?`${ties>1?`${ties} tracked entries tied · `:''}Overall ${fieldRankLabel(fm)} of ${field.size} · Top ${fm.topPercent}% · ${fm.behind?`${fm.behind} back`:'at the field lead'} · ${fullFieldOutlookLabel(fm)} · ${fullFieldOutlookDetail(fm)}.`:ties>1&&!t.final?`${ties} tracked entries are tied${tbVoid?' and there is no tiebreak this week (tiebreak game void)':''}. Full-field data is not published for this week.`:`${nflFinals} of ${M.length} games are final${voids?` · ${voids} void by commissioner ruling`:''}. Full-field data is not published for this week.`;
   }
   $('bestWins').textContent=field?.bestWins??lead?.w??0;
   const pc=Math.round(f/M.length*100);$('progressText').textContent=`${pc}%`;$('progressBar').style.width=`${pc}%`;
@@ -502,7 +539,7 @@ async function feed(signal){
 // view is derived again on every render. A rulings load that fails keeps rulings already verified this session, shown as
 // RULINGS STALE; with none, the contest holds and nothing is graded from the NFL feed alone. HDC-15: it runs inside a refresh
 // generation (refresh() or a week switch), which owns the abort controller and the REFRESH button.
-async function update(id,signal){try{const [scores,rulings]=await Promise.allSettled([feed(signal),CFG.season<FIRST_RULING_SEASON?Promise.resolve(null):loadRulings(signal)]);if(id!==gen)return;if(rulings.status==='rejected')console.warn(rulings.reason);RULINGS=evaluateContestRulings({contestId:contestIdFor(CFG.season,'pickem'),contestType:'pickem',season:CFG.season,...(rulings.status==='fulfilled'?{data:rulings.value}:{error:rulings.reason}),previous:RULINGS});if(scores.status==='rejected')throw scores.reason;const j=scores.value,{next,issues}=verifiedGames(j.events,M,NFL,TIEBREAK_INDEX,CFG);if(id!==gen)return;NFL=next;LAST_EVENTS=j.events;FEED_ISSUES=issues;render();report(j.fetchedAt)}catch(e){if(e?.name==='AbortError'||id!==gen)return;SHARE_FEED={...(SHARE_FEED?.cfg===CFG?SHARE_FEED:{cfg:CFG,fetchedAt:null,incomplete:false,warnings:0,review:false}),failed:true};render();const staleText=`${PUB_STALE?' · PUBLISHED DATA STALE':''}${rulingsStale()?' · RULINGS STALE':''}`;if(document.body.dataset.view==='survivor')showPaused();else{$('sync').textContent=lastFetchedAt?`FEED UNAVAILABLE${staleText} · last good ${ageSeconds(lastFetchedAt)??'?'}s ago`:`FEED UNAVAILABLE${staleText}`;$('dot').style.background='var(--red)'}warn(['Automatic score refresh failed. Existing results are preserved; tap REFRESH to retry.'],{hold:rulingsUnavailable()?RULINGS.reason:null,stale:rulingsStale()});announce()}}
+async function update(id,signal){try{const [scores,rulings]=await Promise.allSettled([feed(signal),CFG.season<FIRST_RULING_SEASON?Promise.resolve(null):loadRulings(signal)]);if(id!==gen)return;if(rulings.status==='rejected')console.warn(rulings.reason);RULINGS=evaluateContestRulings({contestId:contestIdFor(CFG.season,'pickem'),contestType:'pickem',season:CFG.season,...(rulings.status==='fulfilled'?{data:rulings.value}:{error:rulings.reason}),previous:RULINGS});if(scores.status==='rejected')throw scores.reason;const j=scores.value,{next,issues}=verifiedGames(j.events,M,NFL,TIEBREAK_INDEX,CFG);if(id!==gen)return;NFL=next;LAST_EVENTS=j.events;FEED_ISSUES=issues;SHARE_FEED={cfg:CFG,fetchedAt:j.fetchedAt,failed:false,incomplete:false,warnings:0,review:false};render();report(j.fetchedAt)}catch(e){if(e?.name==='AbortError'||id!==gen)return;SHARE_FEED={...(SHARE_FEED?.cfg===CFG?SHARE_FEED:{cfg:CFG,fetchedAt:null,incomplete:false,warnings:0,review:false}),failed:true};render();const staleText=`${PUB_STALE?' · PUBLISHED DATA STALE':''}${rulingsStale()?' · RULINGS STALE':''}`;if(document.body.dataset.view==='survivor')showPaused();else{$('sync').textContent=lastFetchedAt?`FEED UNAVAILABLE${staleText} · last good ${ageSeconds(lastFetchedAt)??'?'}s ago`:`FEED UNAVAILABLE${staleText}`;$('dot').style.background='var(--red)'}warn(['Automatic score refresh failed. Existing results are preserved; tap REFRESH to retry.'],{hold:rulingsUnavailable()?RULINGS.reason:null,stale:rulingsStale()});announce()}}
 // HDC-15. A full refresh: verify that the config on screen is still the published revision of its week (a newer revision is
 // loaded and validated before it replaces it whole), then read the scores and the rules and rulings for whatever config is
 // active. One generation covers both, so a later refresh or week switch supersedes all of it.
