@@ -27,7 +27,8 @@ The week dropdown shows **published weeks**, not the entire NFL calendar. A miss
 - **W–L:** Wins and losses for the selected week's actual picks, using the game's accepted official outcome. A completed NFL tie counts as a **loss for either team selected** under this pool's accepted rule.
 - **Left / Final:** How many selected games are still waiting and how many are complete. A commissioner-confirmed void is separately marked and is not scored as a normal NFL win.
 - **Overall / Top %:** Our entry's place in the **full field**, available only if the validated publication includes the anonymized other pool entries. Otherwise it should say unavailable; it does not pretend four participants are the entire pool.
-- **Group winner / scenarios:** Relative standing or possible outcomes among **our tracked entries**, not control of the actual organizer's contest.
+- **Field outlook:** First-place eligibility is evaluated against **every published entry**, not just the four tracked entries. ELIMINATED means the best remaining outcome cannot reach first. TB PENDING means a favorable wins scenario still needs an unresolved tiebreak. NOT VERIFIED means the app is withholding projections until score feed, contest rulings and publication are verified. A no-submission entry is NO PICKS. Best-case rank is not a win guarantee.
+- **Group winner / scenarios:** Relative standing or possible outcomes among **our tracked entries**, not control of the actual organizer's contest. A group ALIVE/WINNER status must never be read as eligibility to win the entire field.
 - **Tiebreak (TB):** The designated published matchup's combined final points, compared with each entry's prediction, when the contest rules make the tiebreak applicable.
 - **LIVE / DELAYED / FEED UNAVAILABLE:** Whether an NFL score update was retrieved recently. **PUBLISHED DATA STALE** means the currently installed pool-sheet revision could not be reverified. **ON HOLD** indicates insufficient verified ruling information; do not interpret it as a new loss.
 - **Date range in the top strip:** A display summary, not a score or stored official record. The historical-date fix uses verified NFL kickoff instants in **America/New_York**. Until all selected matchups have verified kickoff times, it displays **Kickoff dates unverified** rather than trusting UTC dates from old PDFs. On a stale publication it keeps the PUBLISHED DATA STALE warning and still shows only the verified Eastern range (or Kickoff dates unverified).
@@ -110,7 +111,7 @@ A revision is an explicit replacement of the same week. The current system reche
 
 Use **GitHub → Actions** in this repository. Look for:
 
-- **NFL Pool Tests:** 17 approved Node.js test suites (the job label still says “12-suite” for historical branch-protection reasons), SQL behavior/race checks on disposable PostgreSQL 17.11 (including the full-field publication guard that refuses a four-entry-only locked week from any client, even a stale cached Admin page), and syntax checks. No production database writes.
+- **NFL Pool Tests:** 18 approved Node.js test suites (the job label still says “12-suite” for historical branch-protection reasons), SQL behavior/race checks on disposable PostgreSQL 17.11 (including the full-field publication guard that refuses a four-entry-only locked week from any client, even a stale cached Admin page), and syntax checks. No production database writes.
 - **Pool live score parity (read-only):** Manually run for the actual season and week range; compares deployed \`nflscores2\` with fresh ESPN final scores. This checks feed parity, not whether ESPN itself is infallible.
 - **Smokke Cloud Monitor:** Runs approximately every 15 minutes on GitHub's best-effort cron and checks public availability of multiple websites plus the score function. It is **not** Survivor tracking, authentication testing, a publication scheduler or a backup.
 
@@ -132,7 +133,7 @@ These commands test local code or read public scores; the score command needs ne
 | Site will not load | Open the GitHub Pages build/deploy action and the Cloud Monitor's most recent public-site result |
 | App loads but no week | Verify the published-week index; check whether the organizer actually supplied that week's validated file |
 | NFL score delayed or unavailable | Refresh; compare \`nflscores2\` with ESPN using the read-only parity action; distinguish a temporary feed error from a data error |
-| Pick'em rank looks wrong | Check the exact season/week/revision, all 4 picks, published full-field availability, final NFL results, ties and applicable rulings |
+| Pick'em rank or field outlook looks wrong | Check the exact season/week/revision, all 4 picks, complete published field, verified final NFL results, ties and applicable rulings; a stale or incomplete feed must show NOT VERIFIED rather than a winning projection |
 | Week date range says “Kickoff dates unverified” | The app has not verified every matchup's kickoff from the live feed. Do not infer dates from stored UTC values |
 | Survivor archive is not current | Our tracked Survivor group is intentionally finished. Its historical published weeks remain accessible; the outside contest may continue |
 | App offline or stale after an update | Reconnect, reload and let the service worker replace its shell cache. A cached app shell does not include fresh scores |
