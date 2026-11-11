@@ -1,7 +1,7 @@
 import {createClient} from 'https://cdn.jsdelivr.net/npm/@neondatabase/neon-js@0.7.0-beta/+esm';
 import {detectWeek,groupPdfTextItems,carryForwardWeekHints,parseDocumentGroups,validateConfig} from './parser-core.js?v=16';
 import {pdfRecoveryApplies,attemptPdfFieldRecovery} from './pdf-field-recovery.js?v=3';
-import {planOrganizerCorrection,finalizeOrganizerCorrection,organizerNoticeLabel} from './organizer-correction-core.js?v=2';
+import {planOrganizerCorrection,finalizeOrganizerCorrection,organizerNoticeLabel} from './organizer-correction-core.js?v=3';
 
 const ADMIN_EMAIL='djsmokke@gmail.com';
 const neon=createClient({auth:{url:'https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth'},
@@ -119,10 +119,10 @@ function showPlan(p){
   $('changes').replaceChildren();
   for(const c of p.changes){
     const tr=document.createElement('tr');
-    for(const s of [`Game ${c.gameIndex+1}: ${c.game.away} at ${c.game.home}`,String(c.before),String(c.after)]){const td=document.createElement('td');td.textContent=s;tr.append(td)}
+    for(const s of [`Game ${c.gameIndex+1}: ${c.game.away} at ${c.game.home}`,c.before===0?'No pick (0)':String(c.before),c.after===0?'No pick (0)':String(c.after)]){const td=document.createElement('td');td.textContent=s;tr.append(td)}
     $('changes').append(tr);
   }
-  $('tieChange').textContent=`Tiebreak: ${p.previousTiebreak===null?'blank':p.previousTiebreak} → ${p.correctedTiebreak}`;
+  $('tieChange').textContent=`Tiebreak: ${p.previousTiebreak===null?'blank':p.previousTiebreak} → ${p.correctedTiebreak===null?'blank':p.correctedTiebreak}`;
   $('confirm').checked=false;$('publish').disabled=true;
 }
 $('preview').addEventListener('click',async()=>{

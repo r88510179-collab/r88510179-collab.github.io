@@ -163,6 +163,40 @@ try{
   await page.getByText(/write result is not confirmed/i).waitFor();
   assert.equal(await page.evaluate(()=>window.__testDb.writes),3);
   console.log('PASS: matching picks and history with different publication metadata cannot report success');
+  // Browser-layer regression for v4 PDF-recovery states. This runs against the
+  // real loaded planner module, with synthetic DB state and actual number/blank form inputs.
+  // Excel cannot prove a missing source cell structurally, so do not weaken its parser.
+  const retained=await page.evaluate(async()=>{
+    const {planOrganizerCorrection,finalizeOrganizerCorrection}=
+      await import('/nfl-pool/admin/organizer-correction-core.js?v=3');
+    const published=structuredClone(window.__testDb.row);
+    published.status='locked';
+    published.config.organizerCorrections=[];
+    published.config.fullFieldValidationVersion=4; // Synthetic verified PDF-recovery contract
+    published.config.fieldEntries[0]={id:'field-001',pickNumbers:[0,4],tiebreak:null};
+    const source={config:structuredClone(published.config),localFieldNames:['Mackpool','Other Entrant']};
+    document.querySelector('#picks').value='0 3';
+    document.querySelector('#tiebreak').value='';
+    const planned=planOrganizerCorrection({
+      published,source,digest:published.source_sha256,participantName:'Mackpool',
+      picksText:document.querySelector('#picks').value,
+      tiebreakText:document.querySelector('#tiebreak').value,
+      sourceType:'organizer-email'
+    });
+    const final=finalizeOrganizerCorrection(planned,published,new Date().toISOString());
+    return {picks:final.fieldEntries[0].pickNumbers,tiebreak:final.fieldEntries[0].tiebreak,
+      other:final.fieldEntries[1],original:source.config.fieldEntries[1],
+      audit:final.organizerCorrections[0]};
+  });
+  assert.deepEqual(retained.picks,[0,3]);
+  assert.equal(retained.tiebreak,null);
+  assert.deepEqual(retained.other,retained.original);
+  assert.deepEqual(retained.audit.priorPickNumbers,[0,4]);
+  assert.equal(retained.audit.priorTiebreak,null);
+  assert.equal(retained.audit.correctedTiebreak,null);
+  assert.match(await page.locator('#picks + small').innerText(),/enter 0/i);
+  assert.match(await page.locator('#tiebreak + small').innerText(),/already blank/i);
+  console.log('PASS: browser planner and visible inputs preserve no-pick 0 and blank null tiebreak');
   assert.deepEqual(errors,[],'No browser errors');
   console.log('PASS synthetic Chromium E2E: no real data services contacted');
 }finally{

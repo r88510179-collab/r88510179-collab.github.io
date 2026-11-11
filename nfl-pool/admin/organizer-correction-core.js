@@ -55,11 +55,21 @@ export function planOrganizerCorrection({published,source,digest,participantName
   const picks=parts.map(integer);
   for(let i=0;i<picks.length;i++){
     const g=cfg.games[i];
-    requireState(Number.isSafeInteger(picks[i])&&(picks[i]===g.awayNumber||picks[i]===g.homeNumber),
-      `Pick ${i+1} must be ${g.awayNumber} or ${g.homeNumber}, matching the published matchup.`);
+    // An already-published no-pick (0) is not a missing form field: keep it unchanged when
+    // correcting a different game or tiebreaker. Never silently turn a valid selection into 0.
+    const retainNoPick=picks[i]===0&&before.pickNumbers[i]===0;
+    requireState(Number.isSafeInteger(picks[i])&&
+      (retainNoPick||picks[i]===g.awayNumber||picks[i]===g.homeNumber),
+      `Pick ${i+1} must be ${g.awayNumber} or ${g.homeNumber}. Use 0 only to retain an existing no-pick.`);
   }
-  const tiebreak=integer(tiebreakText);
-  requireState(Number.isSafeInteger(tiebreak)&&tiebreak<=999,'Enter a valid, nonnegative whole-number tiebreaker (0–999).');
+  // The parser can legitimately publish null when the organizer did not supply a
+  // tiebreaker. Blank input preserves that exact null; it cannot erase a known number.
+  const blankTiebreak=String(tiebreakText??'').trim()==='';
+  const retainBlankTiebreak=blankTiebreak&&before.tiebreak===null;
+  const tiebreak=retainBlankTiebreak?null:integer(tiebreakText);
+  requireState(retainBlankTiebreak||
+    (Number.isSafeInteger(tiebreak)&&tiebreak<=999),
+    'Enter a valid, nonnegative whole-number tiebreaker (0–999), or leave blank only to retain an existing blank tiebreaker.');
   requireState(organizerNoticeLabel(sourceType),'Unsupported organizer notice type.');
   requireState(!same(before.pickNumbers,picks)||before.tiebreak!==tiebreak,'The published entry already matches this correction. No new revision is needed.');
   const afterConfig=JSON.parse(JSON.stringify(cfg));

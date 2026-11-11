@@ -113,3 +113,60 @@ test('whole-sheet publisher refuses to erase recorded organizer corrections',()=
   assert.match(source,/existing\.config\?\.organizerCorrections/);
   assert.match(source,/Full-sheet replacement is blocked because it would lose correction history/);
 });
+
+function withVerifiedMissingValues(){
+  const a=fixture();
+  // An original fully verified PDF recovery may leave one no-pick and an unknown tiebreak.
+  // This remains a valid v4 full-field entry; the test must not manufacture substitutes.
+  const entry={id:'field-002',pickNumbers:[0,4],tiebreak:null};
+  a.source.config.fieldEntries[1]=clone(entry);
+  a.published.config.fieldEntries[1]=clone(entry);
+  a.picksText='0 3';a.tiebreakText='';
+  return a;
+}
+test('preserves original no-pick 0 and null tiebreak when a different game is corrected',()=>{
+  const a=withVerifiedMissingValues(),plan=planOrganizerCorrection(a);
+  assert.equal(plan.entryId,'field-002');
+  assert.deepEqual(plan.previousPicks,[0,4]);
+  assert.deepEqual(plan.correctedPicks,[0,3]);
+  assert.equal(plan.previousTiebreak,null);
+  assert.equal(plan.correctedTiebreak,null);
+  assert.deepEqual(plan.changes.map(c=>c.gameIndex),[1]);
+  const updated=finalizeOrganizerCorrection(plan,a.published,'2026-11-11T12:00:00Z');
+  assert.deepEqual(updated.fieldEntries[1],{id:'field-002',pickNumbers:[0,3],tiebreak:null});
+  assert.deepEqual(updated.fieldEntries[0],a.published.config.fieldEntries[0]);
+  assert.deepEqual(updated.fieldEntries[2],a.published.config.fieldEntries[2]);
+  assert.deepEqual(updated.organizerCorrections[0].priorPickNumbers,[0,4]);
+  assert.deepEqual(updated.organizerCorrections[0].correctedPickNumbers,[0,3]);
+  assert.equal(updated.organizerCorrections[0].priorTiebreak,null);
+  assert.equal(updated.organizerCorrections[0].correctedTiebreak,null);
+  assert.equal(updated.competitionSize,7);
+  assert(!JSON.stringify(updated).includes('Mackpool'));
+});
+test('allows a tiebreak-only correction while retaining no-pick 0',()=>{
+  const a=withVerifiedMissingValues();a.picksText='0 4';a.tiebreakText='52';
+  const plan=planOrganizerCorrection(a);
+  assert.deepEqual(plan.changes,[]);
+  assert.equal(plan.previousTiebreak,null);
+  assert.equal(plan.correctedTiebreak,52);
+  assert.deepEqual(finalizeOrganizerCorrection(plan,a.published,'2026-11-11T12:00:00Z').fieldEntries[1].pickNumbers,[0,4]);
+});
+test('allows filling a formerly missing pick while preserving blank tiebreak',()=>{
+  const a=withVerifiedMissingValues();a.picksText='1 4';
+  const plan=planOrganizerCorrection(a);
+  assert.deepEqual(plan.correctedPicks,[1,4]);
+  assert.equal(plan.correctedTiebreak,null);
+});
+test('refuses accidental erasure, malformed no-picks, or hidden tiebreak changes',()=>{
+  const newMissing=fixture();newMissing.picksText='0 4';
+  assert.throws(()=>planOrganizerCorrection(newMissing),/Use 0 only to retain an existing no-pick/);
+  const missing=withVerifiedMissingValues();missing.picksText='0 0';
+  assert.throws(()=>planOrganizerCorrection(missing),/Use 0 only to retain an existing no-pick/);
+  const existingNumber=fixture();existingNumber.tiebreakText='';
+  assert.throws(()=>planOrganizerCorrection(existingNumber),/leave blank only to retain an existing blank tiebreaker/);
+  const existingNull=withVerifiedMissingValues();
+  existingNull.tiebreakText='null';
+  assert.throws(()=>planOrganizerCorrection(existingNull),/leave blank only to retain an existing blank tiebreaker/);
+  const noop=withVerifiedMissingValues();noop.picksText='0 4';
+  assert.throws(()=>planOrganizerCorrection(noop),/already matches this correction/);
+});
