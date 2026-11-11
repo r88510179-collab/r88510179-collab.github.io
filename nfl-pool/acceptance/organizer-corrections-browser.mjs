@@ -172,6 +172,7 @@ try{
     const published=structuredClone(window.__testDb.row);
     published.status='locked';
     published.config.organizerCorrections=[];
+    published.config.fullFieldValidationVersion=4; // Synthetic verified PDF-recovery contract
     published.config.fieldEntries[0]={id:'field-001',pickNumbers:[0,4],tiebreak:null};
     const source={config:structuredClone(published.config),localFieldNames:['Mackpool','Other Entrant']};
     document.querySelector('#picks').value='0 3';
