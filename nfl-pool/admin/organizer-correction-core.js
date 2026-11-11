@@ -69,7 +69,7 @@ export function planOrganizerCorrection({published,source,digest,participantName
   const tiebreak=retainBlankTiebreak?null:integer(tiebreakText);
   requireState(retainBlankTiebreak||
     (Number.isSafeInteger(tiebreak)&&tiebreak<=999),
-    'Enter a nonnegative whole-number tiebreaker (0–999), or leave blank only to retain an existing blank tiebreaker.');
+    'Enter a valid, nonnegative whole-number tiebreaker (0–999), or leave blank only to retain an existing blank tiebreaker.');
   requireState(organizerNoticeLabel(sourceType),'Unsupported organizer notice type.');
   requireState(!same(before.pickNumbers,picks)||before.tiebreak!==tiebreak,'The published entry already matches this correction. No new revision is needed.');
   const afterConfig=JSON.parse(JSON.stringify(cfg));
