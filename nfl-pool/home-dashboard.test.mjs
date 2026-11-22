@@ -496,7 +496,7 @@ await check('mobile accessibility: every control is a native button or input wit
 await check('the Home share menu runs through share-ui.js: each contest’s own card, the combined card and Copy dashboard link work from Home without leaving it; choosing a card closes the menu, as do Escape and a tap elsewhere',async()=>{
   const p=await page({withShareUi:true});
   const menu=p.doc.querySelector('.dash-share-menu'),buttons=p.doc.querySelectorAll('.dash-share-popover [data-share-card]');
-  assert.deepEqual(buttons.map(b=>[b.dataset.shareCard,b.hidden]),[['dashboard',false],['pickem',false],['survivor',false]]);
+  assert.deepEqual(buttons.map(b=>[b.dataset.shareCard,b.hidden]),[['dashboard',false],['pickem',false],['survivor',false],['swings',false]]);
   assert.equal(p.doc.querySelector('[data-share-link]').hidden,false);
   menu.setAttribute('open','');buttons[1].click();await flush();
   const dialog=p.shareDialog();
