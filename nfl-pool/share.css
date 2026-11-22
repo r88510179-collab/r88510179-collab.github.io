@@ -24,3 +24,7 @@
 .share-status.error{color:#ffb1b5}
 .share-copy{position:fixed;top:0;left:0;width:1px;height:1px;opacity:0}
 body:has(.share-dialog[open]){overflow:hidden}
+
+/* The Swing Games image includes every remaining matchup, so its preview can scroll vertically. */
+.share-preview.swing-preview{width:100%;height:min(60dvh,600px);aspect-ratio:auto;overflow:auto;overscroll-behavior:contain}
+.share-preview.swing-preview .share-image{width:100%;height:auto;object-fit:contain}
