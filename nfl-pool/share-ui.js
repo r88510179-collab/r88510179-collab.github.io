@@ -80,7 +80,7 @@ async function openCard(contest,opener){
   view.message.hidden=false;view.message.textContent='Preparing card…';view.note.textContent='';setStatus('');
   for(const button of Object.values(view.buttons)){button.disabled=true;button.hidden=false}
   view.buttons.download.className='share-action';view.actions.hidden=false;
-  view.image.parentElement.classList.toggle('swing-preview',contest==='swings');
+  view.image.parentElement?.classList?.toggle?.('swing-preview',contest==='swings');
   if(!view.dialog.open){if(typeof view.dialog.showModal==='function')view.dialog.showModal();else view.dialog.setAttribute('open','')}
   // The one snapshot of this card: everything below is built from it, whatever the page does next.
   const snapshot=snapshotFor(contest),options={now:Date.now(),href:location.href};
