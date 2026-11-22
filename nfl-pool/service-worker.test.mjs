@@ -129,12 +129,51 @@ function restoreFieldOutlook(path,text){
   return text;
 }
 
+
+// Invert the Swing Games sharing release ONLY for immutable historical release checks.
+// Compare the live page and worker against their new versions separately below.
+function restoreSwingSharing(path,text){
+  const swap=(from,to,label)=>{
+    assert.equal(text.split(from).length,2,'Swing Games inverse '+label);
+    text=text.replace(from,to);
+  };
+  if(path==='index.html'){
+    swap('              <button type="button" data-share-card="swings" hidden>Share Swing Games</button>\n','', 'Home menu');
+    swap('<div class="share-slot"><div class="meta" id="swingMeta">—</div><button type="button" class="share-btn" data-share-card="swings" aria-label="Share Swing Games" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12M7 8l5-5 5 5M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Share</span></button></div></div>\n        <div class="swing-list"',
+      '<div class="meta" id="swingMeta">—</div></div>\n        <div class="swing-list"','Games share button');
+    for(const [from,to] of [['share.css?v=2','share.css?v=1'],['weekly-app.js?v=weekly-v27','weekly-app.js?v=weekly-v26'],['share-ui.js?v=3','share-ui.js?v=2']])
+      swap(from,to,from);
+  }else if(path==='service-worker.js'){
+    for(const [from,to] of [["const CACHE='pool-center-shell-v40'","const CACHE='pool-center-shell-v39'"],
+      ["weekly-app.js?v=weekly-v27","weekly-app.js?v=weekly-v26"],["share-ui.js?v=3","share-ui.js?v=2"],["share.css?v=2","share.css?v=1"],
+      ["  './swing-card.js?v=1',\n",'']])swap(from,to,from);
+  }else if(path==='weekly-app.js'){
+    const start=text.indexOf('// Swing Games shares the same verified, on-screen publication');
+    const end=text.indexOf('// V1.3 mobile UX: picks-mobile.js asks',start);
+    assert(start>=0&&end>start,'bounded Swing Games snapshot addition');
+    text=text.slice(0,start)+"document.addEventListener('poolcenter:share',event=>{if(event?.detail?.contest==='pickem')event.detail.snapshot=shareSnapshot()});\n"+text.slice(end);
+  }else if(path==='share-ui.js'){
+    swap("import {buildSwingCard,drawSwingCard} from './swing-card.js?v=1';\n",'','swing import');
+    swap(",swings:'Share Swing Games'",'','swing title');
+    swap('canvas.height=card.height||CARD_HEIGHT;','canvas.height=CARD_HEIGHT;','canvas');
+    swap("if(card.contest==='swings')drawSwingCard(ctx,card);else drawCard(ctx,card);",'drawCard(ctx,card);','graphic');
+    swap("  view.image.parentElement?.classList?.toggle?.('swing-preview',contest==='swings');\n",'','preview');
+    swap("  const snapshot=snapshotFor(contest),options={now:Date.now(),href:location.href};\n  const card=contest==='swings'?buildSwingCard(snapshot,options):buildCard(contest,snapshot,options);",
+      "  const card=buildCard(contest,snapshotFor(contest),{now:Date.now(),href:location.href});",'build');
+  }else if(path==='share.css'){
+    const start=text.indexOf('\n/* The Swing Games image includes every remaining matchup');
+    assert(start>=0,'bounded Swing Games share styles');
+    text=text.slice(0,start);
+  }
+  return text;
+}
+
 const readFileSync=(url,encoding)=>{
   const pathname=new URL(url).pathname,path=pathname.split('/').pop();
   const raw=diskReadFileSync(url);
   let result=raw;
-  if(['home-dashboard.js','home-dashboard.css','index.html','service-worker.js'].includes(path))
-    result=Buffer.from(restorePulse(path,restoreWeekSelector(path,restoreCloseoutIndex(path,restoreVerifiedDateLayer(path,restoreFieldOutlook(path,raw.toString('utf8')))))),'utf8');
+  if(['home-dashboard.js','home-dashboard.css','index.html','service-worker.js','weekly-app.js','share-ui.js','share.css'].includes(path))
+    result=Buffer.from(restorePulse(path,restoreWeekSelector(path,restoreCloseoutIndex(path,restoreVerifiedDateLayer(path,restoreFieldOutlook(path,restoreSwingSharing(path,raw.toString('utf8'))))))),'utf8');
   return encoding==='utf8'?result.toString('utf8'):result;
 };
 const source=readFileSync(new URL('./service-worker.js',import.meta.url),'utf8');
@@ -2387,7 +2426,9 @@ assert.equal(hdFailures.length,0,`Home dashboard service-worker regressions fail
     assert.equal((currentPage.match(new RegExp(asset.replaceAll('.','\\.')+'\\?v=2','g'))||[]).length,1,`page references exactly one ${asset} v2`);
     assert.equal((currentWorker.match(new RegExp(asset.replaceAll('.','\\.')+'\\?v=2','g'))||[]).length,1,`worker precaches exactly one ${asset} v2`);
   }
-  assert.match(currentWorker,/const CACHE='pool-center-shell-v39'/);
+  assert.match(currentWorker,/const CACHE='pool-center-shell-v40'/);
+  assert(currentWorker.includes("'./swing-card.js?v=1'"),'PWA precaches the new Swing Games graphic');
+  assert.equal((currentPage.match(/data-share-card="swings"/g)||[]).length,2,'Swing Games shares from Games and Home');
   assert(!currentPage.includes('qa-read-routing')&&!currentWorker.includes('qa-read-routing'),
     'release candidate must never include staging-only fetch interception');
   assert(!currentWorker.includes('home-dashboard.js?v=1')&&!currentWorker.includes('home-dashboard.css?v=1'));
@@ -2404,8 +2445,8 @@ assert.equal(hdFailures.length,0,`Home dashboard service-worker regressions fail
   for(const forbidden of ['qa-read-routing.js','qa/live-mobile.html','api/qa-read.js','api/qa-schedule.js'])
     assert(!currentPage.includes(forbidden)&&!currentWorker.includes(forbidden),
       `${forbidden} cannot be in release shell`);
-  assert.equal(restorePulse('index.html',restoreWeekSelector('index.html',restoreCloseoutIndex('index.html',restoreVerifiedDateLayer('index.html',restoreFieldOutlook('index.html',currentPage))))),index,'only approved Home and selector layers changed');
-  assert.equal(restorePulse('service-worker.js',restoreWeekSelector('service-worker.js',restoreVerifiedDateLayer('service-worker.js',restoreFieldOutlook('service-worker.js',currentWorker)))),source,'only Home versions and cache generation changed');
+  assert.equal(restorePulse('index.html',restoreWeekSelector('index.html',restoreCloseoutIndex('index.html',restoreVerifiedDateLayer('index.html',restoreFieldOutlook('index.html',restoreSwingSharing('index.html',currentPage)))))),index,'only approved Home and selector layers changed');
+  assert.equal(restorePulse('service-worker.js',restoreWeekSelector('service-worker.js',restoreVerifiedDateLayer('service-worker.js',restoreFieldOutlook('service-worker.js',restoreSwingSharing('service-worker.js',currentWorker))))),source,'only Home versions and cache generation changed');
 }
 
 assert.equal(pmFailures.length,0,`V1.3 mobile UX service-worker regressions failed (${pmFailures.length}):\n  ${pmFailures.join('\n  ')}`);
@@ -2424,7 +2465,7 @@ assert.equal(ssFailures.length,0,`Season record service-worker regressions faile
   const css=diskReadFileSync(new URL('./week-selector.css',import.meta.url),'utf8');
   assert.equal(actualPage.split(SELECTOR_LINK).length,2,'one loaded fix stylesheet');
   assert.equal(actualWorker.split(SELECTOR_WORKER).length,2,'one precached fix stylesheet');
-  assert.match(actualWorker,/const CACHE='pool-center-shell-v39'/);
+  assert.match(actualWorker,/const CACHE='pool-center-shell-v40'/);
   assert(css.includes('.week-strip > #weekSelect { flex:0 0 150px; width:150px; min-width:150px; max-width:150px; }'));
   assert(css.includes('.week-strip > .week-copy { flex:1 1 0; min-width:0; }'));
   assert(!css.includes('url(')&&!css.includes('@import')&&!css.includes('http:')&&!css.includes('https:'),'no remote CSS or request');
@@ -2466,9 +2507,9 @@ assert.equal(ssFailures.length,0,`Season record service-worker regressions faile
 {
   const page=diskReadFileSync(new URL('./index.html',import.meta.url),'utf8');
   const worker=diskReadFileSync(new URL('./service-worker.js',import.meta.url),'utf8');
-  assert.equal(page.split('weekly-app.js?v=weekly-v26').length,2,'current page loads weekly-v26 once');
-  assert.equal(worker.split('weekly-app.js?v=weekly-v26').length,2,'current worker caches weekly-v26 once');
-  assert.match(worker,/const CACHE='pool-center-shell-v39'/,'fresh PWA cache generation');
+  assert.equal(page.split('weekly-app.js?v=weekly-v27').length,2,'current page loads weekly-v27 once');
+  assert.equal(worker.split('weekly-app.js?v=weekly-v27').length,2,'current worker caches weekly-v27 once');
+  assert.match(worker,/const CACHE='pool-center-shell-v40'/,'fresh PWA cache generation');
   assert(!page.includes('weekly-app.js?v=weekly-v25')&&!worker.includes('weekly-app.js?v=weekly-v25'),'do not load obsolete cached app');
   assert(!worker.includes('qa-read-routing'),'do not precache private QA routing');
 }
@@ -2481,7 +2522,7 @@ assert.equal(ssFailures.length,0,`Season record service-worker regressions faile
   const js=diskReadFileSync(new URL('./week-date-range.js',import.meta.url),'utf8');
   assert.equal(actualPage.split(WEEK_DATE_SCRIPT).length,2,'the current page loads the one date module');
   assert.equal(actualWorker.split(WEEK_DATE_WORKER).length,2,'the current PWA caches the same versioned module');
-  assert.match(actualWorker,/const CACHE='pool-center-shell-v39'/);
+  assert.match(actualWorker,/const CACHE='pool-center-shell-v40'/);
   assert(!/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|EventSource|localStorage|sessionStorage|indexedDB|eval\s*\(|https?:\/\//.test(js),'date display must remain read-only and offline');
   assert(js.includes("doc.addEventListener('poolcenter:update'"),'refresh reads the already-published Pick’em snapshot');
   assert(js.includes("'poolcenter:picks'"),'the display uses the existing picks snapshot, not a second data feed');
