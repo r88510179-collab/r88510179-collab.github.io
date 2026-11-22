@@ -2559,4 +2559,27 @@ console.log('weekly V1.3 mobile UX regressions passed: the Picks snapshot is the
   v.setPayload({events:[game({away:'DEN',home:'KC',awayScore:'24',homeScore:'17'})]});await v.refresh();
   assert.match(v.$('standings').innerHTML,/FIELD WINNER/,'a verified final tiebreak can decide actual first place');
 }
+
+// Sharing Swing Games is a read of exactly the games, names, ownership and rooting impacts the Games view shows.
+{
+  const scheduled=game({away:'DEN',home:'KC',awayScore:'0',homeScore:'0'});
+  scheduled.status={type:{state:'pre',completed:false,shortDetail:'Sun 4:25 PM'}};
+  const v=await view({initialScorePayload:{events:[scheduled]}});
+  const read=contest=>{const detail={contest,snapshot:null};v.doc.dispatchEvent({type:'poolcenter:share',detail});return detail.snapshot};
+  const swings=read('swings'),standings=read('pickem');
+  assert.equal(swings.ready,true,swings.reason);
+  assert.equal(swings.contest,'swings');
+  assert.deepEqual([swings.season,swings.week,swings.revision],[standings.season,standings.week,standings.revision]);
+  assert.equal(swings.swingGames.length,1);
+  const g=swings.swingGames[0];
+  assert.deepEqual([g.away.team,g.home.team,g.live,g.awayScore,g.homeScore],['DEN','KC',false,null,null]);
+  assert.deepEqual(g.away.pickers.map(p=>p.name),['D.C.']);
+  assert.deepEqual(g.home.pickers.map(p=>p.name),['DJS']);
+  assert.equal(g.away.field,null,'the card must not invent unavailable full-field ownership');
+  assert.match(g.away.impact,/helps|clinches|eliminates|leverage/);
+  assert.match(g.tieImpact,/0 pts|tiebreak|clinches|eliminates/);
+  v.setPayload({events:[game()]});await v.refresh();
+  assert.deepEqual(read('swings').swingGames,[],'finals remove the Swing Games just like the live section');
+}
+
 console.log('Week 9 full-field elimination, outage and tiebreak regressions passed');
