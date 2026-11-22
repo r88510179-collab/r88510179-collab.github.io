@@ -2475,7 +2475,8 @@ assert.equal(ssFailures.length,0,`Season record service-worker regressions faile
     assert(contentArea-150>=0,viewport+'px viewport still leaves room for the week description');
   }
   assert.equal(restoreWeekSelector('index.html',actualPage),diskReadFileSync(new URL('./index.html',import.meta.url),'utf8').replace(SELECTOR_LINK,''),'bounded HTML inverse');
-  assert.equal(restoreWeekSelector('service-worker.js',restoreVerifiedDateLayer('service-worker.js',restoreFieldOutlook('service-worker.js',actualWorker))),restoreFieldOutlook('service-worker.js',actualWorker).replace("pool-center-shell-v37","pool-center-shell-v32").replace(WEEK_DATE_WORKER,'').replace(SELECTOR_WORKER,''),'bounded worker inverse');
+  const beforeSwingWorker=restoreSwingSharing('service-worker.js',actualWorker);
+  assert.equal(restoreWeekSelector('service-worker.js',restoreVerifiedDateLayer('service-worker.js',restoreFieldOutlook('service-worker.js',beforeSwingWorker))),restoreFieldOutlook('service-worker.js',beforeSwingWorker).replace("pool-center-shell-v37","pool-center-shell-v32").replace(WEEK_DATE_WORKER,'').replace(SELECTOR_WORKER,''),'bounded worker inverse');
 }
 
 // Closeout overlay: restoreCloseoutIndex removes this page-only <style> for the immutable historical byte checks above,
