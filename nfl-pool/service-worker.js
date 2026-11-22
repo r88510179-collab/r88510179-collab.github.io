@@ -1,12 +1,12 @@
 'use strict';
-const CACHE='pool-center-shell-v39';
+const CACHE='pool-center-shell-v40';
 const SHELL=[
   './',
   './index.html',
   './style.css?v=premium-v3',
   './slate.css?v=slate-v1',
   './weekly.css?v=premium-v3',
-  './weekly-app.js?v=weekly-v26',
+  './weekly-app.js?v=weekly-v27',
   './public-math.js?v=3',
   './survivor.css?v=4',
   './survivor-app.js?v=12',
@@ -15,8 +15,9 @@ const SHELL=[
   './score-feed-proxy.js?v=2',
   './pwa.js?v=1',
   './share-card.js?v=2',
-  './share-ui.js?v=2',
-  './share.css?v=1',
+  './swing-card.js?v=1',
+  './share-ui.js?v=3',
+  './share.css?v=2',
   './home-dashboard.js?v=2',
   './home-dashboard.css?v=2',
   './picks-mobile.js?v=5',
