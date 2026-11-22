@@ -3,6 +3,7 @@
 // fake DOM: the Share buttons, the preview of the exact PNG, native file sharing, cancel, Download and the copy fallbacks.
 // The apps' answers to the share request are checked in weekly-app.test.mjs and survivor-app.test.mjs.
 import assert from 'node:assert/strict';
+import {buildSwingCard,drawSwingCard} from './swing-card.js';
 import {buildCard,drawCard,cardLayout,pickemStatus,survivorStatus,shareLink,linkLabel,shareFileName,shareSupport,sharePayload,
   fitText,wrapText,ageSeconds,freshSeconds,CARD_WIDTH,CARD_HEIGHT,FRESH_SECONDS,MAX_ROWS,DASHBOARD_MAX_ROWS,MIN_CONDENSE,MIN_ROW} from './share-card.js';
 
@@ -572,7 +573,7 @@ class FakeNode{
   fire(t,event={}){for(const f of this.listeners[t]||[])f({target:this,...event})}
   focus(){this.doc.focused=this}
 }
-function fakePage({share=null,canShare=null,clipboard=null,execCommand=()=>false,toBlob='ok',context=true,provider=null,dashboard=false,href='https://example.test/nfl-pool/?view=standings'}={}){
+function fakePage({share=null,canShare=null,clipboard=null,execCommand=()=>false,toBlob='ok',context=true,provider=null,dashboard=false,swings=false,href='https://example.test/nfl-pool/?view=standings'}={}){
   const listeners={},doc={focused:null,downloads:[],shares:[],copies:[],revoked:[],created:[],pendingBlob:null};
   const document={
     body:null,
@@ -592,7 +593,7 @@ function fakePage({share=null,canShare=null,clipboard=null,execCommand=()=>false
     execCommand:cmd=>{doc.commands=(doc.commands||[]).concat(cmd);return execCommand(doc)}
   };
   document.body=new FakeNode('body',doc);
-  doc.buttons=['pickem','survivor'].map(contest=>{const b=new FakeNode('button',doc);b.hidden=true;b.dataset.shareCard=contest;return b});
+  doc.buttons=['pickem','survivor',...(swings?['swings']:[])].map(contest=>{const b=new FakeNode('button',doc);b.hidden=true;b.dataset.shareCard=contest;return b});
   // The Home share menu (home-dashboard.js): a combined-card button, a Copy dashboard link button and its status line.
   if(dashboard){
     doc.dashboardButton=new FakeNode('button',doc);doc.dashboardButton.hidden=true;doc.dashboardButton.dataset.shareCard='dashboard';
@@ -624,7 +625,7 @@ async function shareUi(options){
   const ui={doc,dialog,byText,
     image:()=>find(dialog(),n=>n.tagName==='IMG'),message:()=>find(dialog(),n=>n.className==='share-placeholder'),status:()=>find(dialog(),n=>/^share-status/.test(n.className)),
     actions:()=>find(dialog(),n=>n.className==='share-actions'),title:()=>find(dialog(),n=>n.tagName==='H2'),
-    open:async(contest='pickem')=>{(contest==='dashboard'?doc.dashboardButton:doc.buttons[contest==='pickem'?0:1]).fire('click');await flush()},
+    open:async(contest='pickem')=>{(contest==='dashboard'?doc.dashboardButton:doc.buttons[contest==='pickem'?0:contest==='survivor'?1:2]).fire('click');await flush()},
     copyLink:async()=>{doc.linkButton.fire('click');await flush()},
     click:async text=>{byText(text).fire('click');await flush()}};
   return ui;
@@ -821,6 +822,65 @@ await check('Copy dashboard link falls back to the copy command in the page, and
 await check('a page without the Home share menu (cached before the dashboard) binds the two contest buttons exactly as before',async()=>{
   const ui=await shareUi({...fileShare,provider:pickemProvider()});
   try{assert.deepEqual(ui.doc.buttons.map(b=>b.hidden),[false,false]);await ui.open('survivor');assert.equal(ui.title().textContent,'Share Survivor results')}finally{ui.doc.restore()}
+});
+
+
+const makeSwing=(index=2)=>({index,status:'SCHEDULED',live:false,awayScore:null,homeScore:null,
+  away:{team:'DEN',pickers:[{name:'D.C.',out:false},{name:'JC',out:false}],field:{pct:35,total:87},impact:'helps D.C. and JC'},
+  home:{team:'KC',pickers:[{name:'DJS',out:false},{name:'Thaddeus',out:true}],field:{pct:65,total:87},impact:'helps DJS and Thaddeus'},
+  tieImpact:'0 pts to all'});
+const swings=(games=[makeSwing()])=>({...pickem(),contest:'swings',swingGames:games});
+const swingOpts={now:NOW,href:HREF,timeZone:TZ};
+await check('Swing Games card includes all matchups, each side’s tracked picks and field ownership, and a Games deep link',()=>{
+  const games=[makeSwing(2),{...makeSwing(3),status:'LIVE',live:true,awayScore:13,homeScore:21}];
+  const card=buildSwingCard(swings(games),swingOpts);
+  assert.equal(card.ok,true,card.reason);
+  assert.equal(card.games.length,2);
+  assert.equal(card.fileName,'nfl-pool-center-swing-games-2026-week-5.png');
+  assert.equal(card.link,'https://r88510179-collab.github.io/nfl-pool/?view=games&season=2026&week=5');
+  assert.match(card.summary,/D\.C\., JC/);
+  assert.match(card.summary,/35% of 87 field entries/);
+  assert.match(card.summary,/Tie: 0 pts to all/);
+  assert.match(card.summary,/13–21/);
+  const drawing=recorder();
+  const layout=drawSwingCard(drawing.ctx,card);
+  assert.equal(layout.rows,2);
+  assert(drawing.calls.some(v=>v.text.includes('SWING GAMES')));
+  assert(drawing.calls.some(v=>v.text.includes('DEN @ KC')));
+  assert(drawing.calls.some(v=>v.text.includes('35% OF 87 FIELD ENTRIES')));
+  assert(drawing.calls.some(v=>v.text.includes('TIE:')));
+});
+await check('Swing Games refuses missing, stale or inconsistent source snapshots rather than inventing game data',()=>{
+  assert.equal(buildSwingCard(null,swingOpts).ok,false);
+  assert.match(buildSwingCard({ready:false,reason:'Scores loading'},swingOpts).reason,/Scores loading/);
+  assert.equal(buildSwingCard(pickem(),swingOpts).ok,false);
+  assert.equal(buildSwingCard(swings([makeSwing(2),makeSwing(2)]),swingOpts).ok,false);
+  assert.equal(buildSwingCard(swings([{...makeSwing(),awayScore:17}]),swingOpts).ok,false);
+  assert.equal(buildSwingCard(swings([{...makeSwing(),home:{...makeSwing().home,pickers:[{name:'Outside field',out:false}]}}]),swingOpts).ok,false);
+  assert.equal(buildSwingCard(swings([{...makeSwing(),away:{...makeSwing().away,field:{pct:101,total:87}}}]),swingOpts).ok,false);
+  assert.equal(buildSwingCard(swings([makeSwing(2),makeSwing(3),makeSwing(4),makeSwing(5),makeSwing(6)]),swingOpts).ok,false);
+  assert.equal(buildSwingCard(swings([]),swingOpts).ok,true,'no swings left is a shareable, truthful result');
+});
+await check('Swing Games sharing uses the same preview, image share, downloadable PNG, copy summary and snapshot boundary',async()=>{
+  let snapshot=swings([makeSwing()]);
+  const provider=contest=>contest==='swings'?{...snapshot,feed:{...snapshot.feed,fetchedAt:iso(Date.now()-2000)}}:fresh(pickem());
+  const ui=await shareUi({...fileShare,clipboard:()=>{},swings:true,provider});
+  try{
+    assert.deepEqual(ui.doc.buttons.map(x=>x.hidden),[false,false,false]);
+    await ui.open('swings');
+    assert.equal(ui.title().textContent,'Share Swing Games');
+    assert.equal(ui.image().hidden,false);
+    await ui.click('Copy link');
+    assert.match(ui.doc.copies[0],/view=games&season=2026&week=5$/);
+    snapshot=swings([]);
+    await ui.click('Copy summary');
+    assert.match(ui.doc.copies[1],/1 remaining/,'an open card is a frozen snapshot');
+    ui.byText('Share graphic').fire('click');await flush();
+    assert.equal(ui.doc.shares[0].files[0].name,'nfl-pool-center-swing-games-2026-week-5.png');
+    await ui.open('swings');
+    await ui.click('Copy summary');
+    assert.match(ui.doc.copies.at(-1),/No Swing Games remain/,'reopening captures the new state');
+  }finally{ui.doc.restore()}
 });
 
 assert.equal(failures.length,0,`share-card regressions failed (${failures.length}):\n  ${failures.join('\n  ')}`);

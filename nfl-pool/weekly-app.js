@@ -658,7 +658,28 @@ function shareSnapshot(){
     hold:rulingsUnavailable(),rulingsStale:rulingsStale(),publishedStale:PUB_STALE!==null,
     race:LAST_RACE?{outcomes:LAST_RACE.outcomes,racePaths:LAST_RACE.racePaths,items:LAST_RACE.items.map(x=>({name:x.name,status:x.status,note:x.note}))}:null,spotlight:spotlight()};
 }
-document.addEventListener('poolcenter:share',event=>{if(event?.detail?.contest==='pickem')event.detail.snapshot=shareSnapshot()});
+// Swing Games shares the same verified, on-screen publication and score snapshot as Pick'em,
+// plus only the publicly displayed tracked picks, field ownership percentages and rooting impacts.
+function swingShareSnapshot(){
+  const base=shareSnapshot();
+  if(base.ready!==true)return base;
+  if(!LAST_RACE)return{ready:false,reason:'Swing Games are updating. Share again in a moment.'};
+  const statuses=new Map(LAST_RACE.items.map(x=>[x.name,x.status]));
+  const side=(index,team)=>{
+    const f=fieldShare(index,team);
+    return{team,pickers:P.filter(p=>p.picks[index]===team).map(p=>({name:p.name,out:statuses.get(p.name)==='OUT'})),
+      field:f?{pct:f.pct,total:f.total}:null,impact:impactText(index,team,LAST_RACE)};
+  };
+  return{...base,contest:'swings',swingGames:swingIndexes(true).map(index=>{
+    const g=G[index],live=g.state==='in';
+    return{index,status:state(g),live,awayScore:live?score(g.awayScore):null,homeScore:live?score(g.homeScore):null,
+      away:side(index,g.away),home:side(index,g.home),tieImpact:impactText(index,null,LAST_RACE)};
+  })};
+}
+document.addEventListener('poolcenter:share',event=>{
+  if(event?.detail?.contest==='pickem')event.detail.snapshot=shareSnapshot();
+  if(event?.detail?.contest==='swings')event.detail.snapshot=swingShareSnapshot();
+});
 // V1.3 mobile UX: picks-mobile.js asks for the Picks board with a poolcenter:picks event, answered at once with exactly what the
 // comparison table shows for the config on screen: each published game in published order with the team facts the page draws
 // (code, colour, logo), its kickoff (the verified event's own timestamp) and published date, its status as the Games grid states
