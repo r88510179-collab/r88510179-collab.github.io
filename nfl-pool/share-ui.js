@@ -6,8 +6,9 @@
 // (home-dashboard.js) holds the same buttons for both contests, one for the combined dashboard card (both snapshots, taken
 // at the same instant) and Copy dashboard link, all handled here: there is one share controller on the page.
 import {buildCard,drawCard,shareSupport,sharePayload,CARD_WIDTH,CARD_HEIGHT} from './share-card.js?v=2';
+import {buildSwingCard,drawSwingCard} from './swing-card.js?v=1';
 
-const TITLES={pickem:"Share Pick'em standings",survivor:'Share Survivor results',dashboard:'Share combined dashboard card'};
+const TITLES={pickem:"Share Pick'em standings",survivor:'Share Survivor results',dashboard:'Share combined dashboard card',swings:'Share Swing Games'};
 // A PNG export that has not finished in this time is treated as failed rather than left spinning.
 const EXPORT_TIMEOUT_MS=15000;
 let ui=null,current=null,generation=0;
@@ -63,9 +64,9 @@ function closeDialog(){
 }
 async function exportPng(card){
   if(document.fonts?.ready)await Promise.race([document.fonts.ready,new Promise(resolve=>setTimeout(resolve,1500))]);
-  const canvas=document.createElement('canvas');canvas.width=CARD_WIDTH;canvas.height=CARD_HEIGHT;
+  const canvas=document.createElement('canvas');canvas.width=CARD_WIDTH;canvas.height=card.height||CARD_HEIGHT;
   const ctx=canvas.getContext?.('2d');if(!ctx)throw new Error('this browser has no canvas drawing');
-  drawCard(ctx,card);
+  if(card.contest==='swings')drawSwingCard(ctx,card);else drawCard(ctx,card);
   return new Promise((resolve,reject)=>{
     const timer=setTimeout(()=>reject(new Error('the PNG took too long to create')),EXPORT_TIMEOUT_MS);
     try{canvas.toBlob(blob=>{clearTimeout(timer);blob?resolve(blob):reject(new Error('the PNG could not be created'))},'image/png')}
@@ -79,9 +80,11 @@ async function openCard(contest,opener){
   view.message.hidden=false;view.message.textContent='Preparing card…';view.note.textContent='';setStatus('');
   for(const button of Object.values(view.buttons)){button.disabled=true;button.hidden=false}
   view.buttons.download.className='share-action';view.actions.hidden=false;
+  view.image.parentElement.classList.toggle('swing-preview',contest==='swings');
   if(!view.dialog.open){if(typeof view.dialog.showModal==='function')view.dialog.showModal();else view.dialog.setAttribute('open','')}
   // The one snapshot of this card: everything below is built from it, whatever the page does next.
-  const card=buildCard(contest,snapshotFor(contest),{now:Date.now(),href:location.href});
+  const snapshot=snapshotFor(contest),options={now:Date.now(),href:location.href};
+  const card=contest==='swings'?buildSwingCard(snapshot,options):buildCard(contest,snapshot,options);
   if(!card.ok){
     view.message.textContent=card.reason;view.actions.hidden=true;
     view.note.textContent='No card was made, so nothing misleading can be shared. The page keeps updating; try Share again in a moment.';
