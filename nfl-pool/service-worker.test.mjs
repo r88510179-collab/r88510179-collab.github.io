@@ -2429,6 +2429,7 @@ assert.equal(hdFailures.length,0,`Home dashboard service-worker regressions fail
   assert.match(currentWorker,/const CACHE='pool-center-shell-v40'/);
   assert(currentWorker.includes("'./swing-card.js?v=1'"),'PWA precaches the new Swing Games graphic');
   assert.equal((currentPage.match(/data-share-card="swings"/g)||[]).length,2,'Swing Games shares from Games and Home');
+  assert(currentPage.includes('<div class="swing-list" id="swingList"></div>'),'Share controls must preserve the Games list markup');
   assert(!currentPage.includes('qa-read-routing')&&!currentWorker.includes('qa-read-routing'),
     'release candidate must never include staging-only fetch interception');
   assert(!currentWorker.includes('home-dashboard.js?v=1')&&!currentWorker.includes('home-dashboard.css?v=1'));
