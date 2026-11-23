@@ -5,49 +5,243 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0a0d12">
   <meta name="referrer" content="no-referrer">
-  <title>Commissioner Console</title>
-  <link rel="manifest" href="./manifest.webmanifest">
+  <title>Manage your football pool</title>
+  <link rel="manifest" href="./manifest.webmanifest" crossorigin="use-credentials">
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-  <main class="shell">
+  <main class="shell" id="mainContent">
     <div class="topbar">
       <a href="./" class="brand link-reset">POOL PLATFORM</a>
-      <div class="status">
-        <span class="pill" id="modePill">Loading…</span>
-        <button class="button compact secondary hidden tap-target" id="signOut" type="button">Sign out</button>
-      </div>
+      <div class="status"><span class="pill" id="modePill">Loading…</span>
+        <button class="button compact secondary hidden tap-target" id="signOut" type="button">Sign out</button></div>
     </div>
     <div class="notice error hidden shell-notice" id="sessionError" role="alert"></div>
-    <section class="card hidden" id="authCard">
-      <div class="eyebrow">Commissioner sign in</div><h1>Manage your pool</h1>
-      <p class="meta">Membership is checked by the database. Signing in does not grant access to other customers.</p>
-      <div class="form-grid"><label class="field"><span>Email</span><input id="email" type="email" autocomplete="email"></label><button class="button primary" id="sendCode" type="button">Send code</button></div>
-      <div class="form-grid hidden" id="otpWrap"><label class="field"><span>Sign-in code</span><input id="otp" inputmode="numeric" autocomplete="one-time-code"></label><button class="button primary" id="verifyCode" type="button">Verify & continue</button></div>
+    <section class="card hidden" id="authCard" aria-labelledby="signInHeading">
+      <div class="eyebrow">Commissioner sign in</div><h1 id="signInHeading">Manage your pool</h1>
+      <p class="meta">Sign in with the email that manages your pool. Your access is checked before any information is shown.</p>
+      <div class="form-grid"><label class="field"><span>Email</span><input id="email" type="email" autocomplete="email"></label>
+        <button class="button primary" id="sendCode" type="button">Send sign-in code</button></div>
+      <div class="form-grid hidden" id="otpWrap"><label class="field"><span>Sign-in code</span><input id="otp" inputmode="numeric" autocomplete="one-time-code"></label>
+        <button class="button primary" id="verifyCode" type="button">Continue</button></div>
       <div class="notice error hidden" id="authError" role="alert"></div>
     </section>
-    <section class="card hidden" id="consoleCard">
-      <div class="card-head"><div><div class="eyebrow">Commissioner console</div><h1 id="poolName">Pool</h1></div></div>
-      <div class="toolbar-grid"><label class="field"><span>Season</span><select id="seasonSelect"></select></label><label class="field"><span>Week</span><select id="weekSelect"></select></label></div>
-      <div class="notice info">Participant and commissioner channels can coexist. The first finalized source for each entry/week owns that row; the other channel receives a conflict and cannot overwrite it.</div>
+    <section class="card hidden" id="poolPickerCard" aria-labelledby="poolPickerHeading">
+      <div class="eyebrow">Choose your pool</div><h1 id="poolPickerHeading">Which pool are you managing?</h1>
+      <p class="meta">Select a pool that you manage. If your pool is not listed, you can enter its code from your commissioner link.</p>
+      <div id="authorizedPoolsWrap" class="hidden" aria-label="Pools you manage">
+        <div class="form-grid"><label class="field"><span>Your available pools</span><select id="authorizedPoolSelect"></select></label>
+          <button class="button primary" id="openAuthorizedPool" type="button">Open selected pool</button></div>
+      </div>
+      <p class="meta">Or use a pool code</p>
+      <div class="form-grid"><label class="field"><span>Pool code</span><input id="poolCode" autocomplete="off" placeholder="your-pool-code" pattern="[a-z0-9-]{3,64}" spellcheck="false"></label>
+        <button class="button primary" id="openPool" type="button">Open pool</button></div>
+      <div class="notice error hidden" id="poolPickerError" role="alert"></div>
     </section>
+    <section class="card hidden" id="consoleCard">
+      <div class="card-head"><div><div class="eyebrow">Your pool</div><h1 id="poolName">Pool</h1></div>
+        <button id="switchPool" class="button secondary compact" type="button">Switch pool</button></div>
+      <div class="toolbar-grid"><label class="field"><span>Season</span><select id="seasonSelect"></select></label><label class="field"><span>Week</span><select id="weekSelect"></select></label></div>
+      <div class="notice info" id="weekStatus" role="status" aria-live="polite"></div>
+      <details id="createPoolSetup" class="advanced-import hidden">
+        <summary>Create another pool</summary>
+        <p class="meta">Start a new Pick’em or Survivor pool in your organization. You'll manage its participants separately. New pools begin with no season or picks.</p>
+        <div class="toolbar-grid">
+          <label class="field"><span>Pool name</span><input id="createPoolName" type="text" maxlength="120" placeholder="e.g. Sunday Football Friends" autocomplete="off"></label>
+          <label class="field"><span>Pool format</span><select id="createPoolType">
+            <option value="pickem">Weekly Pick’em</option><option value="survivor">Survivor</option>
+          </select></label>
+        </div>
+        <button id="previewCreatePool" class="button secondary action-button" type="button">Review new pool</button>
+        <div id="createPoolReview" class="review-panel hidden">
+          <p id="createPoolSummary" class="meta"></p>
+          <div class="actions"><button id="cancelCreatePool" class="button secondary" type="button">Cancel</button>
+          <button id="confirmCreatePool" class="button primary" type="button">Create pool</button></div>
+        </div>
+        <div class="notice error hidden" id="createPoolError" role="alert"></div>
+        <div class="notice success hidden" id="createPoolResult" role="status"></div>
+      </details>
+      <details id="createSeasonSetup" class="advanced-import hidden">
+        <summary>Add a season</summary>
+        <p class="meta">Create a new NFL season for this pool. It begins in setup with no weeks or submissions.</p>
+        <label class="field"><span>NFL season year</span><input id="createSeasonYear" type="number" min="2020" max="2100" step="1" inputmode="numeric" placeholder="2027"></label>
+        <button id="previewCreateSeason" class="button secondary action-button" type="button">Review season</button>
+        <div id="createSeasonReview" class="review-panel hidden">
+          <p id="createSeasonSummary" class="meta"></p>
+          <div class="actions"><button id="cancelCreateSeason" class="button secondary" type="button">Cancel</button>
+          <button id="confirmCreateSeason" class="button primary" type="button">Create season</button></div>
+        </div>
+        <div class="notice error hidden" id="createSeasonError" role="alert"></div>
+        <div class="notice success hidden" id="createSeasonResult" role="status"></div>
+      </details>
+      <details id="verifiedScheduleSetup" class="advanced-import hidden">
+        <summary>Import verified NFL games and open picks</summary>
+        <p class="meta">Get the validated NFL schedule for this season and week. It comes from the community-maintained nflverse release (not an NFL-operated feed). Review every matchup, kickoff and bye before opening. All kickoffs and the pick deadline show your local time.</p>
+        <button id="loadVerifiedSchedule" class="button secondary action-button" type="button">Load verified games</button>
+        <div class="notice info hidden" id="verifiedScheduleStatus" role="status" aria-live="polite"></div>
+        <div class="review-panel hidden" id="verifiedScheduleReview">
+          <p id="verifiedScheduleSummary" class="meta"></p>
+          <div id="verifiedScheduleGames" class="meta" aria-label="Source-validated NFL games"></div>
+          <p class="meta">Check these games against the latest NFL announcements. Importing updates this draft only; it does not open picks.</p>
+          <label id="verifiedTiebreakWrap" class="field"><span><input id="verifiedTiebreak" type="checkbox"> Require a predicted combined-points tiebreak for Pick’em</span></label>
+          <div class="actions"><button id="cancelVerifiedSchedule" class="button secondary" type="button">Cancel</button>
+            <button id="confirmVerifiedSchedule" class="button primary" type="button">Import this verified schedule</button></div>
+        </div>
+        <div class="notice error hidden" id="verifiedScheduleError" role="alert"></div>
+        <div class="notice success hidden" id="verifiedScheduleResult" role="status"></div>
+        <button id="previewOpenVerifiedWeek" class="button secondary action-button" type="button">Review opening picks</button>
+        <div class="review-panel hidden" id="verifiedOpenReview">
+          <p id="verifiedOpenSummary" class="meta"></p>
+          <div class="actions"><button id="cancelOpenVerifiedWeek" class="button secondary" type="button">Cancel</button>
+            <button id="confirmOpenVerifiedWeek" class="button primary" type="button">Confirm: open picks for this week</button></div>
+        </div>
+      </details>
+      <details id="weekSetup" class="advanced-import hidden"><summary>Set up another week (draft)</summary>
+        <p class="meta">Create a new, empty week safely. It stays in draft and cannot accept picks until its verified NFL schedule has been configured and opening is separately authorized.</p>
+        <div class="toolbar-grid">
+          <label class="field"><span>Week number</span><input id="newWeekNumber" type="number" min="1" max="25" step="1" inputmode="numeric"></label>
+          <label class="field"><span>Deadline (your local time)</span><input id="newWeekDeadline" type="datetime-local"></label>
+          <label class="field"><span>Optional opening time (your local time)</span><input id="newWeekOpening" type="datetime-local"></label>
+        </div>
+        <button id="previewNewWeek" class="button secondary action-button" type="button">Review draft week</button>
+        <div class="review-panel hidden" id="newWeekReview">
+          <p id="newWeekReviewText" class="meta"></p>
+          <div class="actions"><button id="cancelNewWeek" class="button secondary" type="button">Cancel</button>
+            <button id="confirmNewWeek" class="button primary" type="button">Create draft week</button></div>
+        </div>
+        <div class="notice error hidden" id="newWeekError" role="alert"></div>
+        <div class="notice success hidden" id="newWeekResult" role="status"></div>
+      </details>
+      <details id="scheduleSetup" class="advanced-import hidden"><summary>Configure the draft week’s NFL games</summary>
+        <p class="meta">Select the teams and kickoff for each game from a verified NFL schedule. These manual entries remain <strong>unverified</strong> and cannot open the week. Existing open, locked, or finalized weeks cannot be edited.</p>
+        <div id="scheduleGames" class="guided-games"></div>
+        <div class="actions"><button id="addScheduleGame" class="button secondary" type="button">Add game</button>
+          <button id="clearScheduleGames" class="button secondary" type="button">Start over</button></div>
+        <label class="field"><span><input id="scheduleTiebreak" type="checkbox"> Require a combined-points tiebreak for Pick’em</span></label>
+        <button id="previewSchedule" class="button secondary action-button" type="button">Review schedule</button>
+        <div class="review-panel hidden" id="scheduleReview">
+          <p id="scheduleReviewText" class="meta"></p><div id="scheduleReviewGames" class="meta"></div>
+          <p class="meta"><strong>Important:</strong> Saving does not verify NFL accuracy or open picks.</p>
+          <div class="actions"><button id="cancelSchedule" class="button secondary" type="button">Cancel</button>
+            <button id="confirmSchedule" class="button primary" type="button">Save unverified draft schedule</button></div>
+        </div>
+        <div class="notice error hidden" id="scheduleError" role="alert"></div>
+        <div class="notice success hidden" id="scheduleResult" role="status"></div>
+      </details>
+      <div class="step-links" aria-label="Manage this week">
+        <a class="step-link" href="#entriesCard"><strong>1. Review picks</strong><span>See who has submitted</span></a>
+        <a class="step-link" href="#inviteCard"><strong>2. Invite players</strong><span>Send secure entry links</span></a>
+        <a class="step-link" href="#importCard"><strong>3. Enter picks</strong><span>Help players who cannot submit</span></a>
+      </div>
+      <p class="meta">You can create pools and seasons above. Results and standings management are still under development. Unverified manual schedules cannot open picks.</p>
+    </section>
+    <section class="card hidden" id="scoreboardCard" aria-label="Read-only NFL scoreboard">
+      <div class="card-head"><div><div class="eyebrow">Game day</div><h2>NFL scores</h2></div>
+        <button type="button" class="button secondary compact tap-target" data-score-refresh>Refresh scores</button></div>
+      <p class="meta" role="status" aria-live="polite" data-score-status></p>
+      <div class="scoreboard-list" role="list" data-score-list></div>
+      <p class="meta">NFL score facts only. Picks, commissioner rulings, and official pool standings remain separate.</p>
+    </section>
+
+    <section class="card hidden" id="poolStandingsCard" aria-label="Unofficial pool standings">
+      <div class="card-head"><div><div class="eyebrow">Your pool</div><h2>This week’s standings</h2></div></div>
+      <p class="meta" role="status" aria-live="polite" data-standings-status></p>
+      <div class="standings-list" role="list" data-standings-list></div>
+      <p class="meta">Rankings are provisional, restricted to this pool and never official until independently finalized.</p>
+    </section>
+
+    <section class="card hidden" id="seasonStandingsCard" aria-label="Season standings from final scores recorded by the commissioner">
+      <div class="card-head"><div><div class="eyebrow">Your pool</div><h2>Season standings</h2></div></div>
+      <p class="meta" role="status" aria-live="polite" data-season-status></p>
+      <div class="standings-list" role="list" data-season-list></div>
+      <p class="meta" data-season-weeks></p>
+      <p class="meta">Recomputed each time from the latest final scores your commissioner recorded for every week. A correction changes these standings and the earlier record is kept. Not official NFL results.</p>
+    </section>
+
+    <section class="card hidden" id="finalResultAdmin" aria-labelledby="finalResultHeading">
+      <details id="finalResultDetails" class="advanced-import">
+        <summary id="finalResultHeading">Record reviewed final scores</summary>
+        <p class="meta">Available once a week’s pick deadline has passed and every game has kicked off. Compare every final score against an independent NFL results source before recording. These are <strong>commissioner attestations, not independently certified official standings</strong>. Existing picks cannot be changed here.</p>
+        <p class="meta" id="finalResultStatus" role="status" aria-live="polite">Checking your pool's results…</p>
+        <div id="finalResultForm" class="hidden">
+          <div id="finalResultGames" class="final-score-list"></div>
+          <label class="field"><span>Independent results evidence reference</span>
+            <textarea id="finalResultSource" rows="2" maxlength="500" placeholder="Official league box score URL(s) or identifying reference. Retain the source record for audit."></textarea></label>
+          <label class="field hidden" id="finalResultCorrectionWrap"><span>Why are you correcting previously recorded results?</span>
+            <textarea id="finalResultCorrection" rows="2" maxlength="240" placeholder="Explain exactly what changed."></textarea></label>
+          <button id="finalResultPreview" type="button" class="button secondary action-button">Review all final scores</button>
+          <div id="finalResultReview" class="review-panel hidden">
+            <p id="finalResultSummary" class="meta"></p>
+            <label class="confirm-row"><input id="finalResultConfirmCheck" type="checkbox"><span>I independently checked each game is final and the scores are correct.</span></label>
+            <div class="actions">
+              <button type="button" class="button secondary" id="finalResultCancel">Cancel</button>
+              <button type="button" class="button primary" id="finalResultConfirm">Record commissioner attestation</button>
+            </div>
+          </div>
+        </div>
+        <div id="finalResultError" class="notice error hidden" role="alert"></div>
+        <div id="finalResultSuccess" class="notice success hidden" role="status"></div>
+      </details>
+    </section>
+
     <section class="card hidden" id="entriesCard">
-      <div class="eyebrow">Entry status</div><h2>Participants</h2>
-      <div class="table-scroll"><table class="data-table"><thead><tr><th>Entry</th><th>Claimed</th><th>This week</th></tr></thead><tbody id="entriesBody"></tbody></table></div>
+      <div class="eyebrow">Review</div><h2>Participant status</h2>
+      <p class="meta">Submitted picks are protected. You cannot overwrite a player’s direct submission using commissioner entry.</p>
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>Player entry</th><th>Invitation</th><th>This week</th></tr></thead><tbody id="entriesBody"></tbody></table></div>
+      <div id="newEntryManagement" class="entry-create">
+        <h3>Add a participant entry</h3>
+        <p class="meta">Set up an entry for a participant, then send them a private invitation. Creating an entry does not submit any picks.</p>
+        <div class="toolbar-grid"><label class="field"><span>Entry code</span><input id="newEntryCode" type="text" maxlength="24" autocomplete="off" placeholder="e.g. PLAYER03"></label>
+          <label class="field"><span>Participant name</span><input id="newEntryName" type="text" maxlength="120" autocomplete="off" placeholder="e.g. Jordan"></label></div>
+        <button id="previewNewEntry" class="button secondary action-button" type="button">Review new entry</button>
+        <div class="review-panel hidden" id="newEntryReview">
+          <p id="newEntryReviewText" class="meta"></p>
+          <div class="actions"><button class="button secondary" id="cancelNewEntry" type="button">Cancel</button>
+            <button class="button primary" id="confirmNewEntry" type="button">Create participant entry</button></div>
+        </div>
+        <div class="notice error hidden" id="newEntryError" role="alert"></div>
+        <div class="notice success hidden" id="newEntryResult" role="status"></div>
+      </div>
     </section>
     <section class="card hidden" id="inviteCard">
-      <div class="eyebrow">Direct entry</div><h2>Create participant invitation</h2>
-      <div class="toolbar-grid"><label class="field"><span>Entry</span><select id="inviteEntry"></select></label><label class="field"><span>Email restriction (optional)</span><input id="inviteEmail" type="email" placeholder="participant@example.com"></label></div>
-      <button class="button primary" id="createInvite" type="button">Create secure invite</button><div class="notice success hidden" id="inviteResult"></div>
+      <div class="eyebrow">Invitations</div><h2>Invite a participant</h2>
+      <p class="meta">Select an entry and enter the participant’s email. The link works only for that verified email address, expires after seven days, and can be used once.</p>
+      <div class="toolbar-grid"><label class="field"><span>Participant entry</span><select id="inviteEntry"></select></label>
+        <label class="field"><span>Participant email</span><input id="inviteEmail" type="email" autocomplete="off" placeholder="participant@example.com" required></label></div>
+      <button class="button primary action-button" id="createInvite" type="button">Create invitation</button>
+      <div class="notice success hidden" id="inviteResult" role="status"></div>
+      <label class="field hidden" id="inviteLinkWrap"><span>Private invitation link — copy and send directly to the participant</span>
+        <input id="inviteLink" type="text" readonly aria-label="Private invitation link"></label>
+      <div class="notice error hidden" id="inviteError" role="alert"></div>
     </section>
     <section class="card hidden" id="importCard">
-      <div class="eyebrow">Commissioner channel</div><h2>Import picks</h2><p class="meta" id="importHelp"></p>
-      <label class="field"><span>CSV rows</span><textarea id="importText" rows="9" spellcheck="false"></textarea></label>
-      <div class="actions action-bar"><button class="button secondary" id="sampleImport" type="button">Load sample</button><button class="button primary" id="runImport" type="button">Validate & import</button></div>
-      <div class="notice error hidden" id="importError"></div><div class="notice success hidden" id="importResult"></div>
-      <div class="table-scroll hidden" id="resultTableWrap"><table class="data-table"><thead><tr><th>Entry</th><th>Result</th></tr></thead><tbody id="resultBody"></tbody></table></div>
+      <div class="eyebrow">Help with picks</div><h2>Enter picks for a participant</h2>
+      <p class="meta">Use this only when a participant needs you to enter their picks. First preview, then confirm. Already submitted participant picks cannot be replaced.</p>
+      <div id="guidedImport">
+        <label class="field"><span>Select entry</span><select id="guidedEntry"></select></label>
+        <div id="guidedGames" class="guided-games"></div>
+        <label id="guidedTiebreakWrap" class="field hidden"><span>Tiebreak: predicted combined points</span>
+          <input id="guidedTiebreak" type="number" min="0" max="200" step="1" inputmode="numeric"></label>
+        <button id="guidedPreview" type="button" class="button primary action-button">Review before saving</button>
+      </div>
+      <details id="advancedImport" class="advanced-import"><summary>Advanced: Import a CSV file instead</summary>
+        <p class="meta" id="importHelp"></p>
+        <label class="field"><span>Choose CSV file</span><input id="csvFile" type="file" accept=".csv,text/csv,text/plain"></label>
+        <label class="field"><span>Or paste CSV rows</span><textarea id="importText" rows="7" spellcheck="false"></textarea></label>
+        <div class="actions"><button class="button secondary" id="sampleImport" type="button">Load example for this week</button>
+          <button class="button secondary" id="runImport" type="button">Preview CSV</button></div>
+      </details>
+      <div class="notice error hidden" id="importError" role="alert"></div>
+      <div class="notice success hidden" id="importResult" role="status"></div>
+      <section class="review-panel hidden" id="importPreview" aria-labelledby="previewHeading">
+        <h3 id="previewHeading">Review before saving</h3>
+        <p class="meta" id="previewHelp"></p>
+        <div class="table-scroll" id="resultTableWrap"><table class="data-table"><thead><tr><th>Entry</th><th>Preview or result</th></tr></thead><tbody id="resultBody"></tbody></table></div>
+        <div class="actions action-bar"><button id="cancelImport" class="button secondary" type="button">Cancel</button>
+          <button id="confirmImport" class="button primary" type="button">Confirm and save these picks</button></div>
+      </section>
     </section>
-    <footer class="footer">Commissioner tools · synthetic sandbox until the reviewed backend is connected</footer>
+    <footer class="footer" id="platformFooter">Secure pool management</footer>
   </main>
   <script type="module" src="./commissioner.js"></script>
 </body>

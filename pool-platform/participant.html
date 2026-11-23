@@ -2,17 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <!-- SSO-CONT-02: Netlify rewrites /join/... to this page while keeping the deep URL.
+       Root-relative resources work with CSP base-uri 'none'; never add a base element. -->
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0a0d12">
   <meta name="referrer" content="no-referrer">
   <title>Participant Pick Entry</title>
-  <link rel="manifest" href="./manifest.webmanifest">
-  <link rel="stylesheet" href="./styles.css">
+  <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+  <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <main class="shell">
     <div class="topbar">
-      <a href="./" class="brand link-reset">POOL PLATFORM</a>
+      <a href="/" class="brand link-reset">POOL PLATFORM</a>
       <div class="status">
         <span class="pill" id="modePill">Loading…</span>
         <button class="button compact secondary hidden tap-target" id="signOut" type="button">Sign out</button>
@@ -35,12 +37,24 @@
       <div class="notice error hidden" id="authError" role="alert"></div>
     </section>
 
+    <section class="card hidden" id="poolPickerCard">
+      <div class="eyebrow">Your football pools</div>
+      <h1>Choose where to make your picks</h1>
+      <p class="meta">These are the pools linked to your sign-in. Choose one to view its week and entries.</p>
+      <div class="form-grid">
+        <label class="field"><span>Your pool</span><select id="authorizedPoolSelect"></select></label>
+        <button class="button primary" id="openAuthorizedPool" type="button">Open my picks</button>
+      </div>
+      <div class="notice error hidden" id="poolPickerError" role="alert"></div>
+    </section>
+
     <section class="card hidden" id="entryCard">
       <div class="card-head">
         <div>
           <div class="eyebrow" id="poolTypeLabel">Football pool</div>
           <h1 id="poolName">Pool</h1>
         </div>
+        <button type="button" class="button compact secondary tap-target hidden" id="switchPool">Switch pool</button>
       </div>
       <div class="entry-grid">
         <label class="field hidden" id="entrySelectWrap"><span>Entry</span><select id="entrySelect"></select></label>
@@ -48,6 +62,29 @@
         <div><span class="field-label">Deadline</span><strong id="deadlineLabel">—</strong></div>
       </div>
       <div class="notice info" id="sourceNotice"></div>
+    </section>
+
+    <section class="card hidden" id="scoreboardCard" aria-label="Read-only NFL scoreboard">
+      <div class="card-head"><div><div class="eyebrow">Game day</div><h2>NFL scores</h2></div>
+        <button type="button" class="button secondary compact tap-target" data-score-refresh>Refresh scores</button></div>
+      <p class="meta" role="status" aria-live="polite" data-score-status></p>
+      <div class="scoreboard-list" role="list" data-score-list></div>
+      <p class="meta">NFL score facts only. Picks, commissioner rulings, and official pool standings remain separate.</p>
+    </section>
+
+    <section class="card hidden" id="poolStandingsCard" aria-label="Unofficial pool standings">
+      <div class="card-head"><div><div class="eyebrow">Your pool</div><h2>This week’s standings</h2></div></div>
+      <p class="meta" role="status" aria-live="polite" data-standings-status></p>
+      <div class="standings-list" role="list" data-standings-list></div>
+      <p class="meta">Rankings are provisional, restricted to this pool and never official until independently finalized.</p>
+    </section>
+
+    <section class="card hidden" id="seasonStandingsCard" aria-label="Season standings from final scores recorded by the commissioner">
+      <div class="card-head"><div><div class="eyebrow">Your pool</div><h2>Season standings</h2></div></div>
+      <p class="meta" role="status" aria-live="polite" data-season-status></p>
+      <div class="standings-list" role="list" data-season-list></div>
+      <p class="meta" data-season-weeks></p>
+      <p class="meta">Recomputed each time from the latest final scores your commissioner recorded for every week. A correction changes these standings and the earlier record is kept. Not official NFL results.</p>
     </section>
 
     <form id="pickForm" class="hidden" novalidate>
@@ -74,19 +111,19 @@
     </form>
 
     <section class="card hidden" id="submittedCard" aria-live="polite">
-      <div class="eyebrow">Submission saved</div>
-      <h2 id="submittedTitle">Participant channel claimed</h2>
+      <div class="eyebrow">Your confirmation</div>
+      <h2 id="submittedTitle">Submission saved</h2>
       <div class="notice success" id="submittedMessage"></div>
       <p class="meta" id="submittedMeta"></p>
     </section>
 
     <section class="card hidden" id="emptyCard">
       <h2>No entry available</h2>
-      <p class="meta" id="emptyMessage">This signed-in account does not currently own an entry in this pool.</p>
+      <p class="meta" id="emptyMessage">No pool entries are linked to this account yet. Ask the organizer for an invitation.</p>
     </section>
 
-    <footer class="footer">Responsive participant entry · synthetic sandbox until the reviewed backend is connected</footer>
+    <footer class="footer" id="platformFooter">Secure participant entry</footer>
   </main>
-  <script type="module" src="./participant.js"></script>
+  <script type="module" src="/participant.js"></script>
 </body>
 </html>

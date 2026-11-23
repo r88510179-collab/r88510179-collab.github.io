@@ -84,3 +84,32 @@ export function entrySubmissionAccess(entry,weekStatus,now,deadline){
   if(submitted.source!=='participant')return{editable:false,reason:'commissioner_claimed',source:submitted.source};
   return{editable:true,reason:'participant_update',source:submitted.source};
 }
+
+/**
+ * Display only server-returned pools already linked to this authenticated participant.
+ * Never infer authorization from a URL or select ambiguous tenant-local slugs.
+ * The database must authorize every read and write independently of this display helper.
+ */
+export function chooseParticipantPool(pools,preferredSlug=''){
+  const valid=pool=>pool&&typeof pool.slug==='string'
+    &&/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/.test(pool.slug)
+    &&typeof pool.id==='string'
+    &&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pool.id)
+    &&typeof pool.display_name==='string'&&pool.display_name.length>0
+    &&Number.isInteger(pool.season)&&pool.season>=2000&&pool.season<=2100
+    &&['pickem','survivor'].includes(pool.pool_type);
+  const known=new Map(),ambiguous=new Set();
+  for(const pool of Array.isArray(pools)?pools:[]){
+    if(!valid(pool))continue;
+    const previous=known.get(pool.slug);
+    if(previous&&previous.id!==pool.id)ambiguous.add(pool.slug);
+    else if(!previous)known.set(pool.slug,pool);
+  }
+  const available=[...known.values()].filter(pool=>!ambiguous.has(pool.slug));
+  // A supplied link must never silently switch to another pool, even one
+  // the same account also owns. A missing/ambiguous link goes to the chooser.
+  const selected=preferredSlug
+    ?(available.some(p=>p.slug===preferredSlug)?preferredSlug:null)
+    :(available.length===1?available[0].slug:null);
+  return{available,selected,automatic:!!selected,ambiguous:[...ambiguous]};
+}

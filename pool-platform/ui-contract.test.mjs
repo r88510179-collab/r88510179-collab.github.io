@@ -4,9 +4,9 @@ import http from 'node:http';
 import {createRequire} from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
-import test,{after,before,describe} from 'node:test';
+import test,{after,afterEach,before,describe} from 'node:test';
 import vm from 'node:vm';
-import {CONFIG_UNAVAILABLE,SIGN_IN_NOT_CONFIRMED} from './platform-client.js';
+import {CONFIG_UNAVAILABLE} from './platform-client.js';
 import {buildCommercialFrontend} from './scripts/build.mjs';
 import {contentSecurityPolicy} from './scripts/runtime-config.mjs';
 import {startServer} from './scripts/serve.mjs';
@@ -18,6 +18,10 @@ const commissioner=read('commissioner.html')+read('commissioner.js');
 const css=read('styles.css');
 const sw=read('service-worker.js');
 const tree=participant+commissioner+read('index.html')+read('platform-config.js');
+const PRECACHE_FILES=['','index.html','participant.html','commissioner.html','styles.css','sw-register.js','participant.js','commissioner.js',
+  'submission-core.js','participant-core.js','import-core.js','commissioner-workflow.js','schedule-core.js','auth-core.js','platform-client.js',
+  'game-day-core.js','game-day-board.js','pool-projection.js','pool-standings-board.js','final-results-form.js','results-grading.js',
+  'season-standings-core.js','season-standings-board.js','manifest.webmanifest'];
 
 test('commercial tree stays generic and synthetic',()=>{
   for(const privateName of ['Thaddeus','DJS','D.C.','JC'])assert.equal(tree.includes(privateName),false);
@@ -45,70 +49,56 @@ test('participant summary is built from text nodes; the typed tiebreak never rea
   }
 });
 
-test('participant Sign out and signed-in errors live in the shell, outside every card that context, invites or errors hide',()=>{
+function occursInOrder(source,...pieces){
+  let offset=0;
+  for(const piece of pieces){
+    const index=source.indexOf(piece,offset);
+    assert.ok(index>=0,piece);
+    offset=index+piece.length;
+  }
+}
+
+test('participant session, invitation and pick feedback are scoped to the signed-in account',()=>{
   const html=read('participant.html'),js=read('participant.js');
-  const shell=html.slice(html.indexOf('<main class="shell">'),html.indexOf('<section'));
-  assert.match(shell,/<div class="topbar">[\s\S]*<button class="button compact secondary hidden tap-target" id="signOut" type="button">Sign out<\/button>/);
-  assert.match(shell,/<div class="notice error hidden shell-notice" id="sessionError" role="alert">/);
+  const shell=html.slice(html.indexOf('<main '),html.indexOf('<section'));
+  assert.match(shell,/id="signOut" type="button">Sign out/);
+  assert.match(shell,/id="sessionError" role="alert"/);
   assert.equal(html.match(/id="signOut"/g).length,1);
-  // Only the session decides whether Sign out shows: not the entry context, an invite claim or an error.
   assert.equal(js.match(/show\('signOut'/g).length,1);
-  assert.match(js,/function setAuthVisible\(\)\{show\('authCard',client\.live&&!state\.session\);show\('signOut',client\.live&&!!state\.session\)\}/);
-  // A failed claim is reported, but the account's own context still loads (a reopened, already claimed link).
-  assert.match(js,/async function openSession\(\)\{\n  const session=state\.session,report=e=>\{if\(state\.session===session\)message\('sessionError',e\.message\)\};\n  setAuthVisible\(\);message\('sessionError',''\);\n  let claimFailed=false;\n  try\{await claimInviteIfPresent\(\)\}catch\(e\)\{claimFailed=true;report\(e\)\}\n  try\{await loadLiveContext\(\)\}catch\(e\)\{if\(!claimFailed\)report\(e\)\}\n\}/);
-  assert.match(js,/state\.session=await client\.getSession\(\);setAuthVisible\(\);\n  if\(state\.session\)await openSession\(\);/);
-  assert.match(js,/state\.session=await client\.verifyOtp\(state\.pendingEmail\|\|\$\('email'\)\.value,\$\('otp'\)\.value\)\}catch\(e\)\{message\('authError',e\.message\);return\}await openSession\(\)/);
-  // A failed claim throws before the token is dropped, so the invited account can still claim it. The URL is not
-  // touched here: the invite left it when the page first read it.
-  assert.match(js,/await client\.claimInvite\(inviteToken\);inviteToken=''\}/);
-  assert.doesNotMatch(js,/cleanInviteFromUrl/);
-  const signOut=/\$\('signOut'\)\.addEventListener\('click',async\(\)=>\{\n([\s\S]*?)\n\}\);/.exec(js)?.[1];
-  assert.ok(signOut);
-  assert.match(signOut,/Object\.assign\(state,\{session:null,context:null,entry:null,pendingEmail:''\}\)/);
-  for(const id of ['entryCard','pickForm','submittedCard','emptyCard','otpWrap'])assert.match(signOut,new RegExp(`'${id}'`));
-  assert.match(signOut,/for\(const id of \['sessionError','authError','validation'\]\)message\(id,''\);\n  setAuthVisible\(\);$/,'errors are cleared only after the session is gone');
-  assert.ok(signOut.indexOf("message(id,'')")>signOut.indexOf('await client.signOut()'));
-  assert.doesNotMatch(signOut,/inviteToken|cleanInviteFromUrl/,'signing out must not drop an unclaimed invite');
-  assert.match(js,/if\(state\.session!==session\)return; \/\/ signed out while loading/,'a context that arrives after sign out is not rendered');
-  const submit=/\$\('pickForm'\)\.addEventListener\('submit',async event=>\{\n([\s\S]*?)\n\}\);/.exec(js)?.[1];
-  assert.ok(submit);
-  assert.match(submit,/const session=state\.session;/);
-  assert.match(submit,/if\(state\.session!==session\)return;\n    \$\('submittedTitle'\)/,'no saved card after sign out');
-  assert.match(submit,/catch\(e\)\{if\(state\.session===session\)\{message\('validation',e\.message\)/,'no stale error after sign out');
-  assert.match(submit,/finally\{if\(state\.context&&state\.entry\)\$\('submitBtn'\)/);
-  assert.match(js,/catch\(e\)\{if\(!String\(e\?\.message\)\.includes\('pool_not_found'\)\)throw e\}/,'no readable pool means the empty state');
+  assert.ok(js.includes("show('signOut',client.live&&!!state.session)"));
+  // The page binds the sign-in it shows before anything is claimed or loaded for it, so that every later write is
+  // confirmed against the browser's sign-in first (platform-client.test.mjs, tests/e2e).
+  occursInOrder(js,"async function openSession(notice='')",'client.bindSession(session,accountChanged);',"message('sessionError',notice)",
+    'await claimInviteIfPresent()', 'claimFailed=true;report(e)', 'await discoverParticipantPools()', 'if(!claimFailed)report(e)');
+  occursInOrder(js,'state.session=await client.getSession();setAuthVisible();','watchSignIn(client);',
+    "if(state.session)await openSession(signInChanged?SIGN_IN_CHANGED:'');","else if(signInChanged)message('authError',SIGNED_OUT_ELSEWHERE);");
+  occursInOrder(js,'state.session=await client.verifyOtp(', 'await openSession()');
+  occursInOrder(js,'const context=await client.participantContext(', 'if(state.session!==session||state.poolSlug!==slug)return;', 'state.context=context');
+  // One function takes an account off the page. Sign-out runs it once the server has signed the account out; a
+  // sign-in that changed in another tab runs it and then starts the page again.
+  occursInOrder(js,'function clearAccount(){',"$('signOut').addEventListener",'function accountChanged(){','function renderContext');
+  const clear=js.slice(js.indexOf('function clearAccount(){'),js.indexOf("$('signOut').addEventListener"));
+  occursInOrder(clear,'client.bindSession(null);','session:null,context:null,entry:null', 'availablePools:[],preferredEntryId:null', "message(id,'')", 'setAuthVisible()');
+  for(const id of ['entryCard','pickForm','submittedCard','emptyCard','otpWrap','sessionError','validation','authError'])assert.ok(clear.includes("'"+id+"'"));
+  assert.doesNotMatch(clear,/inviteEntryId\s*=/);
+  const signout=js.slice(js.indexOf("$('signOut').addEventListener"),js.indexOf('function accountChanged(){'));
+  occursInOrder(signout,'try{await client.signOut()}catch(e){',"return}",'clearAccount();');
+  assert.doesNotMatch(signout,/inviteEntryId\s*=|restartAfterSignInChange/);
+  const changed=js.slice(js.indexOf('function accountChanged(){'),js.indexOf('function renderContext'));
+  occursInOrder(changed,'clearAccount();','restartAfterSignInChange();');
+  assert.equal(js.match(/restartAfterSignInChange\(\)/g).length,1);
+  occursInOrder(js,'const signInChanged=takeSignInChangedMark();','const invite=readInviteFromUrl(location.href);');
+  const submit=js.slice(js.indexOf("$('pickForm').addEventListener('submit'"));
+  occursInOrder(submit,'const session=state.session','await client.submitEntry(', 'if(state.session!==session)return;', "$('submittedTitle')", "if(state.session===session){message('validation'",'finally{if(state.context&&state.entry)');
 });
 
-// Invite tokens travel only in the URL fragment, which no HTTP request carries, so Netlify's request logs and
-// observability never see one. The commissioner page builds links that way, and the participant page reads the
-// invite, scrubs it from the address bar and keeps it only in memory before it does anything else.
-test('invite links carry the token only in the fragment; the participant page reads, scrubs and holds it before anything else runs',()=>{
-  const cjs=read('commissioner.js'),pjs=read('participant.js'),core=read('auth-core.js');
-  assert.match(cjs,/^import \{participantInviteUrl\} from '\.\/auth-core\.js';$/m);
-  assert.match(cjs,/const url=participantInviteUrl\(new URL\('\.\/participant\.html',location\.href\),state\.context\.pool\.slug,result\.invite_token\);\n    msg\('inviteResult',`Invite ready: \$\{url\} · /);
-  // Nothing anywhere puts an invite into a query string, or reads one from it.
-  for(const [name,source] of [['commissioner.js',cjs],['participant.js',pjs],['auth-core.js',core]]){
-    assert.doesNotMatch(source,/[?&]invite=|searchParams\.(set|append)\(\s*['"]invite['"]/,name);
-  }
-  assert.doesNotMatch(pjs,/\.get\(\s*['"]invite['"]\s*\)|\.has\(\s*['"]invite['"]\s*\)|location\.hash/);
-  // Read and scrubbed first: before the configuration import, the first thing the page awaits.
-  assert.match(pjs,/^import \{authErrorMessage,readInviteFromUrl\} from '\.\/auth-core\.js';$/m);
-  const capture=pjs.indexOf('\nconst invite=readInviteFromUrl(location.href);\n');
-  assert.ok(capture>0,'the invite is read from the page URL');
-  assert.ok(capture<pjs.indexOf('await '),'and before the page awaits anything');
-  assert.match(pjs,/\nconst invite=readInviteFromUrl\(location\.href\);\nif\(invite\.found\)history\.replaceState\(null,'',invite\.cleanUrl\);\nlet inviteToken=invite\.token;\nconst inviteError=invite\.error\?authErrorMessage\(invite\.error\):'';\nif\(inviteError\)message\('sessionError',inviteError\);\n/);
-  assert.equal(pjs.match(/history\.replaceState\(/g).length,1);
-  // An invite link opened over this page changes only the fragment and loads nothing: the page reloads to read it.
-  assert.match(pjs,/\nwindow\.addEventListener\('hashchange',\(\)=>\{if\(readInviteFromUrl\(location\.href\)\.found\)location\.reload\(\)\}\);\n/);
-  // In memory only: set from the fragment, sent only to claimInvite, cleared only by a successful claim. A refused
-  // link fails like a claim, before any token could be sent, so the account's own entries still load.
-  assert.deepEqual(pjs.split('\n').filter(line=>line.includes('inviteToken')&&!line.trim().startsWith('//')),[
-    'let inviteToken=invite.token;',
-    "async function claimInviteIfPresent(){if(!state.session)return;if(inviteError)throw new Error(inviteError);if(!inviteToken)return;await client.claimInvite(inviteToken);inviteToken=''}"
-  ]);
-  // Never persisted and never logged.
-  for(const [name,source] of [['commissioner.js',cjs],['participant.js',pjs],['auth-core.js',core]]){
-    assert.doesNotMatch(source,/localStorage|sessionStorage|indexedDB|document\.cookie|caches\.|console\./,name);
+test('links carry only the entry and pool, while a verified account authorizes the claim',()=>{
+  const c=read('commissioner.js'),p=read('participant.js');
+  occursInOrder(c,'await client.createInvite({entryId,email','if(state.session!==session)return;', "participantInviteUrl(new URL('./participant.html',location.href),state.context.pool.slug,result.entry_id)");
+  occursInOrder(p,'const invite=readInviteFromUrl(location.href);',"history.replaceState(null,'',invite.cleanUrl)",'let inviteEntryId=invite.entryId;', "await import('./platform-config.js')");
+  occursInOrder(p,'if(!state.session)return;', 'if(inviteError)throw', 'if(!inviteEntryId)return;', 'if(claimInFlight)return claimInFlight;', 'client.claimEmailInvite(target).then(', 'if(state.session!==session)return;', 'state.preferredEntryId=target;', "inviteEntryId='';");
+  for(const js of [c,p,read('auth-core.js')]){
+    assert.doesNotMatch(js,/searchParams\.(set|append)\(\s*['"]invite['"]|localStorage|sessionStorage|indexedDB|document\.cookie|console\./);
   }
 });
 
@@ -123,42 +113,39 @@ test('participant Survivor choices submit the stable key and show the escaped di
   assert.match(js,/summaryRow\('Survivor selection',team\?team\.display:'—'\)/);
 });
 
-test('commissioner Sign out and signed-in errors live in the shell; async work renders only for the session that started it',()=>{
+test('commissioner sign-out clears tenant data and async work is fenced by its originating session',()=>{
   const html=read('commissioner.html'),js=read('commissioner.js');
-  const shell=html.slice(html.indexOf('<main class="shell">'),html.indexOf('<section'));
-  assert.match(shell,/<div class="topbar">[\s\S]*<button class="button compact secondary hidden tap-target" id="signOut" type="button">Sign out<\/button>/);
-  assert.match(shell,/<div class="notice error hidden shell-notice" id="sessionError" role="alert">/);
+  const shell=html.slice(html.indexOf('<main '),html.indexOf('<section'));
+  assert.match(shell,/id="signOut" type="button">Sign out/);
+  assert.match(shell,/id="sessionError" role="alert"/);
   assert.equal(html.match(/id="signOut"/g).length,1);
-  // Only the session decides whether Sign out shows: not the pool context, an import or an error.
   assert.equal(js.match(/show\('signOut'/g).length,1);
-  assert.match(js,/function setAuth\(\)\{show\('authCard',client\.live&&!state\.session\);show\('signOut',client\.live&&!!state\.session\)\}/);
-  assert.match(js,/async function load\(\)\{\n  const session=state\.session,context=client\.live\?await client\.commissionerContext\(poolSlug\):syntheticContext\(\);\n  if\(state\.session!==session\)return; \/\/ signed out while loading: render nothing for the previous account\n  state\.context=context;renderConsole\(\);\n\}/);
-  assert.match(js,/async function openSession\(\)\{\n  const session=state\.session;\n  setAuth\(\);msg\('sessionError',''\);\n  try\{await load\(\)\}catch\(e\)\{if\(state\.session===session\)msg\('sessionError',e\.message\)\}\n\}/);
-  assert.match(js,/state\.session=await client\.getSession\(\);setAuth\(\);\n  if\(state\.session\)await openSession\(\);/);
-  assert.match(js,/state\.session=await client\.verifyOtp\(state\.pendingEmail\|\|\$\('email'\)\.value,\$\('otp'\)\.value\)\}catch\(e\)\{msg\('authError',e\.message\);return\}await openSession\(\)/);
-  assert.match(js,/initialize\(\)\.catch\(e=>msg\('sessionError',e\.message\)\)/);
-  const signOut=/\$\('signOut'\)\.addEventListener\('click',async\(\)=>\{\n([\s\S]*?)\n\}\);/.exec(js)?.[1];
-  assert.ok(signOut);
-  assert.match(signOut,/^  try\{await client\.signOut\(\)\}catch\(e\)\{msg\('sessionError',e\.message\);return\}/);
-  assert.match(signOut,/Object\.assign\(state,\{session:null,context:null,season:null,week:null,pendingEmail:''\}\)/);
-  for(const id of ['consoleCard','entriesCard','inviteCard','importCard','resultTableWrap','otpWrap','seasonSelect','weekSelect','entriesBody','inviteEntry','resultBody','email','otp','inviteEmail','importText','inviteResult','importError','importResult']){
-    assert.match(signOut,new RegExp(`'${id}'`),id);
-  }
-  assert.match(signOut,/for\(const id of \['sessionError','authError','inviteResult','importError','importResult'\]\)msg\(id,''\);\n  setAuth\(\);$/,'errors are cleared only after the session is gone');
-  for(const action of ['createInvite','runImport']){
-    const body=new RegExp(`\\$\\('${action}'\\)\\.addEventListener\\('click',async\\(\\)=>\\{\\n([\\s\\S]*?)\\n\\}\\);`).exec(js)?.[1];
-    assert.ok(body,action);
-    assert.match(body,/const session=state\.session;/,action);
-    assert.match(body,/\n    if\(state\.session!==session\)return; \/\/ signed out while /,action);
-    assert.match(body,/catch\(e\)\{if\(state\.session===session\)msg\('importError',e\.message\)\}/,action);
-  }
+  assert.ok(js.includes("show('signOut',client.live&&!!state.session)"));
+  occursInOrder(js,'await client.commissionerContext(slug)','if(session!==state.session||slug!==state.poolSlug)return;', 'state.context=context;');
+  // As on the participant page: the sign-in is bound before anything is loaded for it, one function takes an
+  // account off the page, and a sign-in that changed in another tab runs it and starts the page again.
+  occursInOrder(js,"async function openSession(notice='')",'client.bindSession(session,accountChanged);',"msg('sessionError',notice)",
+    'await discoverCommissionerPools();','if(session!==state.session)return;');
+  occursInOrder(js,'state.session=await client.getSession();setAuth();','watchSignIn(client);',
+    "if(state.session)await openSession(signInChanged?SIGN_IN_CHANGED:'');","else if(signInChanged)msg('authError',SIGNED_OUT_ELSEWHERE);");
+  occursInOrder(js,'function clearAccount(){',"$('signOut').addEventListener",'function accountChanged(){','function cancelPoolCreation');
+  const clear=js.slice(js.indexOf('function clearAccount(){'),js.indexOf("$('signOut').addEventListener"));
+  occursInOrder(clear,'client.bindSession(null);','session:null,context:null,season:null,week:null', 'availablePools:[],preview:null','hidePool()', "msg(id,'')",'setAuth()');
+  for(const id of ['otpWrap','inviteLinkWrap','seasonSelect','weekSelect','entriesBody','inviteEntry','resultBody','email','otp','inviteEmail','importText','inviteResult','importError','importResult'])assert.ok(clear.includes("'"+id+"'"),id);
+  const signout=js.slice(js.indexOf("$('signOut').addEventListener"),js.indexOf('function accountChanged(){'));
+  occursInOrder(signout,'try{await client.signOut()}catch(e){','return}','clearAccount();');
+  assert.doesNotMatch(signout,/restartAfterSignInChange/);
+  const changed=js.slice(js.indexOf('function accountChanged(){'),js.indexOf('function cancelPoolCreation'));
+  occursInOrder(changed,'clearAccount();','restartAfterSignInChange();');
+  assert.equal(js.match(/restartAfterSignInChange\(\)/g).length,1);
+  const confirm=js.slice(js.indexOf("$('confirmImport').addEventListener"));
+  occursInOrder(confirm,'pending.session!==state.session)return;', 'state.preview=null;', 'await client.submitBatch(', 'if(state.session!==pending.session)return;', 'summarizeBatchResults', "if(state.session===pending.session)msg('importError'");
 });
 
-test('commissioner UI exposes invite and conflict-report workflows',()=>{
-  assert.match(commissioner,/createInvite/);
-  assert.match(commissioner,/submitBatch/);
-  assert.match(commissioner,/source conflict/i);
-  assert.match(commissioner,/<td>\$\{esc\(e\.row\?`Row \$\{e\.row\}\$\{e\.entry_code\?` · \$\{e\.entry_code\}`:''\}`:'CSV'\)\}<\/td><td>\$\{esc\(describeImportError\(e\)\)\}<\/td>/,'rejected rows are listed with their context, both cells escaped');
+test('commissioner preview and import results escape entry labels and conflict messages',()=>{
+  assert.ok(commissioner.includes('source_conflict:'));
+  assert.ok(commissioner.includes('<td>\u0024{esc(r.entry)}</td><td>\u0024{esc(r.result)}</td>'));
+  assert.ok(commissioner.includes("<td>\u0024{esc(entry?.display_name||entry?.entry_code||'Entry')}</td><td>\u0024{esc(outcome)}</td>"));
 });
 
 test('responsive baseline keeps mobile controls touch-friendly',()=>{
@@ -246,8 +233,7 @@ test('activation removes only older commercial caches; Pool Center and unrelated
 test('install precaches exactly the listed static modules, at bare same-origin paths, in the commercial cache only',async()=>{
   const worker=await installedWorker();
   const keys=[...worker.stores.get(worker.cacheName).keys()];
-  const listed=['','index.html','participant.html','commissioner.html','styles.css','sw-register.js','participant.js','commissioner.js','submission-core.js','participant-core.js','import-core.js','auth-core.js','platform-client.js','manifest.webmanifest'];
-  assert.deepEqual(keys.sort(),listed.map(asset=>`${ORIGIN}/pool-platform/${asset}`).sort());
+  assert.deepEqual(keys.sort(),PRECACHE_FILES.map(asset=>`${ORIGIN}/pool-platform/${asset}`).sort());
   // The runtime configuration and the bundled SDK are never precached.
   for(const absent of ['platform-config.js','vendor/neon-js.js','service-worker.js'])assert.ok(!keys.some(key=>key.endsWith(`/${absent}`)),absent);
   assert.ok(keys.every(key=>key.startsWith(`${ORIGIN}/pool-platform/`)&&!key.includes('?')));
@@ -382,7 +368,7 @@ test('the runtime configuration is never stored or answered by the worker, onlin
 
 test('activation deletes the v3 commercial cache, the last one that held platform-config.js, and nothing outside the namespace',async()=>{
   const current=(await installedWorker()).cacheName;
-  assert.equal(current,'pool-platform-commercial-v4');
+  assert.equal(current,'pool-platform-commercial-v5');
   const worker=bootWorker({cacheNames:['pool-platform-commercial-v3',current,PERSONAL_CACHE,'another-app-v1']});
   await worker.dispatch('activate');
   assert.deepEqual(worker.log.deleted,['pool-platform-commercial-v3']);
@@ -400,13 +386,14 @@ test('a request carrying Authorization is never stored, in any header case and f
   assert.deepEqual(worker.log.puts,[]);
 });
 
-// Opt-in: the real participant page in headless Chromium through Playwright.
-//   POOL_PLATFORM_TEST_BROWSER=1 NODE_PATH="$(npm root -g)" node --test pool-platform/ui-contract.test.mjs
+// Opt-in: the real participant and commissioner pages in headless browsers through Playwright.
+//   POOL_PLATFORM_TEST_BROWSER=1 E2E_BROWSERS=chromium,webkit NODE_PATH="$(npm root -g)" node --test pool-platform/ui-contract.test.mjs
 // Sandbox runs as shipped. Live mode is stubbed only at the network edge: platform-config.js is served as a
 // live config, the same-origin bundled SDK (vendor/neon-js.js) as an in-page fake auth client, and the Data API
 // RPCs by an in-memory stand-in, so the page's own auth shell, invite, rendering and submit code runs unmodified.
 // Every page is served with the production Content-Security-Policy, and clean() fails on any violation reported.
 const BROWSER=process.env.POOL_PLATFORM_TEST_BROWSER||'';
+const BROWSER_ENGINES=(process.env.E2E_BROWSERS||'chromium').split(',');
 const SDK_PATH=/import\('\.\/(vendor\/[^']+)'\)/.exec(read('platform-client.js'))?.[1];
 // The stand-in Data API is same-origin and the fake SDK makes no Auth request, so connect-src 'self' suffices.
 const PAGE_CSP=contentSecurityPolicy({dataUrl:''});
@@ -420,7 +407,26 @@ export function createClient(){return{auth:{
   signIn:{emailOtp:async({email,otp})=>email===auth().sent&&otp==='123456'?(auth().email=email,{data:{},error:null}):{data:null,error:new Error('Invalid sign-in code.')}},
   signOut:async()=>{await window.__signOutGate;auth().email=null;return{data:{success:true},error:null}}
 }}}`;
-const INVITE='ab'.repeat(32);
+const LEGACY_INVITE='ab'.repeat(32);
+const ENTRY_ONE='10000000-0000-4000-8000-000000000001';
+const ENTRY_TWO='10000000-0000-4000-8000-000000000002';
+const POOL_ID='20000000-0000-4000-8000-000000000001';
+const WEEK_ID='30000000-0000-4000-8000-000000000001';
+const POOL_SLUG='it-pool';
+const JOIN_PATH=`/join/${POOL_SLUG}/${ENTRY_ONE}`;
+const CLAIM_INVITE='pool_platform_claim_email_invite';
+const CREATE_INVITE='pool_platform_create_email_invite';
+const LIST_PARTICIPANT_POOLS='pool_platform_list_participant_pools';
+const LIST_COMMISSIONER_POOLS='pool_platform_list_commissioner_pools';
+const PARTICIPANT_CONTEXT='pool_platform_participant_context';
+const COMMISSIONER_CONTEXT='pool_platform_commissioner_context';
+const NO_MANAGED_POOLS='No pools are assigned to this account.';
+const REQUEST_FAILED='The request could not be completed. Please try again or contact the pool organizer.';
+const sdkJwt=email=>[
+  Buffer.from('{"alg":"none","typ":"JWT"}').toString('base64url'),
+  Buffer.from(JSON.stringify({email})).toString('base64url'),
+  Buffer.from('shape-only-signature').toString('base64url')
+].join('.');
 const HOSTILE_LABEL='<img src=x onerror="window.__xss=(window.__xss||0)+1">';
 // Every value the tiebreak box must show verbatim (blank shows the dash) without creating markup or running.
 const TIEBREAK_INPUTS=['<img src=x onerror=alert(1)>','<script>alert(1)</script>','<img src=x onerror="window.__xss=(window.__xss||0)+1">','<svg onload=alert(1)>','"double" and \'single\' quotes','Tom & Jerry &amp; &lt;b&gt;','<b>bold</b> > <i>angle</i> <','47','0',''];
@@ -430,7 +436,8 @@ function serveDirectory(root){
   const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.webmanifest':'application/manifest+json'};
   const server=http.createServer((req,res)=>{
     server.targets.push(req.url); // each request target exactly as the browser sent it
-    const name=decodeURIComponent(new URL(req.url,'http://localhost').pathname).replace(/^\/+/,'')||'index.html';
+    const pathname=new URL(req.url,'http://localhost').pathname;
+    const name=/^\/join\/[a-z0-9-]+\/[0-9a-f-]+$/i.test(pathname)?'participant.html':decodeURIComponent(pathname).replace(/^\/+/,'')||'index.html';
     if(name.includes('/')||name.includes('..')){res.writeHead(404).end();return}
     fs.readFile(new URL(name,root),(error,body)=>{
       if(error){res.writeHead(404).end();return}
@@ -441,15 +448,15 @@ function serveDirectory(root){
   return new Promise(resolve=>server.listen(0,'127.0.0.1',()=>resolve(server)));
 }
 
-function liveWorld({owners={},invites={},readable=[],games,poolType='pickem'}={}){
+function liveWorld({owners={},invites={},readable=[],unverified=[],games,poolType='pickem'}={}){
   const deadline=new Date(Date.now()+86400000).toISOString();
   return{
-    owners,invites,readable,calls:[],gates:[],
-    entries:['E01','E02'].map((code,i)=>({id:`entry-${i+1}`,entry_code:code,display_name:`Entry ${code}`,status:'active',submission:null,history:[]})),
+    owners,invites,readable,unverified,calls:[],gates:[],
+    entries:[ENTRY_ONE,ENTRY_TWO].map((id,i)=>({id,entry_code:`E0${i+1}`,display_name:`Entry E0${i+1}`,status:'active',submission:null,history:[]})),
     context:{
-      pool:{id:'pool-1',slug:'it-pool',display_name:poolType==='survivor'?'IT Survivor':'IT Pick’em',pool_type:poolType,rules:{},branding:{}},
+      pool:{id:POOL_ID,slug:POOL_SLUG,display_name:poolType==='survivor'?'IT Survivor':'IT Pick’em',pool_type:poolType,rules:{},branding:{}},
       season:{id:'season-1',season:2027,config:{}},
-      week:{id:'week-1',week:1,status:'open',opens_at:null,deadline_at:deadline,config:{tiebreakRequired:poolType==='pickem',games:games||[
+      week:{id:WEEK_ID,week:1,status:'open',opens_at:null,deadline_at:deadline,config:{tiebreakRequired:poolType==='pickem',games:games||[
         {id:'g1',away:{key:'austin',label:'Austin'},home:{key:'denver',label:'Denver'}},
         {id:'g2',away:{key:'phoenix',label:'Phoenix'},home:{key:'seattle',label:'Seattle'}}
       ]}}
@@ -460,15 +467,18 @@ function liveWorld({owners={},invites={},readable=[],games,poolType='pickem'}={}
 // The same pool seen from the commissioner console. commissioner_context answers only a listed commissioner and
 // only for this pool's slug, raising commissioner_required otherwise, as the database does; contextFailure
 // makes it fail with an HTTP error or a dropped connection instead.
-function consoleWorld({commissioners=['commish@example.test'],contextFailure=null}={}){
+function consoleWorld({commissioners=['commish@example.test'],contextFailure=null,additionalPools=[]}={}){
   const world=liveWorld(),{pool,season,week}=world.context;
-  return Object.assign(world,{commissioners,contextFailure,console:{
+  return Object.assign(world,{commissioners,contextFailure,additionalPools,console:{
     pool:{...pool,tenant_id:'tenant-1',display_name:'Private Console Pool'},
     seasons:[{...season,status:'active',weeks:[week],
       entries:world.entries.map(({id,entry_code,display_name,status})=>({id,entry_code,display_name,status,claimed:false,submissions:[]}))}]
   }});
 }
-const INVITE_OUT='cd'.repeat(32);
+function participantDiscovery({pool,season}){
+  const {id,slug,display_name,pool_type}=pool;
+  return {id,slug,display_name,pool_type,season:season.season};
+}
 
 // Holds the (skip+1)th call of one RPC until release(), so a test can act while that request is in flight.
 // arrived rejects if the page never makes that call, instead of hanging the run.
@@ -490,26 +500,36 @@ function dataApi(world){
     const claims=(request.headers().authorization||'').replace(/^Bearer /,'').split('.')[1];
     const email=claims?JSON.parse(Buffer.from(claims,'base64url').toString()).email:null;
     const args=request.postDataJSON()||{};
+    const reply=(status,body)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
+    if(['pool_platform_week_projection_snapshot','pool_platform_week_result_snapshot','pool_platform_season_standings_snapshot'].includes(name)){
+      // The standings browser suite exercises these endpoints against PostgreSQL.
+      return reply(404,{code:'PGRST202',message:'Could not find the function'});
+    }
     world.calls.push({name,email,args,at:Date.now(),method:request.method(),url:request.url(),headers:request.headers(),body:request.postData()});
     const held=world.gates.find(g=>g.name===name&&!g.done);
     if(held){if(held.skip>0)held.skip--;else{held.done=true;held.seen();await held.released}}
-    const reply=(status,body)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
     const fail=message=>reply(400,{code:'P0001',details:null,hint:null,message});
     // world.authRequired[name]: how many more calls of that RPC answer auth_required before anything else happens,
     // as a newly opened Data API connection that saw no identity would (the database raises it first).
     if(world.authRequired?.[name]>0){world.authRequired[name]--;return fail('auth_required')}
     if(!email)return fail('auth_required');
-    if(name==='pool_platform_claim_entry_invite'){
-      const invite=world.invites[args.p_invite_token];
-      if(!invite||invite.claimedBy)return fail('invite_unavailable');
-      if(invite.email&&invite.email!==email)return fail('invite_email_mismatch');
-      invite.claimedBy=email;world.owners[invite.entryId]=email;
-      return reply(200,{entry_id:invite.entryId,claimed:true});
+    if(name===CLAIM_INVITE){
+      if(world.unverified.includes(email))return fail('invite_email_unverified');
+      const entry=world.entries.find(e=>e.id===args.p_entry_id&&e.status==='active');
+      const invite=entry&&world.invites[entry.id];
+      if(!invite||invite.claimedBy||invite.email!==email.toLowerCase()||
+         (invite.expires_at&&Date.parse(invite.expires_at)<=Date.now()))return fail('invite_unavailable');
+      if(world.owners[entry.id])return fail('entry_already_claimed');
+      invite.claimedBy=email;world.owners[entry.id]=email;
+      return reply(200,{entry_id:entry.id,claimed:true});
     }
-    if(name==='pool_platform_participant_context'){
-      const entries=world.entries.filter(e=>world.owners[e.id]===email);
-      if(!entries.length&&!world.readable.includes(email))return fail('pool_not_found');
-      return reply(200,{...world.context,entries});
+    const ownedEntries=world.entries.filter(e=>e.status==='active'&&world.owners[e.id]===email);
+    if(name===LIST_PARTICIPANT_POOLS)return reply(200,ownedEntries.length?[participantDiscovery(world.context)]:[]);
+    if(name===PARTICIPANT_CONTEXT){
+      if(world.participantContextFailure)return fail(world.participantContextFailure);
+      if(args.p_pool_slug!==world.context.pool.slug||
+         (!ownedEntries.length&&!world.readable.includes(email)))return fail('pool_not_found');
+      return reply(200,{...world.context,entries:ownedEntries});
     }
     if(name==='pool_platform_submit_entry'){
       const entry=world.entries.find(e=>e.id===args.p_entry_id);
@@ -519,15 +539,27 @@ function dataApi(world){
       return reply(200,{ok:true,code:revision>1?'updated':'created',submission_id:`sub-${entry.id}`,source:'participant',status:'submitted',revision});
     }
     const commissioner=(world.commissioners||[]).includes(email);
-    if(name==='pool_platform_commissioner_context'){
+    if(name===LIST_COMMISSIONER_POOLS){
+      if(!commissioner)return reply(200,[]);
+      const {slug,display_name,pool_type}=world.console.pool;
+      return reply(200,[{slug,display_name,pool_type,status:'active'},...world.additionalPools]);
+    }
+    if(name===COMMISSIONER_CONTEXT){
       if(world.contextFailure==='network')return route.abort('failed');
       if(world.contextFailure==='http')return reply(500,{code:'XX000',details:null,hint:null,message:'upstream_unavailable'});
       if(!commissioner||args.p_pool_slug!==world.console.pool.slug)return fail('commissioner_required');
       return reply(200,world.console);
     }
-    if(name==='pool_platform_create_entry_invite'){
-      if(!commissioner)return fail('commissioner_required');
-      return reply(200,{invite_token:INVITE_OUT,entry_id:args.p_entry_id,expires_at:new Date(Date.now()+7*86400000).toISOString()});
+    if(name===CREATE_INVITE){
+      const recipient=typeof args.p_email==='string'?args.p_email.trim().toLowerCase():'';
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient))return fail('invalid_invite_email');
+      if(!Number.isInteger(args.p_expires_hours)||args.p_expires_hours<1||args.p_expires_hours>720)return fail('invalid_invite_expiry');
+      const entry=world.entries.find(e=>e.id===args.p_entry_id);
+      if(!commissioner||!entry)return fail('commissioner_required');
+      if(world.owners[entry.id]||entry.status!=='active')return fail('entry_unavailable');
+      const expires_at=new Date(Date.now()+args.p_expires_hours*3600000).toISOString();
+      world.invites[entry.id]={email:recipient,expires_at};
+      return reply(200,{entry_id:entry.id,expires_at,delivery:'verified_email'});
     }
     if(name==='pool_platform_submit_batch'){
       if(!commissioner)return fail('commissioner_required');
@@ -537,7 +569,8 @@ function dataApi(world){
   };
 }
 
-describe('participant and commissioner pages in headless Chromium (opt-in)',{skip:BROWSER?false:'set POOL_PLATFORM_TEST_BROWSER=1 (with playwright on NODE_PATH) to drive the real page'},()=>{
+for(const engine of BROWSER?BROWSER_ENGINES:['chromium']){
+describe(`participant and commissioner pages in headless ${engine} (opt-in)`,{skip:BROWSER?false:'set POOL_PLATFORM_TEST_BROWSER=1 (with playwright on NODE_PATH) to drive the real page'},()=>{
   let server,browser,base;
   const contexts=[];
   before(async()=>{
@@ -546,10 +579,10 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     catch(error){assert.fail(`POOL_PLATFORM_TEST_BROWSER is set but playwright cannot be loaded (${error.message.split('\n')[0]}); put it on NODE_PATH`)}
     server=await serveDirectory(new URL('./',import.meta.url));
     base=`http://127.0.0.1:${server.address().port}`;
-    browser=await playwright.chromium.launch();
+    browser=await playwright[engine].launch();
   });
+  afterEach(()=>Promise.all(contexts.splice(0).map(c=>c.close())));
   after(async()=>{
-    await Promise.all(contexts.splice(0).map(c=>c.close()));
     await browser?.close();
     await new Promise(resolve=>server?server.close(resolve):resolve());
   });
@@ -569,12 +602,17 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     await recordCsp(page);
     if(world){
       await page.addInitScript(email=>{window.__fakeAuth={email}},signedInAs);
+      await page.route(`${base}/api/auth/get-session`,async route=>{
+        const email=await page.evaluate(()=>window.__fakeAuth.email);
+        return route.fulfill({json:email?{session:{id:'fake-session'},user:{id:email,email}}:null,
+          headers:email?{'set-auth-jwt':sdkJwt(email)}:{}});
+      });
       await page.route(`${base}/platform-config.js`,route=>route.fulfill({contentType:'text/javascript',
         body:`export const PLATFORM_CONFIG=Object.freeze({mode:'live',dataUrl:'${base}/data-api',defaultPoolSlug:${JSON.stringify(poolSlug)}});`}));
       await page.route(`${base}/${SDK_PATH}`,route=>route.fulfill({contentType:'text/javascript',body:FAKE_SDK}));
       await page.route(`${base}/data-api/rpc/*`,dataApi(world));
     }
-    await page.goto(`${base}/${path}${query}`);
+    await page.goto(new URL(path+query,base+'/').href);
     return{page,seen};
   }
   const visible=async(page,expected)=>{
@@ -595,23 +633,36 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     await page.fill('#otp','123456');await page.click('#verifyCode');
   };
   const summaryTiebreak=page=>page.locator('#summary .summary-row').last().locator('strong');
-  // A fragment invite token may travel in one place only: the body of the claim RPC. Never in a request target the
-  // host saw, a URL or header the browser sent, any other RPC, a console message, the page, the address bar or a store.
-  const inviteContained=async(page,world,seen,token)=>{
-    assert.equal(server.targets.some(target=>target.includes(token)||target.includes('#')),false,'a request target the host saw');
-    assert.equal(seen.requests.some(request=>JSON.stringify(request).includes(token)),false,'a request URL or header the browser sent');
-    for(const {args,body,...call} of world.calls){
-      assert.equal(JSON.stringify(call).includes(token),false,`${call.name}: its URL or headers`);
-      if(call.name==='pool_platform_claim_entry_invite'&&args.p_invite_token===token)assert.equal(body,JSON.stringify({p_invite_token:token}));
-      else assert.equal(String(body).includes(token),false,`${call.name}: its body`);
+  const submitPick=async(page,title)=>{
+    await page.click('#submitBtn');
+    await page.locator('#submittedTitle',{hasText:title}).waitFor({state:'visible'});
+  };
+  // The entry UUID is visible only on the invitation navigation and in authorized RPC bodies or loaded entries.
+  // A retired token may arrive in a pasted URL, but never continues into the API, document, logs or storage.
+  const inviteContained=async(page,world,seen,{entryId=ENTRY_ONE,legacyToken=null}={})=>{
+    assert.equal(server.targets.some(target=>target.includes('#')),false,'a fragment reached the host');
+    for(const request of seen.requests){
+      assert.equal(JSON.stringify(request.headers).includes(entryId),false,'an invitation ID in a request header');
+      if(request.url.includes(entryId)){
+        const url=new URL(request.url);
+        assert.ok(url.pathname===JOIN_PATH||url.searchParams.get('entry')===entryId,request.url);
+      }
     }
-    assert.equal(seen.console.some(text=>text.includes(token)),false,'a console message');
-    assert.equal(page.url().includes(token)||page.url().includes('invite'),false,`the address bar: ${page.url()}`);
-    assert.equal((await page.content()).includes(token),false,'the page');
+    for(const call of world.calls){
+      assert.doesNotMatch(call.body||'',/p_invite_token|invite_token/);
+      if(call.name===CLAIM_INVITE)assert.equal(call.body,JSON.stringify({p_entry_id:entryId}));
+      if(legacyToken)assert.equal(JSON.stringify(call).includes(legacyToken),false,call.name);
+    }
+    const markers=[entryId,sdkJwt('invited@example.test'),...(legacyToken?[legacyToken]:[])];
     const stores=await page.evaluate(async()=>JSON.stringify({local:{...localStorage},session:{...sessionStorage},cookie:document.cookie,
       history:history.state,databases:await indexedDB.databases(),caches:await caches.keys()}));
-    assert.equal(stores.includes(token),false,stores);
-    assert.equal(JSON.stringify(await page.context().cookies()).includes(token),false,'a cookie');
+    for(const marker of markers){
+      assert.equal(seen.console.some(text=>text.includes(marker)),false,'a console message');
+      assert.equal(page.url().includes(marker),false,`the address bar: ${page.url()}`);
+      assert.equal(stores.includes(marker),false,stores);
+      assert.equal(JSON.stringify(await page.context().cookies()).includes(marker),false,'a cookie');
+    }
+    if(legacyToken)assert.equal((await page.content()).includes(legacyToken),false,'a retired token is not on the page');
   };
 
   test('sandbox: hostile tiebreak text is displayed literally and never interpreted; 47 and 0 are kept, blank is not 0',async()=>{
@@ -639,14 +690,14 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     await clean(page,seen);
   });
 
-  test('live: wrong account opens an email-bound invite → mismatch beside Sign out → sign out → invited account claims it from page memory',async()=>{
-    const world=liveWorld({invites:{[INVITE]:{email:'invited@example.test',entryId:'entry-1'}}});
-    const {page,seen}=await openPage({world,signedInAs:'wrong@example.test',query:`?pool=it-pool#invite=${INVITE}`});
+  test('live: wrong account opens an email-bound invite → refusal beside Sign out → sign out → verified recipient claims it from page memory',async()=>{
+    const world=liveWorld({invites:{[ENTRY_ONE]:{email:'invited@example.test'}},unverified:['unverified@example.test']});
+    const {page,seen}=await openPage({world,signedInAs:'wrong@example.test',path:JOIN_PATH});
     await page.locator('#sessionError').waitFor({state:'visible'});
-    assert.match(await page.textContent('#sessionError'),/different email address/);
+    assert.match(await page.textContent('#sessionError'),/expired, already used, or no longer available/);
     await page.locator('#emptyCard').waitFor({state:'visible'});
     await visible(page,{signOut:true,authCard:false,entryCard:false,pickForm:false,sessionError:true});
-    assert.equal(world.invites[INVITE].claimedBy,undefined,'a rejected claim does not consume the invite');
+    assert.equal(world.invites[ENTRY_ONE].claimedBy,undefined,'a rejected claim does not consume the invite');
     assert.equal(page.url(),`${base}/participant.html?pool=it-pool`,'the invite left the address bar when the page read it; the pool stays');
 
     await page.click('#signOut');
@@ -655,26 +706,30 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     assert.equal(await page.evaluate(()=>window.__fakeAuth.email),null,'the session ended');
     assert.equal(await page.inputValue('#email'),'');
 
+    await signIn(page,'unverified@example.test');
+    await page.locator('#sessionError',{hasText:'requires a verified email address'}).waitFor();
+    assert.equal(world.invites[ENTRY_ONE].claimedBy,undefined,'an unverified account does not consume the invite');
+    await page.click('#signOut');await page.locator('#authCard').waitFor({state:'visible'});
     await signIn(page,'invited@example.test');
     await page.locator('#entryCard').waitFor({state:'visible'});
     await visible(page,{signOut:true,authCard:false,sessionError:false,pickForm:true,emptyCard:false});
-    assert.equal(world.invites[INVITE].claimedBy,'invited@example.test');
+    assert.equal(world.invites[ENTRY_ONE].claimedBy,'invited@example.test');
     assert.equal(page.url(),`${base}/participant.html?pool=it-pool`);
-    assert.deepEqual(world.calls.filter(c=>c.name==='pool_platform_claim_entry_invite').map(c=>[c.email,c.args.p_invite_token]),
-      [['wrong@example.test',INVITE],['invited@example.test',INVITE]]);
-    // A successful claim drops the token: the next account to sign in on this page claims nothing.
+    assert.deepEqual(world.calls.filter(c=>c.name===CLAIM_INVITE).map(c=>[c.email,c.args]),
+      ['wrong@example.test','unverified@example.test','invited@example.test'].map(email=>[email,{p_entry_id:ENTRY_ONE}]));
+    // A successful claim drops the hint: the next account to sign in on this page claims nothing.
     await page.click('#signOut');await page.locator('#authCard').waitFor({state:'visible'});
     await signIn(page,'wrong@example.test');
     await page.locator('#emptyCard').waitFor({state:'visible'});
     await visible(page,{signOut:true,sessionError:false});
-    assert.equal(world.calls.filter(c=>c.name==='pool_platform_claim_entry_invite').length,2);
-    await inviteContained(page,world,seen,INVITE);
+    assert.equal(world.calls.filter(c=>c.name===CLAIM_INVITE).length,3);
+    await inviteContained(page,world,seen);
     await clean(page,seen);
   });
 
   test('live: reopening an invite link this account already claimed reports it but still loads the entry, before and after signing in again',async()=>{
-    const world=liveWorld({owners:{'entry-1':'player@example.test'},invites:{[INVITE]:{email:'player@example.test',entryId:'entry-1',claimedBy:'player@example.test'}}});
-    const {page,seen}=await openPage({world,signedInAs:'player@example.test',query:`?pool=it-pool#invite=${INVITE}`});
+    const world=liveWorld({owners:{[ENTRY_ONE]:'player@example.test'},invites:{[ENTRY_ONE]:{email:'player@example.test',claimedBy:'player@example.test'}}});
+    const {page,seen}=await openPage({world,signedInAs:'player@example.test',path:JOIN_PATH});
     for(const round of ['opened','signed in again']){
       await page.locator('#entryCard').waitFor({state:'visible'});
       assert.match(await page.textContent('#sessionError'),/expired, already used/,round);
@@ -685,14 +740,14 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
         await signIn(page,'player@example.test');
       }
     }
-    assert.deepEqual(world.calls.filter(c=>c.name==='pool_platform_claim_entry_invite').map(c=>c.email),['player@example.test','player@example.test']);
-    await inviteContained(page,world,seen,INVITE);
+    assert.deepEqual(world.calls.filter(c=>c.name===CLAIM_INVITE).map(c=>c.email),['player@example.test','player@example.test']);
+    await inviteContained(page,world,seen);
     await clean(page,seen);
   });
 
   test('live: a signed-out participant opens an invite, which leaves the address bar at once and is claimed from page memory after sign-in',async()=>{
-    const world=liveWorld({invites:{[INVITE]:{email:'invited@example.test',entryId:'entry-1'}}});
-    const {page,seen}=await openPage({world,query:`?pool=it-pool#invite=${INVITE}`});
+    const world=liveWorld({invites:{[ENTRY_ONE]:{email:'invited@example.test'}}});
+    const {page,seen}=await openPage({world,path:JOIN_PATH});
     await page.locator('#authCard').waitFor({state:'visible'});
     assert.equal(page.url(),`${base}/participant.html?pool=it-pool`);
     await visible(page,{signOut:false,sessionError:false,entryCard:false});
@@ -700,34 +755,34 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     await signIn(page,'invited@example.test');
     await page.locator('#entryCard').waitFor({state:'visible'});
     await visible(page,{signOut:true,sessionError:false,pickForm:true});
-    assert.deepEqual(world.calls.map(c=>[c.name,c.email]),[['pool_platform_claim_entry_invite','invited@example.test'],['pool_platform_participant_context','invited@example.test']]);
-    assert.equal(world.invites[INVITE].claimedBy,'invited@example.test');
-    await inviteContained(page,world,seen,INVITE);
+    assert.deepEqual(world.calls.map(c=>[c.name,c.email]),[CLAIM_INVITE,LIST_PARTICIPANT_POOLS,PARTICIPANT_CONTEXT].map(name=>[name,'invited@example.test']));
+    assert.equal(world.invites[ENTRY_ONE].claimedBy,'invited@example.test');
+    await inviteContained(page,world,seen);
     await clean(page,seen);
   });
 
-  test('live: an invite link opened over an already open participant page changes only the fragment; the page reloads, reads and scrubs it',async()=>{
-    const world=liveWorld({invites:{[INVITE]:{email:'invited@example.test',entryId:'entry-1'}}});
+  test('live: opening an invitation over an open participant page loads the token-free route and removes the entry hint',async()=>{
+    const world=liveWorld({invites:{[ENTRY_ONE]:{email:'invited@example.test'}}});
     const {page,seen}=await openPage({world,signedInAs:'invited@example.test',query:'?pool=it-pool'});
     await page.locator('#emptyCard').waitFor({state:'visible'});
-    await page.goto(`${base}/participant.html?pool=it-pool#invite=${INVITE}`);
+    await page.goto(base+JOIN_PATH);
     await page.locator('#entryCard').waitFor({state:'visible'});
     assert.equal(page.url(),`${base}/participant.html?pool=it-pool`);
-    assert.deepEqual(world.calls.filter(c=>c.name==='pool_platform_claim_entry_invite').map(c=>[c.email,c.args.p_invite_token]),[['invited@example.test',INVITE]]);
-    await inviteContained(page,world,seen,INVITE);
+    assert.deepEqual(world.calls.filter(c=>c.name===CLAIM_INVITE).map(c=>[c.email,c.args]),[['invited@example.test',{p_entry_id:ENTRY_ONE}]]);
+    await inviteContained(page,world,seen);
     await clean(page,seen);
   });
 
   test('live: a query-string invite (the retired link format) is never claimed; it leaves the URL, the participant is told to ask for a new link, and their own entries still load',async()=>{
-    // Each token here would claim entry-1 if it were ever sent; the participant owns entry-2.
-    const LEGACY='ef'.repeat(32);
-    for(const [label,query,copy] of [
-      ['query',`?pool=it-pool&invite=${LEGACY}`,/retired format/],
-      ['query and fragment',`?pool=it-pool&invite=${LEGACY}#invite=${INVITE}`,/not valid/],
-      ['fragment twice',`?pool=it-pool#invite=${INVITE}&invite=${INVITE}`,/not valid/]
+    const duplicateToken='ef'.repeat(32);
+    for(const [label,path,query,copy] of [
+      ['query','participant.html',`?pool=it-pool&invite=${LEGACY_INVITE}`,/retired format/],
+      ['query and fragment','participant.html',`?pool=it-pool&invite=${LEGACY_INVITE}#invite=${duplicateToken}`,/retired format/],
+      ['fragment twice','participant.html',`?pool=it-pool#invite=${LEGACY_INVITE}&invite=${duplicateToken}`,/retired format/],
+      ['ambiguous targets',JOIN_PATH,`?entry=${ENTRY_TWO}`,/not valid/]
     ]){
-      const world=liveWorld({owners:{'entry-2':'player@example.test'},invites:{[LEGACY]:{entryId:'entry-1'},[INVITE]:{entryId:'entry-1'}}});
-      const {page,seen}=await openPage({world,signedInAs:'player@example.test',query});
+      const world=liveWorld({owners:{[ENTRY_TWO]:'player@example.test'},invites:{[ENTRY_ONE]:{email:'player@example.test'}}});
+      const {page,seen}=await openPage({world,signedInAs:'player@example.test',path,query});
       for(const round of ['opened','signed in again']){
         await page.locator('#entryCard').waitFor({state:'visible'});
         await page.locator('#sessionError').waitFor({state:'visible'});
@@ -740,51 +795,55 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
           await signIn(page,'player@example.test');
         }
       }
-      assert.deepEqual(world.calls.filter(c=>c.name==='pool_platform_claim_entry_invite'),[],`${label}: no claim was sent`);
-      assert.deepEqual(world.calls.map(c=>c.name),['pool_platform_participant_context','pool_platform_participant_context'],label);
+      assert.deepEqual(world.calls.filter(c=>c.name===CLAIM_INVITE),[],`${label}: no claim was sent`);
+      assert.deepEqual(world.calls.map(c=>c.name),[LIST_PARTICIPANT_POOLS,PARTICIPANT_CONTEXT,LIST_PARTICIPANT_POOLS,PARTICIPANT_CONTEXT],label);
       assert.equal(Object.values(world.invites).some(invite=>invite.claimedBy),false,label);
-      for(const token of [LEGACY,INVITE])assert.equal(JSON.stringify(world.calls).includes(token),false,`${label}: no RPC carried a token`);
-      await inviteContained(page,world,seen,INVITE);
-      assert.equal(seen.console.some(text=>text.includes(LEGACY)),false,label);
+      for(const legacyToken of [LEGACY_INVITE,duplicateToken]){
+        await inviteContained(page,world,seen,{legacyToken});
+        assert.equal(seen.requests.some(request=>JSON.stringify(request.headers).includes(legacyToken)),false,label);
+      }
       await clean(page,seen);
     }
     // Signed out, the refusal shows beside the sign-in card at once and again after sign-in.
-    const world=liveWorld({invites:{[LEGACY]:{entryId:'entry-1'}}});
-    const {page,seen}=await openPage({world,query:`?pool=it-pool&invite=${LEGACY}`});
+    const world=liveWorld({invites:{[ENTRY_ONE]:{email:'invited@example.test'}}});
+    const {page,seen}=await openPage({world,query:`?pool=it-pool&invite=${LEGACY_INVITE}`});
     await page.locator('#authCard').waitFor({state:'visible'});
     assert.match(await page.textContent('#sessionError'),/retired format/);
     assert.equal(page.url(),`${base}/participant.html?pool=it-pool`);
     await signIn(page,'invited@example.test');
     await page.locator('#emptyCard').waitFor({state:'visible'});
     assert.match(await page.textContent('#sessionError'),/retired format/);
-    assert.deepEqual(world.calls.map(c=>c.name),['pool_platform_participant_context']);
+    assert.deepEqual(world.calls.map(c=>c.name),[LIST_PARTICIPANT_POOLS]);
+    await inviteContained(page,world,seen,{legacyToken:LEGACY_INVITE});
     await clean(page,seen);
   });
 
   test('live: signing out while a claim, context load, submit or post-submit reload is in flight leaves nothing of that account on screen',async()=>{
     const signedOut={authCard:true,signOut:false,sessionError:false,entryCard:false,pickForm:false,emptyCard:false,submittedCard:false};
     // A claim that will fail, then the context load, each still in flight when Sign out finishes.
-    for(const name of ['pool_platform_claim_entry_invite','pool_platform_participant_context']){
-      const world=liveWorld({owners:{'entry-2':'wrong@example.test'},invites:{[INVITE]:{email:'invited@example.test',entryId:'entry-1'}}});
+    for(const [name,reject] of [[CLAIM_INVITE,false],[PARTICIPANT_CONTEXT,false],[PARTICIPANT_CONTEXT,true]]){
+      const world=liveWorld({owners:{[ENTRY_TWO]:'wrong@example.test'},invites:{[ENTRY_ONE]:{email:'invited@example.test'}}});
       const held=gate(world,name);
-      const {page,seen}=await openPage({world,signedInAs:'wrong@example.test',query:`#invite=${INVITE}`});
+      const {page,seen}=await openPage({world,signedInAs:'wrong@example.test',path:JOIN_PATH});
       await held.arrived;
       await page.click('#signOut');await page.locator('#authCard').waitFor({state:'visible'});
+      if(reject)world.participantContextFailure='week_not_found';
       const reply=page.waitForResponse(response=>response.url().endsWith(`/rpc/${name}`));
       held.release();await reply;await settle(page);
       await visible(page,signedOut);
       assert.equal(await page.textContent('#sessionError'),'',name);
+      if(name===CLAIM_INVITE)assert.deepEqual(world.calls.map(call=>call.name),[CLAIM_INVITE],'no account data is requested after sign-out');
       await clean(page,seen);
     }
     // A claim error that lands while Sign out itself is still finishing is cleared with everything else.
     {
-      const world=liveWorld({invites:{[INVITE]:{email:'invited@example.test',entryId:'entry-1'}}});
-      const held=gate(world,'pool_platform_claim_entry_invite');
-      const {page,seen}=await openPage({world,signedInAs:'wrong@example.test',query:`#invite=${INVITE}`});
+      const world=liveWorld({invites:{[ENTRY_ONE]:{email:'invited@example.test'}}});
+      const held=gate(world,CLAIM_INVITE);
+      const {page,seen}=await openPage({world,signedInAs:'wrong@example.test',path:JOIN_PATH});
       await held.arrived;
       await page.evaluate(()=>{window.__signOutGate=new Promise(resolve=>{window.__finishSignOut=resolve})});
       await page.click('#signOut');
-      const reply=page.waitForResponse(response=>response.url().endsWith('/rpc/pool_platform_claim_entry_invite'));
+      const reply=page.waitForResponse(response=>response.url().endsWith('/rpc/'+CLAIM_INVITE));
       held.release();await reply;
       await page.locator('#sessionError').waitFor({state:'visible'});
       await page.evaluate(()=>window.__finishSignOut());
@@ -793,8 +852,8 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
       await clean(page,seen);
     }
     // A submit, then the reload that follows it.
-    for(const [name,skip] of [['pool_platform_submit_entry',0],['pool_platform_participant_context',1]]){
-      const world=liveWorld({owners:{'entry-1':'player@example.test'}});
+    for(const [name,skip] of [['pool_platform_submit_entry',0],[PARTICIPANT_CONTEXT,1]]){
+      const world=liveWorld({owners:{[ENTRY_ONE]:'player@example.test'}});
       const held=gate(world,name,skip);
       const {page,seen}=await openPage({world,signedInAs:'player@example.test'});
       await page.locator('#pickForm').waitFor({state:'visible'});
@@ -813,10 +872,13 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
   });
 
   test('live: an account with no entry sees the empty state with Sign out, whether the pool is unreadable or has no active entry',async()=>{
-    for(const world of [liveWorld(),liveWorld({readable:['loner@example.test']})]){
-      const {page,seen}=await openPage({world,signedInAs:'loner@example.test'});
+    for(const [fallback,readable] of [[false,[]],[true,[]],[true,['loner@example.test']]]){
+      const world=liveWorld({readable});
+      if(fallback)world.authRequired={[LIST_PARTICIPANT_POOLS]:2};
+      const {page,seen}=await openPage({world,signedInAs:'loner@example.test',query:fallback?'?pool=it-pool':''});
       await page.locator('#emptyCard').waitFor({state:'visible'});
       await visible(page,{signOut:true,authCard:false,entryCard:false,pickForm:false,sessionError:false});
+      assert.deepEqual(world.calls.map(c=>c.name),fallback?[LIST_PARTICIPANT_POOLS,LIST_PARTICIPANT_POOLS,PARTICIPANT_CONTEXT]:[LIST_PARTICIPANT_POOLS]);
       await page.click('#signOut');
       await page.locator('#authCard').waitFor({state:'visible'});
       await visible(page,{signOut:false,emptyCard:false});
@@ -825,7 +887,7 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
   });
 
   test('live: a normal multi-entry participant keeps Sign out in the shell; labels and tiebreak render as text; picks submit',async()=>{
-    const world=liveWorld({owners:{'entry-1':'player@example.test','entry-2':'player@example.test'},games:[
+    const world=liveWorld({owners:{[ENTRY_ONE]:'player@example.test',[ENTRY_TWO]:'player@example.test'},games:[
       {id:'g1',away:{key:'austin',label:HOSTILE_LABEL},home:{key:'denver',label:'Denver & "Co" <b>'}},
       {id:'g2',away:{key:'phoenix',label:'Phoenix'},home:{key:'seattle',label:'Seattle'}}
     ]});
@@ -845,13 +907,12 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
 
     await page.click('label[for="game-1-home"]');
     for(const [i,[typed,expected]] of [['47',47],['0',0]].entries()){
-      await page.fill('#tiebreak',typed);await page.click('#submitBtn');
-      // The saved card is still up from the previous submit, so wait for this submit's own revision, which
-      // is written only after its reload has re-rendered the form and re-enabled Submit.
-      await page.locator('#submittedMeta',{hasText:`Revision ${i+1} `}).waitFor();
+      await page.fill('#tiebreak',typed);
+      await submitPick(page,i?'Picks updated':'Picks saved');
       assert.deepEqual(world.calls.filter(c=>c.name==='pool_platform_submit_entry').at(-1).args,
-        {p_week_id:'week-1',p_entry_id:'entry-1',p_source:'participant',p_payload:{picks:{g1:'away',g2:'home'},tiebreak:expected}});
+        {p_week_id:WEEK_ID,p_entry_id:ENTRY_ONE,p_source:'participant',p_payload:{picks:{g1:'away',g2:'home'},tiebreak:expected}});
       assert.equal(await page.inputValue('#tiebreak'),typed);
+      assert.equal(world.entries[0].submission.revision,i+1);
       await visible(page,{signOut:true});
     }
     await page.fill('#tiebreak','');await page.click('#submitBtn');
@@ -873,7 +934,7 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
   ];
   const SURVIVOR_LABELS=['New York (NYG)','Dallas','Miami','New York (NYJ)',`Twin City (${HOSTILE_KEY})`,'twin city (TWC)','Austin',HOSTILE_LABEL,`Los Angeles (${LONG_KEY})`,'Los Angeles (LAX)'];
   const survivorWorld=()=>{
-    const world=liveWorld({owners:{'entry-1':'player@example.test','entry-2':'player@example.test'},games:SURVIVOR_GAMES,poolType:'survivor'});
+    const world=liveWorld({owners:{[ENTRY_ONE]:'player@example.test',[ENTRY_TWO]:'player@example.test'},games:SURVIVOR_GAMES,poolType:'survivor'});
     world.entries[1].history=[{week:2,source:'participant',status:'submitted',payload:{team:'NYG'},revision:1}];
     return world;
   };
@@ -893,28 +954,29 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
 
     await page.click('label[for="team-3"]');
     assert.equal(await page.locator('#summary .summary-row strong').textContent(),'New York (NYJ)');
-    await page.click('#submitBtn');await page.locator('#submittedMeta',{hasText:'Revision 1 '}).waitFor();
-    assert.deepEqual(submitted(),{p_week_id:'week-1',p_entry_id:'entry-1',p_source:'participant',p_payload:{team:'NYJ'}});
+    await submitPick(page,'Survivor pick saved');
+    assert.deepEqual(submitted(),{p_week_id:WEEK_ID,p_entry_id:ENTRY_ONE,p_source:'participant',p_payload:{team:'NYJ'}});
     await page.click('label[for="team-4"]');
     assert.equal(await page.locator('#summary .summary-row strong').textContent(),`Twin City (${HOSTILE_KEY})`);
-    await page.click('#submitBtn');await page.locator('#submittedMeta',{hasText:'Revision 2 '}).waitFor();
+    await submitPick(page,'Survivor pick updated');
     assert.deepEqual(submitted().p_payload,{team:HOSTILE_KEY},'the markup key round-trips exactly');
+    assert.equal(world.entries[0].submission.revision,2);
 
-    await page.selectOption('#entrySelect','entry-2');
+    await page.selectOption('#entrySelect',ENTRY_TWO);
     assert.deepEqual(await survivorLabels(page),['New York (NYG) · USED',...SURVIVOR_LABELS.slice(1)]);
     assert.deepEqual((await survivorInputs(page)).slice(0,4),[['NYG',true],['DAL',false],['MIA',false],['NYJ',false]]);
-    await page.click('label[for="team-3"]');await page.click('#submitBtn');
-    await page.locator('#submittedMeta',{hasText:'Revision 1 '}).waitFor();
-    assert.deepEqual(submitted(),{p_week_id:'week-1',p_entry_id:'entry-2',p_source:'participant',p_payload:{team:'NYJ'}});
+    await page.click('label[for="team-3"]');await submitPick(page,'Survivor pick saved');
+    assert.deepEqual(submitted(),{p_week_id:WEEK_ID,p_entry_id:ENTRY_TWO,p_source:'participant',p_payload:{team:'NYJ'}});
+    assert.equal(world.entries[1].submission.revision,1);
     await clean(page,seen);
   });
 
   test('mobile widths: no horizontal overflow and Sign out stays on screen in every signed-in state',async()=>{
     for(const width of [320,360,375,384,390,412]){
       const states=[
-        {world:liveWorld({invites:{[INVITE]:{email:'invited@example.test',entryId:'entry-1'}}}),signedInAs:'wrong@example.test',query:`#invite=${INVITE}`,ready:'#sessionError'},
+        {world:liveWorld({invites:{[ENTRY_ONE]:{email:'invited@example.test'}}}),signedInAs:'wrong@example.test',path:JOIN_PATH,ready:'#sessionError'},
         {world:liveWorld(),signedInAs:'loner@example.test',ready:'#emptyCard'},
-        {world:liveWorld({owners:{'entry-1':'player@example.test'}}),signedInAs:'player@example.test',ready:'#pickForm'},
+        {world:liveWorld({owners:{[ENTRY_ONE]:'player@example.test'}}),signedInAs:'player@example.test',ready:'#pickForm'},
         {world:survivorWorld(),signedInAs:'player@example.test',ready:'#pickForm',survivor:true}
       ];
       for(const {ready,survivor,...options} of states){
@@ -943,37 +1005,56 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
           assert.ok(after<=0,`${width}px Survivor with the long-key team picked: horizontal overflow ${after}px`);
         }
         await clean(page,seen);
+        await page.context().close();
       }
       const {page,seen}=await openPage({width,height:740});
       await page.locator('#pickForm').waitFor({state:'visible'});
       assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),`${width}px sandbox pick form overflows`);
       await clean(page,seen);
+      await page.context().close();
     }
   });
 
   const openConsole=options=>openPage({path:'commissioner.html',...options});
   const IMPORT_CSV='entry_code,g1,g2,tiebreak\nE01,away,home,47\nE02,home,away,41';
-  const signedOutConsole={authCard:true,signOut:false,sessionError:false,otpWrap:false,consoleCard:false,entriesCard:false,inviteCard:false,importCard:false,resultTableWrap:false};
+  const signedOutConsole={authCard:true,signOut:false,sessionError:false,otpWrap:false,consoleCard:false,entriesCard:false,inviteCard:false,importCard:false,importPreview:false,poolPickerCard:false};
+  const openCsv=async page=>{
+    const summary=page.locator('#advancedImport:not([open]) > summary');
+    if(await summary.count())await summary.click();
+  };
+  const previewAndConfirm=async(page,csv=IMPORT_CSV)=>{
+    await openCsv(page);
+    await page.fill('#importText',csv);await page.click('#runImport');
+    await page.locator('#importPreview').waitFor({state:'visible'});
+    await page.click('#confirmImport');
+  };
+  const noManagedPools=async page=>{
+    await page.locator('#poolPickerError',{hasText:NO_MANAGED_POOLS}).waitFor({state:'visible'});
+    assert.equal(await page.locator('#authorizedPoolSelect option').count(),0,'no tenant or pool names disclosed');
+  };
   // Nothing a commissioner session loaded or typed may stay in the page, shown or hidden, once it signs out.
   // The sign-in fields are checked only while signed out: afterwards they hold the next account's own input.
   const noConsoleLeft=async(page,label,{signedOut=true}={})=>{
     const html=await page.content();
-    for(const marker of ['Private Console Pool','Entry E01','Entry E02','entry-1','entry-2',INVITE_OUT,'Week 1 ·']){
+    for(const marker of ['Private Console Pool','Entry E01','Entry E02',ENTRY_ONE,ENTRY_TWO,'Week 1 ·']){
       assert.equal(html.includes(marker),false,`${label}: "${marker}" is still in the page`);
     }
-    for(const id of ['inviteEmail','importText',...(signedOut?['email','otp']:[])]){
+    for(const id of ['inviteEmail','inviteLink','csvFile','importText',...(signedOut?['email','otp']:[])]){
       assert.equal(await page.inputValue(`#${id}`),'',`${label}: #${id} still has a value`);
     }
     assert.equal(await page.textContent('#poolName'),'Pool',label);
     assert.equal(await page.getAttribute('#importText','placeholder'),'',label);
+    assert.equal(await page.textContent('#previewHelp'),'',label);
   };
 
-  test('commissioner live: an account that manages no pool gets commissioner_required beside Sign out, then switches to the commissioner',async()=>{
+  test('commissioner live: an account that manages no pool sees a private picker with Sign out, then switches to the commissioner',async()=>{
     const world=consoleWorld();
     const {page,seen}=await openConsole({world,signedInAs:'player@example.test'});
-    await page.locator('#sessionError').waitFor({state:'visible'});
-    assert.equal(await page.textContent('#sessionError'),'Commissioner access is required.');
+    await noManagedPools(page);
     await visible(page,{signOut:true,authCard:false,consoleCard:false,entriesCard:false,inviteCard:false,importCard:false});
+    await page.fill('#poolCode',POOL_SLUG);await page.click('#openPool');
+    await page.locator('#poolPickerError',{hasText:'You do not have access to manage this pool.'}).waitFor({state:'visible'});
+    await visible(page,{signOut:true,consoleCard:false,entriesCard:false,inviteCard:false,importCard:false});
     assert.equal(await page.locator('section #signOut').count(),0,'Sign out is not inside any card');
     await page.click('#signOut');
     await page.locator('#authCard').waitFor({state:'visible'});
@@ -983,25 +1064,34 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     await page.locator('#importCard').waitFor({state:'visible'});
     await visible(page,{signOut:true,authCard:false,sessionError:false,consoleCard:true,entriesCard:true,inviteCard:true});
     assert.equal(await page.textContent('#poolName'),'Private Console Pool');
-    assert.deepEqual(world.calls.filter(c=>c.name==='pool_platform_commissioner_context').map(c=>[c.email,c.args.p_pool_slug]),
-      [['player@example.test','it-pool'],['commish@example.test','it-pool']]);
+    assert.deepEqual(world.calls.map(c=>[c.name,c.email,c.args]),[
+      [LIST_COMMISSIONER_POOLS,'player@example.test',{}],
+      [COMMISSIONER_CONTEXT,'player@example.test',{p_pool_slug:POOL_SLUG}],
+      [LIST_COMMISSIONER_POOLS,'commish@example.test',{}],
+      [COMMISSIONER_CONTEXT,'commish@example.test',{p_pool_slug:POOL_SLUG}]
+    ]);
     await clean(page,seen);
   });
 
   test('commissioner live: a missing pool slug, an unknown pool and a failed context load each leave a working Sign out',async()=>{
+    const additionalPools=[{slug:'other-pool',display_name:'Other Authorized Pool',pool_type:'survivor',status:'active'}];
     const cases=[
-      ['no pool slug',{poolSlug:''},{},'',/^Commissioner access is required\.$/],
-      ['unknown pool',{query:'?pool=no-such-pool'},{},'no-such-pool',/^Commissioner access is required\.$/],
-      ['server error',{},{contextFailure:'http'},'it-pool',/^upstream_unavailable$/],
-      ['dropped connection',{},{contextFailure:'network'},'it-pool',/fetch/i]
+      ['no pool slug',{poolSlug:''},{additionalPools},null,/Enter the pool code/],
+      ['unknown pool',{query:'?pool=no-such-pool'},{additionalPools},'no-such-pool',/You do not have access to manage this pool/],
+      ['server error',{},{contextFailure:'http'},POOL_SLUG,/The request could not be completed/],
+      ['dropped connection',{},{contextFailure:'network'},POOL_SLUG,/The request could not be completed/]
     ];
     for(const [label,options,worldOptions,slug,message] of cases){
       const world=consoleWorld(worldOptions);
       const {page,seen}=await openConsole({world,signedInAs:'commish@example.test',...options});
-      await page.locator('#sessionError').waitFor({state:'visible'});
-      assert.match(await page.textContent('#sessionError'),message,label);
+      await page.locator('#poolPickerCard').waitFor({state:'visible'});
+      if(additionalPools===worldOptions.additionalPools)await page.click('#openPool');
+      await page.locator('#poolPickerError').waitFor({state:'visible'});
+      assert.match(await page.textContent('#poolPickerError'),message,label);
       await visible(page,{signOut:true,authCard:false,consoleCard:false,importCard:false});
-      assert.deepEqual(world.calls.map(c=>[c.name,c.args.p_pool_slug]),[['pool_platform_commissioner_context',slug]],label);
+      assert.deepEqual(world.calls.map(c=>[c.name,c.args]),[
+        [LIST_COMMISSIONER_POOLS,{}],...(slug?[[COMMISSIONER_CONTEXT,{p_pool_slug:slug}]]:[])
+      ],label);
       await page.click('#signOut');
       await page.locator('#authCard').waitFor({state:'visible'});
       await visible(page,signedOutConsole);
@@ -1011,10 +1101,11 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
 
   test('commissioner live: a failed sign out is reported beside Sign out and can be retried',async()=>{
     const {page,seen}=await openConsole({world:consoleWorld(),signedInAs:'player@example.test'});
-    await page.locator('#sessionError').waitFor({state:'visible'});
+    await noManagedPools(page);
     await page.evaluate(()=>{window.__signOutGate=Promise.reject(new Error('Sign-out service unavailable.'));window.__signOutGate.catch(()=>{})});
     await page.click('#signOut');
-    await page.locator('#sessionError',{hasText:'Sign-out service unavailable.'}).waitFor();
+    await page.locator('#sessionError',{hasText:REQUEST_FAILED}).waitFor({state:'visible'});
+    assert.equal(await page.evaluate(()=>window.__fakeAuth.email),'player@example.test','a rejected sign-out retains the session');
     await visible(page,{signOut:true,authCard:false});
     await page.evaluate(()=>{window.__signOutGate=null});
     await page.click('#signOut');
@@ -1025,12 +1116,11 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
 
   test('commissioner live: signing out while the context load, an invite, an import or the post-import reload is in flight leaves nothing of that account on screen',async()=>{
     const createInvite=async page=>{await page.fill('#inviteEmail','invitee@example.test');await page.click('#createInvite')};
-    const runImport=async page=>{await page.fill('#importText',IMPORT_CSV);await page.click('#runImport')};
     for(const [name,skip,act] of [
-      ['pool_platform_commissioner_context',0,null],
-      ['pool_platform_create_entry_invite',0,createInvite],
-      ['pool_platform_submit_batch',0,runImport],
-      ['pool_platform_commissioner_context',1,runImport]
+      [COMMISSIONER_CONTEXT,0,null],
+      [CREATE_INVITE,0,createInvite],
+      ['pool_platform_submit_batch',0,previewAndConfirm],
+      [COMMISSIONER_CONTEXT,1,previewAndConfirm]
     ]){
       const world=consoleWorld(),held=gate(world,name,skip),label=`${name} #${skip+1}`;
       const {page,seen}=await openConsole({world,signedInAs:'commish@example.test'});
@@ -1044,9 +1134,8 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
       await noConsoleLeft(page,`${label}, signed out`);
       // The next account sees only its own state: here it manages no pool.
       await signIn(page,'player@example.test');
-      await page.locator('#sessionError').waitFor({state:'visible'});
-      assert.equal(await page.textContent('#sessionError'),'Commissioner access is required.',label);
-      await visible(page,{signOut:true,consoleCard:false,importCard:false,resultTableWrap:false,inviteResult:false,importResult:false});
+      await noManagedPools(page);
+      await visible(page,{signOut:true,consoleCard:false,importCard:false,importPreview:false,inviteResult:false,importResult:false});
       await noConsoleLeft(page,`${label}, next account`,{signedOut:false});
       await clean(page,seen);
     }
@@ -1059,41 +1148,56 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     assert.equal(await page.textContent('#poolName'),'Private Console Pool');
     await page.fill('#inviteEmail','invitee@example.test');await page.click('#createInvite');
     await page.locator('#inviteResult').waitFor({state:'visible'});
-    assert.match(await page.textContent('#inviteResult'),new RegExp(`^Invite ready: ${`${base}/participant.html?pool=it-pool#invite=${INVITE_OUT}`.replace(/[.*+?^${}()|[\]\\/]/g,'\\$&')} · expires `));
-    const reloaded=page.waitForResponse(response=>response.url().endsWith('/rpc/pool_platform_commissioner_context'));
-    await page.fill('#importText',IMPORT_CSV);await page.click('#runImport');
+    assert.match(await page.textContent('#inviteResult'),/Invitation ready for invitee@example\.test.*verified email.*Expires/);
+    assert.equal(await page.inputValue('#inviteLink'),base+JOIN_PATH);
+    const reloaded=page.waitForResponse(response=>response.url().endsWith('/rpc/'+COMMISSIONER_CONTEXT));
+    await previewAndConfirm(page);
     await page.locator('#importResult').waitFor({state:'visible'});
-    assert.match(await page.textContent('#importResult'),/^2 submitted · 0 source conflict\(s\) · 0 other error\(s\)\./);
+    assert.equal(await page.textContent('#importResult'),'2 picks saved. ');
     await reloaded;await settle(page);
-    assert.deepEqual(world.calls.find(c=>c.name==='pool_platform_submit_batch').args.p_items.map(item=>item.entry_id),['entry-1','entry-2']);
-    await page.fill('#importText','entry_code,g1,g2,tiebreak\nE01,home,home,30');
+    assert.deepEqual(world.calls.find(c=>c.name==='pool_platform_submit_batch').args.p_items.map(item=>item.entry_id),[ENTRY_ONE,ENTRY_TWO]);
+    await page.evaluate(()=>{
+      File.prototype.text=()=>new Promise(resolve=>{window.__finishCsv=resolve});
+    });
+    const csv='entry_code,g1,g2,tiebreak\nE01,home,home,30';
+    await page.fill('#importText',csv);
+    await page.locator('#csvFile').setInputFiles({name:'private-picks.csv',mimeType:'text/csv',buffer:Buffer.from(csv)});
+    await page.waitForFunction(()=>typeof window.__finishCsv==='function');
     await page.click('#signOut');await page.locator('#authCard').waitFor({state:'visible'});
+    await page.evaluate(()=>window.__finishCsv('a file from the previous account'));
+    await settle(page);
     await visible(page,signedOutConsole);
     await visible(page,{inviteResult:false,importError:false,importResult:false});
     await noConsoleLeft(page,'signed out');
     await signIn(page,'player@example.test');
-    await page.locator('#sessionError').waitFor({state:'visible'});
+    await noManagedPools(page);
     await noConsoleLeft(page,'next account',{signedOut:false});
     await clean(page,seen);
   });
 
-  test('commissioner live → participant: the link shown carries the pool in its query and the token only in its fragment, and opening it claims that token',async()=>{
-    const {page:consolePage,seen:consoleSeen}=await openConsole({world:consoleWorld(),signedInAs:'commish@example.test'});
+  test('commissioner live → participant: a token-free link contains only the pool and entry, and requires the verified recipient to claim it',async()=>{
+    const world=consoleWorld();
+    const {page:consolePage,seen:consoleSeen}=await openConsole({world,signedInAs:'commish@example.test'});
     await consolePage.locator('#importCard').waitFor({state:'visible'});
     await consolePage.click('#createInvite');
+    await consolePage.locator('#inviteError',{hasText:'Enter the participant’s email address'}).waitFor();
+    assert.equal(world.calls.some(c=>c.name===CREATE_INVITE),false,'a recipient is mandatory');
+    await consolePage.fill('#inviteEmail','Invited@Example.test');
+    await consolePage.click('#createInvite');
     await consolePage.locator('#inviteResult').waitFor({state:'visible'});
-    const link=new URL(/^Invite ready: (\S+) · expires /.exec(await consolePage.textContent('#inviteResult'))?.[1]);
-    assert.equal(link.href,`${base}/participant.html?pool=it-pool#invite=${INVITE_OUT}`);
-    assert.deepEqual([...link.searchParams],[['pool','it-pool']]);
-    assert.equal(consolePage.url(),`${base}/commissioner.html`,'the commissioner page URL never holds a token');
+    const link=new URL(await consolePage.inputValue('#inviteLink'));
+    assert.equal(link.href,base+JOIN_PATH);
+    assert.equal(link.search+link.hash,'');
+    assert.equal(consolePage.url(),`${base}/commissioner.html?pool=it-pool`,'the commissioner page URL never holds an invitation');
+    assert.deepEqual(world.calls.filter(c=>c.name===CREATE_INVITE).map(c=>c.args),
+      [{p_entry_id:ENTRY_ONE,p_email:'invited@example.test',p_expires_hours:168}]);
     await clean(consolePage,consoleSeen);
     // The participant opens exactly that link.
-    const world=liveWorld({invites:{[INVITE_OUT]:{email:'invited@example.test',entryId:'entry-1'}}});
-    const {page,seen}=await openPage({world,signedInAs:'invited@example.test',query:link.href.slice(`${base}/participant.html`.length)});
+    const {page,seen}=await openPage({world,signedInAs:'invited@example.test',path:link.pathname});
     await page.locator('#entryCard').waitFor({state:'visible'});
     assert.equal(page.url(),`${base}/participant.html?pool=it-pool`);
-    assert.deepEqual(world.calls.filter(c=>c.name==='pool_platform_claim_entry_invite').map(c=>[c.email,c.args.p_invite_token]),[['invited@example.test',INVITE_OUT]]);
-    await inviteContained(page,world,seen,INVITE_OUT);
+    assert.deepEqual(world.calls.filter(c=>c.name===CLAIM_INVITE).map(c=>[c.email,c.args]),[['invited@example.test',{p_entry_id:ENTRY_ONE}]]);
+    await inviteContained(page,world,seen);
     await clean(page,seen);
   });
 
@@ -1102,14 +1206,16 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     world.console.seasons[0].entries.push(...['Fox1','FOX1'].map((entry_code,i)=>({id:`entry-f${i+1}`,entry_code,display_name:`Entry ${entry_code}`,status:'active',claimed:false,submissions:[]})));
     const {page,seen}=await openConsole({world,signedInAs:'commish@example.test'});
     await page.locator('#importCard').waitFor({state:'visible'});
+    await openCsv(page);
     await page.fill('#importText','entry_code,g1,g2,tiebreak\nE01,away,home,47\nfox1,home,away,41\ne01,home,home,30\nFOX1,away,away,20');
     await page.click('#runImport');
-    await page.locator('#resultTableWrap').waitFor({state:'visible'});
-    assert.equal(await page.textContent('#importError'),'Import validation found 2 row error(s). Fix them before submission.');
-    assert.deepEqual(await page.locator('#resultBody tr').evaluateAll(rows=>rows.map(row=>[...row.cells].map(cell=>cell.textContent))),[
+    await page.locator('#importPreview').waitFor({state:'visible'});
+    assert.equal(await page.textContent('#importError'),'2 problem(s) found. No picks were saved. Correct them and preview again.');
+    assert.deepEqual(await page.locator('#resultBody tr').evaluateAll(rows=>rows.slice(0,2).map(row=>[...row.cells].map(cell=>cell.textContent))),[
       ['Row 3 · fox1','ambiguous_entry_code · matches entry codes Fox1 and FOX1 · type the entry code exactly as listed'],
       ['Row 4 · E01','duplicate_entry_row · entry E01 is already on row 2; keep one row per entry']
     ]);
+    assert.equal(await page.locator('#confirmImport').isDisabled(),true,'no pick may be confirmed with an invalid row');
     assert.equal(world.calls.filter(c=>c.name==='pool_platform_submit_batch').length,0,'no row is submitted while any row is rejected');
     await clean(page,seen);
   });
@@ -1117,17 +1223,30 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
   test('commissioner sandbox: the synthetic console loads without Sign out and a sample import still reports its conflict',async()=>{
     const {page,seen}=await openConsole();
     await page.locator('#importCard').waitFor({state:'visible'});
-    assert.equal(await page.textContent('#modePill'),'SANDBOX · synthetic');
+    assert.equal(await page.textContent('#modePill'),'Local preview');
     await visible(page,{signOut:false,authCard:false,sessionError:false,consoleCard:true});
-    await page.click('#sampleImport');await page.click('#runImport');
+    await openCsv(page);
+    await page.click('#sampleImport');
+    const allowed=await page.inputValue('#importText');
+    // A player pick blocks confirmation for the entire preview, including the eligible entry.
+    await page.fill('#importText',`${allowed}\nE01,away,home,47`);
+    await page.click('#runImport');
+    await page.locator('#importPreview').waitFor({state:'visible'});
+    assert.match(await page.textContent('#resultBody'),/A pick was already submitted using a different method\. It will not be changed\./);
+    assert.equal(await page.locator('#confirmImport').isDisabled(),true);
+    assert.equal(await page.locator('#entriesBody tr').first().locator('td').last().textContent(),'Submitted by player');
+    await page.fill('#importText',allowed);await page.click('#runImport');
+    assert.match(await page.textContent('#previewHelp'),/never a player-submitted pick/);
+    await page.click('#confirmImport');
     await page.locator('#importResult').waitFor({state:'visible'});
-    assert.match(await page.textContent('#importResult'),/^1 submitted · 1 source conflict\(s\) · 0 other error\(s\)\./);
+    assert.match(await page.textContent('#importResult'),/^1 pick saved\./);
+    assert.equal(await page.locator('#entriesBody tr').first().locator('td').last().textContent(),'Submitted by player');
     await clean(page,seen);
   });
 
   test('commissioner mobile widths: no horizontal overflow, and Sign out stays on screen and works in the error and console states',async()=>{
     for(const width of [320,360,384,412]){
-      for(const [signedInAs,ready] of [[null,'#authCard'],['player@example.test','#sessionError'],['commish@example.test','#importCard']]){
+      for(const [signedInAs,ready] of [[null,'#authCard'],['player@example.test','#poolPickerError'],['commish@example.test','#importCard']]){
         const {page,seen}=await openConsole({world:consoleWorld(),signedInAs,width,height:740}),state=`${width}px ${ready}`;
         await page.locator(ready).waitFor({state:'visible'});
         const overflow=()=>page.evaluate(()=>document.documentElement.scrollWidth-document.documentElement.clientWidth);
@@ -1142,6 +1261,7 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
           assert.ok(after<=0,`${state} after sign out: horizontal overflow ${after}px`);
         }else assert.equal(await page.isVisible('#signOut'),false,state);
         await clean(page,seen);
+        await page.context().close();
       }
     }
   });
@@ -1156,7 +1276,7 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     const calls=(world,name)=>world.calls.filter(c=>c.name===name);
     // The context load answers auth_required once: the resent request loads the entry.
     {
-      const world=liveWorld({owners:{'entry-1':'player@example.test'}});world.authRequired={pool_platform_participant_context:1};
+      const world=liveWorld({owners:{[ENTRY_ONE]:'player@example.test'}});world.authRequired={pool_platform_participant_context:1};
       const {page,seen}=await openPage({world,signedInAs:'player@example.test'});
       await page.locator('#pickForm').waitFor({state:'visible'});
       const loads=calls(world,'pool_platform_participant_context');
@@ -1166,24 +1286,23 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     }
     // A submit answers auth_required once: the first request did nothing, the resent one saves exactly once.
     {
-      const world=liveWorld({owners:{'entry-1':'player@example.test'}});
+      const world=liveWorld({owners:{[ENTRY_ONE]:'player@example.test'}});
       const {page,seen}=await openPage({world,signedInAs:'player@example.test'});
       await page.locator('#pickForm').waitFor({state:'visible'});
       world.authRequired={pool_platform_submit_entry:1};
-      await pickAll(page,['away','home']);await page.fill('#tiebreak','47');await page.click('#submitBtn');
-      await page.locator('#submittedMeta',{hasText:'Revision 1 '}).waitFor();
+      await pickAll(page,['away','home']);await page.fill('#tiebreak','47');
+      await submitPick(page,'Picks saved');
       const submits=calls(world,'pool_platform_submit_entry');
       assert.equal(submits.length,2);same(submits[0],submits[1],'submit');
       assert.equal(world.entries[0].submission.revision,1);
       await visible(page,{validation:false,sessionError:false});
       await clean(page,seen);
     }
-    // auth_required twice: two requests, the friendly message, and no third request although it would succeed.
+    // auth_required twice: two requests, a safe pool picker, and no third request although it would succeed.
     {
-      const world=liveWorld({owners:{'entry-1':'player@example.test'}});world.authRequired={pool_platform_participant_context:2};
+      const world=liveWorld({owners:{[ENTRY_ONE]:'player@example.test'}});world.authRequired={pool_platform_participant_context:2};
       const {page,seen}=await openPage({world,signedInAs:'player@example.test'});
-      await page.locator('#sessionError').waitFor({state:'visible'});
-      assert.equal(await page.textContent('#sessionError'),SIGN_IN_NOT_CONFIRMED);
+      await page.locator('#poolPickerError',{hasText:'This pool cannot be opened right now.'}).waitFor({state:'visible'});
       await page.waitForTimeout(600);
       const loads=calls(world,'pool_platform_participant_context');
       assert.equal(loads.length,2,'no third request');same(loads[0],loads[1],'context twice');
@@ -1203,7 +1322,7 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
         await page.goto(`${base}/${path}`);
         await page.locator('#sessionError').waitFor({state:'visible'});
         assert.equal(await page.textContent('#sessionError'),CONFIG_UNAVAILABLE,label);
-        assert.equal(await page.textContent('#modePill'),'UNAVAILABLE',label);
+        assert.match(await page.textContent('#modePill'),/^unavailable$/i,label);
         for(const id of ['authCard','signOut','entryCard','pickForm','emptyCard','consoleCard','entriesCard','importCard']){
           if(await page.locator(`#${id}`).count())assert.equal(await page.isVisible(`#${id}`),false,`${label}: #${id}`);
         }
@@ -1213,7 +1332,7 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     }
   });
 
-  test('service worker in Chromium: commercial scope, exactly the allow-list cached, the configuration never stored; offline the cached shell says so, and online a reload recovers',async()=>{
+  test('service worker: commercial scope, exactly the allow-list cached, the configuration never stored; offline the cached shell says so, and online a reload recovers',async()=>{
     const own=await serveDirectory(new URL('./',import.meta.url)),port=own.address().port,origin=`http://127.0.0.1:${port}`;
     const stop=()=>new Promise(resolve=>{own.close(()=>resolve());own.closeAllConnections()});
     try{
@@ -1227,13 +1346,12 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
       const cached=()=>page.evaluate(async()=>{
         const out={};for(const name of await caches.keys())out[name]=(await (await caches.open(name)).keys()).map(r=>r.url).sort();return out;
       });
-      const listed=['','index.html','participant.html','commissioner.html','styles.css','sw-register.js','participant.js','commissioner.js',
-        'submission-core.js','participant-core.js','import-core.js','auth-core.js','platform-client.js','manifest.webmanifest'].map(asset=>`${origin}/${asset}`).sort();
-      assert.deepEqual(await cached(),{'pool-platform-commercial-v4':listed});
+      const listed=PRECACHE_FILES.map(asset=>`${origin}/${asset}`).sort();
+      assert.deepEqual(await cached(),{'pool-platform-commercial-v5':listed});
       await page.goto(`${origin}/participant.html`);
       await page.locator('#pickForm').waitFor({state:'visible'});
       assert.equal(await page.evaluate(()=>navigator.serviceWorker.controller?.scriptURL),`${origin}/service-worker.js`);
-      assert.deepEqual(await cached(),{'pool-platform-commercial-v4':listed},'loading the configuration stored nothing');
+      assert.deepEqual(await cached(),{'pool-platform-commercial-v5':listed},'loading the configuration stored nothing');
       // The host unreachable: the worker serves the page and its modules from cache, the configuration cannot load.
       await stop();
       await page.reload();
@@ -1245,14 +1363,14 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
       await new Promise(resolve=>own.listen(port,'127.0.0.1',resolve));
       await page.reload();
       await page.locator('#pickForm').waitFor({state:'visible'});
-      assert.equal(await page.textContent('#modePill'),'SANDBOX · synthetic');
-      assert.deepEqual(await cached(),{'pool-platform-commercial-v4':listed});
+      assert.equal(await page.textContent('#modePill'),'Local preview');
+      assert.deepEqual(await cached(),{'pool-platform-commercial-v5':listed});
       assert.equal(errors.length,1,'only the offline configuration import failed');
       assert.deepEqual(await page.evaluate(()=>window.__csp),[]);
     }finally{if(own.listening)await stop()}
   });
 
-  test('service worker in Chromium: an invite fragment never reaches the host, a cache key or the address bar, online or offline',async()=>{
+  test('service worker: legacy invite fragments stay off the host and token-free invitation routes stay out of Cache Storage',async()=>{
     const own=await serveDirectory(new URL('./',import.meta.url)),port=own.address().port,origin=`http://127.0.0.1:${port}`;
     const stop=()=>new Promise(resolve=>{own.close(()=>resolve());own.closeAllConnections()});
     try{
@@ -1268,33 +1386,37 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
       const cached=()=>page.evaluate(async()=>{
         const out={};for(const name of await caches.keys())out[name]=(await (await caches.open(name)).keys()).map(r=>r.url).sort();return out;
       });
-      const listed=['','index.html','participant.html','commissioner.html','styles.css','sw-register.js','participant.js','commissioner.js',
-        'submission-core.js','participant-core.js','import-core.js','auth-core.js','platform-client.js','manifest.webmanifest'].map(asset=>`${origin}/${asset}`).sort();
+      const listed=PRECACHE_FILES.map(asset=>`${origin}/${asset}`).sort();
       // Each link is opened from another page, so it is a real navigation through the worker, with and without a query.
-      for(const [link,scrubbed] of [[`${origin}/participant.html?pool=demo#invite=${INVITE}`,`${origin}/participant.html?pool=demo`],
-        [`${origin}/participant.html#invite=${INVITE}`,`${origin}/participant.html`]]){
+      for(const [link,scrubbed] of [[`${origin}/participant.html?pool=demo#invite=${LEGACY_INVITE}`,`${origin}/participant.html?pool=demo`],
+        [`${origin}/participant.html#invite=${LEGACY_INVITE}`,`${origin}/participant.html`],
+        [origin+JOIN_PATH,`${origin}/participant.html?pool=it-pool`]]){
         await page.goto(`${origin}/index.html`);
         await page.goto(link);
         await page.locator('#pickForm').waitFor({state:'visible'});
         assert.equal(page.url(),scrubbed);
       }
-      assert.deepEqual(await cached(),{'pool-platform-commercial-v4':listed},'no invite link was stored');
+      assert.deepEqual(await cached(),{'pool-platform-commercial-v5':listed},'no invite link was stored');
       // The host unreachable: the worker serves the bare cached page, which scrubs the invite before its configuration
       // import fails.
       await page.goto(`${origin}/index.html`);
       await stop();
-      await page.goto(`${origin}/participant.html#invite=${INVITE}`);
+      await page.goto(`${origin}/participant.html#invite=${LEGACY_INVITE}`);
       await page.locator('#sessionError').waitFor({state:'visible'});
       assert.equal(await page.textContent('#sessionError'),CONFIG_UNAVAILABLE);
       assert.equal(page.url(),`${origin}/participant.html`);
-      assert.deepEqual(await cached(),{'pool-platform-commercial-v4':listed});
-      assert.equal(own.targets.some(target=>target.includes(INVITE)||target.includes('#')),false,JSON.stringify(own.targets));
-      assert.ok(own.targets.includes('/participant.html?pool=demo')&&own.targets.includes('/participant.html'));
-      assert.equal(requests.some(url=>url.includes(INVITE)||url.includes('#')),false,JSON.stringify(requests));
+      assert.deepEqual(await cached(),{'pool-platform-commercial-v5':listed});
+      assert.equal(own.targets.some(target=>target.includes(LEGACY_INVITE)||target.includes('#')),false,JSON.stringify(own.targets));
+      assert.ok(own.targets.includes('/participant.html?pool=demo')&&own.targets.includes('/participant.html')&&own.targets.includes(JOIN_PATH));
+      assert.equal(requests.some(url=>url.includes(LEGACY_INVITE)||url.includes('#')),false,JSON.stringify(requests));
       assert.equal(errors.length,1,'only the offline configuration import failed');
       assert.deepEqual(await page.evaluate(()=>window.__csp),[]);
     }finally{if(own.listening)await stop()}
   });
+
+  // The legacy proxy server serves HTTP localhost. WebKit authenticates using Secure cookies in the HTTPS E2E suite.
+  const SDK_HTTP_SESSION_SKIP=engine==='webkit'?'WebKit requires HTTPS for these Secure-cookie session checks':
+    ESBUILD?false:'run npm ci in pool-platform to bundle the real SDK';
 
   test('real bundled SDK: a live build served by scripts/serve.mjs at localhost signs in far enough to send a code, through the same-origin Auth proxy only, under the production CSP',{skip:ESBUILD?false:'run npm ci in pool-platform to bundle the real SDK'},async()=>{
     const work=fs.mkdtempSync(path.join(os.tmpdir(),'pool-platform-live-')),dist=path.join(work,'dist');
@@ -1325,7 +1447,7 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
         await page.goto(`${local.url}participant.html`);
         await page.locator('#authCard').waitFor({state:'visible'});
         assert.equal(await page.evaluate(()=>location.hostname),'localhost');
-        assert.equal(await page.textContent('#modePill'),'LIVE · secure');
+        assert.equal(await page.textContent('#modePill'),'Connected');
         await page.fill('#email','Player@Example.test');await page.click('#sendCode');
         await page.locator('#otpWrap').waitFor({state:'visible'});
         assert.equal(await page.textContent('#authError'),'');
@@ -1382,7 +1504,7 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     }finally{fs.rmSync(work,{recursive:true,force:true})}
   });
 
-  test('real bundled SDK: signed in through the proxy and a stand-in Neon Auth, Chromium holds only the app\'s __Host- cookie, no script reads the session, the JWT is the Data API bearer, a planted duplicate fails closed, and sign-out deletes the cookie',{skip:ESBUILD?false:'run npm ci in pool-platform to bundle the real SDK'},async()=>{
+  test('real bundled SDK: signed in through the proxy and a stand-in Neon Auth, Chromium holds only the app\'s __Host- cookie, no script reads the session, the JWT is the Data API bearer, a planted duplicate fails closed, and sign-out deletes the cookie',{skip:SDK_HTTP_SESSION_SKIP},async()=>{
     const work=fs.mkdtempSync(path.join(os.tmpdir(),'pool-platform-cookie-')),dist=path.join(work,'dist');
     const UPSTREAM='https://ep-example-000000.neonauth.c-0.us-east-2.aws.neon.tech/neondb/auth',DATA='https://data.pool.test/neondb/rest/v1';
     // Synthetic shapes only. The stand-in answers like Neon's Better Auth: its own Partitioned, SameSite=None session
@@ -1522,7 +1644,7 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
 
   // The invite telemetry finding end to end: the real page, SDK, local server and Auth proxy core (the one the Netlify
   // functions mount), with stand-ins for Neon Auth and the Data API only.
-  test('real bundled SDK: an invite link opened at scripts/serve.mjs and signed in through the same-origin Auth proxy keeps its token out of every request target, Auth call, log line, header and store; only the claim RPC body carries it',{skip:ESBUILD?false:'run npm ci in pool-platform to bundle the real SDK'},async()=>{
+  test('real bundled SDK: the same-origin Auth proxy signs in the verified recipient without an invite token, and the entry hint never reaches Auth, headers or browser storage',{skip:SDK_HTTP_SESSION_SKIP},async()=>{
     const work=fs.mkdtempSync(path.join(os.tmpdir(),'pool-platform-invite-')),dist=path.join(work,'dist');
     const UPSTREAM='https://ep-example-000000.neonauth.c-0.us-east-2.aws.neon.tech/neondb/auth',DATA='https://data.pool.test/neondb/rest/v1';
     // Synthetic shapes only, answered as in the cookie test above: one accepted code, one session.
@@ -1562,18 +1684,21 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
         page.on('console',message=>messages.push(message.text()));
         context.on('request',request=>requests.push({method:request.method(),url:request.url(),headers:request.headers()}));
         await context.route(/neonauth/,route=>route.abort());
-        // The Data API (cross-origin): this invite claims entry-1 once; the context then holds that entry.
+        // The Data API (cross-origin): the verified recipient claims the entry once, then discovers its pool.
         let claimed=false;
         await context.route('https://data.pool.test/**',route=>{
           const request=route.request(),cors={'access-control-allow-origin':origin,'access-control-allow-headers':'authorization, content-type, accept','access-control-allow-methods':'POST'};
           if(request.method()==='OPTIONS')return route.fulfill({status:204,headers:cors});
           data.push({url:request.url(),headers:request.headers(),body:request.postData()});
           const reply=(status,body)=>route.fulfill({status,contentType:'application/json',headers:cors,body:JSON.stringify(body)});
-          if(request.url()===`${DATA}/rpc/pool_platform_claim_entry_invite`){
-            if(claimed||request.postDataJSON()?.p_invite_token!==INVITE)return reply(400,{message:'invite_unavailable'});
-            claimed=true;return reply(200,{entry_id:'entry-1',claimed:true});
+          if(request.url()===`${DATA}/rpc/${CLAIM_INVITE}`){
+            if(claimed||request.headers().authorization!==`Bearer ${JWT}`||request.postDataJSON()?.p_entry_id!==ENTRY_ONE)
+              return reply(400,{message:'invite_unavailable'});
+            claimed=true;return reply(200,{entry_id:ENTRY_ONE,claimed:true});
           }
-          if(request.url()===`${DATA}/rpc/pool_platform_participant_context`)return claimed?reply(200,{...poolContext,entries:[entries[0]]}):reply(400,{message:'pool_not_found'});
+          if(request.url()===`${DATA}/rpc/${LIST_PARTICIPANT_POOLS}`)return reply(200,claimed?[participantDiscovery(poolContext)]:[]);
+          if(request.url()===`${DATA}/rpc/${PARTICIPANT_CONTEXT}`)return claimed?reply(200,{...poolContext,entries:[entries[0]]}):reply(400,{message:'pool_not_found'});
+          if(request.url().includes('_snapshot'))return reply(404,{code:'PGRST202',message:'Could not find the function'});
           return reply(400,{message:'unexpected_rpc'});
         });
         const signIn=async()=>{
@@ -1582,35 +1707,39 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
           await page.fill('#otp','123456');await page.click('#verifyCode');
           await page.locator('#entryCard').waitFor({state:'visible'});
         };
-        await page.goto(`${local.url}participant.html?pool=it-pool#invite=${INVITE}`);
+        const inviteUrl=origin+JOIN_PATH;
+        await page.goto(inviteUrl);
         await page.locator('#authCard').waitFor({state:'visible'});
         assert.equal(page.url(),`${local.url}participant.html?pool=it-pool`,'scrubbed before sign-in');
         await signIn();
         assert.equal(await page.isVisible('#sessionError'),false);
-        // Signed out and in again on the same page: the claimed token is gone, so nothing is claimed twice.
+        // Signed out and in again on the same page: the claimed hint is gone, so nothing is claimed twice.
         await page.click('#signOut');await page.locator('#authCard').waitFor({state:'visible'});
         await signIn();
         assert.equal(await page.isVisible('#sessionError'),false);
-        // The one place the token travels: the claim RPC body, once, under the session's JWT.
-        const claims=data.filter(call=>call.url===`${DATA}/rpc/pool_platform_claim_entry_invite`);
-        assert.deepEqual(claims.map(call=>[call.body,call.headers.authorization]),[[JSON.stringify({p_invite_token:INVITE}),`Bearer ${JWT}`]]);
-        for(const call of data)assert.equal(JSON.stringify(claims.includes(call)?{...call,body:null}:call).includes(INVITE),false,call.url);
-        // Nowhere else: no request URL or header (the page, the Auth proxy, the Data API), nothing the proxy sent to Neon
-        // Auth, no server or proxy log line, no console message, store or cookie, not the page and not the address bar.
+        const claims=data.filter(call=>call.url===`${DATA}/rpc/${CLAIM_INVITE}`);
+        assert.deepEqual(claims.map(call=>[call.body,call.headers.authorization]),[[JSON.stringify({p_entry_id:ENTRY_ONE}),`Bearer ${JWT}`]]);
+        for(const call of data){
+          assert.doesNotMatch(call.body||'',/p_invite_token|invite_token/);
+          assert.equal(JSON.stringify(claims.includes(call)?{...call,body:null}:call).includes(ENTRY_ONE),false,call.url);
+        }
         const auth=requests.filter(r=>new URL(r.url).pathname.startsWith('/api/auth/'));
         assert.deepEqual([...new Set(auth.map(r=>`${r.method} ${new URL(r.url).pathname}`))].sort(),
           ['GET /api/auth/get-session','POST /api/auth/email-otp/send-verification-otp','POST /api/auth/sign-in/email-otp','POST /api/auth/sign-out']);
-        assert.ok(requests.some(r=>r.url===`${local.url}participant.html?pool=it-pool`),'the page was requested by its path and pool only');
-        for(const [label,value] of [['browser requests',requests],['Neon Auth upstream',upstream],['server and proxy log',lines],['console',messages]]){
-          assert.equal(JSON.stringify(value).includes(INVITE),false,label);
+        assert.equal(requests.filter(r=>r.url===inviteUrl).length,1,'the invitation requests only the pool and entry path');
+        assert.equal(inviteUrl.includes('?')||inviteUrl.includes('#'),false);
+        for(const [label,value] of [['other browser requests',requests.filter(r=>r.url!==inviteUrl)],['request headers',requests.map(r=>r.headers)],
+          ['Neon Auth upstream',upstream],['Auth proxy log',lines.filter(line=>line.startsWith('AUTH '))],['console',messages]]){
+          assert.equal(JSON.stringify(value).includes(ENTRY_ONE),false,label);
         }
-        assert.ok(lines.includes('GET /participant.html 200')&&lines.includes('AUTH POST verify-otp 200'),JSON.stringify(lines));
-        assert.equal(lines.some(line=>line.includes('#')||line.includes('invite')),false,JSON.stringify(lines));
+        assert.ok(lines.includes(`GET ${JOIN_PATH} 200`)&&lines.includes('AUTH POST verify-otp 200'),JSON.stringify(lines));
+        assert.equal(lines.some(line=>line.includes('#')||line.includes('invite=')),false,JSON.stringify(lines));
         const stores=await page.evaluate(async()=>JSON.stringify({local:{...localStorage},session:{...sessionStorage},cookie:document.cookie,
           history:history.state,databases:await indexedDB.databases(),caches:await caches.keys()}));
-        assert.equal(stores.includes(INVITE),false,stores);
-        assert.equal(JSON.stringify(await context.cookies()).includes(INVITE),false);
-        assert.equal((await page.content()).includes(INVITE),false);
+        assert.equal(stores.includes(ENTRY_ONE),false,stores);
+        assert.equal(stores.includes(JWT),false,stores);
+        assert.equal(JSON.stringify(await context.cookies()).includes(ENTRY_ONE),false);
+        assert.doesNotMatch(await page.content(),/invite_token|p_invite_token/);
         assert.equal(page.url(),`${local.url}participant.html?pool=it-pool`);
         assert.deepEqual(errors,[]);
       }finally{await local.close()}
@@ -1625,7 +1754,7 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
   // byte-exactly, so the planted value is never a session, never travels upstream, and is never laundered into the
   // real app cookie; the request fails closed (401). A is a signed-out browser with the planted near-match only; B is
   // a genuine signed-in cookie plus the planted near-match, proving the planted value cannot replace or override it.
-  test('real bundled SDK: a sibling-host NBSP look-alike cookie is never read as the session, sends nothing upstream, and cannot override the genuine __Host- cookie (signed out, and beside a real session)',{skip:ESBUILD?false:'run npm ci in pool-platform to bundle the real SDK'},async()=>{
+  test('real bundled SDK: a sibling-host NBSP look-alike cookie is never read as the session, sends nothing upstream, and cannot override the genuine __Host- cookie (signed out, and beside a real session)',{skip:SDK_HTTP_SESSION_SKIP},async()=>{
     const work=fs.mkdtempSync(path.join(os.tmpdir(),'pool-platform-nbsp-')),dist=path.join(work,'dist');
     const UPSTREAM='https://ep-example-000000.neonauth.c-0.us-east-2.aws.neon.tech/neondb/auth',DATA='https://data.pool.test/neondb/rest/v1';
     const TOKEN='SynthSessTokenAbcdefghijklmn0123',SIGNED=`${TOKEN}.c3ludGhldGljLXNpZ25hdHVyZQ%3D%3D`,PLANTED='PlantedSessTokenZyxwvutsrq98765.cGxhbnRlZA%3D%3D';
@@ -1753,3 +1882,4 @@ describe('participant and commissioner pages in headless Chromium (opt-in)',{ski
     }
   });
 });
+}

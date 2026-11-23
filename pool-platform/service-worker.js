@@ -5,12 +5,18 @@
 // platform-config.js is deliberately not listed, so the worker neither stores nor answers it: the runtime
 // configuration always comes from the network and no cached copy can pin a page to an old backend. v3 cached
 // it; activating this version deletes v3. The bundled SDK (vendor/neon-js.js) is left to the network as well.
+// The list holds every module a page imports statically. A module missing from it is never cached, so when the
+// network fails the page script cannot load at all and nothing explains why; tests/service-worker-assets.test.mjs
+// walks the pages' imports and fails when one is left out.
 const CACHE_PREFIX='pool-platform-commercial-';
-const CACHE=`${CACHE_PREFIX}v4`;
+const CACHE=`${CACHE_PREFIX}v5`;
 const ASSETS=[
   './','./index.html','./participant.html','./commissioner.html','./styles.css','./sw-register.js',
   './participant.js','./commissioner.js','./submission-core.js','./participant-core.js',
-  './import-core.js','./auth-core.js','./platform-client.js','./manifest.webmanifest'
+  './import-core.js','./commissioner-workflow.js','./schedule-core.js','./auth-core.js','./platform-client.js',
+  './game-day-core.js','./game-day-board.js','./pool-projection.js','./pool-standings-board.js',
+  './final-results-form.js','./results-grading.js','./season-standings-core.js','./season-standings-board.js',
+  './manifest.webmanifest'
 ];
 const STATIC_PATHS=new Set(ASSETS.map(asset=>new URL(asset,self.location).pathname));
 

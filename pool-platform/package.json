@@ -6,12 +6,16 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "serve": "node scripts/serve.mjs",
-    "test": "node --test *.test.mjs"
+    "test": "node --test *.test.mjs tests/*.test.mjs"
   },
   "dependencies": {
     "@neondatabase/neon-js": "0.7.0-beta"
   },
   "devDependencies": {
     "esbuild": "0.28.2"
+  },
+  "overrides": {
+    "better-auth": "1.7.7",
+    "zod": "4.6.7"
   }
 }

@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test,{describe} from 'node:test';
 import {fileURLToPath} from 'node:url';
-import {APP_DIR,OUTPUT_FILES,STATIC_FILES,buildCommercialFrontend,listFiles} from './scripts/build.mjs';
+import {APP_DIR,OUTPUT_FILES,STATIC_FILES,buildCommercialFrontend,bundleNeonSdk,listFiles} from './scripts/build.mjs';
 import {HEADERS_FILE,netlifyHeaders,writeNetlifyHeaders} from './scripts/netlify-headers.mjs';
 import {ConfigError,contentSecurityPolicy,parseRuntimeConfig,runtimeConfigFromEnv} from './scripts/runtime-config.mjs';
 import {startServer} from './scripts/serve.mjs';
@@ -45,15 +45,17 @@ function scratch(t){
   t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   return dir;
 }
-async function built(t,env={},bundle=SDK_STAND_IN){
+let verifiedBundle;
+function realSdk(){return verifiedBundle??=bundleNeonSdk(HERE)}
+async function built(t,env={},bundle){
   const dir=path.join(scratch(t),'dist');
-  await buildCommercialFrontend({outDir:dir,env,bundleSdk:async()=>bundle});
+  await buildCommercialFrontend({outDir:dir,env,bundleSdk:()=>bundle??realSdk()});
   return dir;
 }
 // Refused, and nothing written: no _headers appears (or an existing one keeps its bytes).
-function refused(dir,reason,label){
+async function refused(dir,reason,label){
   const before=fs.existsSync(path.join(dir,HEADERS_FILE))?fs.readFileSync(path.join(dir,HEADERS_FILE)):null;
-  assert.throws(()=>writeNetlifyHeaders({dir}),reason,label);
+  await assert.rejects(()=>writeNetlifyHeaders({dir}),reason,label);
   const after=fs.existsSync(path.join(dir,HEADERS_FILE))?fs.readFileSync(path.join(dir,HEADERS_FILE)):null;
   assert.deepEqual(after,before,`${label}: nothing written`);
 }
@@ -67,17 +69,22 @@ function parseNetlifyToml(text){
   for(const [index,raw] of text.split('\n').entries()){
     const line=raw.trim();
     if(line===''||line.startsWith('#'))continue;
+    if(line==='[[redirects]]'){
+      assert.ok(!Object.hasOwn(tables,'redirects'),'only one invitation rewrite');
+      table=tables.redirects={};
+      continue;
+    }
     const header=/^\[([a-z]+(?:\.[a-z]+)*)\]$/.exec(line);
     if(header){
       assert.ok(!Object.hasOwn(tables,header[1]),`[${header[1]}] twice`);
       table=tables[header[1]]={};
       continue;
     }
-    const pair=/^([a-z_]+) = (?:"([^"\\]*)"|'([^'\\]*)'|(true|false))$/.exec(line);
+    const pair=/^([a-z_]+) = (?:"([^"\\]*)"|'([^'\\]*)'|(true|false)|(200))$/.exec(line);
     assert.ok(pair&&table,`netlify.toml line ${index+1} is not a plain key = value inside a table: ${raw}`);
-    const [,key,basic,literal,flag]=pair;
+    const [,key,basic,literal,flag,status]=pair;
     assert.ok(!Object.hasOwn(table,key),`${key} twice`);
-    table[key]=basic??literal??flag==='true';
+    table[key]=basic??literal??(status ? Number(status) : flag==='true');
   }
   return tables;
 }
@@ -130,8 +137,8 @@ async function replay(calls,app){
   const steps={
     'rm -rf dist':()=>fs.rmSync(path.join(app,'dist'),{recursive:true,force:true}),
     'npm ci':()=>{},
-    'npm run build':()=>buildCommercialFrontend({appDir:app,env:LIVE,bundleSdk:async()=>SDK_STAND_IN}),
-    'node scripts/netlify-headers.mjs':()=>writeNetlifyHeaders({appDir:app})
+    'npm run build':()=>buildCommercialFrontend({appDir:app,env:LIVE,bundleSdk:realSdk}),
+    'node scripts/netlify-headers.mjs':()=>writeNetlifyHeaders({appDir:HERE,dir:path.join(app,'dist')})
   };
   for(const call of calls){
     assert.ok(Object.hasOwn(steps,call),`no in-process equivalent for ${call}`);
@@ -147,7 +154,8 @@ test('netlify.toml holds exactly the reviewed settings: rm -rf dist, npm ci, the
       publish:'dist'
     },
     'build.processing.html':{pretty_urls:false},
-    functions:{directory:'netlify/functions'}
+    functions:{directory:'netlify/functions'},
+    redirects:{from:'/join/:pool/:entry',to:'/participant.html',status:200,force:false}
   });
   // The existing build is the package's own build script, and the functions directory is outside the publish one.
   assert.equal(JSON.parse(read('package.json')).scripts.build,'node scripts/build.mjs');
@@ -155,9 +163,9 @@ test('netlify.toml holds exactly the reviewed settings: rm -rf dist, npm ci, the
   assert.equal(path.relative(path.join(HERE,TOML.build.publish),path.join(HERE,TOML.functions.directory)).startsWith('..'),true);
 });
 
-test('netlify.toml sets no environment value, URL, origin, secret, header rule, redirect or reference to main',()=>{
+test('netlify.toml sets no environment value, URL, origin, secret, header rule, external redirect or reference to main',()=>{
   const text=read('netlify.toml'),settings=text.split('\n').filter(line=>!line.trim().startsWith('#')).join('\n');
-  assert.doesNotMatch(text,/^\s*\[\[/m,'no array of tables: no [[headers]], [[redirects]], [[plugins]] or [[edge_functions]]');
+  assert.deepEqual([...text.matchAll(/^\s*\[\[(\w+)\]\]/gm)].map(match=>match[1]),['redirects']);
   assert.doesNotMatch(text,/^\s*\[(?:[a-z.]+\.)?(?:environment|context|headers|redirects|dev|plugins|images|edge_functions)\b/m,'no environment, context, header, redirect or plugin table');
   assert.doesNotMatch(text,/[a-z][a-z0-9+.-]*:\/\//i,'no URL, not even in a comment');
   assert.doesNotMatch(text,/\bmain\b/,'main is never named, let alone as a deployment source');
@@ -237,7 +245,7 @@ test('.nvmrc pins Node 22 and nothing else',()=>{
 
 test('_headers: exact bytes for a live build, with the CSP scripts/serve.mjs sends for the same build, and the other four headers',async t=>{
   const dir=await built(t,LIVE);
-  const result=writeNetlifyHeaders({dir});
+  const result=await writeNetlifyHeaders({dir});
   const text=fs.readFileSync(path.join(dir,HEADERS_FILE),'utf8');
   assert.equal(text,expectedHeaders('live',LIVE_CSP));
   assert.deepEqual(result,{dir,mode:'live',csp:LIVE_CSP,bytes:Buffer.byteLength(text),sha256:sha256(text)});
@@ -256,7 +264,7 @@ test('_headers: exact bytes for a live build, with the CSP scripts/serve.mjs sen
 
 test('_headers: a sandbox build gets its own CSP, connect-src \'self\' only, and says it is the sandbox; live and sandbox differ only there',async t=>{
   const sandbox=await built(t,{}),live=await built(t,LIVE);
-  const s=writeNetlifyHeaders({dir:sandbox}),l=writeNetlifyHeaders({dir:live});
+  const s=await writeNetlifyHeaders({dir:sandbox}),l=await writeNetlifyHeaders({dir:live});
   assert.equal(fs.readFileSync(path.join(sandbox,HEADERS_FILE),'utf8'),expectedHeaders('sandbox',SANDBOX_CSP));
   assert.deepEqual([s.mode,s.csp,l.mode],['sandbox',SANDBOX_CSP,'live']);
   assert.match(s.csp,/; connect-src 'self'; /);
@@ -270,7 +278,7 @@ test('_headers: a sandbox build gets its own CSP, connect-src \'self\' only, and
 
 test('_headers: same build, same bytes, and the SHA-256 reported is the file\'s own; the CLI prints it',async t=>{
   const one=await built(t,LIVE),two=await built(t,LIVE);
-  const a=writeNetlifyHeaders({dir:one}),b=writeNetlifyHeaders({dir:two});
+  const a=await writeNetlifyHeaders({dir:one}),b=await writeNetlifyHeaders({dir:two});
   assert.ok(fs.readFileSync(path.join(one,HEADERS_FILE)).equals(fs.readFileSync(path.join(two,HEADERS_FILE))));
   assert.equal(a.sha256,b.sha256);
   assert.equal(a.sha256,sha256(fs.readFileSync(path.join(one,HEADERS_FILE))));
@@ -289,7 +297,7 @@ test('_headers: same build, same bytes, and the SHA-256 reported is the file\'s 
 
 test('_headers never names Neon Auth: a Data API URL on a Neon Auth host is refused, and the generator never reads the Auth upstream',async t=>{
   const misconfigured=await built(t,{...LIVE,POOL_PLATFORM_DATA_URL:AUTH});
-  refused(misconfigured,/Neon Auth/,'a Data API URL on a Neon Auth host');
+  await refused(misconfigured,/Neon Auth/,'a Data API URL on a Neon Auth host');
   for(const host of ['ep-x.neonauth.c-0.us-east-2.aws.neon.tech','ep-x.NEONAUTH.c-0.us-east-2.aws.neon.tech','neonauth.example.test']){
     const config={mode:'live',dataUrl:`https://${host.toLowerCase()}/neondb/rest/v1`,defaultPoolSlug:''};
     assert.throws(()=>netlifyHeaders(config),/Neon Auth/,host);
@@ -306,7 +314,7 @@ test('_headers carries no credential or secret: server-only settings and stray s
   const dir=await built(t,env);
   const saved={...process.env};
   Object.assign(process.env,env);
-  try{writeNetlifyHeaders({dir})}finally{for(const key of Object.keys(env))if(saved[key]===undefined)delete process.env[key];else process.env[key]=saved[key]}
+  try{await writeNetlifyHeaders({dir})}finally{for(const key of Object.keys(env))if(saved[key]===undefined)delete process.env[key];else process.env[key]=saved[key]}
   const text=fs.readFileSync(path.join(dir,HEADERS_FILE),'utf8');
   assert.equal(text,expectedHeaders('live',LIVE_CSP),'the environment changes nothing');
   for(const secret of ['hunter2','secret','napi_','postgresql','owner','pools.example.test',AUTH,new URL(AUTH).host,'neonauth','@','Bearer','Authorization','Cookie']){
@@ -318,42 +326,42 @@ test('_headers carries no credential or secret: server-only settings and stray s
 
 test('_headers is refused for missing or malformed build output: no directory, a file, a hand-edited configuration, an altered SDK bundle',async t=>{
   const root=scratch(t);
-  refused(path.join(root,'missing'),/not a build directory/,'missing');
+  await refused(path.join(root,'missing'),/not a build directory/,'missing');
   fs.writeFileSync(path.join(root,'file'),'x');
-  assert.throws(()=>writeNetlifyHeaders({dir:path.join(root,'file')}),/not a build directory/);
+  await assert.rejects(()=>writeNetlifyHeaders({dir:path.join(root,'file')}),/not a build directory/);
   const empty=path.join(root,'empty');fs.mkdirSync(empty);
-  refused(empty,/is not exactly the build's output/,'empty');
+  await refused(empty,/is not exactly the build's output/,'empty');
   const edited=await built(t,LIVE);
   fs.appendFileSync(path.join(edited,'platform-config.js'),'globalThis.pwned=1;\n');
-  refused(edited,ConfigError,'hand-edited platform-config.js');
+  await refused(edited,ConfigError,'hand-edited platform-config.js');
   const named=await built(t,LIVE);
   fs.writeFileSync(path.join(named,'platform-config.js'),fs.readFileSync(path.join(named,'platform-config.js'),'utf8').replace('{"mode"',`{"authUrl":"${AUTH}","mode"`));
-  refused(named,ConfigError,'a configuration naming Neon Auth');
-  refused(await built(t,LIVE,'export function createClient(){}\n'),/Neon SDK bundle/,'an SDK bundle without its version record');
-  refused(await built(t,LIVE,`${SDK_STAND_IN}import("https://cdn.jsdelivr.net/npm/x");\n`),/Neon SDK bundle/,'an SDK bundle that imports from a CDN');
+  await refused(named,ConfigError,'a configuration naming Neon Auth');
+  await refused(await built(t,LIVE,'export function createClient(){}\n'),/differs from the exact verified lockfile build/,'an SDK bundle without its version record');
+  await refused(await built(t,LIVE,`${SDK_STAND_IN}import("https://cdn.jsdelivr.net/npm/x");\n`),/differs from the exact verified lockfile build/,'an SDK bundle that imports from a CDN');
 });
 
 test('_headers is refused for a stale or unexpected dist layout: a changed page, a missing file, an extra file, server code, a symbolic link',async t=>{
   const stale=await built(t,LIVE);
   fs.appendFileSync(path.join(stale,'participant.html'),'<!-- older build -->\n');
-  refused(stale,/participant\.html differs from/,'a page from another build');
+  await refused(stale,/participant\.html differs from/,'a page from another build');
   const script=await built(t,{});
   fs.writeFileSync(path.join(script,'service-worker.js'),'// an older worker\n');
-  refused(script,/service-worker\.js differs from/,'a stale worker');
+  await refused(script,/service-worker\.js differs from/,'a stale worker');
   const missing=await built(t,LIVE);
   fs.rmSync(path.join(missing,'styles.css'));
-  refused(missing,/missing styles\.css/,'a missing file');
+  await refused(missing,/missing styles\.css/,'a missing file');
   for(const extra of ['stale.js','index.html.bak','api/auth.mjs','server/auth-proxy-core.mjs','server/netlify-adapter.mjs','netlify/functions/auth-otp.mjs',
     'netlify.toml','.nvmrc','vercel.json','scripts/netlify-headers.mjs','_redirects','.env','vendor/other.js']){
     const dir=await built(t,LIVE);
     fs.mkdirSync(path.dirname(path.join(dir,extra)),{recursive:true});
     fs.writeFileSync(path.join(dir,extra),'x');
-    refused(dir,new RegExp(`unexpected ${extra.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}`),extra);
+    await refused(dir,new RegExp(`unexpected ${extra.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}`),extra);
   }
   const linked=await built(t,LIVE);
   fs.rmSync(path.join(linked,'styles.css'));
   fs.symlinkSync(path.join(HERE,'styles.css'),path.join(linked,'styles.css'));
-  refused(linked,/styles\.css \(not a regular file\)/,'a symbolic link in place of a built file');
+  await refused(linked,/styles\.css \(not a regular file\)/,'a symbolic link in place of a built file');
 });
 
 test('an existing _headers is never overwritten, whatever it holds, and a symbolic link there is never followed',async t=>{
@@ -361,16 +369,16 @@ test('an existing _headers is never overwritten, whatever it holds, and a symbol
     const dir=await built(t,LIVE);
     if(body===null){
       // Written by an earlier run: the same bytes this run would write are still refused.
-      writeNetlifyHeaders({dir});
-      refused(dir,/already holds _headers/,'an earlier run');
+      await writeNetlifyHeaders({dir});
+      await refused(dir,/already holds _headers/,'an earlier run');
     }else{
       fs.writeFileSync(path.join(dir,HEADERS_FILE),body);
-      refused(dir,/already holds _headers/,JSON.stringify(body));
+      await refused(dir,/already holds _headers/,JSON.stringify(body));
     }
   }
   const dir=await built(t,LIVE),target=path.join(scratch(t),'elsewhere');
   fs.symlinkSync(target,path.join(dir,HEADERS_FILE));
-  assert.throws(()=>writeNetlifyHeaders({dir}),/_headers/);
+  await assert.rejects(()=>writeNetlifyHeaders({dir}),/_headers/);
   assert.equal(fs.existsSync(target),false,'nothing was written through the link');
 });
 
@@ -378,10 +386,10 @@ test('the build refuses to replace a dist/ that holds _headers, so a stale hosti
   const app=path.join(scratch(t),'pool-platform'),dist=path.join(app,'dist');
   fs.mkdirSync(app);
   for(const name of fs.readdirSync(HERE))if(/\.(?:html|css|js|webmanifest)$/.test(name))fs.copyFileSync(path.join(HERE,name),path.join(app,name));
-  await buildCommercialFrontend({appDir:app,env:LIVE,bundleSdk:async()=>SDK_STAND_IN});
-  writeNetlifyHeaders({appDir:app});
+  await buildCommercialFrontend({appDir:app,env:LIVE,bundleSdk:realSdk});
+  await writeNetlifyHeaders({appDir:HERE,dir:dist});
   assert.deepEqual(listFiles(dist),[...OUTPUT_FILES,HEADERS_FILE].sort(),'appDir/dist is the default');
-  await assert.rejects(buildCommercialFrontend({appDir:app,env:LIVE,bundleSdk:async()=>SDK_STAND_IN}),/holds _headers, which this build does not produce/);
+  await assert.rejects(buildCommercialFrontend({appDir:app,env:LIVE,bundleSdk:realSdk}),/holds _headers, which this build does not produce/);
   assert.ok(fs.existsSync(path.join(dist,HEADERS_FILE)),'nothing was deleted');
   assert.equal(path.join(APP_DIR,'dist'),path.join(HERE,'dist'),'the default build directory is pool-platform/dist, Netlify\'s publish directory');
 });
@@ -390,7 +398,7 @@ describe('the real Neon SDK bundle',{skip:ESBUILD?false:'run npm ci in pool-plat
   test('a real live build passes every check, and the only file added is _headers with the build\'s CSP',async t=>{
     const dir=path.join(scratch(t),'dist');
     await buildCommercialFrontend({outDir:dir,env:LIVE});
-    const result=writeNetlifyHeaders({dir});
+    const result=await writeNetlifyHeaders({dir});
     assert.equal(fs.readFileSync(path.join(dir,HEADERS_FILE),'utf8'),expectedHeaders('live',LIVE_CSP));
     assert.equal(result.mode,'live');
     assert.deepEqual(listFiles(dir),[...OUTPUT_FILES,HEADERS_FILE].sort());

@@ -16,12 +16,32 @@ export const APP_DIR=path.resolve(fileURLToPath(new URL('..',import.meta.url)));
 export const STATIC_FILES=Object.freeze([
   'index.html','participant.html','commissioner.html','styles.css','manifest.webmanifest',
   'service-worker.js','sw-register.js','participant.js','commissioner.js','platform-client.js',
-  'auth-core.js','submission-core.js','participant-core.js','import-core.js'
+  'game-day-core.js','game-day-board.js',
+  'pool-projection.js','pool-standings-board.js','final-results-form.js',
+  'results-grading.js','season-standings-core.js','season-standings-board.js',
+  'auth-core.js','submission-core.js','participant-core.js','import-core.js','commissioner-workflow.js','schedule-core.js'
 ]);
 export const CONFIG_FILE='platform-config.js';
 export const SDK_FILE='vendor/neon-js.js';
 export const OUTPUT_FILES=Object.freeze([...STATIC_FILES,CONFIG_FILE,SDK_FILE].sort());
 export const NEON_SDK=Object.freeze({name:'@neondatabase/neon-js',version:'0.7.0-beta'});
+
+// Residual transitive LOW advisories in the pinned Neon SDK's unrelated auth UI/email
+// render path. These must never be shipped in this app's browser SDK bundle.
+// The @neondatabase auth client itself IS used; it is not treated as excluded here.
+export const VULNERABLE_LEAF_MODULES=Object.freeze([
+  '@daveyplate/better-auth-ui','@react-email/components','@react-email/render',
+  'deepmerge','html-to-text'
+]);
+export function assertVulnerableLeafModulesExcluded(inputPaths){
+  if(!Array.isArray(inputPaths))throw new Error('missing esbuild module input graph');
+  const included=VULNERABLE_LEAF_MODULES.filter(name=>
+    inputPaths.some(p=>p.includes('/node_modules/'+name+'/')||p.startsWith('node_modules/'+name+'/'))
+  );
+  if(included.length)throw new Error('Browser bundle includes audited vulnerable leaf module(s): '+included.join(', '));
+  return true;
+}
+
 
 // Allow-list entries are plain names of files beside this directory's pages: no path, so none can reach elsewhere.
 for(const name of STATIC_FILES){
@@ -69,8 +89,13 @@ export function assertInstalledMatchesLockfile(appDir=APP_DIR){
 
 // What the bundle must be: one self-contained module (no import of anything, from anywhere), no CDN reference,
 // the SDK's own name/version record reading exactly the pinned version, and createClient exported.
-export function verifySdkBundle(code){
-  if(/^\s*import\s*[\w{*'"]/m.test(code)||/\bimport\s*\(/.test(code))throw new Error('the Neon SDK bundle is not self-contained: it still imports a module');
+export function verifySdkBundle(code,{validatedEsbuildImports=null}={}){
+  // A source regex cannot tell a literal `import()` in a bundled dependency comment from an
+  // executable dynamic import. When bundling, rely on esbuild's parsed output dependency graph.
+  // Standalone verifier calls remain conservative unless they supply verified esbuild data.
+  const verified=Array.isArray(validatedEsbuildImports);
+  if((verified&&validatedEsbuildImports.length!==0)||/^\s*import\s*[\w{*'"]/m.test(code)||(!verified&&/\bimport\s*\(/.test(code)))
+    throw new Error('the Neon SDK bundle is not self-contained: it still imports a module');
   if(/cdn\.jsdelivr\.net|unpkg\.com|esm\.sh|skypack\.dev|jspm\.io/i.test(code))throw new Error('the Neon SDK bundle names a CDN');
   const record=new RegExp(`\\nvar (name\\d*) = "${NEON_SDK.name.replace('/','\\/')}";\\nvar (version\\d*) = "${NEON_SDK.version.replace(/\./g,'\\.')}";\\nfunction buildNeonJsClientInfo\\(\\) \\{\\n  const info = getClientInfo\\d* ?\\(\\1, \\2\\);`);
   if(!record.test(code))throw new Error(`the Neon SDK bundle does not carry ${NEON_SDK.name} ${NEON_SDK.version}'s own version record`);
@@ -90,7 +115,7 @@ export async function bundleNeonSdk(appDir=APP_DIR){
   const result=await esbuild.build({
     absWorkingDir:appDir,
     stdin:{contents:`export * from '${NEON_SDK.name}';\n`,resolveDir:appDir,sourcefile:'neon-js-entry.js',loader:'js'},
-    bundle:true,format:'esm',platform:'browser',charset:'utf8',legalComments:'inline',
+    bundle:true,format:'esm',platform:'browser',charset:'utf8',legalComments:'inline',metafile:true,
     // What a production bundle sees, as in the CDN build this replaces. Every other process access in the SDK is
     // behind a typeof process check, so it stays inert in a browser.
     define:{'process.env.NODE_ENV':'"production"'},
@@ -98,7 +123,16 @@ export async function bundleNeonSdk(appDir=APP_DIR){
     write:false,logLevel:'silent'
   });
   if(result.warnings.length)throw new Error(`bundling the Neon SDK produced warnings: ${result.warnings.map(w=>w.text).join('; ')}`);
-  return verifySdkBundle(result.outputFiles[0].text);
+  // Use esbuild's parsed metafile to prove there are no executable imports. Never bypass
+  // this check merely because a comment includes the text `import()`.
+  const outputs=Object.values(result.metafile?.outputs||{});
+  if(outputs.length!==1||!Array.isArray(outputs[0]?.imports)||outputs[0].imports.length)
+    throw new Error('the Neon SDK bundle is not self-contained: esbuild reports executable module imports');
+  // A lockfile advisory can be present even when the affected UI/email-rendering modules
+  // are tree-shaken out. Fail CLOSED if any known vulnerable leaf package is emitted by
+  // esbuild. This is narrower than claiming the entire dependency tree is vulnerability-free.
+  assertVulnerableLeafModulesExcluded(Object.keys(result.metafile.inputs));
+  return verifySdkBundle(result.outputFiles[0].text,{validatedEsbuildImports:outputs[0].imports});
 }
 
 // Replaces outDir only when that is plainly safe: never a directory holding the sources, never another directory

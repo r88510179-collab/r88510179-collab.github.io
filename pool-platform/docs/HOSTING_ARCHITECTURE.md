@@ -121,6 +121,24 @@ two OTP routes (`auth-otp`), a looser one on the session routes (`auth-session`)
 domain (see **Netlify**). Those numbers are hosting-spike settings, not an answer to question I below; a per-email
 limit needs a shared store and its own approval. The proxy never forwards a client IP upstream.
 
+What a signed-in page asks of the session route, which is what the looser limit has to carry (`platform-client.js`):
+
+- one `get-session` when the page loads, and one whenever the token the SDK remembers has expired;
+- one `get-session` before every write (a pick, an invitation, a recorded final score, any of the twelve functions
+  that are not `STABLE`), asked directly and never of the SDK, so that nothing is written for an account that has
+  signed out, or been replaced, in another tab; a write that the Data API first answers with `auth_required` asks
+  once more before it is sent again;
+- at most one `get-session` a minute when the page is shown or focused again, and one when another tab of the app
+  signs in or out.
+
+A 429 from the limit sends nothing: the write is refused with the sign-in message and the page is left as it is. The
+limit is counted per client address, so people behind one address share it; a group that submits together from one
+network is where 120 requests a minute would be reached first.
+
+The SDK's own notice to other tabs is a `localStorage` entry that holds the session, the Data API token included. The
+client gives the SDK a channel that keeps nothing before it loads, so nothing of a session is stored in the browser
+outside the app's `__Host-` cookie; `tests/e2e` checks that storage stays empty.
+
 ### Open Neon dependencies (unanswered; nothing below is assumed)
 
 - **H.** Which `Origin` Neon Auth's origin check expects on proxied, cookie-bearing POSTs (sign-in, sign-out), and

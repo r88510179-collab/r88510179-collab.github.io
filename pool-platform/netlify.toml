@@ -2,7 +2,7 @@
 # Netlify finds this file through the site's base directory, set to pool-platform/, and every path below is relative
 # to it. Nothing here is a variable or a value: build and function variables are set on the site, and Netlify never
 # passes variables from this file to functions. Response headers are generated into dist/_headers after the build,
-# never declared here, and no redirect is needed: each function routes its own paths.
+# never declared here. The two Auth functions continue to own their routes.
 
 [build]
   # Only a production deploy of commercial-v1-netlify-adapter builds; any other branch, and every deploy preview,
@@ -22,3 +22,11 @@
 
 [functions]
   directory = "netlify/functions"
+
+# Invitation links address an entry by its public identifier. The participant page
+# checks the signed-in recipient before claiming the entry.
+[[redirects]]
+  from = "/join/:pool/:entry"
+  to = "/participant.html"
+  status = 200
+  force = false

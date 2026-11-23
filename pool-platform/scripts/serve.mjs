@@ -94,6 +94,7 @@ export async function startServer({dir=path.join(APP_DIR,'dist'),port=DEFAULT_PO
     if(req.method!=='GET'&&req.method!=='HEAD'){reply(405,{allow:'GET, HEAD'});return}
     let name;
     try{name=decodeURIComponent(url.pathname)}catch{reply(404);return}
+    if(/^\/join\/[a-z0-9][a-z0-9-]{1,62}[a-z0-9]\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(name))name='/participant.html';
     if(name==='/')name='/index.html';
     const segments=name.slice(1).split('/');
     if(segments.some(s=>s===''||s==='.'||s==='..'||s.includes('\\')||s.includes('\0'))||!TYPES[path.extname(name)]){reply(404);return}

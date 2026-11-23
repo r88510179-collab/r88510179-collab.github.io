@@ -11,5 +11,9 @@
     "@neondatabase/neon-js": "0.7.0-beta",
     "pg": "8.23.0",
     "undici": "6.28.1"
+  },
+  "overrides": {
+    "better-auth": "1.7.7",
+    "zod": "4.6.7"
   }
 }

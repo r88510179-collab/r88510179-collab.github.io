@@ -13,7 +13,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
-import {APP_DIR,CONFIG_FILE,OUTPUT_FILES,SDK_FILE,STATIC_FILES,listFiles,verifySdkBundle} from './build.mjs';
+import {APP_DIR,CONFIG_FILE,OUTPUT_FILES,SDK_FILE,STATIC_FILES,listFiles,bundleNeonSdk} from './build.mjs';
 import {contentSecurityPolicy,parseRuntimeConfig} from './runtime-config.mjs';
 
 export const HEADERS_FILE='_headers';
@@ -42,7 +42,7 @@ export function netlifyHeaders(config){
   ].join('\n');
 }
 
-export function writeNetlifyHeaders({appDir=APP_DIR,dir}={}){
+export async function writeNetlifyHeaders({appDir=APP_DIR,dir}={}){
   appDir=path.resolve(appDir);
   dir=path.resolve(dir??path.join(appDir,'dist'));
   if(!fs.lstatSync(dir,{throwIfNoEntry:false})?.isDirectory())throw new Error(`${dir} is not a build directory: run npm run build first`);
@@ -58,7 +58,13 @@ export function writeNetlifyHeaders({appDir=APP_DIR,dir}={}){
   }
   // Values the build could have written, byte for byte, and the bundle it verifies.
   const config=parseRuntimeConfig(fs.readFileSync(path.join(dir,CONFIG_FILE),'utf8'));
-  verifySdkBundle(fs.readFileSync(path.join(dir,SDK_FILE),'utf8'));
+  // Independently re-bundle the exact locked SDK: bundleNeonSdk uses esbuild's parsed
+  // import graph, rejects external executable imports and validates SDK identity.
+  // Comparing exact bytes also detects stale or tampered SDK output without treating
+  // harmless `import()` text inside dependency comments as executable JavaScript.
+  const expectedSdk=await bundleNeonSdk(appDir);
+  const builtSdk=fs.readFileSync(path.join(dir,SDK_FILE),'utf8');
+  if(builtSdk!==expectedSdk)throw new Error('the bundled Neon SDK differs from the exact verified lockfile build');
   const body=netlifyHeaders(config);
   // 'wx' creates the file or fails, so an _headers that appeared meanwhile, or a link in its place, is never written.
   fs.writeFileSync(file,body,{flag:'wx'});
@@ -72,7 +78,7 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1]
     else{console.error(`Unknown argument: ${args[i]} (usage: node scripts/netlify-headers.mjs [--dir <build>])`);process.exit(2)}
   }
   try{
-    const {dir,mode,csp,bytes,sha256:hash}=writeNetlifyHeaders(options);
+    const {dir,mode,csp,bytes,sha256:hash}=await writeNetlifyHeaders(options);
     console.log(`Wrote ${path.join(dir,HEADERS_FILE)} for the ${mode} build`);
     console.log(`  Content-Security-Policy: ${csp}`);
     console.log(`  ${hash}  ${String(bytes).padStart(7)}  ${HEADERS_FILE}`);
