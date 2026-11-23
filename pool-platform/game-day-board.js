@@ -2,13 +2,25 @@
 // transmits a pool entry, submission, auth token or pool ID to the score endpoint.
 // The caller supplies only the authorized week it already loaded from the API.
 import {validateGameDayFeed} from './game-day-core.js';
-export function createGameDayBoard(root,{fetchImpl=fetch,clock=()=>new Date(),intervalMs=30000,onUpdate=()=>{}}={}){
+// This release installs no live-score gateway: nothing in netlify/functions, api/ or the hosting configuration serves
+// SCORE_GATEWAY_PATH, and ops/release/README.md keeps it that way. While SCORE_GATEWAY_INSTALLED is false the card says
+// so, offers no refresh and never requests the path, so no page load, week change or tap ends in a 404. A release that
+// installs the gateway sets it to true in the same change: tests/game-day-board-release.test.mjs fails while this
+// declaration and the deployed functions disagree. It is not a switch for another project's score service.
+export const SCORE_GATEWAY_PATH='/api/nfl-scores';
+export const SCORE_GATEWAY_INSTALLED=false;
+export const SCORE_GATEWAY_NOT_INSTALLED='Live NFL scores are not installed on this site, so this page does not check for them. Picks, pool management and recorded final scores work without them.';
+export function createGameDayBoard(root,{fetchImpl=fetch,clock=()=>new Date(),intervalMs=30000,onUpdate=()=>{},
+  gatewayInstalled=SCORE_GATEWAY_INSTALLED}={}){
   if(!root)throw new Error('score card root missing');
   const status=root.querySelector('[data-score-status]');
   const list=root.querySelector('[data-score-list]');
   const refreshButton=root.querySelector('[data-score-refresh]');
   if(!status||!list||!refreshButton)throw new Error('score card content incomplete');
   let active=null,last=null,controller=null,timer=null,run=0,disabled=false;
+  const installed=gatewayInstalled===true;
+  // Not installed: the refresh control is taken away for good, and nothing below asks for the gateway.
+  if(!installed){refreshButton.disabled=true;refreshButton.classList.add('hidden')}
   const notify=value=>{try{onUpdate(value)}catch{ /* Never interrupt pick or score behavior for an optional view. */ }};
   const display=(text,rows=null)=>{
     status.textContent=text;
@@ -30,7 +42,7 @@ export function createGameDayBoard(root,{fetchImpl=fetch,clock=()=>new Date(),in
   function stop(){
     run++;controller?.abort();controller=null;
     if(timer!==null)clearInterval(timer);timer=null;
-    refreshButton.disabled=false;
+    refreshButton.disabled=!installed;
   }
   function hide(){
     stop();active=null;last=null;disabled=false;
@@ -38,14 +50,14 @@ export function createGameDayBoard(root,{fetchImpl=fetch,clock=()=>new Date(),in
     notify(null);
   }
   async function refresh(){
-    if(!active||controller||document.visibilityState==='hidden')return;
+    if(!installed||!active||controller||document.visibilityState==='hidden')return;
     const id=run,current=active,signalController=new AbortController();
     controller=signalController;refreshButton.disabled=true;
     const timeout=setTimeout(()=>signalController.abort(),10000);
     if(last)status.textContent='Updating scores… last verified results remain visible.';
     else status.textContent='Checking NFL scores…';
     try{
-      const url='/api/nfl-scores?season='+encodeURIComponent(current.season)
+      const url=SCORE_GATEWAY_PATH+'?season='+encodeURIComponent(current.season)
         +'&week='+encodeURIComponent(current.week);
       const response=await fetchImpl(url,{cache:'no-store',signal:signalController.signal,
         headers:{Accept:'application/json'}});
@@ -93,7 +105,14 @@ export function createGameDayBoard(root,{fetchImpl=fetch,clock=()=>new Date(),in
     if(active?.key===incoming.key)return;
     stop();active=incoming;last=null;disabled=false;
     notify(null);
-    root.classList.remove('hidden');display('Checking NFL scores…',[]);
+    root.classList.remove('hidden');
+    if(!installed){
+      // What an unreachable gateway reported before: no score facts for this week. Standings behave exactly as they did.
+      display(SCORE_GATEWAY_NOT_INSTALLED,[]);
+      notify({poolId,season,week,data:null,stale:true});
+      return;
+    }
+    display('Checking NFL scores…',[]);
     void refresh();
     timer=setInterval(()=>{if(!disabled)void refresh()},intervalMs);
   }

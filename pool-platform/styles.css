@@ -62,3 +62,14 @@
 .confirm-row input{flex:0 0 auto;width:24px;height:24px;margin:0;accent-color:var(--accent)}
 #finalResultSummary{overflow-wrap:anywhere}
 @media(min-width:700px){.final-score-list{grid-template-columns:1fr 1fr}}
+
+/* Acceptance findings F-02 and F-06 (2026-11-23). A selector keeps a long option inside its own box: WebKit let the
+   text spill into the field, and the page scrolled sideways on a phone. Without the native appearance WebKit also
+   honours the 48px height set above, where it drew 23px. The arrow is drawn with gradients, so no image is fetched. */
+.field select,select{-webkit-appearance:none;appearance:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  padding-right:40px;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),
+    linear-gradient(135deg,var(--muted) 50%,transparent 50%);
+  background-position:calc(100% - 20px) 50%,calc(100% - 14px) 50%;background-size:6px 6px;background-repeat:no-repeat}
+/* Every control a person taps is at least 44px tall: the home link and the section headings were 18px and 34px. */
+a.brand{display:inline-flex;align-items:center;min-height:44px}
+.advanced-import summary{padding:12px 0;min-height:44px}

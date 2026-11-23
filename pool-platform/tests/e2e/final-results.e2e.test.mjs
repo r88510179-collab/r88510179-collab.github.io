@@ -1199,6 +1199,170 @@ for(const engine of engines){
     assert.deepEqual(await revisions(week.w9),[]);
   });
 
+  // ---- acceptance findings of 2026-11-23: F-02 (a long option widens the page), touch targets, F-03 (score gateway) --
+  // Production's entry names are long ("Synthetic Survivor Participant-1 Entry 01 · SV-D01", 51 characters) and this
+  // fixture's are short. In WebKit the invitation card's entry selector let its selected option spill out of its field,
+  // and the commissioner page scrolled sideways on a phone. These checks lengthen every name first, and give Alice a
+  // second entry so that her page shows its entry selector too.
+  const LONG_NAMES=`UPDATE public.pool_platform_entries
+    SET display_name='Synthetic Survivor Participant-1 Entry '||entry_code||' with a long name';
+    UPDATE public.pool_platform_entries SET owner_auth_user_id='alice' WHERE id='e0000000-0000-4000-8000-000000000003';`;
+  const ALL_WIDTHS=[...WIDTHS,1280];
+  const SIGNED_IN=[['commissioner-pickem','commish.alpha@e2e.invalid','/commissioner.html?pool=e2e-alpha-pickem','#inviteEntry'],
+    ['commissioner-survivor','commish.beta@e2e.invalid','/commissioner.html?pool=e2e-beta-survivor','#inviteEntry'],
+    ['participant','alice@e2e.invalid','/participant.html?pool=e2e-alpha-pickem','#entrySelect']];
+  const openAllSections=page=>page.evaluate(()=>{for(const details of document.querySelectorAll('details'))if(details.getClientRects().length)details.open=true});
+
+  check('long entry names: no signed-in page is wider than the screen at 375, 390, 430 or 1280 px',async({open})=>{
+    await sql(LONG_NAMES);
+    for(const [name,email,address,selector] of SIGNED_IN){
+      const page=await open();
+      await signIn(page,email,address);
+      await page.locator(selector).waitFor({state:'visible'});
+      await quiet(page);
+      const shownOption=await page.locator(selector).evaluate(select=>select.selectedOptions[0].textContent);
+      assert.ok(shownOption.length>=51,`${name}: the selector shows a long option (${shownOption.length} characters)`);
+      for(const width of ALL_WIDTHS){
+        await page.setViewportSize({width,height:850});
+        await quiet(page);
+        assert.deepEqual(await panel.pageLayoutProblems(page,width),[],`${name} at ${width} CSS px`);
+        const box=await page.locator(selector).evaluate(select=>{const b=select.getBoundingClientRect(),field=select.closest('.field').getBoundingClientRect();
+          return{inside:b.left>=field.left-0.5&&b.right<=field.right+0.5,height:b.height}});
+        assert.ok(box.inside,`${name} at ${width} CSS px: the selector stays inside its field`);
+      }
+      // Every section open as well: the selectors and fields inside them obey the same rule.
+      if(name!=='participant'){
+        await openAllSections(page);
+        for(const width of ALL_WIDTHS){
+          await page.setViewportSize({width,height:850});
+          await quiet(page);
+          assert.deepEqual(await panel.pageLayoutProblems(page,width),[],`${name}, every section open, at ${width} CSS px`);
+        }
+      }
+    }
+  });
+
+  check('every control a person can see is at least 44 CSS px tall and wide, signed out and signed in',async({page,open})=>{
+    await sql(LONG_NAMES);
+    // A draft week as well, so that the schedule editors and their controls are on the page.
+    await sql(`UPDATE public.pool_platform_weeks SET status='draft' WHERE id='${week.w10}' AND NOT EXISTS
+      (SELECT 1 FROM public.pool_platform_submissions s WHERE s.week_id='${week.w10}')`);
+    for(const address of ['/','/participant.html','/commissioner.html']){
+      await page.goto(`${origin}${address}`);
+      await page.locator(address==='/'?'main.shell':'#authCard').first().waitFor({state:'visible'});
+      for(const width of ALL_WIDTHS){
+        await page.setViewportSize({width,height:850});
+        assert.deepEqual(await panel.touchTargetProblems(page),[],`${address} signed out at ${width} CSS px`);
+      }
+      if(address!=='/'){
+        // The code field appears once a code was asked for.
+        await page.setViewportSize({width:375,height:850});
+        await page.locator('#email').fill('alice@e2e.invalid');
+        await page.locator('#sendCode').click();
+        await page.locator('#otp').waitFor({state:'visible'});
+        assert.deepEqual(await panel.touchTargetProblems(page),[],`${address} with the code field at 375 CSS px`);
+      }
+    }
+    for(const [name,email,address,selector] of SIGNED_IN){
+      const signedIn=await open();
+      await signIn(signedIn,email,address);
+      await signedIn.locator(selector).waitFor({state:'visible'});
+      await quiet(signedIn);
+      const states=[['as opened',async()=>{}]];
+      if(name==='commissioner-pickem'){
+        states.push(['draft week, every section open',async()=>{
+          await signedIn.locator('#weekSelect').selectOption(week.w10);await quiet(signedIn);await openAllSections(signedIn);
+          // The draft-only panels are really there, with a schedule row of selectors and a date field to measure.
+          for(const id of ['verifiedScheduleSetup','scheduleSetup','weekSetup'])await signedIn.locator(`#${id}`).waitFor({state:'visible'});
+          if(!await signedIn.locator('#scheduleGames .schedule-row').count())await signedIn.locator('#addScheduleGame').click();
+          assert.ok(await signedIn.locator('#scheduleGames select').count()>=2&&await signedIn.locator('#scheduleGames input[type=datetime-local]').count()>=1);
+        }]);
+        states.push(['new-entry review open',async()=>{
+          await signedIn.locator('#newEntryCode').fill('ZZ-44');await signedIn.locator('#newEntryName').fill('Touch target check');
+          await signedIn.locator('#previewNewEntry').click();await signedIn.locator('#newEntryReview').waitFor({state:'visible'})}]);
+        states.push(['pool chooser',async()=>{await signedIn.locator('#switchPool').click();await signedIn.locator('#poolPickerCard').waitFor({state:'visible'})}]);
+      }
+      if(name==='commissioner-survivor')states.push(['every section open',()=>openAllSections(signedIn)]);
+      for(const [state,enter] of states){
+        await enter();
+        for(const width of ALL_WIDTHS){
+          await signedIn.setViewportSize({width,height:850});
+          await quiet(signedIn);
+          assert.deepEqual(await panel.touchTargetProblems(signedIn),[],`${name}, ${state}, at ${width} CSS px`);
+        }
+      }
+    }
+  });
+
+  // F-03. This release installs no live-score gateway: nothing serves /api/nfl-scores. The pages used to ask for it on
+  // every load and every week change and log a 404 each time.
+  check('score gateway not installed: both pages say so, offer no refresh, and never ask for it',async({page,open})=>{
+    const asked=[],errors=[];
+    const listen=target=>{
+      target.on('request',request=>{if(new URL(request.url()).pathname.startsWith('/api/nfl-scores'))asked.push(request.url())});
+      target.on('console',message=>{if(message.type()==='error')errors.push(message.text())});
+    };
+    const card=async(target,name)=>{
+      await target.locator('#scoreboardCard').waitFor({state:'visible'});
+      await target.locator('#scoreboardCard [data-score-status]').filter({hasText:/Live NFL scores are not installed/}).waitFor({state:'visible'});
+      assert.equal(await target.locator('#scoreboardCard [data-score-refresh]').isVisible(),false,`${name}: no refresh is offered for a gateway that is not there`);
+      assert.equal(await target.locator('#scoreboardCard [data-score-refresh]').isDisabled(),true,name);
+      assert.equal(await target.locator('#scoreboardCard [data-score-list] > *').count(),0,`${name}: no score row`);
+    };
+    listen(page);
+    await signIn(page,'commish.alpha@e2e.invalid','/commissioner.html?pool=e2e-alpha-pickem');
+    await page.locator('#poolName').filter({hasText:ALPHA}).waitFor({state:'visible'});
+    await card(page,'commissioner');
+    // Week after week, a tab hidden and shown again, and a reload: still nothing is asked.
+    for(const id of [week.w9,week.w10,week.w11,week.w12,week.w9]){await openWeek(page,id);await quiet(page);await card(page,'commissioner')}
+    await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
+    await page.reload();
+    await card(page,'commissioner after a reload');
+    // Standings are untouched: a week past its deadline still lists the pool's entries without rankings.
+    await openWeek(page,week.w9);
+    await weekCard(page,/NFL scores unavailable\. Showing only this pool’s entries; rankings are not calculated\./);
+    assert.equal((await cardRows(page,'poolStandingsCard')).length,3);
+    const participant=await open();
+    listen(participant);
+    await signIn(participant,'alice@e2e.invalid','/participant.html?pool=e2e-alpha-pickem');
+    await card(participant,'participant');
+    await quiet(participant);
+    // The card with its longer status, and without its button, fits every width on both pages.
+    for(const [name,target] of [['commissioner',page],['participant',participant]]){
+      for(const width of ALL_WIDTHS){
+        await target.setViewportSize({width,height:850});
+        await quiet(target);
+        await card(target,`${name} at ${width} CSS px`);
+        assert.deepEqual(await panel.pageLayoutProblems(target,width),[],`${name} at ${width} CSS px`);
+      }
+    }
+    assert.deepEqual(asked,[],'no request for the score gateway');
+    assert.deepEqual(errors.filter(text=>/404|nfl-scores|Failed to load resource/i.test(text)),[],'no failed request in the console');
+  });
+
+  if(evidenceDir)test(`[${engine}] evidence only: screenshots of the selectors with long names and of the score card at ${WIDTHS.join(', ')} CSS px`,async()=>{
+    resetDatabase();
+    await sql(LONG_NAMES);
+    browser??=await playwright[engine].launch(launchOptions(engine));
+    for(const [name,email,address,selector] of SIGNED_IN){
+      const context=await browser.newContext({viewport:{width:WIDTHS[0],height:850},ignoreHTTPSErrors:true,serviceWorkers:'block'});
+      try{
+        const page=await context.newPage();
+        page.setDefaultTimeout(TIMEOUT);
+        await signIn(page,email,address);
+        await page.locator(selector).waitFor({state:'visible'});
+        for(const width of WIDTHS){
+          await page.setViewportSize({width,height:850});
+          for(const [what,card] of [['long-names',selector==='#inviteEntry'?'#inviteCard':'#entryCard'],['score-card','#scoreboardCard']]){
+            const file=path.join(evidenceDir,`${engine}-${width}px-${what}-${name}.png`);
+            await page.locator(card).screenshot({path:file});
+            assert.ok(fs.statSync(file).size>3000,file);
+          }
+        }
+      }finally{await context.close()}
+    }
+  });
+
   // Every check above blocks service workers. This one allows them, in Chromium only, and opens the page the way an
   // invited participant first does: at /join/<pool>/<entry>, which is not where the worker file is. It then cuts the
   // network: each cached role page explains why it cannot continue and recovers when it can reach configuration again.

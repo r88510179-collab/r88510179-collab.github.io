@@ -48,6 +48,9 @@ test('two role pages show one current pool and do not send picks to NFL gateway'
   assert.doesNotMatch(app,/\bPOST\b|submitEntry|submitBatch|createInvite|\bfetch\(/);
   assert.match(board,/onUpdate/);
   assert.doesNotMatch(board,/\/api\/nfl-scores\?[^;\n]*poolId/);
+  // The address is built from SCORE_GATEWAY_PATH: season and week only, never a pool.
+  assert.match(board,/const url=SCORE_GATEWAY_PATH\+'\?season='/);
+  assert.doesNotMatch(board,/SCORE_GATEWAY_PATH\+[^;\n]*poolId/);
 });
 test('score-derived rankings are never labeled official',()=>{
   assert.match(app,/Unofficial live projection/);

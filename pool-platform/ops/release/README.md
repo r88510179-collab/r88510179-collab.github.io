@@ -85,6 +85,9 @@ The predeployment holds its locks for the length of one transaction (it gives up
    The ten fingerprints and the identity map still equal `baseline-before.txt`; `legacy_invitations_callable` is false.
 
 Keep automated schedule sync and the live-score gateway disabled for this release: neither is deployed by it.
+The pages know it: `SCORE_GATEWAY_INSTALLED` in `game-day-board.js` is `false`, so the score card says that live NFL
+scores are not installed, offers no refresh and never requests `/api/nfl-scores`. A release that deploys the gateway
+sets it to `true` in the same change; `tests/game-day-board-release.test.mjs` fails while the two disagree.
 
 ## Going back
 

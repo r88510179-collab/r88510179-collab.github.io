@@ -186,3 +186,53 @@ export async function panelLayoutProblems(page,width){
   }
   return{problems,scoreInputs:layout.controls.filter(control=>control.type==='number').length};
 }
+
+// ---- the whole page: width and touch targets (acceptance findings F-02 and F-06, 2026-11-23) ---------------------
+// What a person can see: laid out, not hidden, and not inside a closed <details> (whose own summary is seen).
+const SEEN=`el=>{
+  if(!el.getClientRects().length||getComputedStyle(el).visibility==='hidden')return false;
+  if(typeof el.checkVisibility==='function'&&!el.checkVisibility())return false;
+  const closed=el.closest('details:not([open])');
+  return !closed||(el.tagName==='SUMMARY'&&el.parentElement===closed);
+}`;
+const NAMED=`el=>el.id?'#'+el.id:el.tagName.toLowerCase()+(typeof el.className==='string'&&el.className.trim()?'.'+el.className.trim().split(/\\s+/)[0]:'')
+  +((el.textContent||'').trim()?' "'+(el.textContent||'').trim().replace(/\\s+/g,' ').slice(0,28)+'"':'')`;
+
+// The page at the current viewport does not scroll sideways, nothing shown reaches past the screen other than the
+// content of a box that scrolls sideways on purpose (the roster table), and no form field holds more than it shows:
+// a selector whose long option spills out of its field widens the page without anything visibly sticking out.
+// Returns the problems found.
+export async function pageLayoutProblems(page,width){
+  const layout=await page.evaluate(({seenSource,namedSource})=>{
+    const seen=eval(seenSource),named=eval(namedSource);
+    const scrolls=el=>{for(let p=el.parentElement;p&&p!==document.body;p=p.parentElement){const x=getComputedStyle(p).overflowX;if(x==='auto'||x==='scroll')return true}return false};
+    const all=[...document.body.querySelectorAll('*')].filter(seen);
+    return{inner:innerWidth,page:document.documentElement.scrollWidth,
+      outside:all.filter(el=>!scrolls(el)).filter(el=>{const box=el.getBoundingClientRect();return box.width>0&&(box.left<-0.5||box.right>innerWidth+0.5)}).map(named),
+      spilling:all.filter(el=>el.matches('.field,.form-grid,.toolbar-grid,.entry-grid,.card,select')&&el.clientWidth>0&&el.scrollWidth>el.clientWidth+1
+        &&getComputedStyle(el).overflowX==='visible').map(el=>`${named(el)} holds ${el.scrollWidth}px in ${el.clientWidth}px`)};
+  },{seenSource:SEEN,namedSource:NAMED});
+  const problems=[];
+  if(layout.inner!==width)problems.push(`viewport is ${layout.inner}px, not ${width}px`);
+  if(layout.page>width)problems.push(`the page is ${layout.page}px wide and scrolls sideways`);
+  for(const name of layout.outside.slice(0,6))problems.push(`${name} reaches past the screen`);
+  for(const name of layout.spilling.slice(0,6))problems.push(name);
+  return problems;
+}
+
+// Every control a person can see is at least `minimum` CSS px tall and wide. A checkbox or radio button is tapped
+// through its label, so the label is its target. Returns one line per control that is smaller.
+export function touchTargetProblems(page,{minimum=44}={}){
+  return page.evaluate(({minimum,seenSource,namedSource})=>{
+    const seen=eval(seenSource),named=eval(namedSource),problems=[];
+    for(const el of document.querySelectorAll('button,select,textarea,summary,a[href],input:not([type=hidden])')){
+      const toggle=el.tagName==='INPUT'&&(el.type==='checkbox'||el.type==='radio');
+      const label=toggle?(el.closest('label')||(el.id?document.querySelector(`label[for="${CSS.escape(el.id)}"]`):null)):null;
+      const target=label||el;
+      if(!seen(target))continue;
+      const box=target.getBoundingClientRect();
+      if(box.height<minimum-0.5||box.width<minimum-0.5)problems.push(`${named(el)} is ${Math.round(box.width)} x ${Math.round(box.height)} px`);
+    }
+    return problems;
+  },{minimum,seenSource:SEEN,namedSource:NAMED});
+}
