@@ -124,7 +124,7 @@ async function pdfGroups(file){
   return carryForwardWeekHints(groups);
 }
 async function spreadsheetGroups(file){
-  const XLSX=await import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/xlsx.mjs');
+  const XLSX=await import('https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs');
   const wb=XLSX.read(await file.arrayBuffer(),{type:'array'}),groups=[];
   for(const sheetName of wb.SheetNames){
     const ws=wb.Sheets[sheetName],rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''});
