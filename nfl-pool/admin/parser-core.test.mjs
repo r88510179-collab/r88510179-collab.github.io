@@ -2014,12 +2014,12 @@ async function atInstant(iso,run){
   };
   const weeksRequested=t=>t.net.urls.map(u=>new URL(u).searchParams.get('week'));
 
-  await regression('index.html: the Absent games confirmation field, its exact format, and admin.js v14',()=>{
+  await regression('index.html: the Absent games confirmation field, its exact format, and admin.js v19',()=>{
     const field=adminHtml.match(/<textarea id="absenceConfirm"[^>]*>/);
     assert(field,'an #absenceConfirm textarea');
     assert.match(adminHtml,/<label for="absenceConfirm">Absent games/);
     assert.match(adminHtml,/WEEK N AWAY @ HOME ABSENT/,'the help text names the exact confirmation format');
-    assert.match(adminHtml,/<script type="module" src="admin\.js\?v=18"><\/script>/);
+    assert.match(adminHtml,/<script type="module" src="admin\.js\?v=19"><\/script>/);
   });
   await regression('without a typed exception, an absent sheet game still blocks: the old error plus the exact phrase to type',async()=>{
     const t=await readWith();
@@ -2316,4 +2316,14 @@ const {recoverCompletePdfField,attemptPdfFieldRecovery,pdfRecoveryApplies,recove
   assert.equal(recoveredFieldSizeIssue({rowsPerFullPage:51},252,{week:8,competitionSize:276}),null,'less than half a page (24) is churn');
   assert.match(recoveredFieldSizeIssue({rowsPerFullPage:51},251,{week:8,competitionSize:276}),/25 fewer/,'half a page (25) is refused');
   assert.equal(recovered.recovery.missingTiebreaks,1,'the blank tiebreak is counted, not filled');
+}
+
+// Both spreadsheet entry points must use the pinned publisher-maintained release.
+{
+  const correctedSource=readFileSync(new URL('./organizer-corrections.js',import.meta.url),'utf8');
+  const approvedImport="https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs";
+  for (const source of [adminSource,correctedSource]) {
+    assert(source.includes(approvedImport),'spreadsheet parser must use pinned SheetJS 0.20.3');
+    assert(!source.includes('xlsx@0.18.5'),'vulnerable SheetJS must not be imported');
+  }
 }
