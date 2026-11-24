@@ -1,0 +1,90 @@
+name: Commissioner CRM sandbox validation
+on:
+  push:
+    branches:
+      - feature/commissioner-crm-react-foundation
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - commercial-v1-netlify-adapter
+
+permissions:
+  contents: read
+
+jobs:
+  sandbox:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pool-platform/commissioner-crm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test pure permission model
+        run: npm test
+      - name: Install exact committed dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Build sandbox only
+        run: npm run build:sandbox
+      - name: Build separate release-locked connected candidate (never published)
+        run: npm run build:connected-candidate
+      - name: Assert both UI outputs remain isolated from commercial publishing
+        run: |
+          test -f dist/index.html
+          test ! -f dist/connected.html
+          test ! -f dist/platform-config.js
+          test ! -f dist/participant.html
+          test -f dist-connected-candidate/connected.html
+          test ! -f dist-connected-candidate/index.html
+          test ! -f dist-connected-candidate/platform-config.js
+          test ! -f dist-connected-candidate/participant.html
+          test ! -f dist-connected-candidate/commissioner.html
+          test -d dist/assets
+          test -d dist-connected-candidate/assets
+      - name: Archive sandbox-only UI for viewport checks
+        uses: actions/upload-artifact@v4
+        with:
+          name: crm-sandbox-dist
+          path: pool-platform/commissioner-crm/dist/
+          retention-days: 3
+
+  visual:
+    # Browser checks run only for the isolated CRM feature branch or its draft PR, never Netlify production.
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    needs: sandbox
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pool-platform/commissioner-crm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install committed CRM dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Build disconnected sandbox
+        run: npm run build:sandbox
+      - name: Install Playwright in temporary directory only
+        run: npm install --prefix /tmp/crm-visual-deps --ignore-scripts --no-audit --no-fund --no-save playwright@1.56.1
+      - name: Confirm system Chrome is installed
+        run: command -v google-chrome || command -v google-chrome-stable || command -v chromium
+      - name: Verify 360px, 412px and desktop layouts and controls
+        env:
+          CRM_VISUAL_DEPS: /tmp/crm-visual-deps
+        run: node scripts/visual-smoke.mjs
+      - name: Build the isolated connected candidate
+        run: npm run build:connected-candidate
+      - name: Test signed-in account separation using offline intercepted HTTPS
+        env:
+          CRM_VISUAL_DEPS: /tmp/crm-visual-deps
+        run: node scripts/connected-smoke.mjs
+      - name: Save screenshots from disconnected sandbox
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crm-viewport-evidence
+          path: pool-platform/commissioner-crm/visual-evidence/
+          retention-days: 3
