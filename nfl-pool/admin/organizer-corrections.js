@@ -103,7 +103,7 @@ async function readSource(file){
     return carryForwardWeekHints(groups);
   }
   if(!['xlsx','xls','xlsm'].includes(ext))throw new Error('Choose the original PDF, XLSX, XLS or XLSM file.');
-  const XLSX=await import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/xlsx.mjs');
+  const XLSX=await import('https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs');
   const wb=XLSX.read(await file.arrayBuffer(),{type:'array'}),groups=[];
   for(const sheetName of wb.SheetNames){
     const rows=XLSX.utils.sheet_to_json(wb.Sheets[sheetName],{header:1,raw:false,defval:''});
