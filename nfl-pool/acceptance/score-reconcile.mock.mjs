@@ -13,6 +13,9 @@ const event={
 const upstream={events:[event]};
 const proxy=projectScoreboard(upstream,new Date().toISOString());
 if(mode==='mismatch')proxy.events[0].competitions[0].competitors[1].score='99';
+if(mode==='event-state')proxy.events[0].status.type.state='in';
+if(mode==='competition-state')proxy.events[0].competitions[0].status.type.state='in';
+if(mode==='missing-state')delete proxy.events[0].status.type.state;
 if(mode==='empty'){upstream.events=[];proxy.events=[];}
 if(mode==='stale')proxy.fetchedAt='2020-01-01T00:00:00.000Z';
 globalThis.fetch=async (url,options)=>{

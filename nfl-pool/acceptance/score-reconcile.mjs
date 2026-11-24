@@ -50,6 +50,8 @@ function view(e){
     id:String(e.id),date:e.date,
     event:e.status?.type?.name??null,
     competition:c.status?.type?.name??null,
+    eventState:e.status?.type?.state??null,
+    competitionState:c.status?.type?.state??null,
     eventCompleted:e.status?.type?.completed??null,
     competitionCompleted:c.status?.type?.completed??null,
     sides:matchup(e)

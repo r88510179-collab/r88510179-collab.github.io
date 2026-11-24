@@ -55,3 +55,12 @@ test('out-of-range week arguments are rejected before requests',()=>{
   assert.notEqual(r.code,0);
   assert.match(r.out,/invalid week range/);
 });
+
+for(const [fixture,field] of [['event-state','eventState'],['competition-state','competitionState'],['missing-state','eventState']]){
+  test('final projection rejects '+fixture,()=>{
+    const r=run(fixture);
+    assert.equal(r.code,1,r.out);
+    assert.match(r.out,/final mismatch/);
+    assert.ok(r.out.includes('"'+field+'"'),r.out);
+  });
+}
