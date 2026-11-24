@@ -21,14 +21,14 @@
 
 ## The three distinct projects
 
-1. **Personal NFL Pool Center:** What the published \`main\` branch and \`nfl-pool/\` implement. A tracker, not a contest-management platform.
-2. **Commercial V1 pool platform:** Separate application development on \`commercial-v1-netlify-adapter\` and other isolated work. It has its **own** release, access and database safeguards. Do not merge it into the personal website.
+1. **Personal NFL Pool Center:** What the published `main` branch and `nfl-pool/` implement. A tracker, not a contest-management platform.
+2. **Commercial V1 pool platform:** Separate application development on `commercial-v1-netlify-adapter` and other isolated work. It has its **own** release, access and database safeguards. Do not merge it into the personal website.
 3. **Commissioner CRM:** A separate, unfinished staging feature tracked in [PR #19](https://github.com/r88510179-collab/r88510179-collab.github.io/pull/19). It is not enabled by the personal app.
 
 ## How changes reach the public Personal Pool
 
-A proposed change goes into a focused Git branch → GitHub's tests run → the actual mobile/data behavior is checked → the reviewed pull request is merged into protected \`main\` → GitHub Pages builds and deploys → the public site is checked read-only. **A green CI run is not proof of a successful website deployment or a database restore.**
+A proposed change goes into a focused Git branch → GitHub's tests run → the actual mobile/data behavior is checked → the reviewed pull request is merged into protected `main` → GitHub Pages builds and deploys → the public site is checked read-only. **A green CI run is not proof of a successful website deployment or a database restore.**
 
 Never put passwords, session cookies, private publication files or anonymous-user JWTs into commits. Never use production Neon as a synthetic test database. Never merge QA-only publisher overrides, test accounts or same-origin QA gateways.
 
-**Owner status, November 6, 2026:** The earlier Personal Pool closeout and 44px mobile touch-target fixes were released in PR #31 and PR #32. Historical Survivor is displayed as our group's archive; Pick'em remains active. The remaining date-label repair is intentionally a **read-only presentation change**, not a rewrite of old competition data. See its PR for exact deployment status; this README itself does not claim that an unmerged candidate is live.
+**Owner status, November 24, 2026 (repository evidence):** Personal Pool PRs #37–#42 cover verified full-field PDF recovery, organizer corrections, full-field first-place eligibility, stored-field denominator labels, preservation of existing missing picks and blank tiebreakers, and shareable Swing Games. Survivor remains archived for the tracked group; Pick'em remains active. Verify the current GitHub Pages deployment and read-only public behavior before claiming any individual change is live. Commercial release and Commissioner Workspace are tracked separately in the private engineering repository; never merge them into this public site.
