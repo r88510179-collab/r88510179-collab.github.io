@@ -2326,4 +2326,18 @@ const {recoverCompletePdfField,attemptPdfFieldRecovery,pdfRecoveryApplies,recove
     assert(source.includes(approvedImport),'spreadsheet parser must use pinned SheetJS 0.20.3');
     assert(!source.includes('xlsx@0.18.5'),'vulnerable SheetJS must not be imported');
   }
+  // The pin is one recorded release: each entry point loads the reader exactly once, from that address, and its page
+  // declares the recorded integrity for that address alone, ahead of the module script, so other bytes there are refused.
+  const {SHEETJS_URL,SHEETJS_INTEGRITY}=await import(new URL('../acceptance/sheetjs-pinned.mjs',import.meta.url).href);
+  assert.equal(SHEETJS_URL,approvedImport);
+  assert.match(SHEETJS_INTEGRITY,/^sha384-[A-Za-z0-9+/]{64}$/);
+  const correctionsHtml=readFileSync(new URL('./organizer-corrections.html',import.meta.url),'utf8');
+  for(const [name,source,html] of [['admin.js',adminSource,adminHtml],['organizer-corrections.js',correctedSource,correctionsHtml]]){
+    const readers=[...source.matchAll(/import\(\s*(['"`])([^'"`]*(?:xlsx|sheetjs)[^'"`]*)\1\s*\)/gi)].map(m=>m[2]);
+    assert.deepEqual(readers,[SHEETJS_URL],`${name} loads the spreadsheet reader once, from the pinned address`);
+    const maps=[...html.matchAll(/<script type="importmap">([\s\S]*?)<\/script>/g)];
+    assert.equal(maps.length,1,`${name}: its page has one import map`);
+    assert.deepEqual(JSON.parse(maps[0][1]),{integrity:{[SHEETJS_URL]:SHEETJS_INTEGRITY}},`${name}: its page pins the reader's integrity and nothing else`);
+    assert(maps[0].index<html.indexOf('<script type="module"'),`${name}: the import map precedes the module script`);
+  }
 }
