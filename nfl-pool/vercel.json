@@ -13,6 +13,10 @@
   ],
   "rewrites": [
     {
+      "source": "/qa-pr44/schedule/2025/1",
+      "destination": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=2025&seasontype=2&week=1&limit=100"
+    },
+    {
       "source": "/nfl-pool/",
       "destination": "/index.html"
     },
