@@ -234,6 +234,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Self-test of the catalog comparison tool (no database)
+        run: python3 nfl-pool/sql-tests/test_compare_catalog.py
+
       - name: Rebuild the Personal database from the migrations and compare it with the production shape
         env:
           REBUILD_PG_URL: postgresql://postgres@127.0.0.1:5432/postgres
