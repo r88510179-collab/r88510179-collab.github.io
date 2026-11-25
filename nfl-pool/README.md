@@ -99,6 +99,8 @@ A revision is an explicit replacement of the same week. The current system reche
 | \`ops/cloud-smoke.mjs\` | Small read-only checks that public websites and the score gateway respond |
 | \`.github/workflows/\` | Automatic tests, manual score checks and GitHub-based public endpoint monitor |
 
+**Spreadsheet reader:** Weekly Admin and Organizer Corrections read Excel files in the browser with SheetJS Community Edition 0.20.3, loaded from its publisher's own site, cdn.sheetjs.com (not the npm registry package, which stops at an older, unpatched release). Each of the two pages pins that file's SHA-384 in an import map, so a browser that enforces import-map integrity refuses a changed file: the read stops with an error and nothing is parsed or published. PDF import does not use the reader. If that error persists after a reload, stop and have the pin reviewed; do not remove it to get a sheet through. The recorded address, size and hashes, and the steps for moving to a newer release, are in `acceptance/sheetjs-pinned.mjs`.
+
 ## 6. Where it is hosted, and how a release works
 
 - **Public Personal Pool:** GitHub Pages at \`https://r88510179-collab.github.io/nfl-pool/\`, deployed from protected \`main\` after a reviewed merge. Another separately hosted domain or protected Vercel preview may point at the same app, but **do not confuse a Vercel preview with the production GitHub Pages release**.
@@ -114,6 +116,7 @@ Use **GitHub → Actions** in this repository. Look for:
 
 - **NFL Pool Tests:** 18 approved Node.js test suites (the job label still says “12-suite” for historical branch-protection reasons), SQL behavior/race checks on disposable PostgreSQL 17.11 (including the full-field publication guard that refuses a four-entry-only locked week from any client, even a stale cached Admin page), and syntax checks. No production database writes.
 - **Pool live score parity (read-only):** Manually run for the actual season and week range; compares deployed \`nflscores2\` with fresh ESPN final scores. This checks feed parity, not whether ESPN itself is infallible.
+- **Organizer Correction Browser Acceptance:** Runs on pull requests that touch the Admin. In Chromium, against in-memory data only, it exercises the organizer-correction workflow and then reads real synthetic XLS, XLSX and XLSM workbooks through Weekly Admin and Organizer Corrections with the pinned spreadsheet reader, served from a verified local copy. No participant data, no production database, and the pages make no CDN request.
 - **Smokke Cloud Monitor:** Runs approximately every 15 minutes on GitHub's best-effort cron and checks public availability of multiple websites plus the score function. It is **not** Survivor tracking, authentication testing, a publication scheduler or a backup.
 
 On a machine with Node.js 22, from the repository root you may run:

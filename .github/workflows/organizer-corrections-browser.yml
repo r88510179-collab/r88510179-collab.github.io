@@ -5,7 +5,9 @@ on:
     paths:
       - 'nfl-pool/admin/**'
       - 'nfl-pool/acceptance/organizer-corrections-browser.mjs'
+      - 'nfl-pool/acceptance/spreadsheet-ingestion-browser.mjs'
       - 'nfl-pool/acceptance/sheetjs-pinned.mjs'
+      - 'nfl-pool/acceptance/synthetic-workbooks.mjs'
       - '.github/workflows/organizer-corrections-browser.yml'
   workflow_dispatch:
 
@@ -33,3 +35,5 @@ jobs:
         run: command -v google-chrome-stable || command -v google-chrome || command -v chromium
       - name: Browser acceptance with isolated in-memory data
         run: node nfl-pool/acceptance/organizer-corrections-browser.mjs
+      - name: Real XLS, XLSX and XLSM workbooks through both admin flows with the pinned reader
+        run: node nfl-pool/acceptance/spreadsheet-ingestion-browser.mjs
