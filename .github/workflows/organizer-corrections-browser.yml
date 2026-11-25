@@ -5,6 +5,9 @@ on:
     paths:
       - 'nfl-pool/admin/**'
       - 'nfl-pool/acceptance/organizer-corrections-browser.mjs'
+      - 'nfl-pool/acceptance/spreadsheet-ingestion-browser.mjs'
+      - 'nfl-pool/acceptance/sheetjs-pinned.mjs'
+      - 'nfl-pool/acceptance/synthetic-workbooks.mjs'
       - '.github/workflows/organizer-corrections-browser.yml'
   workflow_dispatch:
 
@@ -23,9 +26,14 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
+      # The spreadsheet reader is installed from its publisher's own distribution, never from the npm registry. Both
+      # scripts refuse to run unless it is byte for byte the release recorded in nfl-pool/acceptance/sheetjs-pinned.mjs,
+      # and they serve that local copy to the pages, so no browser request leaves the runner for it.
       - name: Install ephemeral browser test dependencies
-        run: npm install --no-save --no-package-lock --no-audit --no-fund playwright@1.56.1 xlsx@0.18.5
+        run: npm install --no-save --no-package-lock --no-audit --no-fund playwright@1.56.1 https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
       - name: Verify Chromium installed on runner
         run: command -v google-chrome-stable || command -v google-chrome || command -v chromium
       - name: Browser acceptance with isolated in-memory data
         run: node nfl-pool/acceptance/organizer-corrections-browser.mjs
+      - name: Real XLS, XLSX and XLSM workbooks through both admin flows with the pinned reader
+        run: node nfl-pool/acceptance/spreadsheet-ingestion-browser.mjs

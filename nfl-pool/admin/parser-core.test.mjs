@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {readFileSync} from 'node:fs';
+import {readdirSync,readFileSync} from 'node:fs';
 
 const parserSource=readFileSync(new URL('./parser-core.js',import.meta.url),'utf8');
 const parserUrl='data:text/javascript;base64,'+Buffer.from(parserSource).toString('base64');
@@ -2014,12 +2014,12 @@ async function atInstant(iso,run){
   };
   const weeksRequested=t=>t.net.urls.map(u=>new URL(u).searchParams.get('week'));
 
-  await regression('index.html: the Absent games confirmation field, its exact format, and admin.js v14',()=>{
+  await regression('index.html: the Absent games confirmation field, its exact format, and admin.js v19',()=>{
     const field=adminHtml.match(/<textarea id="absenceConfirm"[^>]*>/);
     assert(field,'an #absenceConfirm textarea');
     assert.match(adminHtml,/<label for="absenceConfirm">Absent games/);
     assert.match(adminHtml,/WEEK N AWAY @ HOME ABSENT/,'the help text names the exact confirmation format');
-    assert.match(adminHtml,/<script type="module" src="admin\.js\?v=18"><\/script>/);
+    assert.match(adminHtml,/<script type="module" src="admin\.js\?v=19"><\/script>/);
   });
   await regression('without a typed exception, an absent sheet game still blocks: the old error plus the exact phrase to type',async()=>{
     const t=await readWith();
@@ -2316,4 +2316,42 @@ const {recoverCompletePdfField,attemptPdfFieldRecovery,pdfRecoveryApplies,recove
   assert.equal(recoveredFieldSizeIssue({rowsPerFullPage:51},252,{week:8,competitionSize:276}),null,'less than half a page (24) is churn');
   assert.match(recoveredFieldSizeIssue({rowsPerFullPage:51},251,{week:8,competitionSize:276}),/25 fewer/,'half a page (25) is refused');
   assert.equal(recovered.recovery.missingTiebreaks,1,'the blank tiebreak is counted, not filled');
+}
+
+// Both spreadsheet entry points must use the pinned publisher-maintained release.
+{
+  const correctedSource=readFileSync(new URL('./organizer-corrections.js',import.meta.url),'utf8');
+  const approvedImport="https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs";
+  for (const source of [adminSource,correctedSource]) {
+    assert(source.includes(approvedImport),'spreadsheet parser must use pinned SheetJS 0.20.3');
+    assert(!source.includes('xlsx@0.18.5'),'vulnerable SheetJS must not be imported');
+  }
+  // The pin is one recorded release: each entry point loads the reader exactly once, from that address, and its page
+  // declares the recorded integrity for that address alone, ahead of the module script, so other bytes there are refused.
+  const {SHEETJS_URL,SHEETJS_PACKAGE,SHEETJS_INTEGRITY}=await import(new URL('../acceptance/sheetjs-pinned.mjs',import.meta.url).href);
+  assert.equal(SHEETJS_URL,approvedImport);
+  assert.match(SHEETJS_INTEGRITY,/^sha384-[A-Za-z0-9+/]{64}$/);
+  const correctionsHtml=readFileSync(new URL('./organizer-corrections.html',import.meta.url),'utf8');
+  for(const [name,source,html] of [['admin.js',adminSource,adminHtml],['organizer-corrections.js',correctedSource,correctionsHtml]]){
+    const readers=[...source.matchAll(/import\(\s*(['"`])([^'"`]*(?:xlsx|sheetjs)[^'"`]*)\1\s*\)/gi)].map(m=>m[2]);
+    assert.deepEqual(readers,[SHEETJS_URL],`${name} loads the spreadsheet reader once, from the pinned address`);
+    const maps=[...html.matchAll(/<script type="importmap">([\s\S]*?)<\/script>/g)];
+    assert.equal(maps.length,1,`${name}: its page has one import map`);
+    assert.deepEqual(JSON.parse(maps[0][1]),{integrity:{[SHEETJS_URL]:SHEETJS_INTEGRITY}},`${name}: its page pins the reader's integrity and nothing else`);
+    assert(maps[0].index<html.indexOf('<script type="module"'),`${name}: the import map precedes the module script`);
+  }
+  // Nothing in the pool, its tests or the workflows names another source of the reader: the registry package ("xlsx@...")
+  // is the unpatched line, and any other address would be a second copy that no integrity pin covers.
+  let scanned=0;
+  for(const root of [new URL('../',import.meta.url),new URL('../../.github/workflows/',import.meta.url)]){
+    for(const file of readdirSync(root,{recursive:true})){
+      const path=String(file).split('\\').join('/');
+      if(!/\.(?:html|js|mjs|json|ya?ml|md|css|webmanifest|sh|sql)$/.test(path)||path.includes('node_modules/')||path==='admin/parser-core.test.mjs')continue;
+      const text=readFileSync(new URL(path,root),'utf8');scanned++;
+      for(const [address] of text.matchAll(/https?:\/\/[^\s'"`<>()\\]*(?:xlsx|sheetjs)[^\s'"`<>()\\]*/gi))
+        assert([SHEETJS_URL,SHEETJS_PACKAGE].includes(address),`${path} names another spreadsheet reader source: ${address}`);
+      assert.deepEqual(text.match(/\bxlsx@[^\s'"`]+/g),null,`${path} names the registry spreadsheet package`);
+    }
+  }
+  assert(scanned>60,'the reader-source scan covered the pool and its workflows');
 }

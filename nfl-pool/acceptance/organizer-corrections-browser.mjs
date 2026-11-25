@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {execFileSync,spawn} from 'node:child_process';
-import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import {fileURLToPath} from 'node:url';
 import {chromium} from 'playwright';
-import XLSX from 'xlsx';
 import {parseDocumentGroups} from '../admin/parser-core.js';
+import {loadPinnedSheetJS,servePinnedSheetJS} from './sheetjs-pinned.mjs';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const temp=mkdtempSync(join(tmpdir(),'correction-qa-'));
@@ -19,7 +19,9 @@ const rows=[
   ['D.C.',1,3,42,0],['JC',2,3,43,0],['DJS',1,4,44,0],['Thaddius',2,4,45,0],
   ['Mackpool',2,3,51,0],['Other Entrant',1,4,49,0]
 ];
-const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows),'Week 9');XLSX.writeFile(wb,file);
+// The workbook is written, and later read by the page, with the one pinned SheetJS release, served from its verified local copy.
+const {XLSX,bytes:sheetjs}=await loadPinnedSheetJS();
+const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows),'Week 9');writeFileSync(file,XLSX.write(wb,{type:'buffer',bookType:'xlsx'}));
 const sourceRows=rows.map((cells,i)=>({kind:'spreadsheet',sheetName:'Week 9',rowNumber:i+1,
   cells:cells.map(String),text:cells.map(String).filter(Boolean).join(' ')}));
 const candidate=parseDocumentGroups([{week:9,lines:sourceRows.map(x=>x.text),sourceRows,sheetName:'Week 9'}],
@@ -87,6 +89,7 @@ try{
   await page.route(/neon-js@0\.7\.0-beta/,route=>route.fulfill({status:200,contentType:'text/javascript',
     headers:{'access-control-allow-origin':'*'},body:neonStub}));
   await page.route(/neonauth\./,r=>r.abort());await page.route(/apirest\./,r=>r.abort());
+  const library=await servePinnedSheetJS(page,sheetjs);
   await page.goto('http://127.0.0.1:'+port+'/nfl-pool/admin/organizer-corrections.html',{waitUntil:'networkidle'});
   await page.locator('#authState').getByText('AUTHORIZED').waitFor({timeout:15000});
   await page.locator('#season').fill('2026');await page.locator('#week').fill('9');
@@ -198,6 +201,8 @@ try{
   assert.match(await page.locator('#tiebreak + small').innerText(),/already blank/i);
   console.log('PASS: browser planner and visible inputs preserve no-pick 0 and blank null tiebreak');
   assert.deepEqual(errors,[],'No browser errors');
+  assert(library.pinned>0,'The page read the workbook with the pinned spreadsheet reader');
+  assert.deepEqual(library.refused,[],'No other spreadsheet reader was requested');
   console.log('PASS synthetic Chromium E2E: no real data services contacted');
 }finally{
   if(browser)await browser.close().catch(()=>{});
