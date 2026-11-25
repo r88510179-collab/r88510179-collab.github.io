@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {readFileSync} from 'node:fs';
+import {readdirSync,readFileSync} from 'node:fs';
 
 const parserSource=readFileSync(new URL('./parser-core.js',import.meta.url),'utf8');
 const parserUrl='data:text/javascript;base64,'+Buffer.from(parserSource).toString('base64');
@@ -2328,7 +2328,7 @@ const {recoverCompletePdfField,attemptPdfFieldRecovery,pdfRecoveryApplies,recove
   }
   // The pin is one recorded release: each entry point loads the reader exactly once, from that address, and its page
   // declares the recorded integrity for that address alone, ahead of the module script, so other bytes there are refused.
-  const {SHEETJS_URL,SHEETJS_INTEGRITY}=await import(new URL('../acceptance/sheetjs-pinned.mjs',import.meta.url).href);
+  const {SHEETJS_URL,SHEETJS_PACKAGE,SHEETJS_INTEGRITY}=await import(new URL('../acceptance/sheetjs-pinned.mjs',import.meta.url).href);
   assert.equal(SHEETJS_URL,approvedImport);
   assert.match(SHEETJS_INTEGRITY,/^sha384-[A-Za-z0-9+/]{64}$/);
   const correctionsHtml=readFileSync(new URL('./organizer-corrections.html',import.meta.url),'utf8');
@@ -2340,4 +2340,18 @@ const {recoverCompletePdfField,attemptPdfFieldRecovery,pdfRecoveryApplies,recove
     assert.deepEqual(JSON.parse(maps[0][1]),{integrity:{[SHEETJS_URL]:SHEETJS_INTEGRITY}},`${name}: its page pins the reader's integrity and nothing else`);
     assert(maps[0].index<html.indexOf('<script type="module"'),`${name}: the import map precedes the module script`);
   }
+  // Nothing in the pool, its tests or the workflows names another source of the reader: the registry package ("xlsx@...")
+  // is the unpatched line, and any other address would be a second copy that no integrity pin covers.
+  let scanned=0;
+  for(const root of [new URL('../',import.meta.url),new URL('../../.github/workflows/',import.meta.url)]){
+    for(const file of readdirSync(root,{recursive:true})){
+      const path=String(file).split('\\').join('/');
+      if(!/\.(?:html|js|mjs|json|ya?ml|md|css|webmanifest|sh|sql)$/.test(path)||path.includes('node_modules/')||path==='admin/parser-core.test.mjs')continue;
+      const text=readFileSync(new URL(path,root),'utf8');scanned++;
+      for(const [address] of text.matchAll(/https?:\/\/[^\s'"`<>()\\]*(?:xlsx|sheetjs)[^\s'"`<>()\\]*/gi))
+        assert([SHEETJS_URL,SHEETJS_PACKAGE].includes(address),`${path} names another spreadsheet reader source: ${address}`);
+      assert.deepEqual(text.match(/\bxlsx@[^\s'"`]+/g),null,`${path} names the registry spreadsheet package`);
+    }
+  }
+  assert(scanned>60,'the reader-source scan covered the pool and its workflows');
 }
