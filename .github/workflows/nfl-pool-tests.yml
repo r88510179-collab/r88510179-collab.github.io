@@ -211,3 +211,30 @@ jobs:
 
       - name: Run the SQL behavior and race suites on PostgreSQL 17.11
         run: bash nfl-pool/sql-tests/run.sh
+
+  rebuild-from-migrations:
+    # The Personal database can be rebuilt from this repository: migrations 000-005 and the full-field guard on an empty
+    # PostgreSQL 17.11 (the image run.sh pins by digest, as a service container) give the very catalog that the production
+    # shape in neon-shape.sql describes, migration 000 changes nothing where the table already exists, and the full-field
+    # guard and behavior suites pass on the rebuilt database. A job of its own, so no existing check changes its name.
+    # No Neon database, no secrets.
+    name: rebuild-from-migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17.11@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres -d postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Rebuild the Personal database from the migrations and compare it with the production shape
+        env:
+          REBUILD_PG_URL: postgresql://postgres@127.0.0.1:5432/postgres
+        run: bash nfl-pool/sql-tests/rebuild.sh
