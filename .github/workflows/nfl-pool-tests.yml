@@ -217,7 +217,9 @@ jobs:
     # PostgreSQL 17.11 (the image run.sh pins by digest, as a service container) give the very catalog that the production
     # shape in neon-shape.sql describes, migration 000 changes nothing where the table already exists, and the full-field
     # guard and behavior suites pass on the rebuilt database. A job of its own, so no existing check changes its name.
-    # No Neon database, no secrets.
+    # Before the gate itself, the tests of what it does to a cluster (refusals, one execution at a time, cleanup that removes
+    # only what it made, failed cleanup, signals, unwritable snapshot output) run on the same empty service container, which
+    # they leave empty. No Neon database, no secrets.
     name: rebuild-from-migrations
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -236,6 +238,11 @@ jobs:
 
       - name: Self-test of the catalog comparison tool (no database)
         run: python3 nfl-pool/sql-tests/test_compare_catalog.py
+
+      - name: Lifecycle tests of the rebuild gate (disposable service container; leaves it empty)
+        env:
+          REBUILD_TEST_PG_URL: postgresql://postgres@127.0.0.1:5432/postgres
+        run: bash nfl-pool/sql-tests/test_rebuild_lifecycle.sh
 
       - name: Rebuild the Personal database from the migrations and compare it with the production shape
         env:
