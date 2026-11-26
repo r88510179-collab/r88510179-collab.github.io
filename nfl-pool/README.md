@@ -76,6 +76,8 @@ Use **Weekly Admin → Organizer Corrections** for an email/screenshot notice th
 6. Preview the exact published configuration. Confirm the intended year, week and revision. Publishing is a protected write, not a harmless refresh; only proceed under the existing release/backup authorization.
 7. After publishing, open the public app in a fresh session; verify the chosen week, revision, all four entries, ranks, games, tiebreak, and exact source fingerprint against the reviewed file.
 
+8. **Pool Alerts (once deployed):** after the success message, the Admin page's **Pool Alerts** panel notifies everyone who turned phone alerts on and reports "Subscribers notified: N delivered". If it says it could not reach the alert service, do nothing: the hourly check sends the alert (or tap **Notify subscribers now**). Organizer Corrections does the same for official corrections. You no longer need to message the group. Details: [Pool Alerts manual](push/README.md).
+
 A revision is an explicit replacement of the same week. The current system rechecks the previous revision before writing and reads back the result; stale concurrent writes are rejected. Do **not** bypass it with manual SQL or a re-upload guessed from memory.
 
 **Survivor Admin** at \`nfl-pool/admin/survivor.html\` and **Incident Rulings** at \`nfl-pool/admin/rulings.html\` are restricted specialist tools, not ordinary personal tracking. Our tracked Survivor run is archived; don't resume it merely to fill a later-week gap. A ruling needs the organizer/commissioner's documented authority and valid policy, not a guess by the tracker owner.
@@ -93,7 +95,9 @@ A revision is an explicit replacement of the same week. The current system reche
 | \`survivor-app.js\` / \`survivor-math.js\` | Survivor history, eligibility, reused teams, results and the archive |
 | \`score-feed-proxy.js\` / \`score-proxy/\` | ESPN-shaped score requests and the source implementation/tests for the gateway; deployed gateway health is checked separately |
 | \`admin/\` | Local sheet parsers, validated publisher screens, Survivor historical publisher and incident rulings |
-| \`service-worker.js\` / \`pwa.js\` / \`manifest.webmanifest\` | Installs the web app and caches the app shell for offline opening; **offline does not mean current NFL scores or new publications** |
+| \`service-worker.js\` / \`pwa.js\` / \`manifest.webmanifest\` | Installs the web app and caches the app shell for offline opening; **offline does not mean current NFL scores or new publications** The worker also shows Pool Alerts notifications. |
+| \`pool-alerts.mjs\` / \`push-client.mjs\` / \`pool-alerts.css\` | Home → Pool Alerts card: latest official release, history, sharing, and phone-alert controls with Android/iPhone help |
+| \`push/\` | Pool Alerts sender (Neon Function), owner tool \`ops.mjs\`, manual, deployment steps, runbook and phone acceptance checklist |
 | \`migrations/\` / \`sql-tests/\` | Database schema/security changes and disposable PostgreSQL behavior/race tests |
 | \`acceptance/\` | Full acceptance instructions and independent score-reconciliation scripts |
 | \`ops/cloud-smoke.mjs\` | Small read-only checks that public websites and the score gateway respond |
@@ -112,7 +116,9 @@ A revision is an explicit replacement of the same week. The current system reche
 
 Use **GitHub → Actions** in this repository. Look for:
 
-- **NFL Pool Tests:** 18 approved Node.js test suites (the job label still says “12-suite” for historical branch-protection reasons), SQL behavior/race checks on disposable PostgreSQL 17.11 (including the full-field publication guard that refuses a four-entry-only locked week from any client, even a stale cached Admin page), and syntax checks. No production database writes.
+- **NFL Pool Tests:** 20 approved Node.js test suites (the job label still says “12-suite” for historical branch-protection reasons), SQL behavior/race checks on disposable PostgreSQL 17.11 (including the full-field publication guard that refuses a four-entry-only locked week from any client, even a stale cached Admin page, and the Pool Alerts capture, backup-compatibility and rollback checks), the \`push-alerts-isolated\` end-to-end sender scenarios, and syntax checks. No production database writes.
+- **Pool Alerts Browser Acceptance:** the Pool Alerts card and notifications in Chrome at 375, 390 and 430 px (push subscription simulated; real phones are checked with \`push/ACCEPTANCE.md\`).
+- **Pool Alerts maintenance:** run by hand for \`status\`, \`notify\`, \`pause\`, \`resume\`, \`retry-failed\`, a device test or the enrollment mode. Needs the \`POOL_ALERTS_OWNER_TOKEN\` secret; changing actions need the confirmation box.
 - **Pool live score parity (read-only):** Manually run for the actual season and week range; compares deployed \`nflscores2\` with fresh ESPN final scores. This checks feed parity, not whether ESPN itself is infallible.
 - **Smokke Cloud Monitor:** Runs approximately every 15 minutes on GitHub's best-effort cron and checks public availability of multiple websites plus the score function. It is **not** Survivor tracking, authentication testing, a publication scheduler or a backup.
 
@@ -140,6 +146,8 @@ These commands test local code or read public scores; the score command needs ne
 | App offline or stale after an update | Reconnect, reload and let the service worker replace its shell cache. A cached app shell does not include fresh scores |
 | A publisher is blocked | Stop; check identity, source, publication revision, policy and QA-vs-production target. Never weaken auth/RLS to make it pass |
 | A release fails | Restore the last known-good **code** deployment first; for a genuine database problem follow the separate verified backup/restore playbook, never improvise SQL |
+| Phone alerts did not arrive | Admin → Pool Alerts panel or Actions → Pool Alerts maintenance → \`status\`; then follow [the Pool Alerts runbook](push/RUNBOOK.md). Publishing is never blocked by alerts |
+| Someone's phone gets no alerts | On their phone: Home → Pool Alerts shows the exact reason (blocked, not installed on iPhone, off) with steps; turning alerts off and on again is always safe |
 
 If an investigation needs a developer, include the site URL, page, selected week, exact release commit, what you expected, what actually happened, and relevant console/network evidence. Do **not** include passwords, OTPs or real participant source files.
 
