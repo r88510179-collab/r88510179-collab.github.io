@@ -27,6 +27,7 @@ export async function detectRelease(pool,readPublic){
     const decision=releaseDecision(prev?rowIdentity(prev):null,rowIdentity(latest),visible);
     if(decision.action==='ignore')return 'ignore';
     const n=decision.next,args=[n.season,n.week,n.revision,n.published_at];
+    await c.query("UPDATE pool_alerts.deliveries SET state='cancelled',lease_token=NULL,lease_until=NULL WHERE (season,week,revision)<($1,$2,$3) AND state IN ('pending','retry','sending')",args.slice(0,3));
     if(decision.action==='enqueue'){
       await c.query("INSERT INTO pool_alerts.events(season,week,revision,kind) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING",[...args.slice(0,3),decision.kind]);
       await c.query("INSERT INTO pool_alerts.deliveries(season,week,revision,subscription_id) SELECT $1,$2,$3,id FROM pool_alerts.subscriptions WHERE enabled AND ($4='release' OR corrections) ON CONFLICT DO NOTHING",[...args.slice(0,3),decision.kind]);
@@ -59,14 +60,14 @@ export async function deliverOne(pool,send){
   const job=await tx(pool,async c=>{
     // Expired leases may have sent before a crash; clients use a stable notification tag.
     await c.query("UPDATE pool_alerts.deliveries SET state='failed',lease_token=NULL,lease_until=NULL WHERE state='sending' AND lease_until<=now() AND attempts>=6");
-    const d=(await c.query("SELECT d.*,e.kind FROM pool_alerts.deliveries d JOIN pool_alerts.events e USING(season,week,revision) JOIN pool_alerts.subscriptions s ON s.id=d.subscription_id WHERE s.enabled AND (e.kind='release' OR s.corrections) AND d.attempts<6 AND ((d.state IN ('pending','retry') AND d.next_attempt_at<=now()) OR (d.state='sending' AND d.lease_until<=now())) ORDER BY d.next_attempt_at LIMIT 1 FOR UPDATE OF d SKIP LOCKED")).rows[0];
+    const d=(await c.query("SELECT d.*,e.kind FROM pool_alerts.deliveries d JOIN pool_alerts.events e USING(season,week,revision) JOIN pool_alerts.subscriptions s ON s.id=d.subscription_id JOIN public.nfl_pool_weeks w ON (w.season,w.week,w.revision)=(d.season,d.week,d.revision) AND w.status='locked' WHERE s.enabled AND (e.kind='release' OR s.corrections) AND d.attempts<6 AND ((d.state IN ('pending','retry') AND d.next_attempt_at<=now()) OR (d.state='sending' AND d.lease_until<=now())) ORDER BY d.next_attempt_at LIMIT 1 FOR UPDATE OF d SKIP LOCKED")).rows[0];
     if(!d)return null;
     await c.query("UPDATE pool_alerts.deliveries SET state='sending',attempts=attempts+1,lease_token=$5,lease_until=now()+interval '2 minutes' WHERE season=$1 AND week=$2 AND revision=$3 AND subscription_id=$4",[d.season,d.week,d.revision,d.subscription_id,lease]);
     return {...d,attempts:d.attempts+1};
   });
   if(!job)return false;
   const args=[job.season,job.week,job.revision,job.subscription_id,lease];
-  const sub=(await pool.query("SELECT s.endpoint,s.p256dh,s.auth FROM pool_alerts.subscriptions s JOIN pool_alerts.deliveries d ON d.subscription_id=s.id WHERE d.season=$1 AND d.week=$2 AND d.revision=$3 AND s.id=$4 AND d.lease_token=$5 AND d.state='sending' AND s.enabled AND ($6='release' OR s.corrections)",[...args,job.kind])).rows[0];
+  const sub=(await pool.query("SELECT s.endpoint,s.p256dh,s.auth FROM pool_alerts.subscriptions s JOIN pool_alerts.deliveries d ON d.subscription_id=s.id JOIN public.nfl_pool_weeks w ON (w.season,w.week,w.revision)=(d.season,d.week,d.revision) AND w.status='locked' WHERE d.season=$1 AND d.week=$2 AND d.revision=$3 AND s.id=$4 AND d.lease_token=$5 AND d.state='sending' AND s.enabled AND ($6='release' OR s.corrections)",[...args,job.kind])).rows[0];
   if(!sub)return true;
   let status=0;
   try{const target=validateSubscription({endpoint:sub.endpoint,keys:{p256dh:sub.p256dh,auth:sub.auth}});const result=await send(target,{season:job.season,week:job.week,revision:job.revision,kind:job.kind});status=result.statusCode}
