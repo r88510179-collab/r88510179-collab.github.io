@@ -121,12 +121,72 @@ fi
 [ -n "$plan" ] && [ "$behavior_ok" -eq "$plan" ] || problem "behavior suite: $behavior_ok passed, plan ${plan:-missing}"
 echo "Behavior: $behavior_ok passed, $behavior_fail failed, plan ${plan:-missing}"
 
+# Pool Alerts (migration 006): applied AFTER the unchanged behavior suite (whose shape assertions pin the HDC-12..14
+# function set exactly) and BEFORE the race suite, so the concurrent publish/republish races run with the capture trigger
+# live and prove that publishing is unaffected. The fixtures already in the database play the production weeks that
+# exist when 006 is applied (no event, so no historical notification). It refuses any role but nfl_pool_owner and a
+# second application, changing nothing when it refuses.
+m6=006-pool-alerts.sql
+if [ -f "$migrations/$m6" ]; then
+  alerts_state() { docker exec "$C" psql -X -At -U postgres -d nfl_pool -c "SELECT md5(string_agg(x, '|' ORDER BY x)) FROM (
+    SELECT n.nspname || '.' || c.relname || ':' || c.relkind AS x FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname IN ('public', 'pool_alerts')
+    UNION ALL SELECT p.oid::regprocedure::text || ':' || md5(p.prosrc) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace
+    UNION ALL SELECT t.tgname FROM pg_trigger t WHERE NOT t.tgisinternal
+    UNION ALL SELECT r.rolname FROM pg_roles r) q"; }
+  before="$(alerts_state)"
+  if psql_as postgres nfl_pool < "$migrations/$m6" > "$log/m6-postgres.out" 2>&1; then
+    problem "migration 006 applied as postgres: it must refuse every role but nfl_pool_owner"
+  else
+    refusal="$(grep -m1 -o 'ERROR: .*' "$log/m6-postgres.out")"
+    case "$refusal" in *'must be applied as nfl_pool_owner'*) echo "ALERTS-MIGRATION ok: application as postgres is refused ($refusal)";;
+      *) problem "migration 006 as postgres was refused for an unexpected reason: ${refusal:-no error}";; esac
+  fi
+  [ "$(alerts_state)" = "$before" ] || problem 'a refused application of migration 006 changed the schema'
+  if psql_as nfl_pool_owner nfl_pool < "$migrations/$m6"; then
+    echo "applied $m6"
+    before="$(alerts_state)"
+    if psql_as nfl_pool_owner nfl_pool < "$migrations/$m6" > "$log/m6-again.out" 2>&1; then
+      problem 'migration 006 applied a second time: its preconditions must refuse it'
+    else
+      refusal="$(grep -m1 -o 'ERROR: .*' "$log/m6-again.out")"
+      case "$refusal" in *'already applied'*) echo "ALERTS-MIGRATION ok: a second application is refused ($refusal)";;
+        *) problem "a second application of migration 006 was refused for an unexpected reason: ${refusal:-no error}";; esac
+    fi
+    [ "$(alerts_state)" = "$before" ] || problem 'a refused second application of migration 006 changed the schema'
+  else
+    problem "migration $m6 failed"
+  fi
+else
+  problem "migration $m6 is missing: the Pool Alerts capture does not exist"
+fi
+
 echo "== Race suite"
 HDC13_PG_CONTAINER="$C" bash "$here/races.sh" > "$log/races.out" 2>&1
 races_status=$?
 cat "$log/races.out"
 [ "$races_status" -eq 0 ] || problem "race suite failed (exit $races_status)"
 
-echo "PostgreSQL $version · behavior $behavior_ok/${plan:-?} · full-field guard $guard_ok/${guard_plan:-?} · $(grep -o 'races=[0-9]* passed=[0-9]* failed=[0-9]*' "$log/races.out" || echo 'races: no summary')"
+echo "== Pool Alerts capture suite"
+psql_as postgres nfl_pool < "$here/pool-alerts.sql" > "$log/alerts.out" 2>&1
+alerts_status=$?
+grep -E '^NOTICE:  ALERTS-TEST ' "$log/alerts.out" | sed 's/^NOTICE:  //'
+alerts_ok="$(grep -c '^NOTICE:  ALERTS-TEST ok: ' "$log/alerts.out")"
+alerts_fail="$(grep -c '^NOTICE:  ALERTS-TEST FAIL: ' "$log/alerts.out")"
+alerts_plan="$(sed -n 's/^ALERTS-PLAN \([0-9][0-9]*\)$/\1/p' "$log/alerts.out")"
+if [ "$alerts_status" -ne 0 ]; then
+  grep -v '^NOTICE:  ALERTS-TEST ' "$log/alerts.out" | tail -20
+  problem "pool-alerts.sql stopped with exit code $alerts_status"
+fi
+[ "$alerts_fail" -eq 0 ] || problem "$alerts_fail Pool Alerts assertion(s) failed"
+[ -n "$alerts_plan" ] && [ "$alerts_ok" -eq "$alerts_plan" ] || problem "Pool Alerts suite: $alerts_ok passed, plan ${alerts_plan:-missing}"
+echo "Pool Alerts: $alerts_ok passed, $alerts_fail failed, plan ${alerts_plan:-missing}"
+
+echo "== Personal backup compatibility (public-schema dump and restore with the documented prerequisites)"
+HDC13_PG_CONTAINER="$C" bash "$here/backup-compat.sh" > "$log/backup.out" 2>&1
+backup_status=$?
+cat "$log/backup.out"
+[ "$backup_status" -eq 0 ] || problem "backup compatibility check failed (exit $backup_status)"
+
+echo "PostgreSQL $version · behavior $behavior_ok/${plan:-?} · full-field guard $guard_ok/${guard_plan:-?} · $(grep -o 'races=[0-9]* passed=[0-9]* failed=[0-9]*' "$log/races.out" || echo 'races: no summary') · alerts $alerts_ok/${alerts_plan:-?} · $(grep -o 'backup-compat passed=[0-9]*' "$log/backup.out" || echo 'backup: no summary')"
 if [ "$problems" -ne 0 ]; then echo "HDC-13 SQL gate FAILED ($problems problem(s))"; exit 1; fi
 echo "HDC-13 SQL gate passed"
