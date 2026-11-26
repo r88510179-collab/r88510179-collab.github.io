@@ -1,5 +1,5 @@
 'use strict';
-const CACHE='pool-center-shell-v41';
+const CACHE='pool-center-shell-v42';
 const SHELL=[
   './',
   './index.html',
@@ -14,6 +14,7 @@ const SHELL=[
   './contest-rulings.js?v=2',
   './score-feed-proxy.js?v=2',
   './pool-alerts.mjs?v=1',
+  './push-client.mjs?v=1',
   './pwa.js?v=1',
   './share-card.js?v=2',
   './swing-card.js?v=1',
@@ -91,3 +92,32 @@ self.addEventListener('fetch',event=>{
     event.respondWith(networkFirst(request));
   }
 });
+
+// BEGIN POOL ALERTS PUSH
+function pushIdentity(p){
+  return p&&Number.isInteger(p.season)&&p.season>=2000&&p.season<=2100&&Number.isInteger(p.week)&&p.week>=1&&p.week<=18&&Number.isSafeInteger(p.revision)&&p.revision>=1&&['release','correction'].includes(p.kind);
+}
+self.addEventListener('push',event=>{
+  let p;try{p=event.data?.json()}catch{return}
+  if(!pushIdentity(p))return;
+  const title='Week '+p.week+(p.kind==='correction'?' picks updated':' official picks are live!');
+  event.waitUntil(self.registration.showNotification(title,{
+    body:p.kind==='correction'?'A new official revision is available. Tap to view.':'The official picks have been released. Tap to view.',
+    tag:'pool-alerts-'+p.season+'-'+p.week+'-'+p.revision,
+    icon:'/nfl-pool/assets/pool-center-icon-192.svg',
+    data:{season:p.season,week:p.week,revision:p.revision,kind:p.kind}
+  }));
+});
+self.addEventListener('notificationclick',event=>{
+  event.notification.close();
+  const p=event.notification.data;
+  if(!pushIdentity(p))return;
+  const target=new URL('/nfl-pool/',self.location.origin);
+  target.searchParams.set('view','picks');target.searchParams.set('season',String(p.season));target.searchParams.set('week',String(p.week));
+  event.waitUntil(self.clients.matchAll({type:'window',includeUncontrolled:true}).then(async clients=>{
+    const existing=clients.find(c=>c.url===target.href);
+    if(existing)return existing.focus();
+    return self.clients.openWindow(target.href);
+  }));
+});
+// END POOL ALERTS PUSH
