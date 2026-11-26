@@ -214,25 +214,12 @@ jobs:
         run: bash nfl-pool/sql-tests/run.sh
 
   push-alerts-isolated:
+    # Pool Alerts sender: the lockfile-pinned dependencies, the 27 end-to-end scenarios on a throwaway, production-
+    # shaped PostgreSQL 17.11 container (same pinned image as the SQL gate) with a local HTTPS push service that verifies
+    # VAPID and decrypts every payload, and the reproducible deployment bundle. No Neon, no secrets.
     name: push-alerts-isolated
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_DB: pool_alerts_test
-          POSTGRES_USER: alerts_test
-          POSTGRES_PASSWORD: synthetic_ci_only
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U alerts_test -d pool_alerts_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      PUSH_TEST_DATABASE_URL: postgresql://alerts_test:synthetic_ci_only@127.0.0.1:5432/pool_alerts_test
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         with:
@@ -240,12 +227,20 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
-      - name: Install isolated sender dependencies
+      - name: Install the lockfile-pinned sender dependencies
         working-directory: nfl-pool/push
-        run: npm install --ignore-scripts --no-audit --no-fund
-      - name: Verify sender modules and run synthetic database integration
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Parse every sender and client module
         run: |
-          node --check nfl-pool/push/main.mjs
-          node --check nfl-pool/push/server.mjs
-          node --check nfl-pool/push-client.mjs
-          node nfl-pool/push/integration.spec.mjs
+          set -euo pipefail
+          for f in nfl-pool/push/*.mjs nfl-pool/push/test-support/*.mjs nfl-pool/push-client.mjs nfl-pool/pool-alerts.mjs; do node --check "$f"; done
+      - name: End-to-end scenarios on disposable PostgreSQL 17.11
+        run: bash nfl-pool/push/test-integration.sh
+      - name: Build the deployment bundle twice and require identical bytes
+        working-directory: nfl-pool/push
+        run: |
+          set -euo pipefail
+          npm run --silent bundle | tee first.txt
+          npm run --silent bundle | tee second.txt
+          cmp first.txt second.txt
+          sha256sum dist/poolalerts.zip >> "$GITHUB_STEP_SUMMARY"
