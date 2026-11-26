@@ -115,7 +115,10 @@ async function shot(page, name) {
 }
 
 // Full Chromium (new headless) or the runner's Chrome: the headless shell reports Notification.permission as denied.
-const browser = await chromium.launch({channel: process.env.POOL_ALERTS_BROWSER_CHANNEL || 'chromium'});
+// No host name resolves, so a request the routes above do not answer fails instead of reaching a real site. (With
+// Playwright 1.56 and Chrome the service worker's own fetches bypassed the routes and loaded the live Pool Center.)
+const browser = await chromium.launch({channel: process.env.POOL_ALERTS_BROWSER_CHANNEL || 'chromium',
+  args: ['--host-resolver-rules=MAP * ~NOTFOUND']});
 try {
   await step('latest official release: Eastern time, revision, unread marker, direct link and history baseline', async () => {
     const {context} = await newContext(browser);

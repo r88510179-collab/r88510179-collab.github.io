@@ -38,7 +38,7 @@ jobs:
         with:
           node-version: '22'
       - name: Install the ephemeral browser driver
-        run: npm install --no-save --no-package-lock --no-audit --no-fund playwright@1.56.1
+        run: npm install --no-save --no-package-lock --no-audit --no-fund playwright@1.63.0
       - name: Verify Chrome on the runner
         run: command -v google-chrome-stable || command -v google-chrome
       - name: Browser acceptance at 375, 390 and 430 CSS pixels
