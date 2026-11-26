@@ -7,6 +7,8 @@ import {
 } from './core.mjs';
 import {loadConfig, PRODUCTION} from './config.mjs';
 import {createJwtVerifier, digestMatches, sha256Hex, bearerToken} from './auth.mjs';
+import {generateKeys, describe, main as ops} from './ops.mjs';
+import {createECDH} from 'node:crypto';
 
 let passed = 0;
 const test = async (name, fn) => { await fn(); passed++; };
@@ -183,6 +185,31 @@ await test('publisher JWT: signature, issuer, audience, expiry, verified e-mail,
     assert.equal(await verify(bad), null);
   }
   assert(jwksFetches >= 2 && jwksFetches <= 4, 'an unknown kid forces one JWKS refresh, otherwise keys are cached');
+});
+
+await test('owner tool: generated keys are valid for the sender, tokens match their digests, commands are guarded', async () => {
+  for (let i = 0; i < 200; i++) {
+    const k = generateKeys();
+    const priv = Buffer.from(k.vapidPrivateKey, 'base64url'), pub = Buffer.from(k.vapidPublicKey, 'base64url');
+    assert.equal(priv.length, 32);
+    assert.equal(pub.length, 65);
+    const ecdh = createECDH('prime256v1'); ecdh.setPrivateKey(priv);
+    assert.equal(ecdh.getPublicKey().toString('base64url'), k.vapidPublicKey, 'the private key reproduces the public key');
+    assert.equal(sha256Hex(k.ownerToken), k.ownerTokenSha256);
+    assert.equal(sha256Hex(k.statusToken), k.statusTokenSha256);
+    if (i === 0) assert.equal(loadConfig({...production, VAPID_PUBLIC_KEY: k.vapidPublicKey, VAPID_PRIVATE_KEY: k.vapidPrivateKey,
+      OWNER_TOKEN_SHA256: k.ownerTokenSha256, STATUS_TOKEN_SHA256: k.statusTokenSha256}).ownerTokenSha256, k.ownerTokenSha256);
+  }
+  const printed = [];
+  assert.equal(await ops(['keys'], {}, line => printed.push(line)), 0);
+  assert.match(printed.join('\n'), /VAPID_PUBLIC_KEY=[A-Za-z0-9_-]{87}\n/);
+  await assert.rejects(ops(['status'], {}), /POOL_ALERTS_OWNER_TOKEN is required/);
+  await assert.rejects(ops(['status'], {POOL_ALERTS_URL: 'http://evil.example', POOL_ALERTS_OWNER_TOKEN: 'x'.repeat(43)}), /https origin/);
+  await assert.rejects(ops(['test', 'nope'], {POOL_ALERTS_OWNER_TOKEN: 'x'.repeat(43)}), /Usage: test/);
+  await assert.rejects(ops(['enrollment', 'invite'], {POOL_ALERTS_OWNER_TOKEN: 'x'.repeat(43)}), /POOL_ALERTS_INVITE_CODE/);
+  await assert.rejects(ops(['drop-database'], {POOL_ALERTS_OWNER_TOKEN: 'x'.repeat(43)}), /Unknown command/);
+  assert.match(describe({environment: 'production', sendingConfigured: true, settings: {sending_enabled: false, note: 'maintenance'}, subscriptions: {active: 3}}),
+    /Sending: deployment ON, database OFF \(maintenance\)/);
 });
 
 console.log(`Pool Alerts core: ${passed} policy, configuration-guard and authentication groups passed`);

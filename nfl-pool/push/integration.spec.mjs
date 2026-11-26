@@ -15,6 +15,7 @@ import {createPushSender} from './webpush.mjs';
 import * as store from './store.mjs';
 import {startPushService} from './test-support/push-service.mjs';
 import {startDataApi} from './test-support/data-api.mjs';
+import {main as ops} from './ops.mjs';
 
 const adminUrl = process.env.PUSH_IT_ADMIN_URL, senderUrl = process.env.PUSH_IT_SENDER_URL;
 for (const url of [adminUrl, senderUrl]) {
@@ -456,6 +457,22 @@ try {
       assert.equal(response.status, 503);
       assert.equal((await response.json()).error, 'environment-guard');
     } finally { await new Promise(r => wrong.close(r)); }
+  });
+
+  await scenario('owner tool: status, pause, notify while paused, resume, notify and test through the deployed API', async () => {
+    const env = {POOL_ALERTS_URL: base, POOL_ALERTS_OWNER_TOKEN: OWNER_TOKEN}, out = [];
+    const run = async (...argv) => { out.length = 0; assert.equal(await ops(argv, env, line => out.push(line)), 0); return out.join('\n'); };
+    assert.match(await run('status'), /Environment: test[\s\S]*Sending: deployment ON, database ON[\s\S]*Recent alerts:/);
+    assert.match(await run('pause', 'integration'), /Sending paused/);
+    await publish(21);
+    assert.match(await run('notify'), /Sending is paused: nothing was sent/);
+    assert.equal(weekMessages(A, 21).length, 0);
+    assert.match(await run('resume'), /Sending resumed/);
+    assert.match(await run('notify'), /Cycle ok: \d+ sent/);
+    assert.equal(pushService.received(A.id).concat(pushService.messages.filter(m => m.device.startsWith('a-rotated'))).filter(m => m.payload.week === 21).length, 1);
+    assert.match(await run('test', B.sid), /Test alert accepted/);
+    assert.match(await run('health'), /"service": "pool-alerts"/);
+    await assert.rejects(ops(['status'], {...env, POOL_ALERTS_OWNER_TOKEN: 'w'.repeat(43)}), /HTTP 401/);
   });
 
   await scenario('every delivery was VAPID-signed with the configured key and decrypted by its device; run history is recorded', async () => {

@@ -1,0 +1,70 @@
+name: Pool Alerts maintenance
+
+# Owner-run Pool Alerts operations from GitHub (works from a phone: Actions → Pool Alerts maintenance → Run workflow).
+# It calls the deployed sender with the owner token; it has no database credentials. Changing actions (notify, pause,
+# resume, retry, test, enrollment) require the confirmation box. Nothing runs on a schedule.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'What to do'
+        type: choice
+        default: status
+        options:
+          - health
+          - status
+          - notify
+          - pause
+          - resume
+          - retry-failed
+          - test-device
+          - enrollment-open
+          - enrollment-invite
+          - enrollment-closed
+      device_id:
+        description: 'Device id (test-device only; shown in the Admin Pool Alerts panel)'
+        type: string
+        required: false
+      confirm:
+        description: 'I confirm this changes Pool Alerts (required for every action except health and status)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  operate:
+    name: Pool Alerts ${{ inputs.action }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Run
+        env:
+          POOL_ALERTS_URL: ${{ vars.POOL_ALERTS_URL }}
+          POOL_ALERTS_OWNER_TOKEN: ${{ secrets.POOL_ALERTS_OWNER_TOKEN }}
+          POOL_ALERTS_INVITE_CODE: ${{ secrets.POOL_ALERTS_INVITE_CODE }}
+          ACTION: ${{ inputs.action }}
+          DEVICE_ID: ${{ inputs.device_id }}
+          CONFIRMED: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          case "$ACTION" in
+            health|status) ;;
+            *) if [ "$CONFIRMED" != "true" ]; then echo "::error::Tick the confirmation box for '$ACTION'."; exit 1; fi ;;
+          esac
+          case "$ACTION" in
+            test-device) set -- test "$DEVICE_ID" ;;
+            enrollment-open) set -- enrollment open ;;
+            enrollment-invite) set -- enrollment invite ;;
+            enrollment-closed) set -- enrollment closed ;;
+            *) set -- "$ACTION" ;;
+          esac
+          node nfl-pool/push/ops.mjs "$@" | tee result.txt
+          { echo "## Pool Alerts: $ACTION"; echo; echo '```'; cat result.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

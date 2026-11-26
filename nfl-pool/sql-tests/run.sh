@@ -187,6 +187,29 @@ backup_status=$?
 cat "$log/backup.out"
 [ "$backup_status" -eq 0 ] || problem "backup compatibility check failed (exit $backup_status)"
 
-echo "PostgreSQL $version · behavior $behavior_ok/${plan:-?} · full-field guard $guard_ok/${guard_plan:-?} · $(grep -o 'races=[0-9]* passed=[0-9]* failed=[0-9]*' "$log/races.out" || echo 'races: no summary') · alerts $alerts_ok/${alerts_plan:-?} · $(grep -o 'backup-compat passed=[0-9]*' "$log/backup.out" || echo 'backup: no summary')"
+echo "== Pool Alerts rollback and re-application"
+rollback_ok=0
+if psql_as nfl_pool_owner nfl_pool < "$migrations/006-pool-alerts-rollback.sql"; then
+  state="$(docker exec "$C" psql -X -At -U postgres -d nfl_pool -c "SELECT (SELECT count(*) FROM pg_namespace WHERE nspname='pool_alerts')||':'||
+    (SELECT count(*) FROM pg_trigger WHERE tgname='nfl_pool_alerts_capture')||':'||(SELECT count(*) FROM pg_roles WHERE rolname='pool_alerts_sender')||':'||
+    (SELECT count(*) FROM pg_proc WHERE proname='nfl_pool_alerts_capture')||':'||(SELECT count(*) FROM pg_tables WHERE schemaname='public')")"
+  [ "$state" = "0:0:0:0:5" ] && echo "ALERTS-ROLLBACK ok: schema, trigger, function and role removed; public keeps its five tables" && rollback_ok=$((rollback_ok+1)) || problem "rollback left objects behind ($state)"
+  if printf "%s\n" "BEGIN; SELECT set_config('request.jwt.claims', '{\"sub\":\"00000000-0000-4000-8000-000000000001\",\"role\":\"authenticated\"}', true); SET LOCAL ROLE authenticated;" \
+     "INSERT INTO public.nfl_pool_weeks (season, week, status, config, revision, published_at, locked_at) VALUES (2095, 1, 'locked', '{\"schemaVersion\":1,\"season\":2095,\"week\":1,\"games\":[],\"participants\":[]}', 1, now(), now());" \
+     "COMMIT;" | psql_as postgres nfl_pool > /dev/null; then echo "ALERTS-ROLLBACK ok: publishing works after the rollback"; rollback_ok=$((rollback_ok+1)); else problem 'publishing failed after the Pool Alerts rollback'; fi
+  if psql_as nfl_pool_owner nfl_pool < "$migrations/$m6" > /dev/null; then echo "ALERTS-ROLLBACK ok: migration 006 applies again after the rollback"; rollback_ok=$((rollback_ok+1)); else problem 'migration 006 could not be re-applied after the rollback'; fi
+  if printf "%s\n" "BEGIN; SELECT set_config('request.jwt.claims', '{\"sub\":\"00000000-0000-4000-8000-000000000001\",\"role\":\"authenticated\"}', true); SET LOCAL ROLE authenticated;" \
+     "UPDATE public.nfl_pool_weeks SET revision = 2, config = jsonb_set(config, '{label}', '\"re-applied\"') WHERE season = 2095 AND week = 1;" "COMMIT;" | psql_as postgres nfl_pool > /dev/null \
+     && [ "$(docker exec "$C" psql -X -At -U postgres -d nfl_pool -c "SELECT count(*) FROM pool_alerts.publication_events WHERE season = 2095 AND revision = 2")" = 1 ]; then
+    echo "ALERTS-ROLLBACK ok: the re-applied trigger captures the next publication"; rollback_ok=$((rollback_ok+1))
+  else problem 'the re-applied trigger did not capture the next publication'; fi
+else
+  problem 'the Pool Alerts rollback failed'
+fi
+if psql_as postgres nfl_pool < "$migrations/006-pool-alerts-rollback.sql" > "$log/rb.out" 2>&1; then problem 'the rollback ran as postgres'; else
+  grep -q 'must be applied as nfl_pool_owner' "$log/rb.out" && echo "ALERTS-ROLLBACK ok: the rollback refuses any role but nfl_pool_owner" && rollback_ok=$((rollback_ok+1)) || problem 'rollback refused for an unexpected reason'; fi
+
+echo "PostgreSQL $version · behavior $behavior_ok/${plan:-?} · full-field guard $guard_ok/${guard_plan:-?} · $(grep -o 'races=[0-9]* passed=[0-9]* failed=[0-9]*' "$log/races.out" || echo 'races: no summary') · alerts $alerts_ok/${alerts_plan:-?} · $(grep -o 'backup-compat passed=[0-9]*' "$log/backup.out" || echo 'backup: no summary') · rollback $rollback_ok/5"
+[ "$rollback_ok" -eq 5 ] || problem "Pool Alerts rollback checks: $rollback_ok of 5"
 if [ "$problems" -ne 0 ]; then echo "HDC-13 SQL gate FAILED ($problems problem(s))"; exit 1; fi
 echo "HDC-13 SQL gate passed"
