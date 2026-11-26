@@ -1,0 +1,54 @@
+name: Pool Alerts Browser Acceptance
+
+# Real Chrome, synthetic data, no network beyond the dependency install: the Pool Alerts Home card, the device panel,
+# sharing, blocked and iPhone states, and pushes delivered to the real service worker through the DevTools protocol.
+# Push SUBSCRIPTION is simulated (a headless browser has no push service); physical-device acceptance is manual.
+on:
+  pull_request:
+    paths:
+      - 'nfl-pool/pool-alerts.*'
+      - 'nfl-pool/push-client.mjs'
+      - 'nfl-pool/service-worker.js'
+      - 'nfl-pool/index.html'
+      - 'nfl-pool/acceptance/pool-alerts-browser.mjs'
+      - '.github/workflows/pool-alerts-browser.yml'
+  push:
+    branches:
+      - 'ccr-*'
+    paths:
+      - 'nfl-pool/pool-alerts.*'
+      - 'nfl-pool/push-client.mjs'
+      - 'nfl-pool/service-worker.js'
+      - 'nfl-pool/acceptance/pool-alerts-browser.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  chrome-pool-alerts:
+    name: Chrome Pool Alerts acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Install the ephemeral browser driver
+        run: npm install --no-save --no-package-lock --no-audit --no-fund playwright@1.56.1
+      - name: Verify Chrome on the runner
+        run: command -v google-chrome-stable || command -v google-chrome
+      - name: Browser acceptance at 375, 390 and 430 CSS pixels
+        env:
+          POOL_ALERTS_BROWSER_CHANNEL: chrome
+        run: node nfl-pool/acceptance/pool-alerts-browser.mjs --screenshots "$RUNNER_TEMP/pool-alerts-shots"
+      - name: Keep the mobile screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pool-alerts-mobile-screenshots
+          path: ${{ runner.temp }}/pool-alerts-shots
+          retention-days: 14

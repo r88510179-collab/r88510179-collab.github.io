@@ -1,6 +1,39 @@
 import assert from 'node:assert/strict';
-import {readFileSync as actualDiskReadFileSync} from 'node:fs';
+import {readFileSync as currentDiskReadFileSync} from 'node:fs';
 import vm from 'node:vm';
+
+// Pool Alerts v2 (shell v43) layer. Every older layer below reads through actualDiskReadFileSync, which now returns the
+// exact v42 bytes: it undoes ONLY this layer's additions (asset versions, the stylesheet and touch-icon links, the new
+// precached assets, the cache generation) and puts back the v42 push block verbatim, so the v42, v41 and v40
+// assertions keep testing their own historical bytes and behavior. The current v43 bytes are tested at the end.
+const V43_INDEX_EDITS=[
+  ['<script type="module" src="pool-alerts.mjs?v=2"></script>\n','<script type="module" src="pool-alerts.mjs?v=1"></script>\n'],
+  ['<script type="module" src="push-client.mjs?v=2"></script>\n','<script type="module" src="push-client.mjs?v=1"></script>\n'],
+  ['<link rel="stylesheet" href="pool-alerts.css?v=1">\n',''],
+  ['<link rel="apple-touch-icon" href="assets/pool-center-touch-180.png">\n','']
+];
+const V43_WORKER_EDITS=[
+  ["const CACHE='pool-center-shell-v43';","const CACHE='pool-center-shell-v42';"],
+  ["  './pool-alerts.mjs?v=2',\n  './push-client.mjs?v=2',\n  './pool-alerts.css?v=1',\n","  './pool-alerts.mjs?v=1',\n  './push-client.mjs?v=1',\n"],
+  ["  './assets/pool-center-icon-512.svg',\n  './assets/pool-alerts-icon-192.png',\n  './assets/pool-alerts-badge-96.png',\n  './assets/pool-center-touch-180.png'\n];","  './assets/pool-center-icon-512.svg'\n];"]
+];
+const V42_PUSH_BLOCK="\n// BEGIN POOL ALERTS PUSH\nfunction pushIdentity(p){\n  return p&&Number.isInteger(p.season)&&p.season>=2000&&p.season<=2100&&Number.isInteger(p.week)&&p.week>=1&&p.week<=18&&Number.isSafeInteger(p.revision)&&p.revision>=1&&['release','correction'].includes(p.kind);\n}\nself.addEventListener('push',event=>{\n  let p;try{p=event.data?.json()}catch{return}\n  if(!pushIdentity(p))return;\n  const title='Week '+p.week+(p.kind==='correction'?' picks updated':' official picks are live!');\n  event.waitUntil(self.registration.showNotification(title,{\n    body:p.kind==='correction'?'A new official revision is available. Tap to view.':'The official picks have been released. Tap to view.',\n    tag:'pool-alerts-'+p.season+'-'+p.week+'-'+p.revision,\n    icon:'/nfl-pool/assets/pool-center-icon-192.svg',\n    data:{season:p.season,week:p.week,revision:p.revision,kind:p.kind}\n  }));\n});\nself.addEventListener('notificationclick',event=>{\n  event.notification.close();\n  const p=event.notification.data;\n  if(!pushIdentity(p))return;\n  const target=new URL('/nfl-pool/',self.location.origin);\n  target.searchParams.set('view','picks');target.searchParams.set('season',String(p.season));target.searchParams.set('week',String(p.week));\n  event.waitUntil(self.clients.matchAll({type:'window',includeUncontrolled:true}).then(async clients=>{\n    const existing=clients.find(c=>c.url===target.href);\n    if(existing)return existing.focus();\n    return self.clients.openWindow(target.href);\n  }));\n});\n// END POOL ALERTS PUSH\n";
+function replaceOnce(text,[from,to]){
+  assert.equal(text.split(from).length,2,`exactly one v43 edit: ${from.slice(0,60)}`);
+  return text.replace(from,()=>to);
+}
+function actualDiskReadFileSync(url,encoding){
+  const bytes=currentDiskReadFileSync(url),path=String(url);
+  let text;
+  if(path===String(new URL('./index.html',import.meta.url)))text=V43_INDEX_EDITS.reduce(replaceOnce,bytes.toString('utf8'));
+  else if(path===String(new URL('./service-worker.js',import.meta.url))){
+    const edited=V43_WORKER_EDITS.reduce(replaceOnce,bytes.toString('utf8'));
+    const start=edited.indexOf('\n// BEGIN POOL ALERTS PUSH\n');
+    assert(start>0&&edited.endsWith('// END POOL ALERTS PUSH\n'),'v43 push block is the end of the worker');
+    text=edited.slice(0,start)+V42_PUSH_BLOCK;
+  }else return encoding?bytes.toString(encoding):bytes;
+  return encoding?Buffer.from(text).toString(encoding):Buffer.from(text);
+}
 
 // Preserve the independently tested v41 baseline, stripping only the exact push additions.
 const PUSH_SCRIPT='<script type="module" src="push-client.mjs?v=1"></script>\n';
@@ -2683,4 +2716,116 @@ console.log('service-worker precache graph (share-card, Home dashboard, V1.3 mob
   assert.equal(closed,true);assert.equal(opened[0],'https://example.test/nfl-pool/?view=picks&season=2026&week=12');
   assert.equal(shown.length,1);
   console.log('Pool Alerts v42: background push payload, notification tag, and safe deep link verified');
+}
+
+// Pool Alerts v2 (shell v43): the actual current bytes. The push handler runs unmodified in a VM against a minimal
+// in-memory IndexedDB (only what the worker uses: open/upgrade, get, put, delete, getAll with transaction completion).
+function memoryIndexedDb(){
+  const stores=new Map();
+  const request=(run)=>{const r={};queueMicrotask(()=>{try{r.result=run();r.onsuccess?.()}catch(e){r.error=e;r.onerror?.()}});return r};
+  const db={
+    objectStoreNames:{contains:n=>stores.has(n)},
+    createObjectStore(n,o={}){stores.set(n,{keyPath:o.keyPath,rows:new Map()})},
+    transaction(n){
+      const st=stores.get(n),t={oncomplete:null,onerror:null,onabort:null};
+      let pending=0;const done=()=>{if(--pending===0)queueMicrotask(()=>t.oncomplete?.())};
+      const op=fn=>{pending++;const r={};queueMicrotask(()=>{r.result=fn();done()});return r};
+      t.objectStore=()=>({
+        get:k=>op(()=>structuredClone(st.rows.get(k))),
+        getAll:()=>op(()=>[...st.rows.values()].map(v=>structuredClone(v))),
+        put:(v,k)=>op(()=>{st.rows.set(st.keyPath?v[st.keyPath]:k,structuredClone(v))}),
+        delete:k=>op(()=>{st.rows.delete(k)})
+      });
+      queueMicrotask(()=>{if(pending===0)t.oncomplete?.()});
+      return t;
+    },
+    close(){}
+  };
+  let created=false;
+  return{
+    stores,
+    open(){const r=request(()=>db);queueMicrotask(()=>{if(!created){created=true;r.result=db;r.onupgradeneeded?.()}});return r}
+  };
+}
+{
+  const actual=currentDiskReadFileSync(new URL('./service-worker.js',import.meta.url),'utf8');
+  const page=currentDiskReadFileSync(new URL('./index.html',import.meta.url),'utf8');
+  assert.match(actual,/const CACHE='pool-center-shell-v43'/);
+  for(const asset of ['./pool-alerts.mjs?v=2','./push-client.mjs?v=2','./pool-alerts.css?v=1','./assets/pool-alerts-icon-192.png','./assets/pool-alerts-badge-96.png','./assets/pool-center-touch-180.png'])
+    assert(actual.includes(`'${asset}'`),`v43 precaches ${asset}`);
+  for(const tag of ['<script type="module" src="pool-alerts.mjs?v=2"></script>','<script type="module" src="push-client.mjs?v=2"></script>',
+    '<link rel="stylesheet" href="pool-alerts.css?v=1">','<link rel="apple-touch-icon" href="assets/pool-center-touch-180.png">'])
+    assert.equal(page.split(tag).length,2,`index.html carries ${tag} once`);
+  for(const png of ['pool-alerts-icon-192.png','pool-alerts-badge-96.png','pool-center-touch-180.png']){
+    const bytes=currentDiskReadFileSync(new URL(`./assets/${png}`,import.meta.url));
+    assert.equal(bytes.subarray(1,4).toString('latin1'),'PNG',`${png} is a PNG`);
+  }
+
+  const handlers=new Map(),shown=[],opened=[],posted=[],badges=[],fetched=[];
+  let clients=[];
+  const idb=memoryIndexedDb();
+  const self={addEventListener:(name,fn)=>handlers.set(name,fn),location:{origin:'https://example.test'},
+    navigator:{setAppBadge:async n=>{badges.push(n)},clearAppBadge:async()=>{badges.push(0)}},
+    registration:{showNotification:async(title,options)=>shown.push({title,options}),pushManager:{subscribe:async()=>({endpoint:'https://fcm.googleapis.com/fcm/send/new',toJSON(){return{endpoint:this.endpoint,keys:{p256dh:'k',auth:'a'}}}})}},
+    clients:{matchAll:async()=>clients,openWindow:async url=>opened.push(url)}};
+  vm.runInNewContext(actual,{self,URL,indexedDB:idb,structuredClone,queueMicrotask,
+    fetch:async(url,init)=>{fetched.push({url,init});return{ok:true}},Date,Promise,Object,Number,JSON,console});
+  const push=async data=>{let task;handlers.get('push')({data:data===undefined?null:{json:()=>{if(data instanceof Error)throw data;return data}},waitUntil:p=>{task=p}});await task};
+  const click=async data=>{let task,closed=false;handlers.get('notificationclick')({notification:{close:()=>{closed=true},data},waitUntil:p=>{task=p}});await task;assert(closed)};
+
+  const release={v:1,kind:'release',season:2026,week:12,revision:1};
+  await push(release);
+  assert.equal(shown.at(-1).title,'Week 12 official picks are posted');
+  assert.equal(shown.at(-1).options.tag,'pool-week-2026-12','one notification per week');
+  assert.equal(shown.at(-1).options.renotify,true);
+  assert.equal(shown.at(-1).options.icon,'/nfl-pool/assets/pool-alerts-icon-192.png','raster icon (Android does not draw SVG)');
+  assert.equal(shown.at(-1).options.badge,'/nfl-pool/assets/pool-alerts-badge-96.png','monochrome status-bar badge');
+  assert.deepEqual(badges.at(-1),1,'the installed app shows one unread alert');
+  await push(release);
+  assert.equal(shown.at(-1).options.renotify,false,'an exact resend replaces the notification silently');
+  assert.equal(idb.stores.get('alerts').rows.size,1,'a resend is logged once');
+  await push({...release,kind:'correction',revision:2});
+  assert.equal(shown.at(-1).title,'Week 12 official picks corrected');
+  assert.match(shown.at(-1).options.body,/Revision 2/);
+  assert.equal(shown.at(-1).options.renotify,true);
+  await push({...release,week:21});
+  assert.equal(shown.at(-1).title,'Week 21 official picks are posted','postseason weeks are valid');
+  for(const bad of [{...release,week:99},{...release,kind:'score'},{...release,season:1999},new SyntaxError('not json'),undefined,'text']){
+    const before=shown.length;
+    await push(bad);
+    assert.equal(shown.length,before+1,'every push shows a notification (never a silent push)');
+    assert.equal(shown.at(-1).title,'Pool Center update');
+    assert.equal(shown.at(-1).options.data.kind,'update');
+  }
+  await push({v:1,kind:'test'});
+  assert.equal(shown.at(-1).title,'Pool Alerts test');
+  assert(!JSON.stringify(shown).match(/participant|entry name|standing/i),'lock-screen text names no participant or standing');
+
+  // A tap: an open Pool Center window (not Admin) is focused and navigated to the week's picks; alerts marked opened.
+  let focused=0,navigated=null;
+  clients=[{url:'https://example.test/nfl-pool/admin/',focus:async()=>{throw Error('wrong window')}},
+    {url:'https://example.test/nfl-pool/?view=home',focus:async()=>{focused++},navigate:async u=>{navigated=u}}];
+  await click({season:2026,week:12,revision:2,kind:'correction'});
+  assert.equal(focused,1);
+  assert.equal(navigated,'https://example.test/nfl-pool/?view=picks&season=2026&week=12');
+  assert(['2026:12:1:release','2026:12:2:correction'].every(id=>idb.stores.get('alerts').rows.get(id).openedAt),'opening marks the week read');
+  assert.equal(badges.at(-1),1,'week 21 is still unread');
+  // An uncontrolled window cannot be navigated by the worker: the page is asked to open the week itself.
+  clients=[{url:'https://example.test/nfl-pool/',focus:async()=>{},navigate:async()=>{throw Error('not controlled')},postMessage:m=>posted.push(m)}];
+  await click({season:2026,week:21,revision:1,kind:'release'});
+  assert.deepEqual(JSON.parse(JSON.stringify(posted.at(-1))),{type:'pool-alerts-open',url:'https://example.test/nfl-pool/?view=picks&season=2026&week=21'});
+  assert.equal(badges.at(-1),0,'no unread alert left');
+  clients=[];
+  await click({kind:'update'});
+  assert.equal(opened.at(-1),'https://example.test/nfl-pool/?view=home','an unrecognized alert opens Home');
+  await click({season:2026,week:12,revision:1,kind:'release'});
+  assert.equal(opened.at(-1),'https://example.test/nfl-pool/?view=picks&season=2026&week=12');
+
+  // The browser rotated the subscription: the device re-registers under its own management credentials.
+  idb.stores.get('kv').rows.set('device',{api:'https://alerts.example',id:'6f1c2d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f',token:'t'.repeat(43),endpoint:'https://fcm.googleapis.com/fcm/send/old'});
+  let task;handlers.get('pushsubscriptionchange')({oldSubscription:{options:{applicationServerKey:new Uint8Array(65)}},newSubscription:null,waitUntil:p=>{task=p}});await task;
+  assert.equal(fetched.at(-1).url,'https://alerts.example/v1/preferences');
+  assert.equal(JSON.parse(fetched.at(-1).init.body).subscription.endpoint,'https://fcm.googleapis.com/fcm/send/new');
+  assert.equal(idb.stores.get('kv').rows.get('device').endpoint,'https://fcm.googleapis.com/fcm/send/new');
+  console.log('Pool Alerts v43: never-silent pushes, per-week tags with silent resends, raster icon and badge, device log, app badge, focus-or-open taps, postseason weeks and subscription rotation verified');
 }

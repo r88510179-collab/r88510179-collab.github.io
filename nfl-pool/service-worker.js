@@ -1,5 +1,5 @@
 'use strict';
-const CACHE='pool-center-shell-v42';
+const CACHE='pool-center-shell-v43';
 const SHELL=[
   './',
   './index.html',
@@ -13,8 +13,9 @@ const SHELL=[
   './survivor-math.js?v=7',
   './contest-rulings.js?v=2',
   './score-feed-proxy.js?v=2',
-  './pool-alerts.mjs?v=1',
-  './push-client.mjs?v=1',
+  './pool-alerts.mjs?v=2',
+  './push-client.mjs?v=2',
+  './pool-alerts.css?v=1',
   './pwa.js?v=1',
   './share-card.js?v=2',
   './swing-card.js?v=1',
@@ -31,7 +32,10 @@ const SHELL=[
   './manifest.webmanifest',
   './assets/pool-center-icon.svg',
   './assets/pool-center-icon-192.svg',
-  './assets/pool-center-icon-512.svg'
+  './assets/pool-center-icon-512.svg',
+  './assets/pool-alerts-icon-192.png',
+  './assets/pool-alerts-badge-96.png',
+  './assets/pool-center-touch-180.png'
 ];
 const DOCUMENT_PATHS=['/nfl-pool/','/nfl-pool/index.html'];
 const ADMIN_PATH='/nfl-pool/admin';
@@ -94,30 +98,101 @@ self.addEventListener('fetch',event=>{
 });
 
 // BEGIN POOL ALERTS PUSH
+// Pool Alerts v2. Every push shows a notification (browsers penalize or revoke silent pushes). A recognized alert names
+// only the week and whether its official picks were posted or corrected: nothing private reaches the lock screen.
+const ALERT_ICON='/nfl-pool/assets/pool-alerts-icon-192.png',ALERT_BADGE='/nfl-pool/assets/pool-alerts-badge-96.png';
 function pushIdentity(p){
-  return p&&Number.isInteger(p.season)&&p.season>=2000&&p.season<=2100&&Number.isInteger(p.week)&&p.week>=1&&p.week<=18&&Number.isSafeInteger(p.revision)&&p.revision>=1&&['release','correction'].includes(p.kind);
+  return !!p&&(p.v===undefined||p.v===1)&&Number.isInteger(p.season)&&p.season>=2000&&p.season<=2100&&Number.isInteger(p.week)&&p.week>=1&&p.week<=22&&Number.isSafeInteger(p.revision)&&p.revision>=1&&['release','correction'].includes(p.kind);
+}
+function alertsDb(){
+  return new Promise((resolve,reject)=>{
+    const r=indexedDB.open('pool-alerts',1);
+    r.onupgradeneeded=()=>{const db=r.result;if(!db.objectStoreNames.contains('kv'))db.createObjectStore('kv');if(!db.objectStoreNames.contains('alerts'))db.createObjectStore('alerts',{keyPath:'id'})};
+    r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);
+  });
+}
+async function alertsTx(store,mode,fn){
+  const db=await alertsDb();
+  try{return await new Promise((resolve,reject)=>{const t=db.transaction(store,mode),r=fn(t.objectStore(store));t.oncomplete=()=>resolve(r&&r.result);t.onerror=t.onabort=()=>reject(t.error)})}
+  finally{db.close()}
+}
+async function unreadAlerts(){return((await alertsTx('alerts','readonly',s=>s.getAll()))||[]).filter(a=>a.kind!=='test'&&!a.openedAt).length}
+async function updateBadge(){
+  const nav=self.navigator;
+  if(!nav||typeof nav.setAppBadge!=='function')return;
+  const n=await unreadAlerts();
+  if(n)await nav.setAppBadge(n);else if(typeof nav.clearAppBadge==='function')await nav.clearAppBadge();
+}
+async function recordAlert(p){
+  const id=p.season+':'+p.week+':'+p.revision+':'+p.kind;
+  const seen=await alertsTx('alerts','readonly',s=>s.get(id));
+  if(!seen)await alertsTx('alerts','readwrite',s=>{s.put({id,season:p.season,week:p.week,revision:p.revision,kind:p.kind,receivedAt:Date.now(),openedAt:null})});
+  const all=(await alertsTx('alerts','readonly',s=>s.getAll()))||[];
+  if(all.length>40){const old=all.sort((a,b)=>a.receivedAt-b.receivedAt).slice(0,all.length-40);await alertsTx('alerts','readwrite',s=>{for(const a of old)s.delete(a.id)})}
+  return !seen;
 }
 self.addEventListener('push',event=>{
-  let p;try{p=event.data?.json()}catch{return}
-  if(!pushIdentity(p))return;
-  const title='Week '+p.week+(p.kind==='correction'?' picks updated':' official picks are live!');
-  event.waitUntil(self.registration.showNotification(title,{
-    body:p.kind==='correction'?'A new official revision is available. Tap to view.':'The official picks have been released. Tap to view.',
-    tag:'pool-alerts-'+p.season+'-'+p.week+'-'+p.revision,
-    icon:'/nfl-pool/assets/pool-center-icon-192.svg',
-    data:{season:p.season,week:p.week,revision:p.revision,kind:p.kind}
-  }));
+  event.waitUntil((async()=>{
+    let p=null;
+    try{p=event.data?event.data.json():null}catch{p=null}
+    if(p&&p.kind==='test'){
+      return self.registration.showNotification('Pool Alerts test',{body:'Alerts are working on this device.',tag:'pool-alerts-test',icon:ALERT_ICON,badge:ALERT_BADGE,data:{kind:'test'}});
+    }
+    if(!pushIdentity(p)){
+      return self.registration.showNotification('Pool Center update',{body:'Open Pool Center for the latest official picks.',tag:'pool-alerts-update',icon:ALERT_ICON,badge:ALERT_BADGE,data:{kind:'update'}});
+    }
+    let fresh=true;
+    try{fresh=await recordAlert(p)}catch{fresh=true}
+    const correction=p.kind==='correction';
+    await self.registration.showNotification('Week '+p.week+(correction?' official picks corrected':' official picks are posted'),{
+      body:correction?'Revision '+p.revision+' of the official picks is posted. Tap to review.':'Tap to see every entry\'s official picks.',
+      // One notification per week: a correction replaces and re-alerts; an exact repeat (a resend) replaces silently.
+      tag:'pool-week-'+p.season+'-'+p.week,renotify:fresh,icon:ALERT_ICON,badge:ALERT_BADGE,timestamp:Date.now(),
+      data:{season:p.season,week:p.week,revision:p.revision,kind:p.kind}
+    });
+    try{await updateBadge()}catch{}
+  })());
 });
 self.addEventListener('notificationclick',event=>{
   event.notification.close();
-  const p=event.notification.data;
-  if(!pushIdentity(p))return;
+  const p=event.notification.data||{};
   const target=new URL('/nfl-pool/',self.location.origin);
-  target.searchParams.set('view','picks');target.searchParams.set('season',String(p.season));target.searchParams.set('week',String(p.week));
-  event.waitUntil(self.clients.matchAll({type:'window',includeUncontrolled:true}).then(async clients=>{
-    const existing=clients.find(c=>c.url===target.href);
-    if(existing)return existing.focus();
+  if(pushIdentity(p)){target.searchParams.set('view','picks');target.searchParams.set('season',String(p.season));target.searchParams.set('week',String(p.week))}
+  else target.searchParams.set('view','home');
+  event.waitUntil((async()=>{
+    if(pushIdentity(p)){
+      try{
+        const list=(await alertsTx('alerts','readonly',s=>s.getAll()))||[];
+        const hit=list.filter(a=>a.season===p.season&&a.week===p.week&&a.revision<=p.revision&&!a.openedAt);
+        if(hit.length)await alertsTx('alerts','readwrite',s=>{for(const a of hit)s.put(Object.assign({},a,{openedAt:Date.now()}))});
+        await updateBadge();
+      }catch{}
+    }
+    const windows=await self.clients.matchAll({type:'window',includeUncontrolled:true});
+    const open=windows.find(c=>{const u=new URL(c.url);return u.origin===self.location.origin&&u.pathname.startsWith('/nfl-pool/')&&!u.pathname.startsWith('/nfl-pool/admin')});
+    if(open){
+      try{await open.focus()}catch{}
+      try{if(typeof open.navigate==='function'){await open.navigate(target.href);return}}catch{}
+      open.postMessage({type:'pool-alerts-open',url:target.href});
+      return;
+    }
     return self.clients.openWindow(target.href);
-  }));
+  })());
+});
+// The browser replaced this device's push subscription: re-register it with the alert service under the same device.
+self.addEventListener('pushsubscriptionchange',event=>{
+  event.waitUntil((async()=>{
+    const device=await alertsTx('kv','readonly',s=>s.get('device'));
+    if(!device||!device.id||!device.token||typeof device.api!=='string'||!/^https:\/\//.test(device.api))return;
+    let sub=event.newSubscription||null;
+    if(!sub){
+      const key=event.oldSubscription&&event.oldSubscription.options&&event.oldSubscription.options.applicationServerKey;
+      if(!key)return;
+      sub=await self.registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:key});
+    }
+    const res=await fetch(device.api+'/v1/preferences',{method:'POST',credentials:'omit',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:device.id,token:device.token,subscription:sub.toJSON()})});
+    if(res.ok)await alertsTx('kv','readwrite',s=>{s.put(Object.assign({},device,{endpoint:sub.endpoint}),'device')});
+  })());
 });
 // END POOL ALERTS PUSH
