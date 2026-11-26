@@ -124,7 +124,7 @@ runs out. The earlier draft (polling every 30 s) had exactly that problem.
 ```sh
 cd nfl-pool/push && npm ci          # pg + web-push (runtime), esbuild (bundle), all lockfile-pinned
 node core.test.mjs                  # policy, guards, auth, owner tool
-bash test-integration.sh            # 28 end-to-end scenarios on disposable PostgreSQL 17.11 (Docker)
+bash test-integration.sh            # 30 end-to-end scenarios on disposable PostgreSQL 17.11 (Docker)
 npm run bundle                      # dist/index.mjs + dist/poolalerts.zip, prints SHA-256 (reproducible)
 bash ../sql-tests/run.sh            # SQL gate incl. Pool Alerts capture, backup compatibility and rollback
 node ../acceptance/pool-alerts-browser.mjs --screenshots /tmp/shots   # Chromium acceptance (push subscription simulated)

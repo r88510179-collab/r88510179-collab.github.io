@@ -1,6 +1,6 @@
 # Pool Alerts — physical-device acceptance checklist
 
-Automated tests cover the sender (28 end-to-end scenarios with real VAPID signing and payload encryption), the database
+Automated tests cover the sender (30 end-to-end scenarios with real VAPID signing and payload encryption), the database
 (capture, privileges, backup compatibility, rollback) and the app in Chromium (8 scenarios at 375/390/430 px, real
 service-worker pushes). **They do not prove delivery through Google/Apple push services to a real phone.** Only these
 manual checks do. Record date, device, OS and browser versions, and the result of each line.

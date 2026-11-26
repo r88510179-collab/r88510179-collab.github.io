@@ -70,19 +70,41 @@ async function closeOpen(c, {season, week, maxRevision = null, status, reason, d
 }
 
 async function planPublish(c, event, settings, nowMs, counts) {
-  counts.superseded += await closeOpen(c, {season: event.season, week: event.week, status: 'superseded',
-    reason: `revision ${event.revision} was published`, deliveryState: 'superseded', deliveryError: 'superseded'});
   const plan = planEvent({action: 'publish', contentChanged: event.content_changed, occurredAt: event.occurred_at.toISOString()},
     {nowMs, maxAgeMinutes: settings.max_notification_age_minutes});
+  // An identical republish has nothing new to say, but it still supersedes the week's announcement that may be on its
+  // way (verification needs the exact public revision). Those undelivered deliveries move to the new revision with the
+  // same kind, so a publish -> correct -> identical republish sequence before a cycle never loses the alert.
+  const carried = plan.status === 'unchanged' ? (await c.query(`SELECT d.subscription_id, d.kind FROM pool_alerts.deliveries d
+      JOIN pool_alerts.notifications n ON n.id = d.notification_id
+      WHERE n.season = $1 AND n.week = $2 AND n.status = ANY($3) AND d.state IN ('pending', 'retry', 'sending')`,
+    [event.season, event.week, OPEN])).rows : [];
+  counts.superseded += await closeOpen(c, {season: event.season, week: event.week, status: 'superseded',
+    reason: `revision ${event.revision} was published`, deliveryState: 'superseded', deliveryError: 'superseded'});
+  const status = plan.status === 'unchanged' && carried.length ? 'queued' : plan.status;
+  const reason = status === plan.status ? plan.reason : 'identical republish: carries the announcement still on its way';
   const announced = (await c.query(`SELECT EXISTS (SELECT 1 FROM pool_alerts.deliveries d JOIN pool_alerts.notifications n ON n.id = d.notification_id
       WHERE n.season = $1 AND n.week = $2 AND d.state = 'sent') AS yes`, [event.season, event.week])).rows[0].yes;
   const notification = (await c.query(`INSERT INTO pool_alerts.notifications
       (event_id, season, week, revision, base_kind, status, status_reason, published_at, finished_at)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $6 = 'queued' THEN NULL ELSE clock_timestamp() END)
       ON CONFLICT (event_id) DO NOTHING RETURNING id`,
-    [event.id, event.season, event.week, event.revision, announced ? 'correction' : 'release', plan.status, plan.reason, event.published_at])).rows[0];
-  counts[plan.status] += 1;
-  if (!notification || plan.status !== 'queued') return;
+    [event.id, event.season, event.week, event.revision, announced ? 'correction' : 'release', status, reason, event.published_at])).rows[0];
+  counts[status] += 1;
+  if (!notification || status !== 'queued') return;
+  if (carried.length) {
+    // Same devices, same kind; a device that has since turned corrections off or been removed is skipped.
+    const inserted = await c.query(`INSERT INTO pool_alerts.deliveries (notification_id, subscription_id, kind)
+        SELECT DISTINCT ON (p.subscription_id) $1, p.subscription_id, p.kind
+        FROM unnest($2::uuid[], $3::text[]) AS p(subscription_id, kind)
+        JOIN pool_alerts.subscriptions s ON s.id = p.subscription_id
+        WHERE s.status = 'active' AND (p.kind = 'release' OR s.corrections)
+        ORDER BY p.subscription_id, (p.kind = 'release') DESC
+        ON CONFLICT DO NOTHING`, [notification.id, carried.map(r => r.subscription_id), carried.map(r => r.kind)]);
+    counts.deliveries += inserted.rowCount;
+    counts.carried = (counts.carried || 0) + inserted.rowCount;
+    return;
+  }
   // A device gets 'release' until it has received an announcement of this week, 'correction' afterwards (and only if
   // it wants corrections). Only devices enrolled before the publication are included, and a device that already
   // received this exact revision of this week gets nothing (duplicate publication).

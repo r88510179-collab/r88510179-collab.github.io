@@ -206,6 +206,36 @@ try {
     assert.equal((await notificationOf(4, 2)).status, 'superseded');
   });
 
+  // Found on the hosted staging sender: publish -> correct -> identical republish before a cycle superseded the pending
+  // release and planned the identical revision as 'unchanged', so nobody heard about the week.
+  await scenario('identical republish while the release is still on its way: the newest revision carries it, nobody misses the week', async () => {
+    await publish(22);
+    await publish(22, {label: 'Week 22 (corrected)'});
+    await publish(22, {label: 'Week 22 (corrected)'});
+    await dispatch();
+    for (const device of [A, B, C]) assert.deepEqual(weekMessages(device, 22).map(m => [m.payload.kind, m.payload.revision]), [['release', 3]]);
+    assert.equal((await notificationOf(22, 2)).status, 'superseded');
+    assert.equal((await notificationOf(22, 3)).status, 'done');
+    const before = pushService.messages.length;
+    await publish(22, {label: 'Week 22 (corrected)'});
+    await dispatch();
+    assert.equal(pushService.messages.length, before, 'an identical republish after delivery still announces nothing');
+    assert.equal((await notificationOf(22, 4)).status, 'unchanged');
+  });
+
+  await scenario('identical republish while a correction is still on its way: opted-in devices still get the correction', async () => {
+    await owner('pause');
+    await publish(22, {label: 'Week 22 (corrected again)'});
+    await dispatch();
+    await publish(22, {label: 'Week 22 (corrected again)'});
+    await owner('resume');
+    await dispatch();
+    for (const device of [A, C]) assert.deepEqual(weekMessages(device, 22).map(m => [m.payload.kind, m.payload.revision]), [['release', 3], ['correction', 6]]);
+    assert.deepEqual(weekMessages(B, 22).map(m => [m.payload.kind, m.payload.revision]), [['release', 3]]);
+    assert.equal((await notificationOf(22, 5)).status, 'superseded');
+    assert.equal((await notificationOf(22, 6)).status, 'done');
+  });
+
   await scenario('failed publications (RLS refusal, constraint violation, stale compare-and-swap) record and send nothing', async () => {
     const before = pushService.messages.length;
     await assert.rejects(asPublisher(`INSERT INTO public.nfl_pool_weeks (season, week, status, config, revision, published_at)
