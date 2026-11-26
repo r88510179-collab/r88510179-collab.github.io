@@ -1,6 +1,29 @@
 import assert from 'node:assert/strict';
-import {readFileSync as diskReadFileSync} from 'node:fs';
+import {readFileSync as rawDiskReadFileSync} from 'node:fs';
 import vm from 'node:vm';
+
+// Preserve the immutable v40 assertions below. The inverse removes only the new Pool Alerts layer.
+// Actual v41 bytes and behavior are checked independently at the end.
+const ALERTS_MARKUP="      <section class=\"card\" aria-label=\"Pool Alerts\">\n        <div class=\"head\"><div><span class=\"section-kicker\">Pool Alerts</span><h2 id=\"poolAlertsTitle\" role=\"status\">Checking official picks…</h2><div class=\"meta\" id=\"poolAlertsNote\">Checking the latest release.</div></div><a class=\"dash-tool\" id=\"poolAlertsLink\" hidden>View picks</a></div>\n      </section>\n";
+const ALERTS_SCRIPT="<script type=\"module\" src=\"pool-alerts.mjs?v=1\"></script>\n";
+const ALERTS_WORKER="  './pool-alerts.mjs?v=1',\n";
+function removeExact(text,part){
+  assert.equal(text.split(part).length,2,'one exact Pool Alerts addition');
+  return text.replace(part,'');
+}
+function diskReadFileSync(url,encoding){
+  const raw=rawDiskReadFileSync(url);
+  const path=String(url);
+  let content=raw;
+  if(path.endsWith('/index.html'))content=Buffer.from(removeExact(removeExact(raw.toString('utf8'),ALERTS_MARKUP),ALERTS_SCRIPT),'utf8');
+  if(path.endsWith('/service-worker.js')){
+    const s=raw.toString('utf8');
+    assert.equal(s.split("const CACHE='pool-center-shell-v41'").length,2,'exact new shell generation');
+    content=Buffer.from(removeExact(s,ALERTS_WORKER).replace("const CACHE='pool-center-shell-v41'","const CACHE='pool-center-shell-v40'"),'utf8');
+  }
+  return encoding?content.toString(encoding):content;
+}
+
 
 // Historical HDC/PWA tests compare every earlier feature to its exact historical bytes.
 // Undo ONLY this new group-vs-field presentation layer for those immutable-baseline tests.
@@ -2587,3 +2610,42 @@ assert.equal(ssFailures.length,0,`Season record service-worker regressions faile
 }
 
 console.log('service-worker precache graph (share-card, Home dashboard, V1.3 mobile UX, V1.4 compact Picks UX, V1.4 final polish, V1.4 collapsible slate groups, V1.4 multi-select slates and season record versions), fresh (cache:"reload") precache requests, all-or-nothing install, cache rollover, public fallback, HTTP error fallback, navigation redirect, public route boundary, Admin isolation, Admin path boundary and noncanonical Admin path regressions passed');
+
+{
+  const page=rawDiskReadFileSync(new URL('./index.html',import.meta.url),'utf8');
+  const worker=rawDiskReadFileSync(new URL('./service-worker.js',import.meta.url),'utf8');
+  assert.equal(page.split(ALERTS_MARKUP).length,2);
+  assert.equal(page.split(ALERTS_SCRIPT).length,2);
+  assert.equal(worker.split(ALERTS_WORKER).length,2);
+  assert.match(worker,/const CACHE='pool-center-shell-v41'/);
+  const {latestPublication,publicationKey,publicationTime,bootPoolAlerts,STORAGE_KEY}=await import('./pool-alerts.mjs');
+  const a={season:2026,week:11,revision:2,publishedAt:'2026-11-18T15:00:00Z'};
+  const b={season:2026,week:12,revision:1,publishedAt:'2026-11-25T14:00:00Z'};
+  let state={ready:true,publishedStale:false,index:[b,a],current:{week:a}};
+  assert.equal(latestPublication(state),b,'latest published week is independent of selection and input ordering');
+  assert.equal(latestPublication({...state,publishedStale:true}),null);
+  assert.equal(latestPublication({...state,index:[a,a]}),null);
+  assert.equal(latestPublication({...state,index:[{...b,revision:0}]}),null);
+  assert.equal(publicationKey(b),'2026:12:1');
+  assert.match(publicationTime(b),/9:00 AM EST/);
+  assert.equal(publicationTime({...b,publishedAt:'invalid'}),'Release time unavailable');
+  const nodes=Object.fromEntries(['poolAlertsTitle','poolAlertsNote','poolAlertsLink'].map(id=>[id,{textContent:'',hidden:false,removeAttribute(key){delete this[key]}}]));
+  const handlers=new Map(),saved=new Map();
+  const doc={body:{dataset:{view:'home'}},getElementById:id=>nodes[id],addEventListener:(t,f)=>handlers.set(t,f),dispatchEvent:e=>{if(e.type==='poolcenter:season')e.detail.result=state}};
+  const storage={getItem:k=>saved.get(k),setItem:(k,v)=>saved.set(k,v)};
+  bootPoolAlerts(doc,storage);
+  const update=()=>handlers.get('poolcenter:update')({detail:{contest:'pickem'}});
+  assert.match(nodes.poolAlertsTitle.textContent,/New · Week 12/);
+  assert.equal(nodes.poolAlertsLink.href,'./?view=picks&season=2026&week=12');
+  assert.equal(saved.size,0,'showing Home or historical picks never marks newest release read');
+  doc.body.dataset.view='picks';update();assert.equal(saved.size,0);
+  state={...state,current:{week:b}};update();assert.equal(saved.get(STORAGE_KEY),'2026:12:1');
+  assert.doesNotMatch(nodes.poolAlertsTitle.textContent,/New ·/);
+  const correction={...b,revision:2};doc.body.dataset.view='home';
+  state={...state,index:[a,correction],current:{week:correction}};update();
+  assert.match(nodes.poolAlertsTitle.textContent,/New · Week 12/);
+  state={...state,publishedStale:true};update();
+  assert.equal(nodes.poolAlertsLink.hidden,true);assert.match(nodes.poolAlertsTitle.textContent,/unavailable/);
+  assert.equal(saved.get(STORAGE_KEY),'2026:12:1');
+  console.log('Pool Alerts v41 latest publication, unread, correction, stale and ET regressions passed');
+}
