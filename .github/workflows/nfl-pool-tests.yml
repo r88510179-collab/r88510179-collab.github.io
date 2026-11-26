@@ -212,3 +212,40 @@ jobs:
 
       - name: Run the SQL behavior and race suites on PostgreSQL 17.11
         run: bash nfl-pool/sql-tests/run.sh
+
+  push-alerts-isolated:
+    name: push-alerts-isolated
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: pool_alerts_test
+          POSTGRES_USER: alerts_test
+          POSTGRES_PASSWORD: synthetic_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alerts_test -d pool_alerts_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PUSH_TEST_DATABASE_URL: postgresql://alerts_test:synthetic_ci_only@127.0.0.1:5432/pool_alerts_test
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Install isolated sender dependencies
+        working-directory: nfl-pool/push
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Verify sender modules and run synthetic database integration
+        run: |
+          node --check nfl-pool/push/main.mjs
+          node --check nfl-pool/push/server.mjs
+          node --check nfl-pool/push-client.mjs
+          node nfl-pool/push/integration.spec.mjs
