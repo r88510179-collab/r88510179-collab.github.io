@@ -5,7 +5,7 @@ import pg from 'pg';
 import webpush from 'web-push';
 import {publicLatest,detectRelease,subscribe,changeSubscription,deliverOne} from './server.mjs';
 const env=process.env;
-for(const k of ['DATABASE_URL','NEON_AUTH_URL','NEON_DATA_URL','APP_ORIGIN','VAPID_PUBLIC_KEY','VAPID_PRIVATE_KEY','VAPID_SUBJECT','ENROLLMENT_CODE','EXPECTED_DATABASE'])if(!env[k])throw Error('Missing required setting: '+k);
+for(const k of ['DATABASE_URL','NEON_AUTH_URL','NEON_DATA_URL','APP_ORIGIN','VAPID_PUBLIC_KEY','VAPID_PRIVATE_KEY','VAPID_SUBJECT','ENROLLMENT_CODE','EXPECTED_DATABASE','EXPECTED_DATABASE_HOST'])if(!env[k])throw Error('Missing required setting: '+k);
 if(env.ENROLLMENT_CODE.length<20)throw Error('Enrollment code too short');
 const origin=new URL(env.APP_ORIGIN);
 if(origin.protocol!=='https:'||origin.origin!==env.APP_ORIGIN)throw Error('APP_ORIGIN must be exact HTTPS origin');
@@ -13,6 +13,7 @@ for(const k of ['NEON_AUTH_URL','NEON_DATA_URL']){
   const u=new URL(env[k]);if(u.protocol!=='https:'||!u.hostname.endsWith('.neon.tech')||u.username||u.password)throw Error('Invalid Neon endpoint');
 }
 if(env.PUSH_ENABLED!=='true')throw Error('Sender disabled; explicit PUSH_ENABLED required');
+if(new URL(env.DATABASE_URL).hostname!==env.EXPECTED_DATABASE_HOST)throw Error('Database host guard mismatch');
 const pool=new pg.Pool({connectionString:env.DATABASE_URL,max:5,connectionTimeoutMillis:5000,statement_timeout:10000});
 const guard=await pool.query('SELECT current_database() AS db');
 if(guard.rows[0].db!==env.EXPECTED_DATABASE)throw Error('Database guard mismatch');
@@ -56,7 +57,7 @@ let running=false;
 async function tick(){
   if(running)return;running=true;
   try{
-    try{await detectRelease(pool,()=>publicLatest(env.NEON_AUTH_URL,env.NEON_DATA_URL))}catch{console.error('Release verification failed; no new events queued')}
+    try{await detectRelease(pool,()=>publicLatest(env.NEON_AUTH_URL,env.NEON_DATA_URL))}catch{console.error('Release verification failed; delivery paused');return}
     for(let i=0;i<100;i++){if(!await deliverOne(pool,(sub,payload)=>webpush.sendNotification(sub,JSON.stringify(payload),{TTL:86400,timeout:15000,urgency:'normal'})))break}
   }catch{console.error('Delivery cycle failed')}finally{running=false}
 }
