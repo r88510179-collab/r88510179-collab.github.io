@@ -15,8 +15,8 @@ function diskReadFileSync(url,encoding){
   const raw=rawDiskReadFileSync(url);
   const path=String(url);
   let content=raw;
-  if(path.endsWith('/index.html'))content=Buffer.from(removeExact(removeExact(raw.toString('utf8'),ALERTS_MARKUP),ALERTS_SCRIPT),'utf8');
-  if(path.endsWith('/service-worker.js')){
+  if(path===String(new URL('./index.html',import.meta.url)))content=Buffer.from(removeExact(removeExact(raw.toString('utf8'),ALERTS_MARKUP),ALERTS_SCRIPT),'utf8');
+  if(path===String(new URL('./service-worker.js',import.meta.url))){
     const s=raw.toString('utf8');
     assert.equal(s.split("const CACHE='pool-center-shell-v41'").length,2,'exact new shell generation');
     content=Buffer.from(removeExact(s,ALERTS_WORKER).replace("const CACHE='pool-center-shell-v41'","const CACHE='pool-center-shell-v40'"),'utf8');
