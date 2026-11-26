@@ -17,7 +17,7 @@ export function validateSubscription(value){
   if(!value||typeof value.endpoint!=='string'||value.endpoint.length>2048)throw Error('Invalid endpoint');
   const u=new URL(value.endpoint);
   const allowed=['fcm.googleapis.com','updates.push.services.mozilla.com','web.push.apple.com','notify.windows.com'];
-  if(u.protocol!=='https:'||u.username||u.password||u.port||u.hash||!allowed.some(h=>u.hostname===h|| (h==='notify.windows.com'&&u.hostname.endsWith('.'+h))))throw Error('Unsupported push provider');
+  if(u.protocol!=='https:'||u.username||u.password||u.port||u.hash||!allowed.some(h=>u.hostname===h|| (h==='notify.windows.com'&&u.hostname.endsWith('.'+h))||(h==='web.push.apple.com'&&u.hostname.endsWith('.push.apple.com'))))throw Error('Unsupported push provider');
   if(!u.pathname||u.pathname==='/')throw Error('Invalid push path');
   const keys=value.keys;
   for(const [name,length] of [['p256dh',65],['auth',16]]){
