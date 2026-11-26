@@ -16,8 +16,8 @@ Pool Alerts maintenance → `pause`), then investigate.
      sent late, by design.
    - `unchanged`: you republished identical content; nothing new to announce.
    - `done` with sent > 0: delivered to the push services; see §3 for a device that did not show it.
-3. **Sending: database OFF** → `resume`. **deployment OFF** → the function was deployed without
-   `POOL_ALERTS_SENDING=enabled` (config-only redeploy, DEPLOY.md §5).
+3. **Sending: database OFF** → `resume`. **deployment OFF** → the function is running without
+   `POOL_ALERTS_SENDING=enabled`: set it with a config-only redeploy (DEPLOY.md §5a), wait a minute, check `health`.
 
 ## 2. The sender is down
 
@@ -62,9 +62,9 @@ A restore of the public schema from the Personal backup keeps the trigger; resto
 
 | Level | How | Effect |
 | --- | --- | --- |
-| Pause | Admin **Pause sending** / workflow `pause` | Nothing is sent; events keep being recorded; **Resume** restarts (older than 24 h skipped) |
+| Pause (**immediate**) | Admin **Pause sending** / workflow `pause` | Nothing is sent from the next request on; events keep being recorded; **Resume** restarts (older than 24 h skipped) |
 | Stop the schedule | Neon Console → Functions → `poolalerts` → Manage Triggers → disable `pool-alerts-hourly` | No hourly cycles; Admin "notify now" still works |
-| Stop the sender | Config-only redeploy with `POOL_ALERTS_SENDING` removed, or delete the function | The service answers but never sends / is gone; the app shows "not available" |
+| Stop the sender | Config-only redeploy with `{"POOL_ALERTS_SENDING": ""}` (DEPLOY.md §5a), or delete the function | Within about a minute (running instances finish first; 0–36 s on staging) the service answers but never sends / is gone. Leaving the variable out of a redeploy does **not** remove it: deployments merge variables |
 | Stop recording | `ALTER TABLE public.nfl_pool_weeks DISABLE TRIGGER nfl_pool_alerts_capture;` | Publications no longer recorded (publishing unaffected) |
 | Remove completely | `006-pool-alerts-rollback.sql` as nfl_pool_owner after a backup branch | Schema, trigger, function and role removed; devices re-enroll if it is reinstated |
 

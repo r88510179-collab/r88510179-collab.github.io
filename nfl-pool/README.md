@@ -95,7 +95,7 @@ A revision is an explicit replacement of the same week. The current system reche
 | \`survivor-app.js\` / \`survivor-math.js\` | Survivor history, eligibility, reused teams, results and the archive |
 | \`score-feed-proxy.js\` / \`score-proxy/\` | ESPN-shaped score requests and the source implementation/tests for the gateway; deployed gateway health is checked separately |
 | \`admin/\` | Local sheet parsers, validated publisher screens, Survivor historical publisher and incident rulings |
-| \`service-worker.js\` / \`pwa.js\` / \`manifest.webmanifest\` | Installs the web app and caches the app shell for offline opening; **offline does not mean current NFL scores or new publications** The worker also shows Pool Alerts notifications. |
+| \`service-worker.js\` / \`pwa.js\` / \`manifest.webmanifest\` | Installs the web app and caches the app shell for offline opening; **offline does not mean current NFL scores or new publications**. The worker also shows Pool Alerts notifications. |
 | \`pool-alerts.mjs\` / \`push-client.mjs\` / \`pool-alerts.css\` | Home → Pool Alerts card: latest official release, history, sharing, and phone-alert controls with Android/iPhone help |
 | \`push/\` | Pool Alerts sender (Neon Function), owner tool \`ops.mjs\`, manual, deployment steps, runbook and phone acceptance checklist |
 | \`migrations/\` / \`sql-tests/\` | Database schema/security changes and disposable PostgreSQL behavior/race tests |

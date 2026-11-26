@@ -8,7 +8,12 @@ export const ALERT_APIS=Object.freeze({
   'https://r88510179-collab.github.io':PRODUCTION_ALERT_API,
   'https://picks.smokkeventures.com':PRODUCTION_ALERT_API
 });
-export const apiFor=origin=>Object.prototype.hasOwnProperty.call(ALERT_APIS,origin)?ALERT_APIS[origin]:null;
+// Vercel preview deployments of this site (owner-only, behind Vercel Authentication) use the isolated staging sender,
+// so a preview can never enroll a device into production alerts. The staging sender accepts only the origins it lists.
+export const STAGING_ALERT_API='https://br-rough-smoke-bccichyp-poolalerts.compute.c-16.us-east-1.aws.neon.tech';
+const PREVIEW_ORIGIN=/^https:\/\/nfl-pool-personal-[a-z0-9-]{1,60}-r88510179-collabs-projects\.vercel\.app$/;
+export const apiFor=origin=>Object.prototype.hasOwnProperty.call(ALERT_APIS,origin)?ALERT_APIS[origin]
+  :(typeof origin==='string'&&PREVIEW_ORIGIN.test(origin)?STAGING_ALERT_API:null);
 const CHECK_INTERVAL_MS=24*3600*1000;
 const ICON='/nfl-pool/assets/pool-alerts-icon-192.png',BADGE='/nfl-pool/assets/pool-alerts-badge-96.png';
 

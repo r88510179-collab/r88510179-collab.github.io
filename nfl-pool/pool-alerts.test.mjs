@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {latestPublication, releases, baselineWeeks, readState, unreadCount, shareDetails, releaseNote, picksUrl, publicationTime, bootPoolAlerts,
   STORAGE_KEY, WEEKS_KEY} from './pool-alerts.mjs';
-import {ALERT_APIS, PRODUCTION_ALERT_API, apiFor, decodeVapid, platformOf, support, MESSAGES, createDeviceStore} from './push-client.mjs';
+import {ALERT_APIS, PRODUCTION_ALERT_API, STAGING_ALERT_API, apiFor, decodeVapid, platformOf, support, MESSAGES, createDeviceStore} from './push-client.mjs';
 import {isVerifiedSuccess, describeStatus} from './admin/pool-alerts-admin-core.js';
 import {readFileSync} from 'node:fs';
 
@@ -75,6 +75,15 @@ await group('each Pool Center site maps to exactly one alert service; others nev
   assert.equal(apiFor('https://picks.smokkeventures.com'), PRODUCTION_ALERT_API);
   for (const origin of ['http://r88510179-collab.github.io', 'https://evil.example', 'https://r88510179-collab.github.io.evil.example', 'toString', '__proto__']) assert.equal(apiFor(origin), null, origin);
   assert(Object.isFrozen(ALERT_APIS));
+  // Previews of this site go to the isolated staging sender, never production; look-alikes go nowhere.
+  for (const origin of ['https://nfl-pool-personal-git-ccr-cdd-4f5bad-r88510179-collabs-projects.vercel.app',
+    'https://nfl-pool-personal-98nzvwzoq-r88510179-collabs-projects.vercel.app']) assert.equal(apiFor(origin), STAGING_ALERT_API, origin);
+  for (const origin of ['http://nfl-pool-personal-98nzvwzoq-r88510179-collabs-projects.vercel.app',
+    'https://nfl-pool-personal-98nzvwzoq-r88510179-collabs-projects.vercel.app.evil.example',
+    'https://evil-r88510179-collabs-projects.vercel.app', 'https://nfl-pool-personal-x-someone-else.vercel.app',
+    'https://nfl-pool-personal--r88510179-collabs-projects.vercel.app:8443', null, undefined]) assert.equal(apiFor(origin), null, String(origin));
+  assert.notEqual(STAGING_ALERT_API, PRODUCTION_ALERT_API);
+  assert.match(STAGING_ALERT_API, /^https:\/\/[a-z0-9-]+\.compute\.c-\d+\.[a-z0-9-]+\.aws\.neon\.tech$/);
   assert(Object.values(ALERT_APIS).every(u => /^https:\/\/[a-z0-9-]+\.compute\.c-\d+\.[a-z0-9-]+\.aws\.neon\.tech$/.test(u)));
 });
 

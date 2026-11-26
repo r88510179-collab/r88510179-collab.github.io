@@ -97,6 +97,23 @@ Check it: `node nfl-pool/push/ops.mjs health` must show `"environment": "product
 invocation URL in the Neon Console equals `PRODUCTION_ALERT_API` in `nfl-pool/push-client.mjs` (and `PRODUCTION_URL` in
 `ops.mjs`); if Neon shows a different host, update those two constants (and their tests) before merging the app.
 
+### 5a. Change a setting later (config-only redeploy)
+
+Send only the variables that change; the bundle is reused. Behavior verified on the staging function:
+
+- Variables **merge** with the previous deployment. A variable you leave out keeps its value. To turn the deployment
+  switch off, send it with an empty value: `{"POOL_ALERTS_SENDING": ""}`; to turn it on again, `"enabled"`.
+- The change reaches requests once running instances are replaced: within about a minute (0–36 s on staging). For an
+  immediate stop use **Pause sending** (database switch), which applies to the very next request.
+
+```sh
+printf '%s' '{"POOL_ALERTS_SENDING": ""}' > change.json   # example: deployment switch off
+curl -sS -X POST "https://console.neon.tech/api/v2/projects/patient-thunder-85353337/branches/br-late-hat-b55ygmj4/functions/poolalerts/deployments" \
+  -H "Authorization: Bearer $NEON_API_KEY" -F "environment=<change.json"
+rm change.json
+node nfl-pool/push/ops.mjs health    # repeat until it shows the change ("sendingConfigured": false here)
+```
+
 ## 6. Baseline and the hourly trigger **[APPROVAL]**
 
 ```sh
@@ -126,10 +143,33 @@ Merge the reviewed release PR (exact head SHA). GitHub Pages and the Vercel prod
 Follow [ACCEPTANCE.md](ACCEPTANCE.md) with sending still off for enrollment, then `node ops.mjs resume` (or Admin →
 Resume sending) and run the delivery checks. Sending stays on from then on.
 
-## Staging (isolated, needs approval to create cloud resources)
+## Staging (isolated, created 2026-11-26)
 
-A separate free Neon project `pool-alerts-staging` (us-east-1) with database `nfl_pool` and owner role
-`nfl_pool_owner`, Neon Auth (anonymous tokens allowed) and the Data API, the public `nfl_pool_weeks` table and policies
-as in `nfl-pool/sql-tests/neon-shape.sql`, the full-field guard and migration 006, environment `staging`, a staging
-VAPID pair, and the same function deployed there with `POOL_ALERTS_ENV=staging` and the staging URLs. The sender refuses
-production URLs in staging. Add the staging site origin and function URL to `ALERT_APIS` only on a staging branch.
+| Item | Value |
+| --- | --- |
+| Neon project | `pool-alerts-staging-20261126` (`dry-sea-47243965`, us-east-1, Free plan, separate 100 CU-hour allowance), branch `br-rough-smoke-bccichyp`, database `nfl_pool`, owner role `nfl_pool_owner` |
+| Database | production-shaped `public.nfl_pool_weeks` (same RLS policies, grants and full-field guard; publisher placeholder e-mail), synthetic weeks only, migration 006, environment marker `staging` |
+| Auth / Data API | `https://ep-empty-art-bchi4pzb.neonauth.c-16.us-east-1.aws.neon.tech/nfl_pool/auth`, `https://ep-empty-art-bchi4pzb.apirest.c-16.us-east-1.aws.neon.tech/nfl_pool/rest/v1` |
+| Sender | `https://br-rough-smoke-bccichyp-poolalerts.compute.c-16.us-east-1.aws.neon.tech` (function `poolalerts`, `POOL_ALERTS_ENV=staging`, its own VAPID pair and tokens; the owner `DATABASE_URL` Neon injects into a same-project function is overridden, so the function holds only the sender role) |
+| Hourly trigger | `pool-alerts-hourly`, `17 * * * *` UTC, path `/v1/cron` |
+| Site | Vercel previews of Pool Center use the staging sender (`STAGING_ALERT_API` in `push-client.mjs`); the staging sender accepts the release branch's preview, `https://nfl-pool-personal-git-ccr-cdd-4f5bad-r88510179-collabs-projects.vercel.app/nfl-pool/` (Vercel sign-in required) |
+
+Verified there on real Neon infrastructure (owner-run script, synthetic push endpoints on the real push-service hosts):
+least-privilege refusals of the sender role (public tables, Neon Auth, forged trigger events, its own limits, the
+environment marker); baseline without announcing history; enrollment rules (no account, push-service hosts only,
+production origins refused, another device's token learns nothing); trigger capture of release, correction, identical
+republish and withdrawal; dispatch with a real signed-in Neon Auth publisher token (an unverified e-mail is refused);
+verification through the real public Data API; pushes to Google, Apple and Mozilla push services, which accepted the
+VAPID signature and headers (Apple `400 BadWebPushToken` and Google `410` for the made-up tokens; a wrong key gets
+`403 BadJwtToken` / `403 invalid JWT`) and expired devices on 404/410; sanitized status token; a client-supplied
+`X-Neon-Trigger-Invocation-Id` is stripped by Neon (401); the deployment switch and config-only redeploys (§5a). This
+found and fixed one alert-loss bug (identical republish while an announcement was pending, AUDIT #21).
+
+Not verified on staging: delivery to a physical phone (see ACCEPTANCE.md; on Android, sign in to Vercel in Chrome, open
+the preview address above, turn alerts on, then publish a new synthetic revision in the staging SQL Editor; the next
+hourly check, or `notify` with the staging owner token, delivers it). The staging credentials were generated for this
+verification and kept only in a temporary workspace: to operate staging again, run `ops.mjs keys`, set the sender
+password in the staging SQL Editor and redeploy the config (§5a with the staging project and branch).
+
+Remove staging when no longer needed: delete project `dry-sea-47243965` in the Neon Console. Previews then show alerts
+as unavailable.
