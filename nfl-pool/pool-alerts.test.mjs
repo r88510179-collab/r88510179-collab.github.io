@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {latestPublication, releases, baselineWeeks, readState, unreadCount, shareDetails, releaseNote, picksUrl, publicationTime, bootPoolAlerts,
   STORAGE_KEY, WEEKS_KEY} from './pool-alerts.mjs';
 import {ALERT_APIS, PRODUCTION_ALERT_API, apiFor, decodeVapid, platformOf, support, MESSAGES, createDeviceStore} from './push-client.mjs';
+import {isVerifiedSuccess, describeStatus} from './admin/pool-alerts-admin-core.js';
+import {readFileSync} from 'node:fs';
 
 let groups = 0;
 const group = async (name, fn) => { await fn(); groups++; };
@@ -130,6 +132,38 @@ await group('the device store keeps credentials and the alert log in IndexedDB; 
   assert.equal(rows.alerts.get('2026:13:1:release').openedAt, null);
   await store.deleteDevice();
   assert.equal(await store.getDevice(), undefined);
+});
+
+await group('Admin: only read-back-verified publication and correction messages trigger a dispatch', () => {
+  for (const text of ['Week 12 published and locked successfully. Revision 1.', 'Week 12 published and locked successfully. Revision 2. The earlier attempt of this publication had been written after all, so nothing new was written.',
+    'Official correction published and read-back verified as Week 9 revision 4. Other entries were preserved.', 'Correction did reach the database; confirmed by read-back. Reload the public week.']) {
+    assert(isVerifiedSuccess('notice success', text), text);
+    assert(!isVerifiedSuccess('notice error', text), `an error-styled message never dispatches: ${text}`);
+  }
+  for (const text of ['Signed in securely.', 'Sign-in code sent to x.', 'Week 12 selected and verified.', 'Correction validated. Review each changed game, then explicitly approve the new revision.',
+    'Published week loaded. Choose its exact original source file, then enter the organizer correction.', 'Publish not confirmed: Week 12 published and locked successfully. Revision 1.']) {
+    assert(!isVerifiedSuccess('notice success', text), text);
+  }
+  // The patterns must keep matching the exact strings the publishing pages emit.
+  const admin = readFileSync(new URL('./admin/admin.js', import.meta.url), 'utf8'), corrections = readFileSync(new URL('./admin/organizer-corrections.js', import.meta.url), 'utf8');
+  assert(admin.includes('message(`Week ${attempt.week} published and locked successfully. Revision ${attempt.revision}.${note}`,\'success\')'));
+  assert(corrections.includes('message(`Official correction published and read-back verified as Week ${verified.week} revision ${newRevision}. Other entries were preserved.`,\'success\')'));
+  assert(corrections.includes("message('Correction did reach the database; confirmed by read-back. Reload the public week.','success')"));
+  for (const page of ['./admin/index.html', './admin/organizer-corrections.html']) {
+    assert.equal(readFileSync(new URL(page, import.meta.url), 'utf8').split('<script type="module" src="pool-alerts-admin.js?v=1"></script>').length, 2, page);
+  }
+});
+
+await group('Admin status summary is plain language and flags what needs attention', () => {
+  const lines = describeStatus({sendingConfigured: true, settings: {sending_enabled: true, enrollment_mode: 'open'}, subscriptions: {active: 7, expired: 1},
+    deliveries30d: {sent: 20, failed: 1, retry: 2}, notifications: [{week: 12, revision: 2, base_kind: 'correction', status: 'done', sent: 6, pending: 0, failed: 1}],
+    runs: [{started_at: '2026-11-25T14:01:00Z', trigger: 'dispatch', outcome: 'ok'}], captureGaps30d: [{}], failures7d: [{error: 'gone-410', n: 1}]});
+  assert.deepEqual(lines, ['Sending is ON. Enrollment: open.', 'Devices: 7 active, 1 expired. Last 30 days: 20 delivered, 1 failed, 2 waiting.',
+    'Latest alert: Week 12 revision 2 (correction) is done: 6 sent, 0 waiting, 1 failed.', 'Last check: Nov 25, 9:01 AM EST (dispatch, ok).',
+    'Attention: 1 publication(s) were found by the hourly check instead of being recorded at publishing time. See the Pool Alerts runbook.',
+    'Recent delivery problems: gone-410 ×1.']);
+  assert.equal(describeStatus({sendingConfigured: false, settings: {sending_enabled: true}})[0], 'Sending is PAUSED (deployment switch). Enrollment: unknown.');
+  assert.deepEqual(describeStatus(null), ['Status unavailable.']);
 });
 
 console.log(`Pool Alerts client: ${groups} groups passed (release card, unread history, sharing, site mapping, platform detection, device store)`);
