@@ -1,6 +1,25 @@
 import assert from 'node:assert/strict';
-import {readFileSync as rawDiskReadFileSync} from 'node:fs';
+import {readFileSync as actualDiskReadFileSync} from 'node:fs';
 import vm from 'node:vm';
+
+// Preserve the independently tested v41 baseline, stripping only the exact push additions.
+const PUSH_SCRIPT='<script type="module" src="push-client.mjs?v=1"></script>\n';
+const PUSH_SHELL="  './push-client.mjs?v=1',\n";
+function rawDiskReadFileSync(url,encoding){
+  const bytes=actualDiskReadFileSync(url);
+  let text=bytes.toString('utf8');
+  if(String(url)===String(new URL('./index.html',import.meta.url))){
+    assert.equal(text.split(PUSH_SCRIPT).length,2);
+    text=text.replace(PUSH_SCRIPT,'');
+  }else if(String(url)===String(new URL('./service-worker.js',import.meta.url))){
+    assert.equal(text.split(PUSH_SHELL).length,2);
+    assert.equal(text.split("const CACHE='pool-center-shell-v42'").length,2);
+    const start=text.indexOf('\n// BEGIN POOL ALERTS PUSH\n');
+    assert(start>=0&&text.endsWith('// END POOL ALERTS PUSH\n'));
+    text=text.slice(0,start).replace(PUSH_SHELL,'').replace("const CACHE='pool-center-shell-v42'","const CACHE='pool-center-shell-v41'");
+  }else return encoding?bytes.toString(encoding):bytes;
+  return encoding?Buffer.from(text).toString(encoding):Buffer.from(text);
+}
 
 // Preserve the immutable v40 assertions below. The inverse removes only the new Pool Alerts layer.
 // Actual v41 bytes and behavior are checked independently at the end.
@@ -2648,4 +2667,20 @@ console.log('service-worker precache graph (share-card, Home dashboard, V1.3 mob
   assert.equal(nodes.poolAlertsLink.hidden,true);assert.match(nodes.poolAlertsTitle.textContent,/unavailable/);
   assert.equal(saved.get(STORAGE_KEY),'2026:12:1');
   console.log('Pool Alerts v41 latest publication, unread, correction, stale and ET regressions passed');
+}
+
+{
+  const actual=actualDiskReadFileSync(new URL('./service-worker.js',import.meta.url),'utf8');
+  const handlers=new Map(),shown=[],opened=[];
+  const self={addEventListener:(name,fn)=>handlers.set(name,fn),location:{origin:'https://example.test'},registration:{showNotification:async(title,options)=>shown.push({title,options})},clients:{matchAll:async()=>[],openWindow:async url=>opened.push(url)}};
+  vm.runInNewContext(actual,{self,URL});
+  const payload={season:2026,week:12,revision:3,kind:'release'};
+  let task;
+  handlers.get('push')({data:{json:()=>payload},waitUntil:p=>{task=p}});await task;
+  assert.equal(shown.length,1);assert.equal(shown[0].options.tag,'pool-alerts-2026-12-3');
+  handlers.get('push')({data:{json:()=>({...payload,week:99})},waitUntil:()=>assert.fail('invalid payload')});
+  let closed=false;handlers.get('notificationclick')({notification:{close:()=>{closed=true},data:payload},waitUntil:p=>{task=p}});await task;
+  assert.equal(closed,true);assert.equal(opened[0],'https://example.test/nfl-pool/?view=picks&season=2026&week=12');
+  assert.equal(shown.length,1);
+  console.log('Pool Alerts v42: background push payload, notification tag, and safe deep link verified');
 }
