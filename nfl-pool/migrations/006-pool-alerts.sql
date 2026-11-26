@@ -106,7 +106,7 @@ CREATE TABLE pool_alerts.subscriptions (
   auth text NOT NULL CHECK (auth ~ '^[A-Za-z0-9_-]{22}$'),
   manage_token_sha256 text NOT NULL CHECK (manage_token_sha256 ~ '^[0-9a-f]{64}$'),
   origin text NOT NULL CHECK (origin ~ '^https://[a-z0-9.-]+(:[0-9]+)?$'),
-  releases boolean NOT NULL DEFAULT true,
+  -- New official picks are always announced to an enrolled device; corrections are the one opt-out.
   corrections boolean NOT NULL DEFAULT true,
   status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled', 'expired')),
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -234,12 +234,13 @@ AFTER INSERT OR UPDATE OR DELETE ON public.nfl_pool_weeks
 FOR EACH ROW EXECUTE FUNCTION public.nfl_pool_alerts_capture();
 
 -- The sender role: no login yet (the owner enables it with a generated password), no inheritance, no RLS bypass, a
--- small connection limit, and short timeouts so a stuck sender can never hold publication locks.
+-- small connection limit (each function instance pools at most 3; overlapping instances stay under 10), and short
+-- timeouts so a stuck sender can never hold publication locks.
 DO $role$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pool_alerts_sender') THEN
     CREATE ROLE pool_alerts_sender NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS
-      CONNECTION LIMIT 5;
+      CONNECTION LIMIT 10;
   END IF;
 END
 $role$;

@@ -87,7 +87,7 @@ BEGIN
        AND t.tgfoid = 'public.nfl_pool_alerts_capture()'::regprocedure));
   PERFORM alerts_test.check('sender role cannot log in yet, has no superuser, createrole, createdb or RLS bypass',
     (SELECT NOT rolcanlogin AND NOT rolsuper AND NOT rolcreaterole AND NOT rolcreatedb AND NOT rolbypassrls
-            AND NOT rolinherit AND rolconnlimit = 5 FROM pg_roles WHERE rolname = 'pool_alerts_sender'));
+            AND NOT rolinherit AND rolconnlimit = 10 FROM pg_roles WHERE rolname = 'pool_alerts_sender'));
   PERFORM alerts_test.check('sender role is a member of no other role',
     NOT EXISTS (SELECT 1 FROM pg_auth_members WHERE member = 'pool_alerts_sender'::regrole));
   FOR r IN SELECT unnest(ARRAY['public.nfl_pool_weeks', 'public.nfl_survivor_weeks', 'public.nfl_contests',
