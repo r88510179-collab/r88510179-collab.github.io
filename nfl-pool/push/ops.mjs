@@ -12,6 +12,10 @@
 //   node nfl-pool/push/ops.mjs retry-failed         put failed deliveries (still current, within 24 h) back in the queue
 //   node nfl-pool/push/ops.mjs test <device-id>     send a test alert to one enrolled device
 //   node nfl-pool/push/ops.mjs enrollment open|closed|invite   (invite reads the code from POOL_ALERTS_INVITE_CODE)
+//   node nfl-pool/push/ops.mjs devices              devices that asked for a device check (24 h): code, platform, id
+//   node nfl-pool/push/ops.mjs check <device-id> test|release|repeat|correction   one check alert to that device
+//   node nfl-pool/push/ops.mjs checks               recent checks: push-service answer, received, opened, verdict
+//   node nfl-pool/push/ops.mjs confirm <check-id> pass|fail ["note"]   record your own verdict for a check
 //
 // Environment: POOL_ALERTS_URL (default: production), POOL_ALERTS_OWNER_TOKEN (required except for keys and health).
 import {createECDH, createHash, randomBytes} from 'node:crypto';
@@ -104,7 +108,34 @@ export async function main(argv = process.argv.slice(2), env = process.env, prin
       await call(base, '/v1/owner/enrollment', {token, body});
       print(`Enrollment is now ${value}.`); return 0;
     }
-    default: throw new Error('Unknown command. Commands: keys, health, status, notify, pause, resume, retry-failed, test, enrollment');
+    case 'devices': {
+      const {devices} = await call(base, '/v1/owner/devices', {token, method: 'GET'});
+      if (!devices.length) { print('No device asked for a check in the last 24 hours. On the phone: Pool Center → Home → Pool Alerts → Device check.'); return 0; }
+      for (const d of devices) print(`${d.code}  ${d.platform ?? 'unknown'}  corrections ${d.corrections ? 'on' : 'off'}  asked ${d.checkRequestedAt}  id ${d.id}`);
+      return 0;
+    }
+    case 'check': {
+      const [, id, scenario] = argv;
+      if (!/^[0-9a-f-]{36}$/.test(id || '') || !['test', 'release', 'repeat', 'correction'].includes(scenario)) throw new Error('Usage: check <device-id> test|release|repeat|correction');
+      const r = await call(base, '/v1/owner/check', {token, body: {subscriptionId: id, scenario}});
+      print(r.outcome === 'skipped' ? `Check #${r.check} skipped: ${r.reason}.` : `Check #${r.check} ${scenario}: the push service answered ${r.status} (${r.outcome}).${r.week ? ` Week ${r.week} r${r.revision}.` : ''} Accepted is not delivery: see "checks" for the phone's receipt.`);
+      return 0;
+    }
+    case 'checks': {
+      const {checks} = await call(base, '/v1/owner/checks', {token, method: 'GET'});
+      for (const c of checks) print(`#${c.id} ${c.code} ${c.scenario}${c.week ? ` W${c.week}r${c.revision}` : ''} → ${c.state}${c.last_status ? ` ${c.last_status}` : ''}` +
+        ` · received ${c.received_at ? (c.received_repeat ? 'yes (replaced an identical alert)' : 'yes') : 'no'} · opened ${c.opened_at ? 'yes' : 'no'}${c.owner_result ? ` · verdict ${c.owner_result}` : ''}`);
+      if (!checks.length) print('No checks in the last 48 hours.');
+      return 0;
+    }
+    case 'confirm': {
+      const [, id, result, ...note] = argv;
+      if (!/^\d+$/.test(id || '') || !['pass', 'fail'].includes(result)) throw new Error('Usage: confirm <check-id> pass|fail ["note"]');
+      const r = await call(base, '/v1/owner/check-confirm', {token, body: {checkId: Number(id), result, note: note.join(' ') || null}});
+      print(`Check #${r.confirmed.id} recorded as ${result} (received ${r.confirmed.received ? 'yes' : 'no'}, opened ${r.confirmed.opened ? 'yes' : 'no'}).`);
+      return 0;
+    }
+    default: throw new Error('Unknown command. Commands: keys, health, status, notify, pause, resume, retry-failed, test, enrollment, devices, check, checks, confirm');
   }
 }
 

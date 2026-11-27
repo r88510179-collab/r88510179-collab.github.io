@@ -4,8 +4,8 @@
 //  * Deliveries are claimed with FOR UPDATE SKIP LOCKED and a per-batch lease token; a crashed sender's lease expires
 //    and the delivery is retried (the device's notification tag makes a repeat display replace, not duplicate).
 //  * A completion only lands if its lease is still held, so a slow worker can never overwrite a newer outcome.
-import {randomBytes, randomUUID} from 'node:crypto';
-import {MAX_ATTEMPTS, deliveryOutcome, planEvent, verificationOutcome, weekKey} from './core.mjs';
+import {createHash, randomBytes, randomUUID} from 'node:crypto';
+import {MAX_ATTEMPTS, deliveryOutcome, deviceCodeFromDigest, planEvent, verificationOutcome, weekKey} from './core.mjs';
 import {digestMatches, sha256Hex} from './auth.mjs';
 
 const OPEN = ['queued', 'verified'];
@@ -43,13 +43,15 @@ export async function checkIdentity(pool, cfg) {
   const row = (await pool.query(`SELECT current_user AS role, current_database() AS database,
       (SELECT name FROM pool_alerts.environment) AS environment,
       (SELECT rolsuper OR rolbypassrls OR rolcreaterole FROM pg_roles WHERE rolname = current_user) AS privileged,
-      (SELECT count(*)::int FROM pool_alerts.settings) AS settings`)).rows[0];
+      (SELECT count(*)::int FROM pool_alerts.settings) AS settings,
+      to_regclass('pool_alerts.device_checks') IS NOT NULL AS device_checks`)).rows[0];
   const problems = [];
   if (row.role !== 'pool_alerts_sender') problems.push(`connected as ${row.role}, not pool_alerts_sender`);
   if (row.privileged) problems.push('the sender role has superuser, create-role or RLS-bypass rights');
   if (row.database !== cfg.database) problems.push(`database is ${row.database}, expected ${cfg.database}`);
   if (row.environment !== cfg.environment) problems.push(`database environment marker is ${row.environment ?? 'not set'}, sender is ${cfg.environment}`);
   if (row.settings !== 1) problems.push('settings row missing');
+  if (!row.device_checks) problems.push('migration 007 (device checks) is not applied');
   if (problems.length) throw Object.assign(new Error(`Environment guard refused: ${problems.join('; ')}`), {errorClass: 'environment-guard'});
   return row;
 }
@@ -298,7 +300,8 @@ export async function housekeeping(pool) {
         AND coalesce(disabled_at, updated_at) < clock_timestamp() - interval '30 days'`);
     const deliveries = await c.query(`DELETE FROM pool_alerts.deliveries WHERE state IN ('sent', 'failed', 'expired', 'cancelled', 'superseded')
         AND updated_at < clock_timestamp() - interval '180 days'`);
-    return {runs: runs.rowCount, subscriptions: subs.rowCount, deliveries: deliveries.rowCount};
+    const checks = await c.query("DELETE FROM pool_alerts.device_checks WHERE created_at < clock_timestamp() - interval '30 days'");
+    return {runs: runs.rowCount, subscriptions: subs.rowCount, deliveries: deliveries.rowCount, checks: checks.rowCount};
   });
 }
 
@@ -319,7 +322,7 @@ async function authorizedSubscription(c, id, token) {
   return row;
 }
 
-export async function enroll(pool, {subscription, corrections, origin, inviteCode}) {
+export async function enroll(pool, {subscription, corrections, origin, inviteCode, platform = null}) {
   return tx(pool, async c => {
     await c.query(LOCK_ENROLL);
     const settings = await readSettings(c);
@@ -333,17 +336,18 @@ export async function enroll(pool, {subscription, corrections, origin, inviteCod
       // The same browser enrolling again (its stored credentials were lost): same endpoint AND same keys only.
       if (existing.p256dh !== subscription.keys.p256dh || existing.auth !== subscription.keys.auth) return {status: 409, body: {error: 'endpoint-conflict'}};
       await c.query(`UPDATE pool_alerts.subscriptions SET manage_token_sha256 = $2, corrections = $3, origin = $4, status = 'active',
-          disabled_at = NULL, disabled_reason = NULL, updated_at = clock_timestamp(), last_seen_at = clock_timestamp() WHERE id = $1`,
-        [existing.id, sha256Hex(token), corrections, origin]);
+          disabled_at = NULL, disabled_reason = NULL, updated_at = clock_timestamp(), last_seen_at = clock_timestamp(),
+          platform = coalesce($5, platform) WHERE id = $1`,
+        [existing.id, sha256Hex(token), corrections, origin, platform]);
       return {status: 200, body: {id: existing.id, token, corrections, reenrolled: true}};
     }
     const counts = (await c.query(`SELECT count(*) FILTER (WHERE status = 'active')::int AS active,
         count(*) FILTER (WHERE created_at > clock_timestamp() - interval '1 hour')::int AS recent FROM pool_alerts.subscriptions`)).rows[0];
     if (counts.active >= settings.max_active_subscriptions) return {status: 503, body: {error: 'capacity-reached'}};
     if (counts.recent >= settings.max_new_subscriptions_per_hour) return {status: 429, body: {error: 'enrollment-busy'}};
-    const id = (await c.query(`INSERT INTO pool_alerts.subscriptions (endpoint, p256dh, auth, manage_token_sha256, origin, corrections)
-        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-      [subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth, sha256Hex(token), origin, corrections])).rows[0].id;
+    const id = (await c.query(`INSERT INTO pool_alerts.subscriptions (endpoint, p256dh, auth, manage_token_sha256, origin, corrections, platform)
+        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth, sha256Hex(token), origin, corrections, platform])).rows[0].id;
     return {status: 201, body: {id, token, corrections}};
   });
 }
@@ -392,7 +396,88 @@ export async function checkDevice(pool, {id, token, endpoint}) {
 }
 
 export async function deviceForTest(db, id) {
-  return (await db.query("SELECT id, endpoint, p256dh, auth, status FROM pool_alerts.subscriptions WHERE id = $1", [id])).rows[0] || null;
+  return (await db.query("SELECT id, endpoint, p256dh, auth, status, corrections FROM pool_alerts.subscriptions WHERE id = $1", [id])).rows[0] || null;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Device checks (migration 007): the device asks to be checked; the owner sends check alerts to that one device; the
+// device's service worker returns each check's receipt; the owner records a verdict.
+// ---------------------------------------------------------------------------------------------------------------
+export const deviceCode = id => deviceCodeFromDigest(createHash('sha256').update(String(id), 'utf8').digest());
+
+// A device asks (from its own Pool Alerts card) to be listed for the owner's checks for 24 hours. At most once a minute.
+export async function requestCheck(pool, {id, token, platform = null}) {
+  return tx(pool, async c => {
+    const row = await authorizedSubscription(c, id, token);
+    if (!row) return {status: 403, body: {error: 'not-authorized'}};
+    if (row.status !== 'active') return {status: 409, body: {error: 'device-not-active'}};
+    const recent = (await c.query(`SELECT check_requested_at > clock_timestamp() - interval '1 minute' AS recent FROM pool_alerts.subscriptions WHERE id = $1`, [id])).rows[0];
+    if (recent?.recent) return {status: 429, body: {error: 'try-again-later'}};
+    await c.query(`UPDATE pool_alerts.subscriptions SET check_requested_at = clock_timestamp(), last_seen_at = clock_timestamp(),
+        platform = coalesce($2, platform) WHERE id = $1`, [id, platform]);
+    return {status: 200, body: {ok: true, code: deviceCode(id), listedForHours: 24}};
+  });
+}
+
+// The devices that asked to be checked in the last 24 hours (the owner's acceptance list). No endpoint or key.
+export async function checkCandidates(db) {
+  const rows = (await db.query(`SELECT id, platform, origin, corrections, status, created_at, last_seen_at, check_requested_at, last_success_at
+      FROM pool_alerts.subscriptions WHERE check_requested_at > clock_timestamp() - interval '24 hours'
+      ORDER BY check_requested_at DESC LIMIT 20`)).rows;
+  return rows.map(r => ({id: r.id, code: deviceCode(r.id), platform: r.platform, origin: r.origin, corrections: r.corrections, status: r.status,
+    enrolledAt: r.created_at, lastSeenAt: r.last_seen_at, checkRequestedAt: r.check_requested_at, lastSuccessAt: r.last_success_at}));
+}
+
+export async function startCheck(pool, {subscriptionId, scenario, season = null, week = null, revision = null, ackSha256, actor, skipped = null}) {
+  return Number((await pool.query(`INSERT INTO pool_alerts.device_checks (subscription_id, ack_sha256, scenario, season, week, revision, requested_by, state, last_error)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+    [subscriptionId, ackSha256, scenario, season, week, revision, String(actor).slice(0, 40), skipped ? 'skipped' : 'sending', skipped])).rows[0].id);
+}
+
+export async function completeCheck(pool, {id, state, status, errorClass}) {
+  await withRetry(() => tx(pool, async c => {
+    const done = (await c.query(`UPDATE pool_alerts.device_checks SET state = $2, last_status = $3, last_error = $4,
+        sent_at = CASE WHEN $2 = 'sent' THEN clock_timestamp() ELSE sent_at END WHERE id = $1 AND state = 'sending' RETURNING subscription_id`,
+      [id, state, status || null, errorClass])).rows[0];
+    if (!done) return;
+    if (state === 'sent') await c.query('UPDATE pool_alerts.subscriptions SET last_success_at = clock_timestamp() WHERE id = $1', [done.subscription_id]);
+    else if (state === 'expired') {
+      await c.query(`UPDATE pool_alerts.subscriptions SET status = 'expired', disabled_at = clock_timestamp(), disabled_reason = $2,
+          updated_at = clock_timestamp() WHERE id = $1 AND status = 'active'`, [done.subscription_id, errorClass]);
+      await c.query(`UPDATE pool_alerts.deliveries SET state = 'cancelled', last_error = 'subscription expired', updated_at = clock_timestamp()
+          WHERE subscription_id = $1 AND state IN ('pending', 'retry')`, [done.subscription_id]);
+    }
+  }));
+}
+
+// A device's receipt for a check sent within the last day: 'received' (shown; repeat = it replaced an identical alert
+// already on the device) or 'opened' (tapped). Anything else changes nothing; the caller learns nothing either way.
+export async function ackCheck(pool, {ackSha256, event, repeat = null}) {
+  const rows = await pool.query(`UPDATE pool_alerts.device_checks SET received_at = coalesce(received_at, clock_timestamp()),
+      received_repeat = CASE WHEN $2 = 'received' AND received_at IS NULL THEN $3 ELSE received_repeat END,
+      opened_at = CASE WHEN $2 = 'opened' THEN coalesce(opened_at, clock_timestamp()) ELSE opened_at END
+      WHERE ack_sha256 = $1 AND state = 'sent' AND created_at > clock_timestamp() - interval '1 day'`, [ackSha256, event, repeat]);
+  return rows.rowCount > 0;
+}
+
+export async function recentChecks(db) {
+  const rows = (await db.query(`SELECT c.id, c.subscription_id, s.platform, c.scenario, c.season, c.week, c.revision, c.state, c.last_status,
+      c.last_error, c.requested_by, c.created_at, c.sent_at, c.received_at, c.received_repeat, c.opened_at, c.owner_result, c.owner_note, c.confirmed_at
+      FROM pool_alerts.device_checks c JOIN pool_alerts.subscriptions s ON s.id = c.subscription_id
+      WHERE c.created_at > clock_timestamp() - interval '48 hours' ORDER BY c.id DESC LIMIT 40`)).rows;
+  return rows.map(({subscription_id: sid, ...r}) => ({...r, id: Number(r.id), code: deviceCode(sid)}));
+}
+
+export async function confirmCheck(pool, {checkId, result, note = null, actor}) {
+  if (!['pass', 'fail'].includes(result)) throw Object.assign(new Error('result must be pass or fail'), {status: 400});
+  return tx(pool, async c => {
+    const row = (await c.query(`UPDATE pool_alerts.device_checks SET owner_result = $2, owner_note = $3, confirmed_at = clock_timestamp()
+        WHERE id = $1 RETURNING id, scenario, state, received_at IS NOT NULL AS received, opened_at IS NOT NULL AS opened`,
+      [checkId, result, note ? String(note).slice(0, 200) : null])).rows[0];
+    if (!row) return null;
+    await audit(c, actor, 'device-check-verdict', {check: Number(row.id), scenario: row.scenario, result, state: row.state, received: row.received, opened: row.opened});
+    return {...row, id: Number(row.id)};
+  });
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -461,11 +546,32 @@ export async function status(pool) {
   const runs = await q(`SELECT id, trigger, started_at, finished_at, outcome, error_class, summary FROM pool_alerts.runs ORDER BY id DESC LIMIT 10`);
   const gaps = await q(`SELECT at, detail FROM pool_alerts.audit_log WHERE action = 'capture-gap' AND at > clock_timestamp() - interval '30 days' ORDER BY at DESC LIMIT 5`);
   const actions = await q(`SELECT at, actor, action, detail FROM pool_alerts.audit_log ORDER BY id DESC LIMIT 10`);
+  // Figures for the Maintenance Center (counts and times only).
+  const [runTimes] = await q(`SELECT max(started_at) FILTER (WHERE outcome IN ('ok', 'paused')) AS last_ok,
+      max(started_at) FILTER (WHERE trigger = 'cron') AS last_cron FROM pool_alerts.runs`);
+  const [waiting] = await q(`SELECT count(*)::int AS n FROM pool_alerts.publication_events WHERE id > coalesce((SELECT last_event_id FROM pool_alerts.cursor), 0)`);
+  const [latest] = await q(`SELECT season, week, revision, action, occurred_at FROM pool_alerts.publication_events ORDER BY id DESC LIMIT 1`);
+  const [latency] = await q(`SELECT count(*)::int AS sent, round(percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM d.sent_at - e.occurred_at))::numeric) AS p50,
+      round(max(extract(epoch FROM d.sent_at - e.occurred_at))::numeric) AS max FROM pool_alerts.deliveries d
+      JOIN pool_alerts.notifications n ON n.id = d.notification_id JOIN pool_alerts.publication_events e ON e.id = n.event_id
+      WHERE d.state = 'sent' AND d.sent_at > clock_timestamp() - interval '7 days'`);
+  const [expired] = await q(`SELECT count(*)::int AS n FROM pool_alerts.subscriptions WHERE status = 'expired' AND coalesce(disabled_at, updated_at) > clock_timestamp() - interval '7 days'`);
+  const [checkRows] = await q(`SELECT to_regclass('pool_alerts.device_checks') IS NOT NULL AS installed`);
+  const checks7d = checkRows?.installed ? (await q(`SELECT count(*)::int AS requested, count(*) FILTER (WHERE state = 'sent')::int AS sent,
+      count(*) FILTER (WHERE state IN ('failed', 'expired'))::int AS failed, count(received_at)::int AS received, count(opened_at)::int AS opened,
+      count(*) FILTER (WHERE owner_result = 'pass')::int AS passed, count(*) FILTER (WHERE owner_result = 'fail')::int AS owner_failed,
+      max(received_at) AS last_received_at, max(confirmed_at) AS last_confirmed_at
+      FROM pool_alerts.device_checks WHERE created_at > clock_timestamp() - interval '7 days'`))[0] : null;
   return {
     environment: env?.name ?? null, settings, cursor: cursor ?? null,
     events: {latestId: events.latest_id === null ? null : Number(events.latest_id), latestAt: events.latest_at, reconciled: events.reconciled},
     subscriptions, deliveries30d: deliveries, oldestOutstandingAt: oldest?.at ?? null, failures7d: failures,
     notifications: notifications.map(n => ({...n, id: Number(n.id)})),
-    runs: runs.map(r => ({...r, id: Number(r.id)})), captureGaps30d: gaps, recentActions: actions
+    runs: runs.map(r => ({...r, id: Number(r.id)})), captureGaps30d: gaps, recentActions: actions,
+    lastOkRunAt: runTimes?.last_ok ?? null, lastCronRunAt: runTimes?.last_cron ?? null, eventsWaiting: waiting?.n ?? 0,
+    latestEvent: latest ? {season: latest.season, week: latest.week, revision: latest.revision, action: latest.action, occurredAt: latest.occurred_at} : null,
+    latency7d: {sent: latency?.sent ?? 0, p50Seconds: latency?.p50 === null || latency?.p50 === undefined ? null : Number(latency.p50),
+      maxSeconds: latency?.max === null || latency?.max === undefined ? null : Number(latency.max)},
+    expiredDevices7d: expired?.n ?? 0, checks7d
   };
 }

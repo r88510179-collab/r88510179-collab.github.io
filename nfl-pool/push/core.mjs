@@ -99,13 +99,15 @@ export function deliveryOutcome({status, attempt, retryAfterSeconds = null}) {
 
 // The encrypted push payload. It carries no name, pick, standing or account detail: only which official publication
 // changed, so the lock screen shows nothing private and the app loads everything else after it opens.
-export function notificationPayload({kind, season, week, revision}) {
+export function notificationPayload({kind, season, week, revision, check}) {
   if (!['release', 'correction', 'test'].includes(kind)) throw new Error('Invalid notification kind');
-  if (kind === 'test') return {v: 1, kind};
+  // An owner-run device check carries a one-time receipt value (only the device can decrypt it); nothing else changes.
+  if (check !== undefined && !isCheckValue(check)) throw new Error('Invalid check value');
+  if (kind === 'test') return check === undefined ? {v: 1, kind} : {v: 1, kind, ack: check};
   if (!isInt(season, SEASON_MIN, SEASON_MAX) || !isInt(week, WEEK_MIN, WEEK_MAX) || !isInt(revision, 1, Number.MAX_SAFE_INTEGER)) {
     throw new Error('Invalid notification identity');
   }
-  return {v: 1, kind, season, week, revision};
+  return check === undefined ? {v: 1, kind, season, week, revision} : {v: 1, kind, season, week, revision, check};
 }
 
 // Push-service delivery options. The topic lets a push service replace an undelivered older message about the same
@@ -157,3 +159,45 @@ export function parseOrigins(list) {
 
 export const isUuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
 export const isManageToken = value => typeof value === 'string' && /^[A-Za-z0-9_-]{43}$/.test(value);
+
+// ---------------------------------------------------------------------------------------------------------------
+// Device checks (migration 007): an owner-run alert to one device, with a receipt only that device can give.
+// ---------------------------------------------------------------------------------------------------------------
+export const CHECK_SCENARIOS = Object.freeze(['test', 'release', 'repeat', 'correction']);
+export const isCheckValue = value => typeof value === 'string' && /^[A-Za-z0-9_-]{22}$/.test(value);
+export const PLATFORMS = Object.freeze(['android', 'ios', 'desktop']);
+export const validatePlatform = value => (PLATFORMS.includes(value) ? value : null);
+
+// A device's short code, shown on its Pool Alerts card and in the owner's acceptance list, so the owner can tell which
+// phone is which without seeing its id: the first 8 base32 characters of SHA-256(id), as XXXX-XXXX. The app computes
+// the same code with WebCrypto (pool-alerts.mjs deviceCode); core.test.mjs pins both to the same vectors.
+const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+export function deviceCodeFromDigest(bytes) {
+  let bits = 0, value = 0, out = '';
+  for (const byte of bytes) {
+    value = (value << 8) | byte; bits += 8;
+    while (bits >= 5 && out.length < 8) { out += BASE32[(value >>> (bits - 5)) & 31]; bits -= 5; }
+    if (out.length >= 8) break;
+  }
+  return `${out.slice(0, 4)}-${out.slice(4, 8)}`;
+}
+
+// The most recently published week of the public index (the week a real-week check names).
+export function latestPublished(index) {
+  let best = null;
+  for (const row of index || []) {
+    if (!best || row.season > best.season || (row.season === best.season && row.week > best.week)) best = row;
+  }
+  return best;
+}
+
+// What a check's push-service answer means. A check is never retried: the owner is waiting for this one answer.
+export function checkOutcome(status) {
+  const code = Number.isInteger(status) ? status : 0;
+  if (code >= 200 && code < 300) return {state: 'sent', errorClass: null};
+  if (code === 404 || code === 410) return {state: 'expired', errorClass: `gone-${code}`};
+  if (code === 401 || code === 403) return {state: 'failed', errorClass: `auth-${code}`};
+  if (code === 0) return {state: 'failed', errorClass: 'network'};
+  if (code === 429) return {state: 'failed', errorClass: 'rate-limited'};
+  return {state: 'failed', errorClass: code >= 500 ? `server-${code}` : `rejected-${code}`};
+}

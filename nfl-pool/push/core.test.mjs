@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import {generateKeyPairSync, sign} from 'node:crypto';
 import {
   publicationIdentity, validateSubscription, validatePreferences, deliveryOutcome, parseRetryAfter, notificationPayload, pushOptions,
-  planEvent, verificationOutcome, parseOrigins, isUuid, isManageToken, MAX_ATTEMPTS, RETRY_DELAYS_SECONDS
+  planEvent, verificationOutcome, parseOrigins, isUuid, isManageToken, MAX_ATTEMPTS, RETRY_DELAYS_SECONDS,
+  CHECK_SCENARIOS, checkOutcome, deviceCodeFromDigest, isCheckValue, latestPublished, validatePlatform
 } from './core.mjs';
+import {createHash, webcrypto} from 'node:crypto';
 import {loadConfig, PRODUCTION} from './config.mjs';
 import {createJwtVerifier, digestMatches, sha256Hex, bearerToken} from './auth.mjs';
 import {generateKeys, describe, main as ops} from './ops.mjs';
@@ -210,6 +212,31 @@ await test('owner tool: generated keys are valid for the sender, tokens match th
   await assert.rejects(ops(['drop-database'], {POOL_ALERTS_OWNER_TOKEN: 'x'.repeat(43)}), /Unknown command/);
   assert.match(describe({environment: 'production', sendingConfigured: true, settings: {sending_enabled: false, note: 'maintenance'}, subscriptions: {active: 3}}),
     /Sending: deployment ON, database OFF \(maintenance\)/);
+});
+
+await test('device checks: payloads carry a receipt value only when asked; codes match the app; outcomes are never retried', async () => {
+  const ack = 'AbCdEfGhIjKlMnOpQrStUv';
+  assert.deepEqual(notificationPayload({kind: 'test'}), {v: 1, kind: 'test'}, 'an ordinary test is unchanged');
+  assert.deepEqual(notificationPayload({kind: 'release', season: 2026, week: 12, revision: 3}), {v: 1, kind: 'release', season: 2026, week: 12, revision: 3},
+    'a real alert never carries a receipt value');
+  assert.deepEqual(notificationPayload({kind: 'test', check: ack}), {v: 1, kind: 'test', ack});
+  assert.deepEqual(notificationPayload({kind: 'correction', season: 2026, week: 12, revision: 3, check: ack}), {v: 1, kind: 'correction', season: 2026, week: 12, revision: 3, check: ack});
+  for (const bad of ['short', `${ack}x`, 'AbCdEfGhIjKlMnOpQrSt/v', 1]) assert.throws(() => notificationPayload({kind: 'test', check: bad}), /check value/);
+  assert.equal(isCheckValue(ack), true);
+  assert.deepEqual(CHECK_SCENARIOS, ['test', 'release', 'repeat', 'correction']);
+  assert.deepEqual(['android', 'ios', 'desktop', 'iPhone', '', null, 7].map(validatePlatform), ['android', 'ios', 'desktop', null, null, null, null]);
+  // The same code from Node's hash (sender) and WebCrypto (the app), for fixed vectors.
+  const vectors = {'11111111-1111-4111-8111-111111111111': 'XV3G-FJPO', '00000000-0000-4000-8000-000000000000': '3OAF-LYHA'};
+  for (const [id, code] of Object.entries(vectors)) {
+    assert.equal(deviceCodeFromDigest(createHash('sha256').update(id).digest()), code);
+    assert.equal(deviceCodeFromDigest(new Uint8Array(await webcrypto.subtle.digest('SHA-256', new TextEncoder().encode(id)))), code);
+  }
+  assert.match(deviceCodeFromDigest(createHash('sha256').update('x').digest()), /^[A-Z2-7]{4}-[A-Z2-7]{4}$/);
+  assert.deepEqual(latestPublished([{season: 2026, week: 3, revision: 1}, {season: 2026, week: 12, revision: 2}, {season: 2025, week: 22, revision: 4}]),
+    {season: 2026, week: 12, revision: 2});
+  assert.equal(latestPublished([]), null);
+  assert.deepEqual([201, 404, 410, 403, 0, 429, 503, 400].map(s => checkOutcome(s).state), ['sent', 'expired', 'expired', 'failed', 'failed', 'failed', 'failed', 'failed']);
+  assert.deepEqual([checkOutcome(503).errorClass, checkOutcome(429).errorClass, checkOutcome(0).errorClass], ['server-503', 'rate-limited', 'network']);
 });
 
 console.log(`Pool Alerts core: ${passed} policy, configuration-guard and authentication groups passed`);

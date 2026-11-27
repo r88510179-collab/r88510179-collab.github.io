@@ -514,6 +514,114 @@ try {
     assert.equal((await admin.query("SELECT count(*)::int AS n FROM pool_alerts.runs WHERE finished_at IS NULL")).rows[0].n, 0);
   });
 
+  await scenario('device checks: a device asks; the owner sends a test, a real week, an exact repeat and a correction to it alone; receipts and the verdict are recorded', async () => {
+    const deliveriesBefore = (await admin.query('SELECT count(*)::int AS n FROM pool_alerts.deliveries')).rows[0].n;
+    const phoneDevice = pushService.device('acceptance-phone');
+    const enrolled = await call('/v1/subscribe', {body: {subscription: phoneDevice.subscription, corrections: false, platform: 'android'}});
+    assert.equal(enrolled.status, 201);
+    const phone = {...phoneDevice, sid: enrolled.body.id, token: enrolled.body.token};
+    assert.equal((await admin.query('SELECT platform FROM pool_alerts.subscriptions WHERE id = $1', [phone.sid])).rows[0].platform, 'android');
+    const asked = await call('/v1/check-request', {body: {id: phone.sid, token: phone.token}});
+    assert.deepEqual([asked.status, asked.body], [200, {ok: true, code: store.deviceCode(phone.sid), listedForHours: 24}]);
+    assert.equal((await call('/v1/check-request', {body: {id: phone.sid, token: phone.token}})).status, 429, 'at most once a minute');
+    assert.equal((await call('/v1/check-request', {body: {id: phone.sid, token: 'w'.repeat(43)}})).status, 403, 'only the device itself');
+    assert.equal((await call('/v1/owner/devices', {method: 'GET', token: STATUS_TOKEN, origin: null})).status, 401, 'the status token is read-only and sees no device');
+    const listed = await call('/v1/owner/devices', {method: 'GET', token: OWNER_TOKEN, origin: null});
+    const candidate = listed.body.devices.find(d => d.id === phone.sid);
+    assert.deepEqual([candidate.code, candidate.platform, candidate.corrections, candidate.status], [store.deviceCode(phone.sid), 'android', false, 'active']);
+    assert.equal(/endpoint|p256dh|"auth"|manage_token/.test(JSON.stringify(listed.body)), false, 'no address, key or token in the list');
+    assert.equal((await call('/v1/owner/devices', {method: 'GET', token: publisherJwt(), origin: null})).status, 200, 'the signed-in publisher may run checks too');
+
+    // Group sending paused: a targeted check still goes to this one device.
+    await owner('pause', {note: 'acceptance'});
+    const sentTo = () => pushService.received(phone.id);
+    const test = await owner('check', {subscriptionId: phone.sid, scenario: 'test'});
+    assert.deepEqual([test.status, test.body.outcome, test.body.status], [200, 'accepted', 201]);
+    assert.equal(sentTo().length, 1);
+    const testPayload = sentTo()[0].payload;
+    assert.deepEqual(Object.keys(testPayload).sort(), ['ack', 'kind', 'v']);
+    assert.equal(testPayload.kind, 'test');
+    const receipt = body => call('/v1/ack', {body});
+    assert.equal((await receipt({ack: testPayload.ack, event: 'received', repeat: false})).status, 200);
+    assert.equal((await receipt({ack: testPayload.ack, event: 'opened'})).status, 200);
+    assert.equal((await call('/v1/ack', {body: {ack: testPayload.ack, event: 'opened'}, origin: 'https://evil.example'})).status, 403, 'receipts come from the Pool Center sites only');
+    for (const bad of [{ack: 'short', event: 'received'}, {ack: testPayload.ack, event: 'deleted'}, {ack: testPayload.ack, event: 'received', repeat: 'yes'}]) {
+      assert.equal((await receipt(bad)).status, 400, JSON.stringify(bad));
+    }
+    assert.deepEqual((await receipt({ack: randomBytes(16).toString('base64url'), event: 'received'})).body, {ok: true}, 'an unknown value gets the same answer');
+    let row = (await admin.query('SELECT state, last_status, received_at IS NOT NULL AS received, opened_at IS NOT NULL AS opened, received_repeat, ack_sha256 FROM pool_alerts.device_checks WHERE id = $1', [test.body.check])).rows[0];
+    assert.deepEqual([row.state, row.last_status, row.received, row.opened, row.received_repeat], ['sent', 201, true, true, false]);
+    assert.equal(row.ack_sha256, sha256Hex(testPayload.ack), 'only the digest of the receipt value is stored');
+
+    // A real week (the most recently published), then an exact repeat of it.
+    const latest = (await admin.query("SELECT season, week, revision FROM public.nfl_pool_weeks WHERE status = 'locked' ORDER BY season DESC, week DESC LIMIT 1")).rows[0];
+    const release = await owner('check', {subscriptionId: phone.sid, scenario: 'release'});
+    assert.deepEqual([release.body.outcome, release.body.season, release.body.week, release.body.revision], ['accepted', latest.season, latest.week, latest.revision]);
+    const releasePayload = sentTo()[1].payload;
+    assert.deepEqual(releasePayload, {v: 1, kind: 'release', season: latest.season, week: latest.week, revision: latest.revision, check: releasePayload.check});
+    await receipt({ack: releasePayload.check, event: 'received', repeat: false});
+    const repeat = await owner('check', {subscriptionId: phone.sid, scenario: 'repeat'});
+    const repeatPayload = sentTo()[2].payload;
+    assert.equal(repeat.body.outcome, 'accepted');
+    assert.deepEqual({...repeatPayload, check: null}, {...releasePayload, check: null}, 'the same alert, a new receipt value');
+    assert.notEqual(repeatPayload.check, releasePayload.check);
+    await receipt({ack: repeatPayload.check, event: 'received', repeat: true});
+    assert.equal((await admin.query('SELECT received_repeat FROM pool_alerts.device_checks WHERE id = $1', [repeat.body.check])).rows[0].received_repeat, true);
+
+    // Corrections off on this device: the correction check is skipped, exactly as the planner would skip it.
+    const skipped = await owner('check', {subscriptionId: phone.sid, scenario: 'correction'});
+    assert.deepEqual([skipped.body.outcome, skipped.body.reason], ['skipped', 'corrections-off']);
+    assert.equal(sentTo().length, 3, 'nothing was sent');
+    assert.equal((await call('/v1/preferences', {body: {id: phone.sid, token: phone.token, corrections: true}})).status, 200);
+    const correction = await owner('check', {subscriptionId: phone.sid, scenario: 'correction'});
+    assert.equal(correction.body.outcome, 'accepted');
+    assert.equal(sentTo()[3].payload.kind, 'correction');
+
+    // The owner's verdict, the evidence list, the figures.
+    const verdict = await owner('check-confirm', {checkId: test.body.check, result: 'pass', note: 'Android lock screen showed the test'});
+    assert.deepEqual([verdict.status, verdict.body.confirmed.received, verdict.body.confirmed.opened], [200, true, true]);
+    assert.equal((await owner('check-confirm', {checkId: test.body.check, result: 'maybe'})).status, 400);
+    assert.equal((await owner('check-confirm', {checkId: 999999, result: 'pass'})).status, 404);
+    const checks = (await call('/v1/owner/checks', {method: 'GET', token: OWNER_TOKEN, origin: null})).body.checks.filter(c => c.code === store.deviceCode(phone.sid));
+    assert.deepEqual(checks.map(c => [c.scenario, c.state]).reverse(), [['test', 'sent'], ['release', 'sent'], ['repeat', 'sent'], ['correction', 'skipped'], ['correction', 'sent']]);
+    assert.equal(/endpoint|p256dh|subscription_id/.test(JSON.stringify(checks)), false);
+    const status = (await call('/v1/owner/status', {method: 'GET', token: OWNER_TOKEN, origin: null})).body;
+    assert.equal(status.settings.sending_enabled, false, 'group sending stayed paused throughout');
+    assert.deepEqual([status.checks7d.requested, status.checks7d.sent, status.checks7d.received, status.checks7d.opened, status.checks7d.passed], [5, 4, 3, 1, 1]);
+    const readOnly = (await call('/v1/status', {method: 'GET', token: STATUS_TOKEN, origin: null})).body;
+    assert.deepEqual(Object.keys(readOnly.checks7d).includes('received'), true);
+    assert.equal(JSON.stringify(readOnly).includes(phone.sid) || JSON.stringify(readOnly).includes(store.deviceCode(phone.sid)), false, 'the read-only status names no device');
+    assert(Number.isFinite(Date.parse(readOnly.lastOkRunAt)) && Number.isFinite(Date.parse(readOnly.lastCronRunAt)) && readOnly.latency7d.sent > 0);
+    assert.equal((await admin.query('SELECT count(*)::int AS n FROM pool_alerts.deliveries')).rows[0].n, deliveriesBefore, 'checks never create group deliveries');
+    // The same through the owner tool (what the GitHub workflow runs).
+    const env = {POOL_ALERTS_URL: base, POOL_ALERTS_OWNER_TOKEN: OWNER_TOKEN}, out = [];
+    const run = async (...argv) => { out.length = 0; assert.equal(await ops(argv, env, line => out.push(line)), 0); return out.join('\n'); };
+    assert.match(await run('devices'), new RegExp(`${store.deviceCode(phone.sid)}  android  corrections on .* id ${phone.sid}`));
+    assert.match(await run('check', phone.sid, 'test'), /Check #\d+ test: the push service answered 201 \(accepted\)\. Accepted is not delivery/);
+    assert.match(await run('checks'), new RegExp(`#${test.body.check} ${store.deviceCode(phone.sid)} test → sent 201 · received yes · opened yes · verdict pass`));
+    assert.match(await run('confirm', String(correction.body.check), 'fail', 'no sound'), /recorded as fail \(received no, opened no\)/);
+    await assert.rejects(ops(['check', phone.sid, 'everything'], env, () => {}), /Usage: check/);
+    await owner('resume', {note: 'acceptance done'});
+
+    // Turning alerts off: the device and its checks are gone, and a check finds nothing to send to.
+    assert.equal((await call('/v1/unsubscribe', {body: {id: phone.sid, token: phone.token}})).status, 200);
+    const gone = await owner('check', {subscriptionId: phone.sid, scenario: 'test'});
+    assert.deepEqual([gone.status, gone.body.error], [404, 'device-not-enrolled']);
+    assert.equal((await admin.query('SELECT count(*)::int AS n FROM pool_alerts.device_checks WHERE subscription_id = $1', [phone.sid])).rows[0].n, 0);
+    for (const m of pushService.messages.filter(m => m.device === phone.id)) assert.equal(m.vapidKey, vapid.publicKey);
+
+    // A sender whose database lacks migration 007 refuses to work, naming the reason.
+    await admin.query('ALTER TABLE pool_alerts.device_checks RENAME TO device_checks_hidden');
+    const unready = await serve(makeApp());
+    try {
+      const response = await fetch(`http://127.0.0.1:${unready.address().port}/v1/owner/status`, {headers: {Authorization: `Bearer ${OWNER_TOKEN}`}});
+      assert.deepEqual([response.status, (await response.json()).error], [503, 'environment-guard']);
+    } finally {
+      await new Promise(r => unready.close(r));
+      await admin.query('ALTER TABLE pool_alerts.device_checks_hidden RENAME TO device_checks');
+    }
+  });
+
   console.log(`Pool Alerts integration: ${results.length} scenarios passed (${pushService.messages.length} push requests verified and decrypted)`);
 } finally {
   await new Promise(r => server.close(r));
