@@ -80,7 +80,8 @@ try{
     try{bin=execFileSync('which',[name],{encoding:'utf8'}).trim();if(bin)break}catch{}
   }
   assert(bin,'Chrome/Chromium not present');
-  browser=await chromium.launch({executablePath:bin,headless:true,args:['--no-sandbox']});
+  // No host name resolves: a request the routes below do not answer fails instead of reaching a real (production) site.
+  browser=await chromium.launch({executablePath:bin,headless:true,args:['--no-sandbox','--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost']});
   const page=await browser.newPage({viewport:{width:1280,height:850}});
   const errors=[];page.on('pageerror',e=>errors.push(String(e)));
   await page.addInitScript(row=>{window.__testDb={row,writes:0}},initial);
