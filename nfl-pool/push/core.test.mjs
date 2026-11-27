@@ -210,6 +210,16 @@ await test('owner tool: generated keys are valid for the sender, tokens match th
   await assert.rejects(ops(['test', 'nope'], {POOL_ALERTS_OWNER_TOKEN: 'x'.repeat(43)}), /Usage: test/);
   await assert.rejects(ops(['enrollment', 'invite'], {POOL_ALERTS_OWNER_TOKEN: 'x'.repeat(43)}), /POOL_ALERTS_INVITE_CODE/);
   await assert.rejects(ops(['drop-database'], {POOL_ALERTS_OWNER_TOKEN: 'x'.repeat(43)}), /Unknown command/);
+  // With only the control key, the owner token is derived for the pinned senders, never for another address.
+  const realFetch = globalThis.fetch, seenOps = [];
+  globalThis.fetch = async (url, init) => { seenOps.push({url: String(url), auth: init.headers.Authorization}); return new Response(JSON.stringify({outcome: 'ok', sent: 0, retrying: 0, failed: 0}), {status: 200}); };
+  try {
+    const KEYC = Buffer.alloc(32, 5).toString('base64url');
+    await ops(['notify'], {POOL_ALERTS_CONTROL_KEY: KEYC}, () => {});
+    assert.deepEqual(seenOps.at(-1), {url: 'https://br-late-hat-b55ygmj4-poolalerts.compute.c-7.us-east-2.aws.neon.tech/v1/dispatch', auth: 'Bearer Xl3ckx0UY97zN3kNZLI-GdGkhTbtTAO7Fy1H2fXu9Ts'},
+      'the production owner token, as the release workflow and the Maintenance Center derive it');
+    await assert.rejects(ops(['notify'], {POOL_ALERTS_CONTROL_KEY: KEYC, POOL_ALERTS_URL: 'https://br-other-poolalerts.compute.c-7.us-east-2.aws.neon.tech'}, () => {}), /POOL_ALERTS_OWNER_TOKEN is required/);
+  } finally { globalThis.fetch = realFetch; }
   assert.match(describe({environment: 'production', sendingConfigured: true, settings: {sending_enabled: false, note: 'maintenance'}, subscriptions: {active: 3}}),
     /Sending: deployment ON, database OFF \(maintenance\)/);
 });

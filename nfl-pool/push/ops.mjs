@@ -17,8 +17,12 @@
 //   node nfl-pool/push/ops.mjs checks               recent checks: push-service answer, received, opened, verdict
 //   node nfl-pool/push/ops.mjs confirm <check-id> pass|fail ["note"]   record your own verdict for a check
 //
-// Environment: POOL_ALERTS_URL (default: production), POOL_ALERTS_OWNER_TOKEN (required except for keys and health).
+// Environment: POOL_ALERTS_URL (default: production), POOL_ALERTS_OWNER_TOKEN (required except for keys and health), or
+// instead POOL_ALERTS_CONTROL_KEY: for the production or staging sender, the owner token is then derived from it exactly as
+// the release workflow derives it (release-lib.mjs), so one key serves the workflows and the Maintenance Center.
 import {createECDH, createHash, randomBytes} from 'node:crypto';
+import {deriveToken} from './release-lib.mjs';
+import {TARGETS} from './release-targets.mjs';
 
 export const PRODUCTION_URL = 'https://br-late-hat-b55ygmj4-poolalerts.compute.c-7.us-east-2.aws.neon.tech';
 const CLASS = /^[a-z0-9-]{1,60}$/;
@@ -88,8 +92,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, prin
     return 0;
   }
   if (command === 'health') { print(JSON.stringify(await call(base, '/v1/health', {method: 'GET'}), null, 2)); return 0; }
-  const token = env.POOL_ALERTS_OWNER_TOKEN;
-  if (!token || token.length < 32) throw new Error('POOL_ALERTS_OWNER_TOKEN is required');
+  const known = Object.values(TARGETS).find(t => t.sender.url === base);
+  const token = env.POOL_ALERTS_OWNER_TOKEN
+    || (env.POOL_ALERTS_CONTROL_KEY && known ? deriveToken(env.POOL_ALERTS_CONTROL_KEY, {app: 'personal', environment: known.environment, purpose: 'owner'}) : null);
+  if (!token || token.length < 32) throw new Error('POOL_ALERTS_OWNER_TOKEN is required (or POOL_ALERTS_CONTROL_KEY, for the production or staging sender)');
   switch (command) {
     case 'status': print(describe(await call(base, '/v1/owner/status', {token, method: 'GET'}))); return 0;
     case 'notify': { const r = await call(base, '/v1/dispatch', {token}); print(r.paused ? 'Sending is paused: nothing was sent.' : `Cycle ${r.outcome}: ${r.sent} sent, ${r.retrying} retrying, ${r.failed} failed.`); return 0; }

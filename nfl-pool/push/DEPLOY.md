@@ -33,7 +33,8 @@ collation; identical on CI's en_US.UTF-8 image, locally and on Neon staging).
 `pool-alerts-staging`; in both, the secrets `NEON_API_KEY` (a Neon API key) and `POOL_ALERTS_CONTROL_KEY` (generate once:
 `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`, keep it in your password manager). Put
 the same control key in the Maintenance Center (Vercel → smokke-dashboard → `POOL_ALERTS_CONTROL_KEY`, server-only) and in
-the environment `pool-alerts-monitor` (scheduled monitor, below). Then run `stage` on staging once with your key, so
+the environment `pool-alerts-monitor` (used by the scheduled monitor, below, and by the Pool Alerts maintenance workflow,
+which derives its owner token from it; `POOL_ALERTS_OWNER_TOKEN` is no longer needed). Then run `stage` on staging once with your key, so
 staging's tokens are yours.
 
 Staging rehearsal on real Neon (2026-11-27): preflight, stage (backup branch, 007 at the exact fingerprint, Neon-generated

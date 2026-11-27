@@ -46,6 +46,8 @@ jobs:
     name: Pool Alerts ${{ inputs.action }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # The control key lives in this environment (no reviewers; restrict it to main), shared with the scheduled monitor.
+    environment: pool-alerts-monitor
     steps:
       - uses: actions/checkout@v5
         with:
@@ -57,6 +59,8 @@ jobs:
         env:
           POOL_ALERTS_URL: ${{ vars.POOL_ALERTS_URL }}
           POOL_ALERTS_OWNER_TOKEN: ${{ secrets.POOL_ALERTS_OWNER_TOKEN }}
+          # Or, with no POOL_ALERTS_OWNER_TOKEN: the owner token is derived from the control key (as the release workflow does).
+          POOL_ALERTS_CONTROL_KEY: ${{ secrets.POOL_ALERTS_CONTROL_KEY }}
           POOL_ALERTS_INVITE_CODE: ${{ secrets.POOL_ALERTS_INVITE_CODE }}
           ACTION: ${{ inputs.action }}
           DEVICE_ID: ${{ inputs.device_id }}
