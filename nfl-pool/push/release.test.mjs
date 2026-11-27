@@ -4,8 +4,7 @@ import assert from 'node:assert/strict';
 import {readFileSync, mkdtempSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {pbkdf2Sync, createHmac, createHash} from 'node:crypto';
-import {checkControlKey, deriveToken, splitSqlScript, scrub, loadManifest, migrationPlan, nextCronRun, scramVerifier, fingerprintQuery,
+import {checkControlKey, deriveToken, splitSqlScript, scrub, loadManifest, migrationPlan, nextCronRun, fingerprintQuery,
   confirmationFor, sha256Hex} from './release-lib.mjs';
 import {parseArgs, run} from './release.mjs';
 import {TARGETS} from './release-targets.mjs';
@@ -72,18 +71,6 @@ await test('the release manifest names the exact migration files of this commit,
   assert.match(q, /^SELECT \* FROM \(WITH owner_names/);
   assert.match(q, /AS f\(schema, counts, functions, relations, triggers, sender_role\)$/);
   assert(!q.includes('\\set'));
-});
-
-await test('a SCRAM-SHA-256 verifier is exactly what PostgreSQL stores for that password', () => {
-  const salt = Buffer.from('0123456789abcdef'), v = scramVerifier('pencil', {salt, iterations: 4096});
-  const [, iterations, saltB64, stored, server] = /^SCRAM-SHA-256\$(\d+):([^$]+)\$([^:]+):(.+)$/.exec(v);
-  assert.equal(iterations, '4096');
-  assert.equal(Buffer.from(saltB64, 'base64').toString(), '0123456789abcdef');
-  const salted = pbkdf2Sync('pencil', salt, 4096, 32, 'sha256');
-  assert.equal(stored, createHash('sha256').update(createHmac('sha256', salted).update('Client Key').digest()).digest('base64'));
-  assert.equal(server, createHmac('sha256', salted).update('Server Key').digest('base64'));
-  assert.notEqual(scramVerifier('pencil'), scramVerifier('pencil'), 'a fresh salt each time');
-  assert(!scramVerifier('pencil-secret').includes('pencil-secret'));
 });
 
 await test('the next scheduled run of the Pool Alerts triggers', () => {

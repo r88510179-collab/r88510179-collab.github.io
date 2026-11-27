@@ -1,6 +1,6 @@
 // Pool Alerts release automation: the parts with no network, database or clock of their own, unit-tested in
 // release.test.mjs. The operations themselves are in release.mjs.
-import {createHash, createHmac, pbkdf2Sync, randomBytes} from 'node:crypto';
+import {createHash, createHmac, randomBytes} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 
 export const sha256Hex = data => createHash('sha256').update(data).digest('hex');
@@ -149,17 +149,6 @@ export function nextCronRun(cron, from = Date.now()) {
 // Confirmation words for every operation that changes something: the workflow's "confirm" input must be exactly this.
 export const confirmationFor = (operation, environment) => `${operation}-${environment}`;
 export const CHANGING = Object.freeze(['backup', 'stage', 'activate', 'pause', 'resume', 'rollback']);
-
-// A SCRAM-SHA-256 verifier for a password (RFC 5802/7677, PostgreSQL's format). ALTER ROLE ... PASSWORD '<verifier>'
-// stores it as is, so the plaintext password never travels in SQL and never reaches a server log; only the sender's
-// connection string (in its deployment environment) holds it.
-export function scramVerifier(password, {salt = randomBytes(16), iterations = 4096} = {}) {
-  const salted = pbkdf2Sync(Buffer.from(password, 'utf8'), salt, iterations, 32, 'sha256');
-  const hmac = (key, text) => createHmac('sha256', key).update(text).digest();
-  const storedKey = createHash('sha256').update(hmac(salted, 'Client Key')).digest();
-  const serverKey = hmac(salted, 'Server Key');
-  return `SCRAM-SHA-256$${iterations}:${salt.toString('base64')}$${storedKey.toString('base64')}:${serverKey.toString('base64')}`;
-}
 
 // The read-only fingerprint query of push/fingerprint.sql, without its psql wrapper.
 export function fingerprintQuery(text = readFileSync(new URL('./fingerprint.sql', import.meta.url), 'utf8')) {

@@ -3,7 +3,8 @@
 // branches, endpoints, connection URIs, functions, deployments with Neon's merge semantics, triggers), an emulation of
 // Neon's SQL-over-HTTP endpoint (one statement per query, a batch is one transaction, raw text values), and the real
 // sender served locally from whatever environment the release deployed. The sender role must authenticate with SCRAM
-// on these databases (pg_hba, test-integration.sh), so the password the release sets is really checked.
+// on these databases (pg_hba, test-integration.sh), so the password Neon's reset_password stand-in sets (as Neon does)
+// is really what the deployed sender authenticates with.
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import {readFileSync, mkdtempSync} from 'node:fs';
@@ -12,7 +13,7 @@ import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import pg from 'pg';
 import {run} from './release.mjs';
-import {loadManifest, splitSqlScript, fingerprintQuery, scramVerifier, randomPassword, deriveToken} from './release-lib.mjs';
+import {loadManifest, splitSqlScript, fingerprintQuery, randomPassword, deriveToken} from './release-lib.mjs';
 import {createApp} from './app.mjs';
 import {serve} from './main.mjs';
 
@@ -48,23 +49,6 @@ await scenario('the whole file over TCP and its statements as one HTTP batch giv
     await b.query('ROLLBACK');
     assert.equal(await fingerprintOf('nfl_pool_release_b'), manifest.migrations[1].fingerprintAfter);
   } finally { await a.end(); await b.end(); }
-});
-
-await scenario('a password set as a SCRAM verifier authenticates the sender role, and nothing else does', async () => {
-  const password = randomPassword(), owner = new pg.Client({connectionString: url('nfl_pool_release_a')});
-  await owner.connect();
-  try { await owner.query(`ALTER ROLE pool_alerts_sender LOGIN PASSWORD '${scramVerifier(password)}'`); } finally { await owner.end(); }
-  const sender = new pg.Client({connectionString: url('nfl_pool_release_a', 'pool_alerts_sender', password)});
-  await sender.connect();
-  assert.equal((await sender.query('SELECT current_user AS u')).rows[0].u, 'pool_alerts_sender');
-  await sender.end();
-  const wrong = new pg.Client({connectionString: url('nfl_pool_release_a', 'pool_alerts_sender', `${password}x`)});
-  await assert.rejects(wrong.connect(), /password authentication failed/);
-  const owner2 = new pg.Client({connectionString: url('nfl_pool_release_a')});
-  await owner2.connect();
-  const stored = (await owner2.query("SELECT rolpassword FROM pg_authid WHERE rolname = 'pool_alerts_sender'").catch(() => ({rows: [{rolpassword: null}]}))).rows[0].rolpassword;
-  await owner2.end();
-  if (stored) assert(!stored.includes(password), 'only the verifier is stored');
 });
 
 // The comparison copies are done: drop them and the role they created, so the rehearsal below starts from exactly the
@@ -140,6 +124,14 @@ async function fetcher(input, init = {}) {
   if (method === 'GET' && path === `${base}/branches/br-rehearsal-main/databases`) return ok({databases: [{name: DB, owner_name: 'nfl_pool_owner'}]});
   if (method === 'GET' && path === `${base}/branches/br-rehearsal-main/roles`) return ok({roles: [{name: 'nfl_pool_owner'}]});
   if (method === 'GET' && path === `${base}/connection_uri`) return ok({uri: url(DB)});
+  if (method === 'POST' && path === `${base}/branches/br-rehearsal-main/roles/pool_alerts_sender/reset_password`) {
+    // As Neon does: a new password generated server-side, applied to the role, returned once.
+    const password = randomPassword(), c = new pg.Client({connectionString: url('postgres', 'postgres')});
+    await c.connect();
+    try { await c.query(`ALTER ROLE pool_alerts_sender PASSWORD '${password}'`); } finally { await c.end(); }
+    state.resets = (state.resets || 0) + 1;
+    return ok({role: {name: 'pool_alerts_sender', password}, operations: []});
+  }
   const fnPath = `${base}/branches/br-rehearsal-main/functions/poolalerts`;
   if (method === 'GET' && path === fnPath) return state.env ? ok({function: {invocation_url: `${senderUrl}/`, current_deployment: {id: state.deployments.length, status: 'completed', environment: Object.keys(state.env).sort()}}})
     : new Response('{"message":"not found"}', {status: 404});
@@ -178,7 +170,7 @@ try {
     assert.equal(await fingerprintOf(DB), manifest.fingerprintBefore);
   });
 
-  await scenario('stage over HTTP: backup, 006 and 007 verified by fingerprint, marker, SCRAM password, exact bundle, health, baseline, trigger; group sending stays off', async () => {
+  await scenario('stage over HTTP: backup, 006 and 007 verified by fingerprint, marker, Neon-generated password, exact bundle, health, baseline, trigger; group sending stays off', async () => {
     const evidence = await release('stage', '--target', 'staging', '--confirm', 'stage-staging', '--sql', 'http', '--bundle', bundle);
     assert.equal(evidence.ok, true, JSON.stringify(evidence.steps, null, 1));
     assert.deepEqual(names(evidence).filter(n => /migration|marker|backup|trigger|baseline|deployment/.test(n)),
@@ -194,6 +186,10 @@ try {
     const row = (await c.query('SELECT (SELECT name FROM pool_alerts.environment) AS env, (SELECT sending_enabled FROM pool_alerts.settings) AS sending, (SELECT last_event_id FROM pool_alerts.cursor) AS cursor')).rows[0];
     await c.end();
     assert.deepEqual([row.env, row.sending, row.cursor !== null], ['staging', false, true], 'marked, group sending OFF, baseline recorded');
+    assert.equal(state.resets, 1, 'the sender password came from the reset_password stand-in');
+    const deployedPassword = decodeURIComponent(new URL(state.env.POOL_ALERTS_DATABASE_URL).password);
+    const wrong = new pg.Client({connectionString: url(DB, 'pool_alerts_sender', `${deployedPassword}x`)});
+    await assert.rejects(wrong.connect(), /password authentication failed/, 'SCRAM is really checked on this database');
     const written = readFileSync(evidence.file, 'utf8');
     for (const secret of [CONTROL, env.NEON_API_KEY, state.env.POOL_ALERTS_DATABASE_URL.split(':')[2].split('@')[0], state.env.VAPID_PRIVATE_KEY,
       deriveToken(CONTROL, {app: 'personal', environment: 'staging', purpose: 'owner'})]) assert(!written.includes(secret), 'no secret in the evidence');
