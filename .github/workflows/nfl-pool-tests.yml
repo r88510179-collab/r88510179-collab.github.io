@@ -31,7 +31,7 @@ jobs:
       # nfl-pool/**/*.test.mjs files are exactly these paths, so adding,
       # removing or renaming a suite means updating this list and the count in
       # the same change.
-      EXPECTED_SUITE_COUNT: '21'
+      EXPECTED_SUITE_COUNT: '22'
       EXPECTED_SUITES: |
         nfl-pool/admin/incident-rulings.test.mjs
         nfl-pool/admin/organizer-correction-core.test.mjs
@@ -40,6 +40,7 @@ jobs:
         nfl-pool/admin/survivor-parser.test.mjs
         nfl-pool/admin/survivor-publish-checks.test.mjs
         nfl-pool/home-dashboard.test.mjs
+        nfl-pool/ops/pool-alerts-monitor.test.mjs
         nfl-pool/picks-mobile.test.mjs
         nfl-pool/pool-alerts.test.mjs
         nfl-pool/public-math.test.mjs
@@ -127,7 +128,7 @@ jobs:
           fi
           echo "Inventory guard passed: the discovered suites are exactly the $count approved suites."
 
-      - name: Run 21 suites
+      - name: Run 22 suites
         run: |
           set -euo pipefail
           work="$(mktemp -d)"

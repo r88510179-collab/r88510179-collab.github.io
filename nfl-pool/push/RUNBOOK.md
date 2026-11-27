@@ -94,3 +94,27 @@ What matters: the device list (`pool_alerts.subscriptions`). Everything else is 
 - **Sender:** redeploy the previous bundle (Neon keeps deployments) or pause/disable as in §6.
 - **Database:** §6 "Remove completely", or reset to the backup branch from DEPLOY.md §1 (loses publications made since —
   avoid unless necessary).
+- **Automated:** Actions → Pool Alerts release → `rollback` with the level you need (`pause`, `trigger`, `sender`,
+  `database`) and the confirmation `rollback-production`. The database level removes 007 then 006 only if each rollback
+  ends exactly in the reviewed earlier catalog (otherwise it commits nothing) and needs a backup branch from the last 7
+  days. The evidence report lists every step.
+
+## 9. The monitor opened "Pool Alerts needs attention"
+
+The scheduled monitor (`.github/workflows/pool-alerts-monitor.yml`) already tried what is safe: one dispatch when
+publications were waiting or deliveries overdue. The issue lists what is left, per app and environment:
+
+| Code | Meaning | Do this |
+| --- | --- | --- |
+| `health-unavailable`, `status-unavailable` | the sender or its database does not answer | §2; Neon Console → the project's status |
+| `status-token-refused` | the sender was deployed with another control key | run the release workflow's `stage` again with the current key |
+| `environment-changed` | the sender reports another environment | stop: check which function and variables were deployed |
+| `last-run-failed` | the last cycle failed (database, verification) | §1, §2 |
+| `scheduled-run-missed` | no scheduled run for over two schedule periods | Neon Console → Functions → `poolalerts` → triggers; `notify` sends meanwhile |
+| `publications-waiting`, `deliveries-delayed` | still waiting after the monitor's dispatch | §1 |
+| `push-key-refused` | a push service refused the VAPID key | §4 |
+| `many-subscriptions-expired` | more subscriptions expired this week than are active | §4 (a changed or wrong VAPID key) |
+| `compute-near-limit` | 90% of the Free plan's 100 CU-hours used this month | reduce schedules (DEPLOY.md costs) or wait for the monthly reset |
+
+It closes the issue itself once everything is healthy, and does not repeat a problem that has not changed.
+

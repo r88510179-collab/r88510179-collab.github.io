@@ -37,6 +37,24 @@ Prerequisites: DEPLOY.md steps 1–8 done; sending OFF until step C.
 7. **Turn off alerts** on one phone → next alert does not reach it; `status` shows one device fewer. ☐
 8. Desktop: Chrome or Edge (Windows/macOS) or Safari (macOS 13+): steps A1–A3 and C3. ☐
 
+## E. Phone acceptance from the Maintenance Center (group sending can stay paused)
+
+This is what `release.mjs activate` requires. Everything but the phone is automated.
+
+1. On the phone open the Pool Center (staging: the preview in DEPLOY.md; production: picks.smokkeventures.com/nfl-pool/),
+   turn on Pool Alerts (iPhone: from the Home Screen app), and tap **Ask for a device check**. The card shows a code
+   such as `7BBP-SBWX`.
+2. Close the app or lock the phone.
+3. On any device open dashboard.smokkeventures.com → Pool Alerts tile → **Pool Alerts operations**, choose Personal and
+   the environment. Your phone is listed by its code: press **Test** (then **Release**, **Repeat**, **Correction**).
+4. The check shows **Accepted** (the push service took it), **Received** (the phone itself reported it) and, when you tap
+   the notification, **Opened** (the app opens on the right page and clears the *New* marker).
+5. Press **It arrived** or **It did not arrive**. Only your answer counts as physical delivery; the page then shows
+   "Android: passed · iPhone: passed" once each platform has a passed, opened check.
+
+The same is available without the dashboard: Actions → Pool Alerts maintenance → `devices`, `check-*`, `checks`,
+`confirm-pass`/`confirm-fail`.
+
 ## D. Sign-off
 
 - [ ] All lines above pass on at least one Android phone and one iPhone.
