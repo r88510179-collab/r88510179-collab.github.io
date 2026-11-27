@@ -117,7 +117,8 @@ function deployLocally(env) {
   senderPools.push(pool);
   current = createApp({cfg: Object.freeze({environment: env.POOL_ALERTS_ENV, database: DB, origins: env.APP_ORIGINS.split(','), publisherEmail: env.PUBLISHER_EMAIL,
     vapid: {publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY, subject: env.VAPID_SUBJECT}, sendingAllowed: env.POOL_ALERTS_SENDING === 'enabled',
-    ownerTokenSha256: env.OWNER_TOKEN_SHA256, statusTokenSha256: env.STATUS_TOKEN_SHA256, version: env.POOL_ALERTS_VERSION}),
+    ownerTokenSha256: env.OWNER_TOKEN_SHA256, statusTokenSha256: env.STATUS_TOKEN_SHA256, monitorTokenSha256: env.MONITOR_TOKEN_SHA256 || null,
+    version: env.POOL_ALERTS_VERSION}),
   pool, send: async () => ({status: 201}), reader: {readIndex: async () => [], readWeek: async () => null}, verifyPublisher: async () => false});
 }
 const target = Object.freeze({
@@ -186,8 +187,11 @@ async function fetcher(input, init = {}) {
   if (method === 'PATCH' && trig) { const t = state.triggers.find(x => x.trigger_id === trig[1]); Object.assign(t, JSON.parse(init.body)); return ok({trigger: t}); }
   return new Response(JSON.stringify({message: `unexpected ${method} ${path}`}), {status: 500});
 }
-const CONTROL = Buffer.alloc(32, 9).toString('base64url');
-const env = {NEON_API_KEY: 'rehearsal-neon-key-not-real', POOL_ALERTS_CONTROL_KEY: CONTROL};
+const CONTROL = Buffer.alloc(32, 9).toString('base64url'), MONITOR = Buffer.alloc(32, 13).toString('base64url');
+const env = {NEON_API_KEY: 'rehearsal-neon-key-not-real', POOL_ALERTS_CONTROL_KEY: CONTROL, POOL_ALERTS_MONITOR_KEY: MONITOR};
+const tokenOf = (key, purpose) => deriveToken(key, {app: 'personal', environment: 'staging', purpose});
+const answer = async (path, token, method = 'GET') => (await fetch(`${senderUrl}${path}`, {method, headers: {Authorization: `Bearer ${token}`,
+  ...(method === 'POST' ? {'Content-Type': 'application/json'} : {})}, body: method === 'POST' ? '{}' : undefined})).status;
 const evidenceDir = mkdtempSync(join(tmpdir(), 'release-spec-'));
 const bundle = new URL('./dist/poolalerts.zip', import.meta.url).pathname;
 const release = (...argv) => run([...argv, '--evidence', evidenceDir], {env, fetcher, targets: {staging: target}, print: () => {}, wait: ms => new Promise(r => setTimeout(r, Math.min(ms, 20)))});
@@ -212,6 +216,8 @@ try {
     assert(state.deployments[0].zip > 100000, 'the bundle was uploaded');
     assert.equal(state.env.POOL_ALERTS_VERSION, head);
     assert.equal(state.env.OWNER_TOKEN_SHA256.length, 64);
+    assert.equal(state.env.MONITOR_TOKEN_SHA256, createHash('sha256').update(tokenOf(MONITOR, 'monitor')).digest('hex'), 'the monitor digest comes from the monitor key');
+    assert(names(evidence).includes('ok:sender accepts the monitor token (status and dispatch only)'));
     assert.equal(state.env.DATABASE_URL, 'unused', 'a same-project function never keeps the owner connection Neon injects');
     assert.deepEqual(state.triggers.map(t => [t.name, t.schedule.cron, t.function_path, t.enabled]), [['pool-alerts-hourly', '17 * * * *', '/v1/cron', true]]);
     const c = new pg.Client({connectionString: url(DB)}); await c.connect();
@@ -226,8 +232,8 @@ try {
     const wrong = new pg.Client({connectionString: url(DB, 'pool_alerts_sender', `${deployedPassword}x`)});
     await assert.rejects(wrong.connect(), /password authentication failed/, 'SCRAM is really checked on this database');
     const written = readFileSync(evidence.file, 'utf8');
-    for (const secret of [CONTROL, env.NEON_API_KEY, state.env.POOL_ALERTS_DATABASE_URL.split(':')[2].split('@')[0], state.env.VAPID_PRIVATE_KEY,
-      deriveToken(CONTROL, {app: 'personal', environment: 'staging', purpose: 'owner'})]) assert(!written.includes(secret), 'no secret in the evidence');
+    for (const secret of [CONTROL, MONITOR, env.NEON_API_KEY, state.env.POOL_ALERTS_DATABASE_URL.split(':')[2].split('@')[0], state.env.VAPID_PRIVATE_KEY,
+      tokenOf(CONTROL, 'owner'), tokenOf(MONITOR, 'monitor')]) assert(!written.includes(secret), 'no secret in the evidence');
   });
 
   await scenario('stage again (an interrupted run resumes): nothing applied twice, VAPID keys kept, one trigger, a fresh password that works', async () => {
@@ -247,6 +253,7 @@ try {
     const verified = await release('verify', '--target', 'staging');
     assert.equal(verified.ok, true, JSON.stringify(verified.steps, null, 1));
     assert.equal(verified.status.sendingEnabled, false);
+    assert.equal(verified.steps.find(s => s.name === 'monitor token').status, 'ok', 'verify confirms the scheduled monitor can read the sender');
     assert.equal((await release('resume', '--target', 'staging', '--confirm', 'resume-staging')).ok, true);
     assert.equal((await release('pause', '--target', 'staging', '--confirm', 'pause-staging')).ok, true);
     const refused = await release('activate', '--target', 'staging', '--confirm', 'activate-staging');
@@ -254,6 +261,23 @@ try {
     assert.match(refused.steps.at(-1).note, /no passed, opened device check on both an Android phone and an iPhone/);
     const c = new pg.Client({connectionString: url(DB)}); await c.connect();
     assert.equal((await c.query('SELECT sending_enabled FROM pool_alerts.settings')).rows[0].sending_enabled, false, 'still off');
+    await c.end();
+  });
+
+  await scenario('the monitor token reads status and asks for the scheduled cycle, and opens nothing else; its key derives no owner token', async () => {
+    const monitor = tokenOf(MONITOR, 'monitor');
+    assert.equal(await answer('/v1/status', monitor), 200, 'health report');
+    assert.equal(await answer('/v1/dispatch', monitor, 'POST'), 200, 'safe recovery: the same cycle the hourly trigger runs');
+    for (const [path, method] of [['/v1/owner/status', 'GET'], ['/v1/owner/devices', 'GET'], ['/v1/owner/checks', 'GET'], ['/v1/owner/pause', 'POST'],
+      ['/v1/owner/resume', 'POST'], ['/v1/owner/retry-failed', 'POST'], ['/v1/owner/enrollment', 'POST'], ['/v1/owner/test', 'POST'], ['/v1/owner/check', 'POST'],
+      ['/v1/dispatch', 'GET']]) assert.equal(await answer(path, monitor, method), 401, `the monitor token never opens ${method} ${path}`);
+    for (const purpose of ['owner', 'status']) {
+      assert.equal(await answer('/v1/owner/status', tokenOf(MONITOR, purpose)), 401, `the monitor key derives no ${purpose} token`);
+      assert.equal(await answer('/v1/status', tokenOf(MONITOR, purpose)), 401);
+    }
+    assert.equal(await answer('/v1/status', tokenOf(CONTROL, 'monitor')), 401, 'and the control key is not the monitor\'s key');
+    const c = new pg.Client({connectionString: url(DB)}); await c.connect();
+    assert.equal((await c.query('SELECT sending_enabled FROM pool_alerts.settings')).rows[0].sending_enabled, false, 'group sending is still off');
     await c.end();
   });
 
@@ -284,17 +308,20 @@ try {
     const sha = t => createHash('sha256').update(t).digest('hex');
     const other = Buffer.alloc(32, 3).toString('base64url');
     const token = (key, purpose) => deriveToken(key, {app: 'personal', environment: 'staging', purpose});
-    const adopt = key => release('adopt-tokens', '--target', 'staging', '--owner-sha256', sha(token(key, 'owner')), '--status-sha256', sha(token(key, 'status')), '--confirm', 'adopt-tokens-staging');
+    const otherMonitor = Buffer.alloc(32, 4).toString('base64url');
+    const adopt = (key, monitorKey) => release('adopt-tokens', '--target', 'staging', '--owner-sha256', sha(token(key, 'owner')), '--status-sha256', sha(token(key, 'status')),
+      '--monitor-sha256', sha(token(monitorKey, 'monitor')), '--confirm', 'adopt-tokens-staging');
     const refused = await run(['adopt-tokens', '--target', 'staging', '--owner-sha256', 'a'.repeat(64), '--status-sha256', 'b'.repeat(64), '--confirm', 'yes'],
       {env, fetcher, targets: {staging: target}, print: () => {}, wait: async () => {}});
     assert.equal(refused.ok, false, 'needs its exact confirmation');
-    const e = await adopt(other);
+    const e = await adopt(other, otherMonitor);
     assert.equal(e.ok, true, JSON.stringify(e.steps, null, 1));
     const status = async key => (await fetch(`${senderUrl}/v1/status`, {headers: {Authorization: `Bearer ${token(key, 'status')}`}})).status;
     assert.deepEqual([await status(other), await status(CONTROL)], [200, 401], 'the other key\'s token works, the old one no longer does');
+    assert.deepEqual([await answer('/v1/status', token(otherMonitor, 'monitor')), await answer('/v1/status', token(MONITOR, 'monitor'))], [200, 401], 'the monitor digest too');
     assert(!JSON.stringify(e).includes(token(other, 'owner')), 'no token in the evidence');
-    assert.equal((await adopt(CONTROL)).ok, true, 'back to the rehearsal key for the scenarios that follow');
-    assert.equal(await status(CONTROL), 200);
+    assert.equal((await adopt(CONTROL, MONITOR)).ok, true, 'back to the rehearsal keys for the scenarios that follow');
+    assert.deepEqual([await status(CONTROL), await answer('/v1/status', token(MONITOR, 'monitor'))], [200, 200]);
   });
 
   await scenario('rollback rehearsal: database level pauses, disables the trigger, stops the sender, removes 007 then 006 exactly; stage restores it all', async () => {

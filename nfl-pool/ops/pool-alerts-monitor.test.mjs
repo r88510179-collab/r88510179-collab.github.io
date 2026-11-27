@@ -1,7 +1,8 @@
-// Pool Alerts monitor, unit level: no network. Health/status answers, recovery, compute and the one-issue alerting are
-// played against stand-ins; the token derivation is the release workflow's own (nfl-pool/push/release-lib.mjs).
+// Pool Alerts monitor, unit level: no network. Health/status answers, recovery, least privilege and the one-issue
+// alerting are played against stand-ins; the token derivation is the release workflow's own (nfl-pool/push/release-lib.mjs).
 import assert from 'node:assert/strict';
-import {TARGETS, scheduleGapMs, assess, computeProblem, signature, planIssue, issueBody, checkAll, manageIssue, summary} from './pool-alerts-monitor.mjs';
+import {readFileSync} from 'node:fs';
+import {TARGETS, scheduleGapMs, assess, signature, planIssue, issueBody, checkAll, manageIssue, summary} from './pool-alerts-monitor.mjs';
 import {deriveToken} from '../push/release-lib.mjs';
 
 let passed = 0;
@@ -9,14 +10,18 @@ const test = async (name, fn) => { await fn(); passed++; };
 const NOW = Date.parse('2026-11-27T06:21:00Z');
 const ago = min => new Date(NOW - min * 60000).toISOString();
 const personalProd = TARGETS.find(t => t.app === 'personal' && t.environment === 'production');
-const commercialStaging = TARGETS.find(t => t.app === 'commercial' && t.environment === 'staging');
+// A sender answering with the Commercial field names (the assessment is the same code as the Commercial monitor's).
+const commercialStaging = {app: 'commercial', environment: 'staging', url: 'https://commercial-staging.example.invalid', cron: '13 * * * *'};
+const commercialProd = {app: 'commercial', environment: 'production', url: 'https://commercial-production.example.invalid', cron: '13,43 * * * *'};
 const healthy = {status: 200, data: {environment: 'production', version: 'abc1234', sendingConfigured: true}};
 const personalStatus = (extra = {}) => ({status: 200, data: {environment: 'production', sendingEnabled: true, subscriptions: {active: 4}, failures7d: [], oldestOutstandingAt: null,
   captureGaps30d: 0, lastRun: {at: ago(4), outcome: 'ok'}, lastOkRunAt: ago(4), lastCronRunAt: ago(4), eventsWaiting: 0, expiredDevices7d: 0, ...extra}});
 const alerts = r => r.problems.filter(p => p.severity === 'alert').map(p => p.code);
 
-await test('targets: both apps, both environments, each sender URL in the Neon Functions shape with its schedule', () => {
-  assert.deepEqual(TARGETS.map(t => `${t.app}/${t.environment}`), ['personal/production', 'personal/staging', 'commercial/production', 'commercial/staging']);
+await test('targets: the Personal senders only (Commercial has its own monitor in its private repository), each in the Neon Functions shape', () => {
+  assert.deepEqual(TARGETS.map(t => `${t.app}/${t.environment}`), ['personal/production', 'personal/staging']);
+  const source = readFileSync(new URL('./pool-alerts-monitor.mjs', import.meta.url), 'utf8');
+  assert(!/br-hidden-darkness|br-frosty-math|fancy-brook|shy-sea/.test(source), 'nothing about the Commercial deployment is published in this public repository');
   for (const t of TARGETS) assert.match(t.url, /^https:\/\/br-[a-z0-9-]+-poolalerts\.compute\.c-\d+\.us-east-[12]\.aws\.neon\.tech$/);
   assert.equal(scheduleGapMs('17 * * * *'), 3600000);
   assert.equal(scheduleGapMs('13,43 * * * *'), 1800000);
@@ -38,7 +43,7 @@ await test('each failure the brief names is detected and needs the owner', () =>
   const cases = [
     [{health: {status: 503, data: null}}, 'health-unavailable'],
     [{health: {...healthy, data: {...healthy.data, environment: 'staging'}}, status: personalStatus()}, 'environment-changed'],
-    [{health: healthy, status: {status: 401, data: null}}, 'status-token-refused'],
+    [{health: healthy, status: {status: 401, data: null}}, 'monitor-token-refused'],
     [{health: healthy, status: {status: 503, data: {error: 'environment-guard'}}}, 'status-unavailable'],
     [{health: healthy, status: personalStatus({lastRun: {at: ago(4), outcome: 'error', errorClass: 'database'}})}, 'last-run-failed'],
     [{health: healthy, status: personalStatus({failures7d: [{error: 'auth-403', n: 3}]})}, 'push-key-refused'],
@@ -55,7 +60,6 @@ await test('each failure the brief names is detected and needs the owner', () =>
       lastRuns: [{trigger: 'cron', startedAt: ago(30), outcome: 'error'}], lastOkRunAt: ago(400), lastCronRunAt: ago(30), eventsWaiting: 0}}}, NOW);
   assert.deepEqual(alerts(c), [], 'staging never opens the issue');
   assert.deepEqual(c.problems.filter(p => p.severity === 'warn').map(p => p.code).sort(), ['deliveries-delayed', 'last-run-failed', 'push-key-refused'], 'but every problem is shown');
-  const commercialProd = TARGETS.find(t => t.app === 'commercial' && t.environment === 'production');
   const cp = assess(commercialProd, {health: {status: 200, data: {environment: 'production', sendingConfigured: true}},
     status: {status: 200, data: {environment: 'production', sendingEnabled: false, devices: {active: 2}, problems7d: {'auth-401': 1}, oldestWaiting: ago(300),
       lastRuns: [{trigger: 'cron', startedAt: ago(30), outcome: 'error'}], lastOkRunAt: ago(400), lastCronRunAt: ago(30), eventsWaiting: 0}}}, NOW);
@@ -69,10 +73,11 @@ await test('only waiting publications, overdue deliveries or a missed run with w
   assert.deepEqual(missedIdle.problems.filter(p => p.recover), [], 'nothing waiting: a dispatch would not help, the owner checks the trigger');
 });
 
-await test('compute: warned at 75%, an incident at 90% of the Free plan allowance', () => {
-  assert.equal(computeProblem(personalProd, {id: 'p', compute_time_seconds: 50 * 3600}, NOW), null);
-  assert.equal(computeProblem(personalProd, {id: 'p', compute_time_seconds: 80 * 3600}, NOW).severity, 'warn');
-  assert.equal(computeProblem(personalProd, {id: 'p', compute_time_seconds: 95 * 3600}, NOW).code, 'compute-near-limit');
+await test('a refused monitor token says why: never staged with the monitor key, or keyed with another one', () => {
+  const unset = assess(personalProd, {health: {...healthy, data: {...healthy.data, monitorTokenConfigured: false}}, status: {status: 401, data: null}}, NOW);
+  assert.match(unset.problems[0].message, /no monitor token yet/);
+  const other = assess(personalProd, {health: {...healthy, data: {...healthy.data, monitorTokenConfigured: true}}, status: {status: 401, data: null}}, NOW);
+  assert.match(other.problems[0].message, /another monitor key/);
 });
 
 await test('one issue per incident: created once, unchanged problems are not repeated, changes update it, recovery closes it', () => {
@@ -83,7 +88,7 @@ await test('one issue per incident: created once, unchanged problems are not rep
   const body = issueBody(sick, sig, NOW);
   assert.match(body, /<!-- signature: personal\/production:scheduled-run-missed -->/);
   assert.deepEqual(planIssue({number: 7, body}, signature([{...sick[0], problems: [{code: 'scheduled-run-missed', severity: 'alert', message: '260 min'}]}])), {action: 'none'}, 'the minutes changed, the incident did not');
-  assert.deepEqual(planIssue({number: 7, body}, 'commercial/staging:last-run-failed personal/production:scheduled-run-missed'), {action: 'update'});
+  assert.deepEqual(planIssue({number: 7, body}, 'personal/production:last-run-failed personal/production:scheduled-run-missed'), {action: 'update'});
   assert.deepEqual(planIssue({number: 7, body}, ''), {action: 'close'});
   assert.deepEqual(planIssue(null, ''), {action: 'none'});
 });
@@ -99,7 +104,7 @@ function senders(answers, seen) {
 }
 const KEY = Buffer.alloc(32, 5).toString('base64url');
 
-await test('recovery: one dispatch with the owner token, then a fresh read; status uses the status token; without a key only health', async () => {
+await test('recovery: one dispatch with the monitor token, then a fresh read; status uses the same token; without the monitor key only health', async () => {
   const seen = [];
   let dispatched = false;
   const fetcher = senders((target, path) => {
@@ -108,14 +113,14 @@ await test('recovery: one dispatch with the owner token, then a fresh read; stat
     if (path === '/v1/dispatch') { dispatched = true; return {status: 200, data: {outcome: 'ok'}}; }
     return personalStatus(dispatched ? {} : {eventsWaiting: 3, lastOkRunAt: ago(70)});
   }, seen);
-  const results = await checkAll({env: {POOL_ALERTS_CONTROL_KEY: KEY}, fetcher, now: () => NOW});
+  const results = await checkAll({env: {POOL_ALERTS_MONITOR_KEY: KEY}, fetcher, now: () => NOW});
   const prod = results.find(r => r.app === 'personal' && r.environment === 'production');
   assert.deepEqual(alerts(prod), [], 'recovered: nothing for the owner');
   assert.deepEqual(prod.recovery, ['dispatch answered 200 (ok)']);
   const calls = seen.filter(s => s.target === 'personal/production');
   assert.deepEqual(calls.map(c => `${c.method} ${c.path}`), ['GET /v1/health', 'GET /v1/status', 'POST /v1/dispatch', 'GET /v1/health', 'GET /v1/status']);
-  assert.equal(calls[1].auth, `Bearer ${deriveToken(KEY, {app: 'personal', environment: 'production', purpose: 'status'})}`);
-  assert.equal(calls[2].auth, `Bearer ${deriveToken(KEY, {app: 'personal', environment: 'production', purpose: 'owner'})}`);
+  const monitorToken = deriveToken(KEY, {app: 'personal', environment: 'production', purpose: 'monitor'});
+  assert.deepEqual([calls[1].auth, calls[2].auth, calls[4].auth], Array(3).fill(`Bearer ${monitorToken}`), 'the monitor token, for status and the dispatch alike');
   assert.equal(calls[0].auth, null);
   assert(results.filter(r => r !== prod).every(r => r.deployed === false), 'the others are not deployed yet');
   const text = summary(results, {action: 'none'});
@@ -123,6 +128,16 @@ await test('recovery: one dispatch with the owner token, then a fresh read; stat
   const bare = [];
   await checkAll({env: {}, fetcher: senders(() => healthy, bare), now: () => NOW});
   assert(bare.every(s => s.path === '/v1/health' && s.auth === null), 'no key: health only, no token, no dispatch');
+});
+
+await test('least privilege: a control key or Neon API key given to the monitor by mistake is never used', async () => {
+  const seen = [];
+  const results = await checkAll({env: {POOL_ALERTS_CONTROL_KEY: KEY, NEON_API_KEY: 'neon-admin-key-not-for-the-monitor'}, fetcher: senders(() => healthy, seen), now: () => NOW});
+  assert(seen.every(s => s.path === '/v1/health' && s.auth === null), 'health only: nothing derived from the control key, no call to Neon');
+  assert(results.every(r => r.problems.some(p => p.code === 'status-not-checked')));
+  const workflow = readFileSync(new URL('../../.github/workflows/pool-alerts-monitor.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /POOL_ALERTS_MONITOR_KEY: \$\{\{ secrets\.POOL_ALERTS_MONITOR_KEY \}\}/);
+  assert(!/POOL_ALERTS_CONTROL_KEY|NEON_API_KEY|POOL_ALERTS_OWNER_TOKEN/.test(workflow.replace(/^#.*$/gm, '')), 'the scheduled workflow is given the monitor key and nothing else');
 });
 
 await test('GitHub issue: created for a new incident, left alone while unchanged, closed with a comment on recovery', async () => {

@@ -23,7 +23,8 @@
 // Options: --approved-commit <sha> (production stage/activate), --confirm <operation>-<target> (every change),
 //   --bundle <zip> and --bundle-sha256 <hex>, --sql tcp|http (http: Neon's SQL-over-HTTP, for a rehearsal from a host
 //   without PostgreSQL egress), --evidence <dir>, --level <rollback level>, --accept-without-device-evidence "<reason>".
-// Environment: NEON_API_KEY (a Neon API key; never printed), POOL_ALERTS_CONTROL_KEY (operations that need tokens).
+// Environment: NEON_API_KEY (a Neon API key; never printed), POOL_ALERTS_CONTROL_KEY (operations that need tokens),
+// POOL_ALERTS_MONITOR_KEY (the scheduled monitor's separate key: stage installs its token digest; required for a production stage).
 //
 // Every step first looks at what is there, so an interrupted run can simply be run again: a migration already applied is
 // verified, not re-run; the backup, marker, deployment and trigger are reused when they already match; nothing here can
@@ -66,6 +67,8 @@ export function parseArgs(argv, targets = TARGETS) {
     if (options.target !== 'staging') throw new Error('adopt-tokens runs on staging only (production gets its tokens from the release workflow\'s own key)');
     for (const k of ['ownerSha256', 'statusSha256']) if (!/^[0-9a-f]{64}$/.test(options[k] || '')) throw new Error('--owner-sha256 and --status-sha256 must be 64 lowercase hex digits');
     if (options.ownerSha256 === options.statusSha256) throw new Error('the owner and status digests must differ');
+    if (options.monitorSha256 !== undefined && !/^[0-9a-f]{64}$/.test(options.monitorSha256)) throw new Error('--monitor-sha256 must be 64 lowercase hex digits');
+    if (options.monitorSha256 !== undefined && [options.ownerSha256, options.statusSha256].includes(options.monitorSha256)) throw new Error('the monitor digest must differ from the owner and status digests');
   }
   return {operation, options};
 }
@@ -198,7 +201,7 @@ export async function run(argv, {env = process.env, fetcher = fetch, print = con
   targets = TARGETS} = {}) {
   const {operation, options} = parseArgs(argv, targets);
   const target = targets[options.target];
-  const secrets = [env.NEON_API_KEY, env.POOL_ALERTS_CONTROL_KEY];
+  const secrets = [env.NEON_API_KEY, env.POOL_ALERTS_CONTROL_KEY, env.POOL_ALERTS_MONITOR_KEY];
   const evidence = {tool: 'nfl-pool/push/release.mjs', operation, target: target.environment, startedAt: new Date(now()).toISOString(), steps: [], ok: false};
   const step = (name, status, detail = {}) => { evidence.steps.push({name, status, ...detail}); print(`${status === 'ok' ? 'ok  ' : status === 'skip' ? 'skip' : status === 'warn' ? 'WARN' : 'FAIL'} ${name}${detail.note ? ` — ${detail.note}` : ''}`); };
   const fail = (name, note, detail = {}) => { step(name, 'fail', {note, ...detail}); throw Object.assign(new Error(note), {stepFailure: true}); };
@@ -206,6 +209,13 @@ export async function run(argv, {env = process.env, fetcher = fetch, print = con
   const gitRun = git || (args => execFileSync('git', args, {cwd: ROOT, encoding: 'utf8'}).trim());
   const tokens = purpose => {
     const token = deriveToken(env.POOL_ALERTS_CONTROL_KEY, {app: target.app, environment: target.environment, purpose});
+    secrets.push(token);
+    return token;
+  };
+  // The scheduled monitor's token comes from its own key (POOL_ALERTS_MONITOR_KEY), never from the control key.
+  const monitorToken = () => {
+    if (!env.POOL_ALERTS_MONITOR_KEY) return null;
+    const token = deriveToken(env.POOL_ALERTS_MONITOR_KEY, {app: target.app, environment: target.environment, purpose: 'monitor'});
     secrets.push(token);
     return token;
   };
@@ -222,6 +232,9 @@ export async function run(argv, {env = process.env, fetcher = fetch, print = con
     }
     if (operation === 'adopt-tokens' && (target.environment !== 'staging' || options.confirm !== confirmationFor(operation, target.environment))) {
       fail('confirmation', `pass --confirm ${confirmationFor('adopt-tokens', 'staging')} (staging only)`);
+    }
+    if (operation === 'stage' && target.environment === 'production' && !env.POOL_ALERTS_MONITOR_KEY) {
+      fail('monitor key', 'POOL_ALERTS_MONITOR_KEY is required for a production stage (the scheduled monitor\'s own token)');
     }
     if (['stage', 'activate', 'pause', 'resume', 'rollback', 'staging-publish'].includes(operation) && !env.POOL_ALERTS_CONTROL_KEY) {
       fail('control key', 'POOL_ALERTS_CONTROL_KEY is required for this operation (the owner and status tokens are derived from it)');
@@ -323,7 +336,8 @@ export async function run(argv, {env = process.env, fetcher = fetch, print = con
       // Credentials: derived tokens (digests only to the sender) and a new sender database password. Neon generates the
       // password (reset_password) so it never appears in SQL text; only if Neon's API does not list the role is it set
       // with ALTER ROLE (Neon accepts only a plaintext password there, not a SCRAM verifier).
-      const owner = tokens('owner'), status = tokens('status');
+      const owner = tokens('owner'), status = tokens('status'), monitor = monitorToken();
+      if (!monitor) step('monitor token', 'warn', {note: 'POOL_ALERTS_MONITOR_KEY not set: the scheduled monitor cannot read this sender'});
       if (!db.senderCanLogin) await sql.query('ALTER ROLE pool_alerts_sender LOGIN');
       const {password, how} = await senderPassword({neon, sql, target, secrets});
       secrets.push(password);
@@ -341,6 +355,7 @@ export async function run(argv, {env = process.env, fetcher = fetch, print = con
       const environment = {...target.env, POOL_ALERTS_ENV: target.environment,
         POOL_ALERTS_DATABASE_URL: `postgresql://pool_alerts_sender:${password}@${target.database.host}/${target.database.database}?sslmode=${target.database.sslmode ?? 'require'}`,
         OWNER_TOKEN_SHA256: sha256Hex(owner), STATUS_TOKEN_SHA256: sha256Hex(status), POOL_ALERTS_SENDING: 'enabled', POOL_ALERTS_VERSION: head,
+        ...(monitor ? {MONITOR_TOKEN_SHA256: sha256Hex(monitor)} : {}),
         ...(vapid ? {VAPID_PUBLIC_KEY: vapid.vapidPublicKey, VAPID_PRIVATE_KEY: vapid.vapidPrivateKey} : {}),
         ...(target.sender.sameProjectAsDatabase ? {DATABASE_URL: 'unused', DATABASE_URL_UNPOOLED: 'unused'} : {})};
       if (!fn && (!environment.PUBLISHER_EMAIL || !environment.VAPID_SUBJECT)) fail('deployment', 'a first deployment needs PUBLISHER_EMAIL and VAPID_SUBJECT in the target');
@@ -365,6 +380,14 @@ export async function run(argv, {env = process.env, fetcher = fetch, print = con
         const o = await http(`${target.sender.url}/v1/owner/status`, {token: owner, fetcher}).catch(() => null);
         return o?.status === 200 && o.data?.version === head ? true : null;
       }, {wait, step, fail, timeoutMs: 180000, consecutive: 4});
+      if (monitor) {
+        await waitFor('sender accepts the monitor token (status and dispatch only)', async () => {
+          const m = await http(`${target.sender.url}/v1/status`, {token: monitor, fetcher}).catch(() => null);
+          // A read-only owner route: the monitor token must be refused there (it never reaches an owner control).
+          const refused = await http(`${target.sender.url}/v1/owner/status`, {token: monitor, fetcher}).catch(() => null);
+          return m?.status === 200 && refused?.status === 401 ? true : null;
+        }, {wait, step, fail, timeoutMs: 180000, consecutive: 2});
+      }
       const baseline = await http(`${target.sender.url}/v1/dispatch`, {method: 'POST', token: owner, body: {}, fetcher});
       if (baseline.status !== 200) fail('baseline cycle', `dispatch answered ${baseline.status}`);
       db = await readDatabase(sql, target);
@@ -386,6 +409,11 @@ export async function run(argv, {env = process.env, fetcher = fetch, print = con
         const cronLate = trigger?.enabled && s.lastCronRunAt && now() - Date.parse(s.lastCronRunAt) > 3 * 3600000;
         step('sender status', cronLate ? 'warn' : 'ok', {note: `group sending ${s.sendingEnabled ? 'ON' : 'off'}; last scheduled run ${s.lastCronRunAt ?? 'none'}${cronLate ? ' (late)' : ''}`});
       } else step('sender status', 'skip', {note: 'POOL_ALERTS_CONTROL_KEY not set'});
+      const monitor = monitorToken();
+      if (monitor) {
+        const m = await http(`${target.sender.url}/v1/status`, {token: monitor, fetcher}).catch(() => null);
+        step('monitor token', m?.status === 200 ? 'ok' : 'warn', {note: m?.status === 200 ? 'the scheduled monitor can read this sender' : `the sender refused the monitor token (${m?.status ?? 'no answer'})`});
+      } else step('monitor token', 'skip', {note: 'POOL_ALERTS_MONITOR_KEY not set'});
       if (trigger) step('trigger', trigger.enabled ? 'ok' : 'warn', {cron: trigger.schedule?.cron, nextRunAt: trigger.next_run_at ?? nextCronRun(trigger.schedule?.cron, now())});
       const expected = latestOf(manifest);
       if (db.fingerprint !== expected) step('catalog', operation === 'verify' ? 'fail' : 'warn', {note: `at ${plan.state}, release is ${manifest.migrations.at(-1).id}`});
@@ -437,7 +465,8 @@ export async function run(argv, {env = process.env, fetcher = fetch, print = con
     if (operation === 'adopt-tokens') {
       if (!fn) fail('adopt-tokens', 'the staging sender is not deployed: run stage first');
       const deployed = await neon.deploy(target.sender.projectId, target.sender.branchId, target.sender.slug,
-        {environment: {OWNER_TOKEN_SHA256: options.ownerSha256, STATUS_TOKEN_SHA256: options.statusSha256}});
+        {environment: {OWNER_TOKEN_SHA256: options.ownerSha256, STATUS_TOKEN_SHA256: options.statusSha256,
+          ...(options.monitorSha256 ? {MONITOR_TOKEN_SHA256: options.monitorSha256} : {})}});
       const deploymentId = deployed?.deployment?.id ?? deployed?.id ?? null;
       step('token digests', 'ok', {note: 'config-only deployment with the owner\'s token digests', deploymentId});
       await waitFor('deployment complete', async () => {
@@ -446,7 +475,8 @@ export async function run(argv, {env = process.env, fetcher = fetch, print = con
       }, {wait, step, fail, timeoutMs: 300000});
       await waitFor('sender answers after the change', async () => {
         const h = await http(`${target.sender.url}/v1/health`, {fetcher}).catch(() => null);
-        return h?.status === 200 && h.data?.environment === target.environment && h.data?.ownerTokenConfigured && h.data?.statusTokenConfigured ? true : null;
+        return h?.status === 200 && h.data?.environment === target.environment && h.data?.ownerTokenConfigured && h.data?.statusTokenConfigured
+          && (!options.monitorSha256 || h.data?.monitorTokenConfigured) ? true : null;
       }, {wait, step, fail, timeoutMs: 180000, consecutive: 4});
       step('next', 'ok', {note: 'open the Maintenance Center operations page for this staging target: it connects with your control key'});
     }

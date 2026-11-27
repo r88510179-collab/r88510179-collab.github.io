@@ -24,6 +24,7 @@ for (const url of [adminUrl, senderUrl]) {
 const admin = new pg.Pool({connectionString: adminUrl, max: 8});
 const senderPool = new pg.Pool({connectionString: senderUrl, max: 3});
 const SEASON = 2096, ORIGIN = 'https://pool-center.test', OWNER_TOKEN = randomBytes(32).toString('base64url'), STATUS_TOKEN = randomBytes(32).toString('base64url');
+const MONITOR_TOKEN = randomBytes(32).toString('base64url');
 const COMMISSIONER = '00000000-0000-4000-8000-000000000001';
 
 const {publicKey: jwtPublic, privateKey: jwtPrivate} = generateKeyPairSync('ed25519');
@@ -32,7 +33,7 @@ const vapid = webpush.generateVAPIDKeys(), subject = 'mailto:pool-alerts-test@ex
 const pushService = await startPushService({subject});
 const cfg = Object.freeze({environment: 'test', database: 'nfl_pool', origins: [ORIGIN], publisherEmail: 'djsmokke@gmail.com',
   vapid: {publicKey: vapid.publicKey, privateKey: vapid.privateKey, subject}, sendingAllowed: true,
-  ownerTokenSha256: sha256Hex(OWNER_TOKEN), statusTokenSha256: sha256Hex(STATUS_TOKEN), version: 'test'});
+  ownerTokenSha256: sha256Hex(OWNER_TOKEN), statusTokenSha256: sha256Hex(STATUS_TOKEN), monitorTokenSha256: sha256Hex(MONITOR_TOKEN), version: 'test'});
 const services = [{name: 'local-test-service', accepts: host => host === 'localhost', allowsPort: true}];
 const send = createPushSender({...cfg.vapid, agent: new https.Agent({ca: pushService.ca})});
 function makeApp(cfgOverrides = {}) {
@@ -451,6 +452,14 @@ try {
     assert.equal(status.body.sendingEnabled, true);
     const publisherStatus = await call('/v1/owner/status', {method: 'GET', token: publisherJwt()});
     assert.equal(publisherStatus.status, 200);
+    // The monitor token: health checks and a safe dispatch only.
+    assert.equal((await call('/v1/status', {method: 'GET', token: MONITOR_TOKEN, origin: null})).status, 200, 'the monitor reads status');
+    assert.equal((await call('/v1/dispatch', {body: {}, token: MONITOR_TOKEN, origin: null})).status, 200, 'the monitor may ask for the scheduled cycle');
+    for (const [path, method] of [['/v1/owner/pause', 'POST'], ['/v1/owner/resume', 'POST'], ['/v1/owner/retry-failed', 'POST'], ['/v1/owner/status', 'GET'],
+      ['/v1/owner/devices', 'GET'], ['/v1/owner/checks', 'GET'], ['/v1/owner/check', 'POST'], ['/v1/owner/test', 'POST'], ['/v1/owner/enrollment', 'POST']]) {
+      assert.equal((await call(path, {method, body: method === 'POST' ? {} : undefined, token: MONITOR_TOKEN, origin: null})).status, 401, `the monitor token never opens ${path}`);
+    }
+    assert.equal((await call('/v1/dispatch', {method: 'GET', token: MONITOR_TOKEN, origin: null})).status, 401, 'only the POST dispatch');
   });
 
   await scenario('controlled test notification to one device', async () => {

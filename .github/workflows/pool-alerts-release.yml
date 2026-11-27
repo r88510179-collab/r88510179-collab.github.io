@@ -9,7 +9,8 @@ name: Pool Alerts release
 #    an explicit approval of that very run.
 #  * Production stage and activate also need the reviewed commit SHA, and stage the reviewed bundle SHA-256 (both printed
 #    by the NFL Pool Tests "push-alerts-isolated" job of that commit).
-#  * Secrets: NEON_API_KEY and POOL_ALERTS_CONTROL_KEY, as environment secrets of pool-alerts-production and
+#  * Secrets: NEON_API_KEY, POOL_ALERTS_CONTROL_KEY and POOL_ALERTS_MONITOR_KEY (stage installs the digest of the
+#    monitor's own token; required for production), as environment secrets of pool-alerts-production and
 #    pool-alerts-staging. They are never printed; the evidence artifact is scrubbed.
 #  * One release per target at a time (concurrency), so migrations, deployments and triggers are never raced; any step
 #    can be run again after an interruption (each step checks what is already there).
@@ -93,6 +94,7 @@ jobs:
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           POOL_ALERTS_CONTROL_KEY: ${{ secrets.POOL_ALERTS_CONTROL_KEY }}
+          POOL_ALERTS_MONITOR_KEY: ${{ secrets.POOL_ALERTS_MONITOR_KEY }}
           OPERATION: ${{ inputs.operation }}
           TARGET: ${{ inputs.target }}
           APPROVED_COMMIT: ${{ inputs.approved_commit }}

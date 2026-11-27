@@ -2,7 +2,8 @@ name: Pool Alerts maintenance
 
 # Owner-run Pool Alerts operations from GitHub (works from a phone: Actions → Pool Alerts maintenance → Run workflow).
 # It calls the deployed sender with the owner token; it has no database credentials. Changing actions (notify, pause,
-# resume, retry, test, enrollment) require the confirmation box. Nothing runs on a schedule.
+# resume, retry, test, enrollment) require the confirmation box. Nothing runs on a schedule. The Maintenance Center's
+# Pool Alerts operations page does the same from a phone; this workflow is the fallback.
 on:
   workflow_dispatch:
     inputs:
@@ -46,8 +47,9 @@ jobs:
     name: Pool Alerts ${{ inputs.action }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # The control key lives in this environment (no reviewers; restrict it to main), shared with the scheduled monitor.
-    environment: pool-alerts-monitor
+    # The owner credential (the control key) is a secret of pool-alerts-production, the release environment: every run
+    # waits for the owner's approval there, as a release does. The scheduled monitor never holds it.
+    environment: pool-alerts-production
     steps:
       - uses: actions/checkout@v5
         with:

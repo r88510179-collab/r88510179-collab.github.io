@@ -17,8 +17,12 @@ await test('tokens are derived per app, environment and purpose, and never from 
   const owner = deriveToken(KEY, {app: 'personal', environment: 'production', purpose: 'owner'});
   assert.match(owner, /^[A-Za-z0-9_-]{43}$/);
   assert.equal(owner, deriveToken(KEY, {app: 'personal', environment: 'production', purpose: 'owner'}), 'stable');
-  const all = ['personal', 'commercial'].flatMap(app => ['production', 'staging'].flatMap(environment => ['owner', 'status'].map(purpose => deriveToken(KEY, {app, environment, purpose}))));
-  assert.equal(new Set(all).size, 8, 'eight different tokens');
+  const all = ['personal', 'commercial'].flatMap(app => ['production', 'staging'].flatMap(environment => ['owner', 'status', 'monitor'].map(purpose => deriveToken(KEY, {app, environment, purpose}))));
+  assert.equal(new Set(all).size, 12, 'twelve different tokens');
+  // The monitor holds its own key: what it can derive never equals a token derived from the control key.
+  const MONITOR_KEY = Buffer.alloc(32, 11).toString('base64url');
+  const fromMonitorKey = ['owner', 'status', 'monitor'].map(purpose => deriveToken(MONITOR_KEY, {app: 'personal', environment: 'production', purpose}));
+  assert(!fromMonitorKey.some(t => all.includes(t)), 'the monitor key opens nothing the control key does');
   assert.notEqual(deriveToken(Buffer.alloc(32, 8).toString('base64url'), {app: 'personal', environment: 'production', purpose: 'owner'}), owner);
   for (const bad of [undefined, '', 'short', Buffer.alloc(16, 1).toString('base64url'), 'x'.repeat(42), `${KEY}!`]) assert.throws(() => checkControlKey(bad), /at least 32 random bytes/);
   assert.throws(() => deriveToken(KEY, {app: 'personal', environment: 'production', purpose: 'admin'}), /Unknown token/);
@@ -123,6 +127,10 @@ await test('arguments: an operation, a target and nothing unexpected', () => {
   assert.throws(() => parseArgs(['adopt-tokens', '--target', 'production', '--owner-sha256', 'a'.repeat(64), '--status-sha256', 'b'.repeat(64)]), /staging only/, 'never production');
   assert.throws(() => parseArgs(['adopt-tokens', '--target', 'staging', '--owner-sha256', 'A'.repeat(64), '--status-sha256', 'b'.repeat(64)]), /64 lowercase hex/);
   assert.throws(() => parseArgs(['adopt-tokens', '--target', 'staging', '--owner-sha256', 'a'.repeat(64), '--status-sha256', 'a'.repeat(64)]), /must differ/);
+  const adopt = monitor => parseArgs(['adopt-tokens', '--target', 'staging', '--owner-sha256', 'a'.repeat(64), '--status-sha256', 'b'.repeat(64), '--monitor-sha256', monitor]);
+  assert.equal(adopt('c'.repeat(64)).options.monitorSha256, 'c'.repeat(64), 'the monitor digest is optional and adopted with the others');
+  assert.throws(() => adopt('C'.repeat(64)), /--monitor-sha256 must be 64 lowercase hex/);
+  for (const same of ['a', 'b']) assert.throws(() => adopt(same.repeat(64)), /monitor digest must differ/);
   assert.equal(TARGETS.production.sender.sameProjectAsDatabase, false, 'production keeps the sender out of the database project');
   assert.equal(TARGETS.production.env.APP_ORIGINS, 'https://r88510179-collab.github.io,https://picks.smokkeventures.com');
 });
@@ -196,8 +204,14 @@ await test('a change without its exact confirmation, or production without the a
     assert.deepEqual(calls, [], `${argv.join(' ')}: nothing was contacted`);
   }
   const {fetcher, sqlFactory, calls} = fakeNeon({fingerprint: manifest.fingerprintBefore});
-  const wrong = await run(['stage', '--target', 'production', '--confirm', 'stage-production', '--approved-commit', 'b'.repeat(40)],
+  const MONITOR_KEY = Buffer.alloc(32, 11).toString('base64url');
+  const noMonitor = await run(['stage', '--target', 'production', '--confirm', 'stage-production', '--approved-commit', 'a'.repeat(40), '--bundle-sha256', 'b'.repeat(64)],
     {env: {NEON_API_KEY: 'k'.repeat(20), POOL_ALERTS_CONTROL_KEY: KEY}, fetcher, sqlFactory, git, print: quiet, wait: async () => {}});
+  assert.equal(noMonitor.ok, false);
+  assert.match(noMonitor.steps[0].note, /POOL_ALERTS_MONITOR_KEY is required for a production stage/, 'production is never staged without the monitor\'s own token');
+  assert.deepEqual(calls, [], 'a missing monitor key stops before Neon is contacted');
+  const wrong = await run(['stage', '--target', 'production', '--confirm', 'stage-production', '--approved-commit', 'b'.repeat(40)],
+    {env: {NEON_API_KEY: 'k'.repeat(20), POOL_ALERTS_CONTROL_KEY: KEY, POOL_ALERTS_MONITOR_KEY: MONITOR_KEY}, fetcher, sqlFactory, git, print: quiet, wait: async () => {}});
   assert.equal(wrong.ok, false);
   assert.match(wrong.steps.find(s => s.name === 'approved commit').note, /approved b{40}/);
   assert.deepEqual(calls, [], 'a different commit stops before Neon is contacted');

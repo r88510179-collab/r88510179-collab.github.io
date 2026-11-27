@@ -145,6 +145,14 @@ await test('configuration: production must be exactly production; staging must t
     {...production, NEON_DATA_URL: `${PRODUCTION.dataUrl}?x=1`}
   ];
   for (const env of refused) assert.throws(() => loadConfig(env), undefined, JSON.stringify(env).slice(0, 120));
+  // The monitor's digest is optional, and never one of the owner's (a monitor holding an owner token is refused).
+  const digest = c => c.repeat(64);
+  assert.equal(loadConfig({...production, OWNER_TOKEN_SHA256: digest('a'), STATUS_TOKEN_SHA256: digest('b'), MONITOR_TOKEN_SHA256: digest('c')}).monitorTokenSha256, digest('c'));
+  assert.equal(loadConfig(production).monitorTokenSha256, null);
+  for (const same of ['OWNER_TOKEN_SHA256', 'STATUS_TOKEN_SHA256']) {
+    assert.throws(() => loadConfig({...production, [same]: digest('d'), MONITOR_TOKEN_SHA256: digest('d')}), /MONITOR_TOKEN_SHA256 must differ/);
+  }
+  assert.throws(() => loadConfig({...production, MONITOR_TOKEN_SHA256: 'D'.repeat(64)}), /MONITOR_TOKEN_SHA256 must be a lowercase SHA-256/);
   for (const name of Object.keys(production).filter(k => k !== 'POOL_ALERTS_SENDING')) {
     const env = {...production}; delete env[name];
     assert.throws(() => loadConfig(env), new RegExp(name), `missing ${name} is refused`);

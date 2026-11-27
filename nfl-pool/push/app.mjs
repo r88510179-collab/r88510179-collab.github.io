@@ -122,7 +122,7 @@ export function createApp({cfg, pool, reader, send, verifyPublisher, now = () =>
     }
     if (request.method === 'GET' && path === '/v1/health') {
       return json(200, {service: 'pool-alerts', environment: cfg.environment, version: cfg.version, sendingConfigured: cfg.sendingAllowed,
-        ownerTokenConfigured: !!cfg.ownerTokenSha256, statusTokenConfigured: !!cfg.statusTokenSha256, lastCycle}, headers);
+        ownerTokenConfigured: !!cfg.ownerTokenSha256, statusTokenConfigured: !!cfg.statusTokenSha256, monitorTokenConfigured: !!cfg.monitorTokenSha256, lastCycle}, headers);
     }
 
     if (request.method === 'POST' && path === '/v1/cron') {
@@ -133,7 +133,9 @@ export function createApp({cfg, pool, reader, send, verifyPublisher, now = () =>
     }
 
     if (path === '/v1/dispatch' || path.startsWith('/v1/owner/')) {
-      const actor = await ownerActor(request);
+      // The monitor token is accepted for the dispatch alone (the same cycle the trigger runs), never on an owner route.
+      const monitor = path === '/v1/dispatch' && request.method === 'POST' && !!cfg.monitorTokenSha256 && digestMatches(bearerToken(request), cfg.monitorTokenSha256);
+      const actor = monitor ? 'monitor-token' : await ownerActor(request);
       if (!actor) return json(401, {error: 'not-authorized'}, headers);
       await guard();
       if (request.method === 'POST' && path === '/v1/dispatch') {
@@ -187,7 +189,8 @@ export function createApp({cfg, pool, reader, send, verifyPublisher, now = () =>
 
     if (request.method === 'GET' && path === '/v1/status') {
       const token = bearerToken(request);
-      if (!cfg.statusTokenSha256 || !digestMatches(token, cfg.statusTokenSha256)) return json(401, {error: 'not-authorized'});
+      const reader = (cfg.statusTokenSha256 && digestMatches(token, cfg.statusTokenSha256)) || (cfg.monitorTokenSha256 && digestMatches(token, cfg.monitorTokenSha256));
+      if (!reader) return json(401, {error: 'not-authorized'});
       await guard();
       const s = await store.status(pool);
       // Read-only, sanitized: counts and states only, never endpoints, tokens or device ids.

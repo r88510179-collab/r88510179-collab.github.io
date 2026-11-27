@@ -1,28 +1,21 @@
-// Pool Alerts monitor (scheduled: .github/workflows/pool-alerts-monitor.yml). For the Personal and Commercial senders,
-// production and staging, it reads each sender's health and status, recovers what is safe to recover on its own, and
-// keeps ONE GitHub issue (label pool-alerts-monitor) for problems that need the owner: opened when a problem appears,
-// updated only when the set of problems changes, closed when everything is healthy again. No problem is reported twice.
+// Pool Alerts monitor (scheduled: .github/workflows/pool-alerts-monitor.yml). For the Personal senders, production and
+// staging, it reads each sender's health and status, recovers what is safe to recover on its own, and keeps ONE GitHub
+// issue (label pool-alerts-monitor) for problems that need the owner: opened when a problem appears, updated only when
+// the set of problems changes, closed when everything is healthy again. No problem is reported twice. The Commercial
+// senders have their own monitor in the (private) Commercial repository, so nothing about them is published here.
 //
-// Safe recovery = one POST /v1/dispatch with the owner token (the same cycle the scheduled trigger runs: it sends only
-// verified, current alerts, never while group sending is paused, and never the same alert twice), when publications are
-// waiting or deliveries are overdue. Nothing else is changed: no pause, resume, deployment or database write.
-//
-// Tokens are derived from POOL_ALERTS_CONTROL_KEY exactly as the release workflow derives them; without the key only the
-// public health endpoints are checked. With NEON_API_KEY (optional) the compute used this month is compared with the
-// Free plan's allowance. Neither value is ever printed.
+// Least privilege: the monitor holds POOL_ALERTS_MONITOR_KEY, never the control key or a Neon API key. The token it
+// derives (purpose "monitor") opens exactly two things on a sender: the read-only status report and POST /v1/dispatch,
+// the same cycle the scheduled trigger runs (it sends only verified, current alerts, never while group sending is
+// paused, and never the same alert twice). That is the only recovery it performs, when publications are waiting or
+// deliveries are overdue: it cannot pause, resume, test, enroll, deploy or touch a database, and the monitor key derives
+// no owner or status token. Without the key only the public health endpoints are checked. The key is never printed.
 import {deriveToken} from '../push/release-lib.mjs';
 
 export const TARGETS = Object.freeze([
-  {app: 'personal', environment: 'production', url: 'https://br-late-hat-b55ygmj4-poolalerts.compute.c-7.us-east-2.aws.neon.tech', cron: '17 * * * *',
-    neon: {databaseProject: 'flat-cake-85432375', functionProject: 'patient-thunder-85353337'}},
-  {app: 'personal', environment: 'staging', url: 'https://br-rough-smoke-bccichyp-poolalerts.compute.c-16.us-east-1.aws.neon.tech', cron: '17 * * * *',
-    neon: {databaseProject: 'dry-sea-47243965'}},
-  {app: 'commercial', environment: 'production', url: 'https://br-hidden-darkness-b55g0j83-poolalerts.compute.c-7.us-east-2.aws.neon.tech', cron: '13,43 * * * *',
-    neon: {databaseProject: 'fancy-brook-65396623'}},
-  {app: 'commercial', environment: 'staging', url: 'https://br-frosty-math-bde1lr4y-poolalerts.compute.c-8.us-east-2.aws.neon.tech', cron: '13 * * * *',
-    neon: {databaseProject: 'shy-sea-71585123'}}
+  {app: 'personal', environment: 'production', url: 'https://br-late-hat-b55ygmj4-poolalerts.compute.c-7.us-east-2.aws.neon.tech', cron: '17 * * * *'},
+  {app: 'personal', environment: 'staging', url: 'https://br-rough-smoke-bccichyp-poolalerts.compute.c-16.us-east-1.aws.neon.tech', cron: '17 * * * *'}
 ].map(Object.freeze));
-const FREE_PLAN_CU_HOURS = 100;
 const LABEL = 'pool-alerts-monitor', TITLE = 'Pool Alerts needs attention';
 
 export function scheduleGapMs(cron) {
@@ -51,8 +44,12 @@ function assessAnswers(target, {health, status}, now) {
   const h = health.data || {};
   if (h.environment !== target.environment) add('environment-changed', 'alert', `the sender reports ${h.environment || 'no environment'}, expected ${target.environment}`);
   if (!h.sendingConfigured) add('sending-switched-off', target.environment === 'production' ? 'warn' : 'info', 'the deployment switch POOL_ALERTS_SENDING is off');
-  if (!status) { add('status-not-checked', 'info', 'no control key: only health was checked'); return {deployed: true, problems}; }
-  if (status.status === 401) { add('status-token-refused', 'alert', 'the sender refused the derived status token (deployed with another control key?)'); return {deployed: true, problems}; }
+  if (!status) { add('status-not-checked', 'info', 'no monitor key: only health was checked'); return {deployed: true, problems}; }
+  if (status.status === 401) {
+    add('monitor-token-refused', 'alert', h.monitorTokenConfigured === false ? 'the sender has no monitor token yet (stage it with POOL_ALERTS_MONITOR_KEY set)'
+      : 'the sender refused the monitor token (deployed with another monitor key?)');
+    return {deployed: true, problems};
+  }
   if (status.status !== 200) { add('status-unavailable', 'alert', `status answered ${status.status || 'nothing'} (database or sender failure)`); return {deployed: true, problems}; }
   const s = status.data || {};
   const lastRun = s.lastRun || (Array.isArray(s.lastRuns) ? {at: s.lastRuns[0]?.startedAt, outcome: s.lastRuns[0]?.outcome, errorClass: null} : null);
@@ -72,15 +69,6 @@ function assessAnswers(target, {health, status}, now) {
   if (Number(s.captureGaps30d) > 0) add('capture-gaps', 'warn', `${s.captureGaps30d} publication(s) were caught by reconciliation instead of the capture trigger`);
   if (!s.sendingEnabled) add('group-sending-paused', 'info', target.environment === 'production' ? 'group sending is paused (expected until activation)' : 'group sending is paused');
   return {deployed: true, problems, figures: {waiting, active, expired, lastCronRunAt: s.lastCronRunAt ?? null, lastOkRunAt: s.lastOkRunAt ?? null, version: h.version ?? null}};
-}
-
-export function computeProblem(target, project, now = Date.now()) {
-  if (!project) return null;
-  const used = (Number(project.compute_time_seconds) || 0) / 3600;
-  const share = used / FREE_PLAN_CU_HOURS;
-  if (share >= 0.9) return {code: 'compute-near-limit', severity: 'alert', message: `${used.toFixed(1)} of ${FREE_PLAN_CU_HOURS} CU-hours used this month in ${project.id}`, recover: false};
-  if (share >= 0.75) return {code: 'compute-high', severity: 'warn', message: `${used.toFixed(1)} of ${FREE_PLAN_CU_HOURS} CU-hours used this month in ${project.id}`, recover: false};
-  return null;
 }
 
 // The incident's identity: which targets have which alert-level problems. Details (counts, minutes) are left out, so a
@@ -114,27 +102,22 @@ async function getJson(fetcher, url, {token, method = 'GET', timeout = 20000} = 
 }
 
 export async function checkAll({env = process.env, fetcher = fetch, now = () => Date.now(), targets = TARGETS} = {}) {
-  const key = env.POOL_ALERTS_CONTROL_KEY;
+  // Only the monitor key: a control key or a Neon API key given to this process by mistake is never read.
+  const key = env.POOL_ALERTS_MONITOR_KEY;
   const results = [];
   for (const target of targets) {
-    const tokens = key ? {status: deriveToken(key, {app: target.app, environment: target.environment, purpose: 'status'}),
-      owner: deriveToken(key, {app: target.app, environment: target.environment, purpose: 'owner'})} : null;
+    const token = key ? deriveToken(key, {app: target.app, environment: target.environment, purpose: 'monitor'}) : null;
     const read = async () => {
       const health = await getJson(fetcher, `${target.url}/v1/health`);
-      const status = health.status === 200 && tokens ? await getJson(fetcher, `${target.url}/v1/status`, {token: tokens.status}) : null;
+      const status = health.status === 200 && token ? await getJson(fetcher, `${target.url}/v1/status`, {token}) : null;
       return assess(target, {health, status}, now());
     };
     let outcome = await read();
     const recovery = [];
-    if (tokens && outcome.problems.some(p => p.recover)) {
-      const dispatched = await getJson(fetcher, `${target.url}/v1/dispatch`, {token: tokens.owner, method: 'POST', timeout: 60000});
+    if (token && outcome.problems.some(p => p.recover)) {
+      const dispatched = await getJson(fetcher, `${target.url}/v1/dispatch`, {token, method: 'POST', timeout: 60000});
       recovery.push(`dispatch answered ${dispatched.status}${dispatched.data?.outcome ? ` (${dispatched.data.outcome})` : ''}`);
       outcome = await read();
-    }
-    if (env.NEON_API_KEY) {
-      const project = await getJson(fetcher, `https://console.neon.tech/api/v2/projects/${target.neon.databaseProject}`, {token: env.NEON_API_KEY});
-      const p = computeProblem(target, project.data?.project, now());
-      if (p) outcome.problems.push(p);
     }
     results.push({app: target.app, environment: target.environment, url: target.url, ...outcome, recovery});
   }

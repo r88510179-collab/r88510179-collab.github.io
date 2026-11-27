@@ -71,6 +71,14 @@ export function loadConfig(env) {
   const vapidSubject = requireText(env, 'VAPID_SUBJECT');
   if (!/^mailto:[^\s@]+@[^\s@]+$/.test(vapidSubject) && !/^https:\/\/[^\s]+$/.test(vapidSubject)) throw new Error('VAPID_SUBJECT must be a mailto: or https: contact');
 
+  const ownerTokenSha256 = optionalHash(env, 'OWNER_TOKEN_SHA256'), statusTokenSha256 = optionalHash(env, 'STATUS_TOKEN_SHA256');
+  // The monitor's own token: it may read /v1/status and ask for a dispatch, nothing else (no owner route). It comes from
+  // a separate key, so its digest can never be one of the owner's.
+  const monitorTokenSha256 = optionalHash(env, 'MONITOR_TOKEN_SHA256');
+  if (monitorTokenSha256 && [ownerTokenSha256, statusTokenSha256].includes(monitorTokenSha256)) {
+    throw new Error('MONITOR_TOKEN_SHA256 must differ from the owner and status digests (the monitor holds its own key)');
+  }
+
   return Object.freeze({
     environment,
     databaseUrl,
@@ -85,8 +93,9 @@ export function loadConfig(env) {
     vapid: Object.freeze({publicKey: vapidPublicKey, privateKey: vapidPrivateKey, subject: vapidSubject}),
     // Deployment-level master switch. Sending also needs the database switch (settings.sending_enabled) to be on.
     sendingAllowed: env.POOL_ALERTS_SENDING === 'enabled',
-    ownerTokenSha256: optionalHash(env, 'OWNER_TOKEN_SHA256'),
-    statusTokenSha256: optionalHash(env, 'STATUS_TOKEN_SHA256'),
+    ownerTokenSha256,
+    statusTokenSha256,
+    monitorTokenSha256,
     version: typeof env.POOL_ALERTS_VERSION === 'string' && /^[0-9a-f]{7,40}$/.test(env.POOL_ALERTS_VERSION) ? env.POOL_ALERTS_VERSION : 'unversioned'
   });
 }

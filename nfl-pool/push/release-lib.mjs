@@ -14,7 +14,9 @@ export const sha256Hex = data => createHash('sha256').update(data).digest('hex')
 // ---------------------------------------------------------------------------------------------------------------
 export const APPS = Object.freeze(['personal', 'commercial']);
 export const ENVIRONMENTS = Object.freeze(['production', 'staging']);
-export const PURPOSES = Object.freeze(['owner', 'status']);
+// owner: every owner route; status: the read-only report; monitor: the report and the dispatch only (the scheduled monitor
+// holds a separate monitor key, never the control key).
+export const PURPOSES = Object.freeze(['owner', 'status', 'monitor']);
 const CONTROL_KEY = /^[A-Za-z0-9_-]{43,512}$/;
 
 export function checkControlKey(value) {

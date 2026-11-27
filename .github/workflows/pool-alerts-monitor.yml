@@ -1,18 +1,20 @@
 name: Pool Alerts monitor
 
-# Scheduled Pool Alerts checks for the Personal and Commercial senders, production and staging
-# (nfl-pool/ops/pool-alerts-monitor.mjs), next to the Smokke Cloud Monitor. Every three hours, four minutes after the
-# Personal hourly run (:17), while that database compute is usually still awake, so the checks add no wake-ups.
-#  * Detects: unreachable or misconfigured senders, a changed environment, refused tokens, failed runs (database or
-#    sender), missed scheduled runs, publications waiting, overdue deliveries, refused VAPID keys, mass-expired
-#    subscriptions and, with NEON_API_KEY, compute near the Free plan allowance.
+# Scheduled Pool Alerts checks for the Personal senders, production and staging (nfl-pool/ops/pool-alerts-monitor.mjs),
+# next to the Smokke Cloud Monitor. Every three hours, four minutes after the hourly run (:17), while that database
+# compute is usually still awake, so the checks add no wake-ups. (The Commercial senders are watched by the Commercial
+# repository's own monitor.)
+#  * Detects: unreachable or misconfigured senders, a changed environment, a refused monitor token, failed runs
+#    (database or sender), missed scheduled runs, publications waiting, overdue deliveries, refused VAPID keys and
+#    mass-expired subscriptions.
 #  * Recovers on its own what is safe: one dispatch (the scheduled cycle itself) when publications wait or deliveries are
-#    overdue. It never pauses, resumes, deploys or writes to a database.
+#    overdue. It cannot pause, resume, test, enroll, deploy or write to a database: its only credential is the monitor
+#    key, whose token the senders accept for the status report and the dispatch alone.
 #  * Alerts once: ONE issue titled "Pool Alerts needs attention" (label pool-alerts-monitor), opened when a problem that
 #    needs the owner appears, updated only when the set of problems changes, closed when everything is healthy again.
 # Scheduled workflows run from the default branch only: this starts once the Personal release is merged.
-# Secrets of the environment pool-alerts-monitor (Settings → Environments; restrict it to main): POOL_ALERTS_CONTROL_KEY
-# (status and recovery; without it only health is checked) and, optionally, NEON_API_KEY (compute allowance).
+# Secret of the environment pool-alerts-monitor (Settings → Environments; deployment branch main): POOL_ALERTS_MONITOR_KEY
+# only (without it only health is checked). Never the control key or a Neon API key.
 on:
   schedule:
     - cron: '21 */3 * * *'
@@ -41,7 +43,6 @@ jobs:
           node-version: '22'
       - name: Check every Pool Alerts sender, recover safe stalls, keep one issue for real problems
         env:
-          POOL_ALERTS_CONTROL_KEY: ${{ secrets.POOL_ALERTS_CONTROL_KEY }}
-          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          POOL_ALERTS_MONITOR_KEY: ${{ secrets.POOL_ALERTS_MONITOR_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node nfl-pool/ops/pool-alerts-monitor.mjs
