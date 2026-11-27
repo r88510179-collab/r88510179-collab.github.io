@@ -157,3 +157,31 @@ export function fingerprintQuery(text = readFileSync(new URL('./fingerprint.sql'
   // Named columns (the file's own SELECT leaves them unnamed for psql -At), so every client reads all six.
   return `SELECT * FROM (${text.slice(start, end + 'FROM parts'.length)}) AS f(schema, counts, functions, relations, triggers, sender_role)`;
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Verify before commit. Every migration and rollback file is one transaction that ends with its own top-level COMMIT.
+// The release inserts, just before that COMMIT, a check that the catalog is exactly the reviewed fingerprint: a database
+// that would end up in any other state raises inside the transaction and keeps the state it had, so a release can never
+// leave a half-reviewed catalog behind. Over HTTP the guard is the last statement of the batch (the batch is the
+// transaction). The file itself is otherwise sent unchanged.
+// ---------------------------------------------------------------------------------------------------------------
+export const GUARD_MESSAGE = 'pool alerts release: the catalog would be';
+export function fingerprintGuard(expected, query = fingerprintQuery()) {
+  if (!/^[0-9a-f]{64}$/.test(expected || '')) throw new Error('A reviewed fingerprint is 64 lowercase hex digits');
+  if (query.includes('$pool_alerts_guard$')) throw new Error('The fingerprint query must not contain the guard delimiter');
+  return `DO $pool_alerts_guard$
+DECLARE got text;
+BEGIN
+  SELECT substr(q.schema, 15) INTO got FROM (${query}) AS q;
+  IF got IS DISTINCT FROM '${expected}' THEN
+    RAISE EXCEPTION '${GUARD_MESSAGE} %, not the reviewed ${expected}; nothing was committed', coalesce(got, 'unknown');
+  END IF;
+END
+$pool_alerts_guard$;`;
+}
+export function withGuard(script, guard) {
+  const match = /(^|\n)COMMIT;\s*$/.exec(script);
+  if (!match) throw new Error('A migration file must end with its own top-level COMMIT;');
+  const at = match.index + match[1].length;
+  return `${script.slice(0, at)}${guard}\n${script.slice(at)}`;
+}

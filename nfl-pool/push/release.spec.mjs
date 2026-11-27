@@ -12,8 +12,8 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import pg from 'pg';
-import {run} from './release.mjs';
-import {loadManifest, splitSqlScript, fingerprintQuery, randomPassword, deriveToken} from './release-lib.mjs';
+import {run, ownerSql} from './release.mjs';
+import {loadManifest, splitSqlScript, fingerprintQuery, randomPassword, deriveToken, fingerprintGuard, withGuard, GUARD_MESSAGE} from './release-lib.mjs';
 import {createApp} from './app.mjs';
 import {serve} from './main.mjs';
 
@@ -30,6 +30,47 @@ const fingerprintOf = async database => {
 const results = [];
 const scenario = async (name, fn) => { await fn(); results.push(name); console.log(`ok - ${name}`); };
 const migrationText = id => readFileSync(new URL(`../../${manifest.migrations.find(m => m.id === id).file}`, import.meta.url), 'utf8');
+// Neon's SQL-over-HTTP endpoint, emulated: the database named by the Neon-Connection-String header, one statement per
+// query (a multi-statement query is refused, as a prepared statement is), a batch is one transaction, raw text values.
+const sqlOverHttpOn = async (connectionString, body) => {
+  const c = new pg.Client({connectionString, types: {getTypeParser: () => value => value}});
+  await c.connect();
+  const shape = r => ({fields: r.fields.map(f => ({name: f.name})), rows: r.rows});
+  try {
+    if (body.queries) {
+      await c.query('BEGIN');
+      try { const results = []; for (const q of body.queries) results.push(shape(await c.query({text: q.query, values: q.params, rowMode: 'array'}))); await c.query('COMMIT'); return {status: 200, body: {results}}; }
+      catch (e) { await c.query('ROLLBACK'); return {status: 400, body: {message: e.message, code: e.code}}; }
+    }
+    if (/;\s*\S/.test(body.query.replace(/'[^']*'|\$(\w*)\$[\s\S]*?\$\1\$/g, ''))) return {status: 400, body: {message: 'cannot insert multiple commands into a prepared statement', code: '42601'}};
+    try { return {status: 200, body: shape(await c.query({text: body.query, values: body.params, rowMode: 'array'}))}; }
+    catch (e) { return {status: 400, body: {message: e.message, code: e.code}}; }
+  } finally { await c.end(); }
+};
+const httpOnly = async (input, init = {}) => {
+  if (new URL(input).pathname !== '/sql') throw new Error(`unexpected request ${input}`);
+  const r = await sqlOverHttpOn(init.headers['Neon-Connection-String'], JSON.parse(init.body));
+  return new Response(JSON.stringify(r.body), {status: r.status});
+};
+const senderRoles = async () => {
+  const c = new pg.Client({connectionString: url('postgres', 'postgres')});
+  await c.connect();
+  try { return Number((await c.query("SELECT count(*) FROM pg_roles WHERE rolname = 'pool_alerts_sender'")).rows[0].count); } finally { await c.end(); }
+};
+
+await scenario('verify before commit: a migration that would not end as the reviewed catalog commits nothing, over TCP and as an HTTP batch', async () => {
+  for (const [database, transport] of [['nfl_pool_release_a', 'tcp'], ['nfl_pool_release_b', 'http']]) {
+    assert.equal(await fingerprintOf(database), manifest.fingerprintBefore);
+    const sql = await ownerSql({uri: url(database), transport, fetcher: httpOnly});
+    try {
+      await assert.rejects(sql.script(withGuard(migrationText('006'), fingerprintGuard('0'.repeat(64)))),
+        error => error.message.includes(GUARD_MESSAGE) && error.message.includes(manifest.migrations[0].fingerprintAfter), `${transport}: the guard names what the catalog would have been`);
+      assert.equal(await fingerprintOf(database), manifest.fingerprintBefore, `${transport}: nothing was committed`);
+      assert.equal((await sql.query("SELECT to_regnamespace('pool_alerts') IS NULL AS absent"))[0].absent, transport === 'tcp' ? true : 't', `${transport}: the connection still answers`);
+      assert.equal(await senderRoles(), 0, `${transport}: even the role the migration creates was rolled back`);
+    } finally { await sql.close(); }
+  }
+});
 
 await scenario('the whole file over TCP and its statements as one HTTP batch give exactly the reviewed catalog; a second run is refused and changes nothing', async () => {
   assert.equal(await fingerprintOf('nfl_pool_release_a'), manifest.fingerprintBefore, 'a fresh copy is the reviewed starting point');
@@ -88,25 +129,10 @@ const target = Object.freeze({
   trigger: {name: 'pool-alerts-hourly', cron: '17 * * * *', path: '/v1/cron'}, apps: [], backupPrefix: 'backup-before-pool-alerts'
 });
 const state = {deployments: [], env: null, triggers: [], branches: [{id: 'br-rehearsal-main', name: 'main', parent_id: null, current_state: 'ready', created_at: '2026-09-14T00:00:00Z'}], calls: []};
-const sqlOverHttp = async body => {
-  const c = new pg.Client({connectionString: url(DB), types: {getTypeParser: () => value => value}});
-  await c.connect();
-  const shape = r => ({fields: r.fields.map(f => ({name: f.name})), rows: r.rows});
-  try {
-    if (body.queries) {
-      await c.query('BEGIN');
-      try { const results = []; for (const q of body.queries) results.push(shape(await c.query({text: q.query, values: q.params, rowMode: 'array'}))); await c.query('COMMIT'); return {status: 200, body: {results}}; }
-      catch (e) { await c.query('ROLLBACK'); return {status: 400, body: {message: e.message, code: e.code}}; }
-    }
-    if (/;\s*\S/.test(body.query.replace(/'[^']*'|\$(\w*)\$[\s\S]*?\$\1\$/g, ''))) return {status: 400, body: {message: 'cannot insert multiple commands into a prepared statement', code: '42601'}};
-    try { return {status: 200, body: shape(await c.query({text: body.query, values: body.params, rowMode: 'array'}))}; }
-    catch (e) { return {status: 400, body: {message: e.message, code: e.code}}; }
-  } finally { await c.end(); }
-};
 async function fetcher(input, init = {}) {
   const u = new URL(input), method = init.method || 'GET';
   if (u.origin === senderUrl) return fetch(input, init);
-  if (u.pathname === '/sql') { const r = await sqlOverHttp(JSON.parse(init.body)); return new Response(JSON.stringify(r.body), {status: r.status}); }
+  if (u.pathname === '/sql') { const r = await sqlOverHttpOn(url(DB), JSON.parse(init.body)); return new Response(JSON.stringify(r.body), {status: r.status}); }
   const path = u.pathname.replace('/api/v2', '');
   state.calls.push(`${method} ${path}`);
   const ok = body => new Response(JSON.stringify(body), {status: 200});

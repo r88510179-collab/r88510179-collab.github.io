@@ -33,10 +33,9 @@ import {execFileSync} from 'node:child_process';
 import {existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
-import pg from 'pg';
 import {TARGETS} from './release-targets.mjs';
-import {CHANGING, confirmationFor, deriveToken, fingerprintQuery, loadManifest, migrationPlan, nextCronRun, randomPassword,
-  scrub, sha256Hex, splitSqlScript} from './release-lib.mjs';
+import {CHANGING, confirmationFor, deriveToken, fingerprintGuard, fingerprintQuery, loadManifest, migrationPlan, nextCronRun,
+  randomPassword, scrub, sha256Hex, splitSqlScript, withGuard} from './release-lib.mjs';
 import {generateKeys} from './ops.mjs';
 
 const ROOT = new URL('../../', import.meta.url);
@@ -118,11 +117,16 @@ export function neonApi({apiKey, fetcher = fetch, base = API, wait = sleep}) {
 // byte for byte). http: Neon's SQL-over-HTTP (statements of a file as one batch, one transaction).
 export async function ownerSql({uri, transport = 'tcp', fetcher = fetch}) {
   if (transport === 'tcp') {
+    // Loaded here, not at the top: the unit suite (release.test.mjs) imports this module without the sender's
+    // node_modules, and only the TCP transport needs node-postgres.
+    const {default: pg} = await import('pg');
     const client = new pg.Client({connectionString: uri, statement_timeout: 120000, connectionTimeoutMillis: 20000});
     await client.connect();
     return {
       query: async (text, params = []) => (await client.query(text, params)).rows,
-      script: async text => { await client.query(text); },
+      // A file's own BEGIN ... COMMIT: on an error the server skips the rest (its COMMIT included) and the session stays
+      // in the aborted transaction, which is rolled back here so the connection can report the state it kept.
+      script: async text => { try { await client.query(text); } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; } },
       close: () => client.end()
     };
   }
@@ -290,12 +294,13 @@ export async function run(argv, {env = process.env, fetcher = fetch, print = con
     }
 
     if (operation === 'stage') {
-      // Migrations, each verified by fingerprint before the next.
+      // Migrations, each verified by fingerprint inside its own transaction (it commits only as the reviewed catalog) and
+      // again after it committed, before the next one.
       for (const id of plan.pending) {
         const migration = manifest.migrations.find(m => m.id === id);
         const body = readFileSync(new URL(migration.file, ROOT), 'utf8');
         if (sha256Hex(body) !== migration.sha256) fail(`migration ${id}`, 'file changed since the manifest was checked');
-        await sql.script(body);
+        await guardedScript({sql, body, expected: migration.fingerprintAfter, name: `migration ${id}`, target, fail});
         db = await readDatabase(sql, target);
         if (db.fingerprint !== migration.fingerprintAfter) fail(`migration ${id}`, 'the catalog after the migration is not the reviewed one', {fingerprint: db.fingerprint, expected: migration.fingerprintAfter});
         step(`migration ${id}`, 'ok', {fingerprint: db.fingerprint});
@@ -446,10 +451,12 @@ export async function run(argv, {env = process.env, fetcher = fetch, print = con
           plan = migrationPlan(manifest, db);
           const applied = plan.state !== 'none' && manifest.migrations.findIndex(m => m.id === plan.state) >= manifest.migrations.findIndex(m => m.id === migration.id);
           if (!applied) { step(`rollback ${migration.id}`, 'skip', {note: 'not applied'}); continue; }
-          await sql.script(readFileSync(new URL(migration.rollback, ROOT), 'utf8'));
-          db = await readDatabase(sql, target);
           const index = manifest.migrations.findIndex(m => m.id === migration.id);
           const expected = index === 0 ? manifest.fingerprintBefore : manifest.migrations[index - 1].fingerprintAfter;
+          const body = readFileSync(new URL(migration.rollback, ROOT), 'utf8');
+          if (sha256Hex(body) !== migration.rollbackSha256) fail(`rollback ${migration.id}`, 'file changed since the manifest was checked');
+          await guardedScript({sql, body, expected, name: `rollback ${migration.id}`, target, fail});
+          db = await readDatabase(sql, target);
           if (db.fingerprint !== expected) fail(`rollback ${migration.id}`, 'the catalog after the rollback is not the reviewed one');
           step(`rollback ${migration.id}`, 'ok', {fingerprint: db.fingerprint});
         }
@@ -475,6 +482,17 @@ export async function run(argv, {env = process.env, fetcher = fetch, print = con
 }
 
 const latestOf = manifest => manifest.migrations.at(-1).fingerprintAfter;
+
+// Runs a migration or rollback file with the fingerprint guard before its COMMIT (release-lib.mjs withGuard). When it does
+// not commit (the guard, the file's own preconditions or any error), the step fails with what the database still shows.
+async function guardedScript({sql, body, expected, name, target, fail}) {
+  try {
+    await sql.script(withGuard(body, fingerprintGuard(expected)));
+  } catch (error) {
+    const kept = await readDatabase(sql, target).catch(() => null);
+    fail(name, `not committed: ${String(error?.message || error).slice(0, 240)}`, {fingerprint: kept?.fingerprint ?? null, expected});
+  }
+}
 
 // Polls until the probe answers. With consecutive > 1 it must answer that many times in a row: after a deployment Neon
 // serves old and new instances side by side for up to about a minute, and one good answer may come from a new one.

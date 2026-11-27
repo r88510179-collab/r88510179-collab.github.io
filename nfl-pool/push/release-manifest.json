@@ -9,7 +9,7 @@
       "sha256": "ab61a25d114df74bdf30b44f67161c7e1ecd5c7744fd3bebc01d49cf4c2754de",
       "rollback": "nfl-pool/migrations/006-pool-alerts-rollback.sql",
       "rollbackSha256": "998a4788b460e89eae5b2ab5bbcf8672a5c6670fd4fa05543e70b752ec11ed4e",
-      "fingerprintAfter": "9996242be5b3120db549ccba452542f5d74a661a63625862d9c75691c324df25"
+      "fingerprintAfter": "aaebdd08c0d9a29c0a98a5bd84ea06ce1374655e7f3cbe7303f85556d5f66b8a"
     },
     {
       "id": "007",
@@ -17,7 +17,7 @@
       "sha256": "cab6ad705e99966b232de6c4e83e2b4a88ddf510d6e5dc4460d6972886568771",
       "rollback": "nfl-pool/migrations/007-pool-alerts-device-checks-rollback.sql",
       "rollbackSha256": "e7734caf237043f04ddaaa74d4661af30fcf33c05b772624be398ac89d3494c2",
-      "fingerprintAfter": "404d9ff2d7c3a117f6f9ef4f27abf888be6c1e927e94c98eba52fca450243757"
+      "fingerprintAfter": "85fa46b3b04be17e7f6647c8736617f1c28c7e2b00852554b7cbb7c715da56f0"
     }
   ]
 }

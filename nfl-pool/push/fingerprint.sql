@@ -3,7 +3,9 @@
 -- the capture function public.nfl_pool_alerts_capture() with their definitions and grants; the capture trigger; the
 -- sender role's settings. The owner of an object is written as <owner>, so a disposable test database and production
 -- give the same schema_sha256 for the same migrations. Whether the sender role may log in (the owner gives it a password
--- at deployment) is reported apart and is not part of schema_sha256. Run with psql -X -At; it changes nothing.
+-- at deployment) is reported apart and is not part of schema_sha256. Every text ordering is COLLATE "C", so the value does
+-- not depend on the database's collation (a Docker image's en_US.UTF-8 and Neon's C.UTF-8 give the same fingerprint), and
+-- indexes are listed by definition, not by their physical order in pg_index. Run with psql -X -At; it changes nothing.
 \set ON_ERROR_STOP on
 BEGIN READ ONLY;
 WITH owner_names AS (
@@ -11,7 +13,7 @@ WITH owner_names AS (
 ),
 acl AS (
   -- One line per privilege: grantee (the owner as <owner>, PUBLIC for 0), privilege, grantable. Grantor omitted.
-  SELECT kind, id, string_agg(grantee||'='||privilege_type||CASE WHEN is_grantable THEN '*' ELSE '' END, ',' ORDER BY grantee, privilege_type) AS acl
+  SELECT kind, id, string_agg(grantee||'='||privilege_type||CASE WHEN is_grantable THEN '*' ELSE '' END, ',' ORDER BY grantee COLLATE "C", privilege_type COLLATE "C") AS acl
   FROM (
     SELECT 'f' AS kind, p.oid AS id, CASE WHEN a.grantee=0 THEN 'PUBLIC' WHEN r.rolname IN (SELECT rolname FROM owner_names) OR a.grantee=p.proowner THEN '<owner>' ELSE r.rolname END AS grantee,
       a.privilege_type, a.is_grantable
@@ -38,9 +40,9 @@ relations AS (
       coalesce(' default '||pg_get_expr(d.adbin,d.adrelid),'')||CASE WHEN a.attidentity<>'' THEN ' identity '||a.attidentity::text ELSE '' END, ', ' ORDER BY a.attnum)
       FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
       WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped),'')||'|'||
-    coalesce((SELECT string_agg(pg_get_constraintdef(k.oid), '; ' ORDER BY pg_get_constraintdef(k.oid)) FROM pg_constraint k WHERE k.conrelid=c.oid),'')||'|'||
-    coalesce((SELECT string_agg(regexp_replace(pg_get_indexdef(i.indexrelid),'^CREATE (UNIQUE )?INDEX \S+ ','CREATE \1INDEX '), '; ' ORDER BY 1)
-      FROM pg_index i WHERE i.indrelid=c.oid),'') AS def
+    coalesce((SELECT string_agg(pg_get_constraintdef(k.oid), '; ' ORDER BY pg_get_constraintdef(k.oid) COLLATE "C") FROM pg_constraint k WHERE k.conrelid=c.oid),'')||'|'||
+    coalesce((SELECT string_agg(ix.def, '; ' ORDER BY ix.def COLLATE "C") FROM (SELECT regexp_replace(pg_get_indexdef(i.indexrelid),'^CREATE (UNIQUE )?INDEX \S+ ','CREATE \1INDEX ') AS def
+      FROM pg_index i WHERE i.indrelid=c.oid) ix),'') AS def
   FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
   WHERE n.nspname='pool_alerts' AND c.relkind IN ('r','S')
 ),
@@ -50,15 +52,15 @@ triggers AS (
 ),
 sender AS (
   SELECT 'connlimit='||rolconnlimit||' super='||rolsuper||' createrole='||rolcreaterole||' createdb='||rolcreatedb||' inherit='||rolinherit||
-    ' replication='||rolreplication||' bypassrls='||rolbypassrls||' config='||coalesce(array_to_string(ARRAY(SELECT unnest(rolconfig) ORDER BY 1),','),'') AS def,
+    ' replication='||rolreplication||' bypassrls='||rolbypassrls||' config='||coalesce(array_to_string(ARRAY(SELECT s FROM unnest(rolconfig) AS s ORDER BY s COLLATE "C"),','),'') AS def,
     rolcanlogin AS can_login
   FROM pg_roles WHERE rolname='pool_alerts_sender'
 ),
 parts AS (
   SELECT
-    encode(sha256(convert_to(coalesce((SELECT string_agg(id||'='||def, E'\n' ORDER BY id) FROM functions),''),'UTF8')),'hex') AS functions_sha256,
-    encode(sha256(convert_to(coalesce((SELECT string_agg(id||'='||def, E'\n' ORDER BY id) FROM relations),''),'UTF8')),'hex') AS relations_sha256,
-    encode(sha256(convert_to(coalesce((SELECT string_agg(id||'='||def, E'\n' ORDER BY id) FROM triggers),''),'UTF8')),'hex') AS triggers_sha256,
+    encode(sha256(convert_to(coalesce((SELECT string_agg(id||'='||def, E'\n' ORDER BY id COLLATE "C") FROM functions),''),'UTF8')),'hex') AS functions_sha256,
+    encode(sha256(convert_to(coalesce((SELECT string_agg(id||'='||def, E'\n' ORDER BY id COLLATE "C") FROM relations),''),'UTF8')),'hex') AS relations_sha256,
+    encode(sha256(convert_to(coalesce((SELECT string_agg(id||'='||def, E'\n' ORDER BY id COLLATE "C") FROM triggers),''),'UTF8')),'hex') AS triggers_sha256,
     encode(sha256(convert_to(coalesce((SELECT def FROM sender),''),'UTF8')),'hex') AS sender_role_sha256,
     (SELECT count(*) FROM functions) AS functions, (SELECT count(*) FROM relations) AS relations, (SELECT count(*) FROM triggers) AS triggers,
     (SELECT can_login FROM sender) AS sender_can_login

@@ -246,4 +246,4 @@ jobs:
           sha256sum dist/poolalerts.zip >> "$GITHUB_STEP_SUMMARY"
       # After the bundle: the release rehearsal (release.spec.mjs) stages that exact zip.
       - name: End-to-end scenarios and the release rehearsal on disposable PostgreSQL 17.11
-        run: bash nfl-pool/push/test-integration.sh"
+        run: bash nfl-pool/push/test-integration.sh

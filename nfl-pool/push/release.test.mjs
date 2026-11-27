@@ -5,7 +5,7 @@ import {readFileSync, mkdtempSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {checkControlKey, deriveToken, splitSqlScript, scrub, loadManifest, migrationPlan, nextCronRun, fingerprintQuery,
-  confirmationFor, sha256Hex} from './release-lib.mjs';
+  confirmationFor, sha256Hex, fingerprintGuard, withGuard, GUARD_MESSAGE} from './release-lib.mjs';
 import {parseArgs, run} from './release.mjs';
 import {TARGETS} from './release-targets.mjs';
 
@@ -71,6 +71,30 @@ await test('the release manifest names the exact migration files of this commit,
   assert.match(q, /^SELECT \* FROM \(WITH owner_names/);
   assert.match(q, /AS f\(schema, counts, functions, relations, triggers, sender_role\)$/);
   assert(!q.includes('\\set'));
+  // The fingerprint must not depend on the database's collation (CI's Docker image is en_US.UTF-8, Neon is C.UTF-8):
+  // every text ordering is COLLATE "C", and indexes are ordered by definition, never by "ORDER BY 1" (a constant there).
+  const orderings = {'ORDER BY grantee COLLATE "C", privilege_type COLLATE "C")': 1, 'ORDER BY pg_get_constraintdef(k.oid) COLLATE "C")': 1,
+    'ORDER BY ix.def COLLATE "C")': 1, 'ORDER BY s COLLATE "C")': 1, 'ORDER BY id COLLATE "C")': 3, 'ORDER BY a.attnum)': 1};
+  for (const [clause, count] of Object.entries(orderings)) assert.equal(q.split(clause).length - 1, count, clause);
+  assert.equal(q.split('ORDER BY').length - 1, Object.values(orderings).reduce((a, b) => a + b), 'no other ordering');
+});
+
+await test('each migration and rollback commits only as its reviewed catalog: the guard sits right before its own COMMIT', () => {
+  const expected = 'a'.repeat(64), guard = fingerprintGuard(expected);
+  assert.match(guard, /^DO \$pool_alerts_guard\$\n/);
+  assert(guard.includes(`IS DISTINCT FROM '${expected}'`) && guard.includes(GUARD_MESSAGE) && guard.includes(fingerprintQuery()));
+  for (const bad of [undefined, '', 'A'.repeat(64), 'a'.repeat(63), `${'a'.repeat(63)}'`]) assert.throws(() => fingerprintGuard(bad), /64 lowercase hex/);
+  assert.throws(() => fingerprintGuard(expected, 'SELECT $pool_alerts_guard$'), /delimiter/);
+  for (const file of ['006-pool-alerts.sql', '006-pool-alerts-rollback.sql', '007-pool-alerts-device-checks.sql', '007-pool-alerts-device-checks-rollback.sql']) {
+    const text = readFileSync(new URL(`../migrations/${file}`, import.meta.url), 'utf8');
+    const guarded = withGuard(text, guard);
+    assert.equal(guarded.replace(`${guard}\n`, ''), text, `${file}: otherwise byte for byte`);
+    assert.match(guarded, /\$pool_alerts_guard\$;\nCOMMIT;\n$/, `${file}: the guard is the last statement before COMMIT`);
+    const statements = splitSqlScript(guarded);
+    assert.equal(statements.at(-1).replace(/^(--[^\n]*\n)+/, ''), guard.replace(/;$/, ''), `${file}: as an HTTP batch the guard is its last statement`);
+  }
+  assert.throws(() => withGuard('BEGIN;\nSELECT 1;\n', guard), /must end with its own top-level COMMIT/);
+  assert.throws(() => withGuard('BEGIN;\nCOMMIT;\nSELECT 1;\n', guard), /must end with its own top-level COMMIT/);
 });
 
 await test('the next scheduled run of the Pool Alerts triggers', () => {

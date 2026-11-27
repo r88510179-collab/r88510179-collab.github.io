@@ -63,6 +63,7 @@ if [ -f "$migrations/$m5" ]; then
       SELECT p.oid::regprocedure::text || ':' || md5(p.prosrc) || ':' || COALESCE(p.proacl::text, '') AS x FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace
       UNION ALL SELECT c.conname || ':' || pg_get_constraintdef(c.oid) FROM pg_constraint c WHERE c.conrelid = 'public.nfl_incident_rulings'::regclass) q"; }
     before="$(schema_state)"
+    [ -n "$before" ] || problem 'the HDC-14 catalog snapshot (schema_state) returned nothing: its query failed'
     for role in nfl_pool_owner postgres; do
       if psql_as "$role" nfl_pool < "$migrations/$m5" > "$log/m5-$role.out" 2>&1; then
         problem "migration 005 applied a second time as $role: its preconditions must refuse it"
@@ -132,14 +133,21 @@ m6=006-pool-alerts.sql
 manifest_value() { node -e "const m=require(process.argv[1]);const k=process.argv[2];console.log(k==='before'?m.fingerprintBefore:m.migrations.find(x=>x.id===k).fingerprintAfter)" "$here/../push/release-manifest.json" "$1"; }
 schema_fingerprint() { docker exec -i "$C" psql -X -At -U postgres -d nfl_pool < "$here/../push/fingerprint.sql" | grep -o 'schema_sha256=[0-9a-f]*' | cut -d= -f2; }
 manifest_ok=0
-[ "$(schema_fingerprint)" = "$(manifest_value before)" ] && { echo "MANIFEST ok: the catalog before 006 is the manifest's"; manifest_ok=$((manifest_ok+1)); } || problem 'the catalog before 006 differs from release-manifest.json fingerprintBefore'
+# manifest_check <manifest key> <label>: the database's fingerprint must be the manifest's (printed both ways when not).
+manifest_check() {
+  local got want; got="$(schema_fingerprint)"; want="$(manifest_value "$1")"
+  if [ -n "$got" ] && [ "$got" = "$want" ]; then echo "MANIFEST ok: the catalog $2 is the manifest's"; manifest_ok=$((manifest_ok+1))
+  else problem "the catalog $2 differs from release-manifest.json: database ${got:-<no fingerprint>}, manifest ${want:-<none>}"; fi
+}
+manifest_check before 'before 006'
 if [ -f "$migrations/$m6" ]; then
   alerts_state() { docker exec "$C" psql -X -At -U postgres -d nfl_pool -c "SELECT md5(string_agg(x, '|' ORDER BY x)) FROM (
-    SELECT n.nspname || '.' || c.relname || ':' || c.relkind AS x FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname IN ('public', 'pool_alerts')
+    SELECT n.nspname || '.' || c.relname || ':' || c.relkind::text AS x FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname IN ('public', 'pool_alerts')
     UNION ALL SELECT p.oid::regprocedure::text || ':' || md5(p.prosrc) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace
     UNION ALL SELECT t.tgname FROM pg_trigger t WHERE NOT t.tgisinternal
     UNION ALL SELECT r.rolname FROM pg_roles r) q"; }
   before="$(alerts_state)"
+  [ -n "$before" ] || problem 'the Pool Alerts catalog snapshot (alerts_state) returned nothing: its query failed'
   if psql_as postgres nfl_pool < "$migrations/$m6" > "$log/m6-postgres.out" 2>&1; then
     problem "migration 006 applied as postgres: it must refuse every role but nfl_pool_owner"
   else
@@ -150,7 +158,7 @@ if [ -f "$migrations/$m6" ]; then
   [ "$(alerts_state)" = "$before" ] || problem 'a refused application of migration 006 changed the schema'
   if psql_as nfl_pool_owner nfl_pool < "$migrations/$m6"; then
     echo "applied $m6"
-    [ "$(schema_fingerprint)" = "$(manifest_value 006)" ] && { echo "MANIFEST ok: the catalog after 006 is the manifest's"; manifest_ok=$((manifest_ok+1)); } || problem 'the catalog after 006 differs from release-manifest.json'
+    manifest_check 006 'after 006'
     before="$(alerts_state)"
     if psql_as nfl_pool_owner nfl_pool < "$migrations/$m6" > "$log/m6-again.out" 2>&1; then
       problem 'migration 006 applied a second time: its preconditions must refuse it'
@@ -197,13 +205,14 @@ checks_ok=0; checks_plan=''
 fingerprint() { docker exec -i "$C" psql -X -At -U postgres -d nfl_pool < "$here/../push/fingerprint.sql" | grep -v '^\(BEGIN\|COMMIT\)$'; }
 if [ -f "$migrations/$m7" ]; then
   only006="$(fingerprint)"
+  case "$only006" in schema_sha256=*) ;; *) problem 'fingerprint.sql returned no fingerprint before 007';; esac
   if psql_as postgres nfl_pool < "$migrations/$m7" > "$log/m7-postgres.out" 2>&1; then problem 'migration 007 applied as postgres'; else
     grep -q 'must be applied as nfl_pool_owner' "$log/m7-postgres.out" && echo "CHECKS-MIGRATION ok: application as postgres is refused" || problem "migration 007 as postgres refused for an unexpected reason"; fi
   [ "$(fingerprint)" = "$only006" ] || problem 'a refused application of migration 007 changed the catalog'
   if psql_as nfl_pool_owner nfl_pool < "$migrations/$m7"; then
     echo "applied $m7"
     with007="$(fingerprint)"
-    [ "$(schema_fingerprint)" = "$(manifest_value 007)" ] && { echo "MANIFEST ok: the catalog after 007 is the manifest's"; manifest_ok=$((manifest_ok+1)); } || problem 'the catalog after 007 differs from release-manifest.json'
+    manifest_check 007 'after 007'
     [ "$with007" != "$only006" ] || problem 'migration 007 changed nothing'
     if psql_as nfl_pool_owner nfl_pool < "$migrations/$m7" > "$log/m7-again.out" 2>&1; then problem 'migration 007 applied a second time'; else
       grep -q 'already applied' "$log/m7-again.out" && echo "CHECKS-MIGRATION ok: a second application is refused" || problem 'a second application of 007 was refused for an unexpected reason'; fi
