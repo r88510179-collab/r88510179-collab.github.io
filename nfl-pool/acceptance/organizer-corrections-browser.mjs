@@ -88,6 +88,10 @@ try{
   await page.route(/neon-js@0\.7\.0-beta/,route=>route.fulfill({status:200,contentType:'text/javascript',
     headers:{'access-control-allow-origin':'*'},body:neonStub}));
   await page.route(/neonauth\./,r=>r.abort());await page.route(/apirest\./,r=>r.abort());
+  // The page reads a workbook with SheetJS 0.18.5 imported from jsDelivr: the same package version, installed for this
+  // test, is served from here (no host name resolves, so the CDN itself is never reached).
+  await page.route('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/xlsx.mjs',route=>route.fulfill({status:200,contentType:'text/javascript',
+    headers:{'access-control-allow-origin':'*'},body:readFileSync(fileURLToPath(import.meta.resolve('xlsx/xlsx.mjs')),'utf8')}));
   await page.goto('http://127.0.0.1:'+port+'/nfl-pool/admin/organizer-corrections.html',{waitUntil:'networkidle'});
   await page.locator('#authState').getByText('AUTHORIZED').waitFor({timeout:15000});
   await page.locator('#season').fill('2026');await page.locator('#week').fill('9');
