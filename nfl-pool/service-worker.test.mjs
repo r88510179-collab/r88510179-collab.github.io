@@ -2827,5 +2827,35 @@ function memoryIndexedDb(){
   assert.equal(fetched.at(-1).url,'https://alerts.example/v1/preferences');
   assert.equal(JSON.parse(fetched.at(-1).init.body).subscription.endpoint,'https://fcm.googleapis.com/fcm/send/new');
   assert.equal(idb.stores.get('kv').rows.get('device').endpoint,'https://fcm.googleapis.com/fcm/send/new');
-  console.log('Pool Alerts v43: never-silent pushes, per-week tags with silent resends, raster icon and badge, device log, app badge, focus-or-open taps, postseason weeks and subscription rotation verified');
+  // Owner-run device checks: the one-time value goes back to this device's own alert service when the alert is shown
+  // (with whether it replaced an identical one) and when it is tapped; ordinary alerts send nothing back.
+  const receipts=()=>fetched.filter(f=>f.url==='https://alerts.example/v1/ack').map(f=>JSON.parse(f.init.body));
+  const ACK='AbCdEfGhIjKlMnOpQrStUv',CHECK='ZyXwVuTsRqPoNmLkJiHgFe';
+  await push({v:1,kind:'test',ack:ACK});
+  assert.equal(shown.at(-1).title,'Pool Alerts test');
+  assert.deepEqual(JSON.parse(JSON.stringify(shown.at(-1).options.data)),{kind:'test',ack:ACK});
+  assert.deepEqual(receipts(),[{ack:ACK,event:'received',repeat:false}]);
+  const checked={v:1,kind:'release',season:2026,week:14,revision:1,check:CHECK};
+  await push(checked);
+  assert.equal(shown.at(-1).title,'Week 14 official picks are posted');
+  assert.match(shown.at(-1).options.body,/^Device check\. /,'a check says it is one');
+  assert.deepEqual(receipts().at(-1),{ack:CHECK,event:'received',repeat:false});
+  await push({...checked,check:ACK});
+  assert.equal(shown.at(-1).options.renotify,false,'an exact repeat replaces the first silently');
+  assert.deepEqual(receipts().at(-1),{ack:ACK,event:'received',repeat:true},'and the receipt says it was a repeat');
+  assert.equal(idb.stores.get('alerts').rows.has('2026:14:1:release'),true,'a week check is logged like an alert (and shows as unread)');
+  await click(JSON.parse(JSON.stringify(shown.at(-1).options.data)));
+  assert.deepEqual(receipts().at(-1),{ack:ACK,event:'opened'});
+  assert.equal(opened.at(-1),'https://example.test/nfl-pool/?view=picks&season=2026&week=14','the tap opens that week');
+  assert(idb.stores.get('alerts').rows.get('2026:14:1:release').openedAt,'and clears its unread marker');
+  const before=receipts().length;
+  await push({...release,week:15});
+  await push({v:1,kind:'test',ack:'../not-a-value'});
+  await push({...release,week:16,check:'short'});
+  await click({season:2026,week:15,revision:1,kind:'release'});
+  assert.equal(receipts().length,before,'ordinary alerts and malformed values send nothing');
+  idb.stores.get('kv').rows.set('device',{api:'http://alerts.example',id:'x',token:'t'});
+  await push({v:1,kind:'test',ack:ACK});
+  assert.equal(receipts().length,before,'never to an address that is not an https origin');
+  console.log('Pool Alerts v43: never-silent pushes, per-week tags with silent resends, raster icon and badge, device log, app badge, focus-or-open taps, postseason weeks, subscription rotation and device-check receipts verified');
 }

@@ -123,6 +123,19 @@ async function updateBadge(){
   const n=await unreadAlerts();
   if(n)await nav.setAppBadge(n);else if(typeof nav.clearAppBadge==='function')await nav.clearAppBadge();
 }
+// Device checks (owner-run, migration 007): a check alert carries a one-time value only this device can decrypt (ack for a
+// test, check for a week). It goes back to this device's alert service when the alert is shown (and whether it replaced
+// an identical alert already here) and when it is tapped: proof of delivery to this physical device. Nothing else is sent.
+const CHECK_VALUE=/^[A-Za-z0-9_-]{22}$/;
+async function checkReceipt(value,event,repeat){
+  if(typeof value!=='string'||!CHECK_VALUE.test(value))return;
+  try{
+    const device=await alertsTx('kv','readonly',s=>s.get('device'));
+    if(!device||typeof device.api!=='string'||!/^https:\/\/[a-z0-9.-]+$/.test(device.api))return;
+    await fetch(device.api+'/v1/ack',{method:'POST',credentials:'omit',cache:'no-store',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(event==='received'?{ack:value,event,repeat:repeat===true}:{ack:value,event})});
+  }catch{}
+}
 async function recordAlert(p){
   const id=p.season+':'+p.week+':'+p.revision+':'+p.kind;
   const seen=await alertsTx('alerts','readonly',s=>s.get(id));
@@ -136,21 +149,25 @@ self.addEventListener('push',event=>{
     let p=null;
     try{p=event.data?event.data.json():null}catch{p=null}
     if(p&&p.kind==='test'){
-      return self.registration.showNotification('Pool Alerts test',{body:'Alerts are working on this device.',tag:'pool-alerts-test',icon:ALERT_ICON,badge:ALERT_BADGE,data:{kind:'test'}});
+      const ack=typeof p.ack==='string'&&CHECK_VALUE.test(p.ack)?p.ack:null;
+      await self.registration.showNotification('Pool Alerts test',{body:'Alerts are working on this device.',tag:'pool-alerts-test',icon:ALERT_ICON,badge:ALERT_BADGE,data:ack?{kind:'test',ack}:{kind:'test'}});
+      return checkReceipt(ack,'received',false);
     }
     if(!pushIdentity(p)){
       return self.registration.showNotification('Pool Center update',{body:'Open Pool Center for the latest official picks.',tag:'pool-alerts-update',icon:ALERT_ICON,badge:ALERT_BADGE,data:{kind:'update'}});
     }
     let fresh=true;
     try{fresh=await recordAlert(p)}catch{fresh=true}
-    const correction=p.kind==='correction';
+    const correction=p.kind==='correction',check=typeof p.check==='string'&&CHECK_VALUE.test(p.check)?p.check:null;
+    const text=correction?'Revision '+p.revision+' of the official picks is posted. Tap to review.':'Tap to see every entry\'s official picks.';
     await self.registration.showNotification('Week '+p.week+(correction?' official picks corrected':' official picks are posted'),{
-      body:correction?'Revision '+p.revision+' of the official picks is posted. Tap to review.':'Tap to see every entry\'s official picks.',
+      body:check?'Device check. '+text:text,
       // One notification per week: a correction replaces and re-alerts; an exact repeat (a resend) replaces silently.
       tag:'pool-week-'+p.season+'-'+p.week,renotify:fresh,icon:ALERT_ICON,badge:ALERT_BADGE,timestamp:Date.now(),
-      data:{season:p.season,week:p.week,revision:p.revision,kind:p.kind}
+      data:check?{season:p.season,week:p.week,revision:p.revision,kind:p.kind,check}:{season:p.season,week:p.week,revision:p.revision,kind:p.kind}
     });
     try{await updateBadge()}catch{}
+    await checkReceipt(check,'received',!fresh);
   })());
 });
 self.addEventListener('notificationclick',event=>{
@@ -160,6 +177,7 @@ self.addEventListener('notificationclick',event=>{
   if(pushIdentity(p)){target.searchParams.set('view','picks');target.searchParams.set('season',String(p.season));target.searchParams.set('week',String(p.week))}
   else target.searchParams.set('view','home');
   event.waitUntil((async()=>{
+    await checkReceipt(p.ack||p.check,'opened');
     if(pushIdentity(p)){
       try{
         const list=(await alertsTx('alerts','readonly',s=>s.getAll()))||[];

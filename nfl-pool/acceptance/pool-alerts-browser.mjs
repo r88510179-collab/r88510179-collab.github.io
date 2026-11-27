@@ -269,6 +269,36 @@ try {
     assert.deepEqual(calls, []);
     await context.close();
   });
+  await step('device check: a check link asks for a check, the card shows the device code, and a check alert sends its receipt (375, 390, 430 px)', async () => {
+    for (const width of [375, 390, 430]) {
+      const {context, api} = await newContext(browser, {width});
+      const page = await open(context, '/nfl-pool/?view=home#alerts-check');
+      await page.getByRole('button', {name: 'Turn on alerts'}).click();
+      await until(page, () => document.querySelector('[data-pa-device] .pa-status')?.textContent.startsWith('Device check requested for '));
+      const request = api.calls.find(c => c.path === '/v1/check-request');
+      assert.deepEqual(request.body, {id: '6f1c2d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f', token: 'T'.repeat(43), platform: 'android'}, 'only the device\'s own credentials and its platform');
+      assert.equal(api.calls.find(c => c.path === '/v1/subscribe').body.platform, 'android');
+      await until(page, () => /This device's code: [A-Z2-7]{4}-[A-Z2-7]{4}$/.test(document.querySelector('[data-pa-device-check] .pa-muted:last-of-type')?.textContent || ''));
+      assert.equal(await page.locator('[data-pa-device-check]').evaluate(d => d.open), true, 'opened from the link');
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      assert.equal(overflow, 0, `no horizontal scrolling at ${width} px`);
+      if (width === 390) await shot(page, 'device-check-390');
+      // A check alert reaches the real service worker, which sends its receipt to this device's alert service.
+      await page.evaluate(() => navigator.serviceWorker.ready);
+      const cdp = await context.newCDPSession(page);
+      const registration = new Promise(resolve => cdp.on('ServiceWorker.workerRegistrationUpdated', ({registrations}) => {
+        const r = registrations.find(x => x.scopeURL === `${ORIGIN}/nfl-pool/` && !x.isDeleted);
+        if (r) resolve(r.registrationId);
+      }));
+      await cdp.send('ServiceWorker.enable');
+      const registrationId = await registration;
+      await cdp.send('ServiceWorker.deliverPushMessage', {origin: ORIGIN, registrationId, data: JSON.stringify({v: 1, kind: 'test', ack: 'AbCdEfGhIjKlMnOpQrStUv'})});
+      const deadline = Date.now() + 15000;
+      while (!api.calls.some(c => c.path === '/v1/ack') && Date.now() < deadline) await new Promise(r => setTimeout(r, 200));
+      assert.deepEqual(api.calls.find(c => c.path === '/v1/ack')?.body, {ack: 'AbCdEfGhIjKlMnOpQrStUv', event: 'received', repeat: false});
+      await context.close();
+    }
+  });
   console.log(`Pool Alerts browser acceptance: ${results.length} Chromium scenarios passed (push subscription simulated; pushes delivered to the real service worker via DevTools)`);
 } finally {
   await browser.close();

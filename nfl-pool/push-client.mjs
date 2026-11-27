@@ -17,6 +17,17 @@ export const apiFor=origin=>Object.prototype.hasOwnProperty.call(ALERT_APIS,orig
 const CHECK_INTERVAL_MS=24*3600*1000;
 const ICON='/nfl-pool/assets/pool-alerts-icon-192.png',BADGE='/nfl-pool/assets/pool-alerts-badge-96.png';
 
+// A device's short code (the first 8 base32 characters of SHA-256 of its id, as XXXX-XXXX), the same one the alert
+// service computes (push/core.mjs deviceCodeFromDigest), so the owner can tell which phone is which in a device check.
+const BASE32='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+export async function deviceCode(id,subtle=globalThis.crypto?.subtle){
+  if(typeof id!=='string'||!id||!subtle)return null;
+  const bytes=new Uint8Array(await subtle.digest('SHA-256',new TextEncoder().encode(id)));
+  let bits=0,value=0,out='';
+  for(const byte of bytes){value=(value<<8)|byte;bits+=8;while(bits>=5&&out.length<8){out+=BASE32[(value>>>(bits-5))&31];bits-=5}if(out.length>=8)break}
+  return out.slice(0,4)+'-'+out.slice(4,8);
+}
+
 export function decodeVapid(key){
   if(typeof key!=='string'||!/^[A-Za-z0-9_-]+$/.test(key))throw Error('Invalid public key');
   const raw=atob(key.replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(key.length/4)*4,'='));
@@ -126,11 +137,17 @@ export async function bootPush(doc=globalThis.document,win=globalThis,{api=apiFo
   const correctionsBox=el(doc,'input',{type:'checkbox',checked:true});
   const corrections=el(doc,'label',{className:'pa-check',hidden:true},[correctionsBox,doc.createTextNode('Also alert me when official picks are corrected')]);
   const invite=el(doc,'input',{type:'text',className:'pa-input',autocomplete:'off',placeholder:'Invitation code',hidden:true,'aria-label':'Invitation code',maxLength:128});
+  const checkCode=el(doc,'p',{className:'pa-muted'});
+  const checkButton=el(doc,'button',{type:'button',className:'dash-tool',textContent:'Ask for a device check'});
+  const checkSection=el(doc,'details',{className:'pa-section pa-details',hidden:true,dataset:{paDeviceCheck:''}},[
+    el(doc,'summary',{textContent:'Device check'}),
+    el(doc,'p',{className:'pa-muted',textContent:'Lets the pool owner send test alerts to this device for the next 24 hours, to confirm alerts reach it even with Pool Center closed. Nothing else is shared.'}),
+    checkCode,el(doc,'div',{className:'pa-row'},[checkButton])]);
   const log=el(doc,'ul',{className:'pa-list'});
   const logSection=el(doc,'details',{className:'pa-section pa-details',hidden:true,dataset:{paDeviceLog:''}},[el(doc,'summary',{textContent:'Alerts on this device'}),log]);
   const panel=el(doc,'section',{className:'pa-section',dataset:{paDevice:''},'aria-label':'Phone alerts'},[
     el(doc,'h3',{textContent:'Phone alerts'}),status,explain,corrections,invite,el(doc,'div',{className:'pa-row'},[toggle,test])]);
-  body.append(panel,logSection,helpSection(doc,can.platform));
+  body.append(panel,checkSection,logSection,helpSection(doc,can.platform));
   const say=(text,tone='')=>{status.textContent=text;status.className='pa-status'+(tone?' pa-'+tone:'')};
   const state={phase:'checking',device:null,subscription:null,publicKey:null,api};
   const fromHash=(()=>{try{return new URLSearchParams((win.location?.hash||'').slice(1)).get('alerts-invite')}catch{return null}})();
@@ -143,6 +160,8 @@ export async function bootPush(doc=globalThis.document,win=globalThis,{api=apiFo
     toggle.disabled=busy;
     toggle.className='dash-tool'+(on?'':' pa-primary');
     test.hidden=!on;test.disabled=busy;
+    checkSection.hidden=!on;checkButton.disabled=busy;
+    if(on&&state.device?.id)void deviceCode(state.device.id,win.crypto?.subtle).then(code=>{if(code&&state.device)checkCode.textContent='This device\'s code: '+code}).catch(()=>{});
     corrections.hidden=!['on','off'].includes(state.phase)&&!busy;
     correctionsBox.disabled=busy;
     if(on)correctionsBox.checked=state.device?.corrections!==false;
@@ -174,7 +193,7 @@ export async function bootPush(doc=globalThis.document,win=globalThis,{api=apiFo
 
   // Enroll (or re-enroll) this browser's push subscription. Returns true when the device is on.
   async function enroll(sub,{silent=false}={}){
-    const result=await call('/v1/subscribe',{subscription:sub.toJSON(),corrections:correctionsBox.checked,...(invite.value.trim()?{inviteCode:invite.value.trim()}:{})});
+    const result=await call('/v1/subscribe',{subscription:sub.toJSON(),corrections:correctionsBox.checked,platform:can.platform,...(invite.value.trim()?{inviteCode:invite.value.trim()}:{})});
     if(result.ok&&result.data?.id&&result.data?.token){
       await saveDevice({api,id:result.data.id,token:result.data.token,endpoint:sub.endpoint,corrections:result.data.corrections!==false,enrolledAt:now(),checkedAt:now()});
       invite.hidden=true;
@@ -278,6 +297,7 @@ export async function bootPush(doc=globalThis.document,win=globalThis,{api=apiFo
       state.subscription=enrolled?sub:sub&&!created?sub:null;
       state.phase=enrolled?'on':'off';
       if(enrolled)say(MESSAGES.on,'good');
+      if(enrolled&&checkLink){checkSection.open=true;render();void requestCheck()}
     }catch(error){
       state.phase=state.device&&state.subscription?'on':'off';
       say(error?.name==='NotAllowedError'?MESSAGES.denied+' '+UNBLOCK[can.platform]:'Alerts could not be changed. Check your connection and try again.','bad');
@@ -296,6 +316,25 @@ export async function bootPush(doc=globalThis.document,win=globalThis,{api=apiFo
     }catch{correctionsBox.checked=!wanted;say('That change could not be saved. Try again.','bad')}
     finally{state.phase='on';render()}
   });
+
+  // The device asks to be listed for the owner's device checks (24 hours). Also asked once, automatically, when Pool
+  // Center was opened from a check link (…#alerts-check) and alerts are on.
+  async function requestCheck(){
+    const device=state.device;
+    if(state.phase!=='on'||!device)return false;
+    checkButton.disabled=true;
+    try{
+      const r=await call('/v1/check-request',{id:device.id,token:device.token,platform:can.platform});
+      const code=r.data?.code||await deviceCode(device.id,win.crypto?.subtle);
+      if(r.ok){say('Device check requested for '+code+'. Close Pool Center now; the owner\'s test alerts will arrive here.','good');return true}
+      say(r.status===429?'A device check was just requested. Wait a minute before asking again.':'The device check could not be requested. Turn alerts off and on again, then try.','warn');
+      return false;
+    }catch{say('The device check could not be requested. Check your connection and try again.','bad');return false}
+    finally{checkButton.disabled=false}
+  }
+  checkButton.addEventListener('click',()=>{void requestCheck()});
+  const checkLink=(()=>{try{return new URLSearchParams((win.location?.hash||'').slice(1)).has('alerts-check')}catch{return false}})();
+  if(checkLink&&state.phase==='on'){checkSection.open=true;void requestCheck()}
 
   test.addEventListener('click',async()=>{
     try{
