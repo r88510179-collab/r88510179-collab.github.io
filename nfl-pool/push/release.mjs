@@ -338,12 +338,16 @@ export async function run(argv, {env = process.env, fetcher = fetch, print = con
       const ready = await waitFor('sender reports this release', async () => {
         const h = await http(`${target.sender.url}/v1/health`, {fetcher}).catch(() => null);
         return h?.status === 200 && h.data?.version === head && h.data?.environment === target.environment && h.data?.ownerTokenConfigured ? h.data : null;
-      }, {wait, step, fail, timeoutMs: 300000});
+      }, {wait, step, fail, timeoutMs: 300000, consecutive: 4});
       evidence.sender.health = ready;
       const statusAnswer = await waitFor('sender reaches its database as pool_alerts_sender', async () => {
         const s = await http(`${target.sender.url}/v1/status`, {token: status, fetcher}).catch(() => null);
-        return s?.status === 200 && s.data?.environment === target.environment ? s.data : null;
-      }, {wait, step, fail, timeoutMs: 180000});
+        return s?.status === 200 && s.data?.environment === target.environment && s.data?.version === head ? s.data : null;
+      }, {wait, step, fail, timeoutMs: 180000, consecutive: 4});
+      await waitFor('sender accepts the owner token', async () => {
+        const o = await http(`${target.sender.url}/v1/owner/status`, {token: owner, fetcher}).catch(() => null);
+        return o?.status === 200 && o.data?.version === head ? true : null;
+      }, {wait, step, fail, timeoutMs: 180000, consecutive: 4});
       const baseline = await http(`${target.sender.url}/v1/dispatch`, {method: 'POST', token: owner, body: {}, fetcher});
       if (baseline.status !== 200) fail('baseline cycle', `dispatch answered ${baseline.status}`);
       db = await readDatabase(sql, target);
@@ -440,13 +444,18 @@ export async function run(argv, {env = process.env, fetcher = fetch, print = con
 
 const latestOf = manifest => manifest.migrations.at(-1).fingerprintAfter;
 
-async function waitFor(name, probe, {wait, step, fail, timeoutMs, intervalMs = 5000}) {
+// Polls until the probe answers. With consecutive > 1 it must answer that many times in a row: after a deployment Neon
+// serves old and new instances side by side for up to about a minute, and one good answer may come from a new one.
+async function waitFor(name, probe, {wait, step, fail, timeoutMs, intervalMs = 5000, consecutive = 1}) {
   const deadline = Date.now() + timeoutMs;
+  let streak = 0, value = null;
   for (;;) {
-    const value = await probe();
-    if (value) { step(name, 'ok'); return value; }
+    const answer = await probe();
+    streak = answer ? streak + 1 : 0;
+    if (answer) value = answer;
+    if (streak >= consecutive) { step(name, 'ok'); return value; }
     if (Date.now() > deadline) fail(name, `not reached within ${Math.round(timeoutMs / 1000)} s`);
-    await wait(intervalMs);
+    await wait(answer ? Math.min(intervalMs, 3000) : intervalMs);
   }
 }
 
