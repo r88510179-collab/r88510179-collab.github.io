@@ -40,7 +40,7 @@ import {generateKeys} from './ops.mjs';
 
 const ROOT = new URL('../../', import.meta.url);
 const API = 'https://console.neon.tech/api/v2';
-const OPERATIONS = ['preflight', 'backup', 'stage', 'verify', 'activate', 'pause', 'resume', 'rollback', 'status', 'staging-publish'];
+const OPERATIONS = ['preflight', 'backup', 'stage', 'verify', 'activate', 'pause', 'resume', 'rollback', 'status', 'staging-publish', 'adopt-tokens'];
 const ROLLBACK_LEVELS = ['pause', 'trigger', 'sender', 'database'];
 const FREE_PLAN_CU_HOURS = 100, FREE_PLAN_BRANCHES = 10;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -61,6 +61,11 @@ export function parseArgs(argv, targets = TARGETS) {
     if (options.target !== 'staging') throw new Error('staging-publish runs on staging only');
     if (!['publish', 'correct', 'withdraw'].includes(options.action)) throw new Error('--action must be publish, correct or withdraw');
     if (!/^([1-9]|1[0-9]|2[0-2])$/.test(options.week || '')) throw new Error('--week must be 1 to 22');
+  }
+  if (operation === 'adopt-tokens') {
+    if (options.target !== 'staging') throw new Error('adopt-tokens runs on staging only (production gets its tokens from the release workflow\'s own key)');
+    for (const k of ['ownerSha256', 'statusSha256']) if (!/^[0-9a-f]{64}$/.test(options[k] || '')) throw new Error('--owner-sha256 and --status-sha256 must be 64 lowercase hex digits');
+    if (options.ownerSha256 === options.statusSha256) throw new Error('the owner and status digests must differ');
   }
   return {operation, options};
 }
@@ -214,6 +219,9 @@ export async function run(argv, {env = process.env, fetcher = fetch, print = con
     }
     if (operation === 'staging-publish' && (target.environment !== 'staging' || options.confirm !== confirmationFor(operation, target.environment))) {
       fail('confirmation', `pass --confirm ${confirmationFor('staging-publish', 'staging')} (staging only)`);
+    }
+    if (operation === 'adopt-tokens' && (target.environment !== 'staging' || options.confirm !== confirmationFor(operation, target.environment))) {
+      fail('confirmation', `pass --confirm ${confirmationFor('adopt-tokens', 'staging')} (staging only)`);
     }
     if (['stage', 'activate', 'pause', 'resume', 'rollback', 'staging-publish'].includes(operation) && !env.POOL_ALERTS_CONTROL_KEY) {
       fail('control key', 'POOL_ALERTS_CONTROL_KEY is required for this operation (the owner and status tokens are derived from it)');
@@ -422,6 +430,25 @@ export async function run(argv, {env = process.env, fetcher = fetch, print = con
       step('synthetic publication', 'ok', {note: `${options.action} ${season} week ${week}: revision ${row.revision}, ${row.status}; captured as event ${event?.id ?? 'none'} (${event?.action ?? '-'})`});
       const dispatched = await http(`${target.sender.url}/v1/dispatch`, {method: 'POST', token: tokens('owner'), body: {}, fetcher});
       step('dispatch', dispatched.status === 200 ? 'ok' : 'fail', {note: dispatched.status === 200 ? `${dispatched.data.outcome}: ${dispatched.data.sent} sent, ${dispatched.data.retrying} retrying, ${dispatched.data.failed} failed${dispatched.data.paused ? ' (sending paused)' : ''}` : `dispatch answered ${dispatched.status}`});
+    }
+
+    // Staging only: the sender learns the digests of the owner's own tokens (shown by the Maintenance Center when a sender
+    // was keyed with another control key). Digests are not secrets; nothing else changes (Neon merges variables).
+    if (operation === 'adopt-tokens') {
+      if (!fn) fail('adopt-tokens', 'the staging sender is not deployed: run stage first');
+      const deployed = await neon.deploy(target.sender.projectId, target.sender.branchId, target.sender.slug,
+        {environment: {OWNER_TOKEN_SHA256: options.ownerSha256, STATUS_TOKEN_SHA256: options.statusSha256}});
+      const deploymentId = deployed?.deployment?.id ?? deployed?.id ?? null;
+      step('token digests', 'ok', {note: 'config-only deployment with the owner\'s token digests', deploymentId});
+      await waitFor('deployment complete', async () => {
+        const current = (await neon.fn(target.sender.projectId, target.sender.branchId, target.sender.slug))?.current_deployment;
+        return current && (deploymentId === null || current.id === deploymentId) && current.status === 'completed' ? current : null;
+      }, {wait, step, fail, timeoutMs: 300000});
+      await waitFor('sender answers after the change', async () => {
+        const h = await http(`${target.sender.url}/v1/health`, {fetcher}).catch(() => null);
+        return h?.status === 200 && h.data?.environment === target.environment && h.data?.ownerTokenConfigured && h.data?.statusTokenConfigured ? true : null;
+      }, {wait, step, fail, timeoutMs: 180000, consecutive: 4});
+      step('next', 'ok', {note: 'open the Maintenance Center operations page for this staging target: it connects with your control key'});
     }
 
     if (operation === 'rollback') {

@@ -11,6 +11,7 @@ import {readFileSync, mkdtempSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import pg from 'pg';
 import {run, ownerSql} from './release.mjs';
 import {loadManifest, splitSqlScript, fingerprintQuery, randomPassword, deriveToken, fingerprintGuard, withGuard, GUARD_MESSAGE} from './release-lib.mjs';
@@ -277,6 +278,23 @@ try {
       const unconfirmed = await release('staging-publish', '--target', 'staging', '--confirm', 'yes', '--action', 'publish', '--week', '12');
       assert.match(unconfirmed.steps[0].note, /staging-publish-staging/);
     } finally { await c.end(); }
+  });
+
+  await scenario('adopt-tokens (staging only): the sender learns the digests of another control key\'s tokens, never the key; the old tokens stop working', async () => {
+    const sha = t => createHash('sha256').update(t).digest('hex');
+    const other = Buffer.alloc(32, 3).toString('base64url');
+    const token = (key, purpose) => deriveToken(key, {app: 'personal', environment: 'staging', purpose});
+    const adopt = key => release('adopt-tokens', '--target', 'staging', '--owner-sha256', sha(token(key, 'owner')), '--status-sha256', sha(token(key, 'status')), '--confirm', 'adopt-tokens-staging');
+    const refused = await run(['adopt-tokens', '--target', 'staging', '--owner-sha256', 'a'.repeat(64), '--status-sha256', 'b'.repeat(64), '--confirm', 'yes'],
+      {env, fetcher, targets: {staging: target}, print: () => {}, wait: async () => {}});
+    assert.equal(refused.ok, false, 'needs its exact confirmation');
+    const e = await adopt(other);
+    assert.equal(e.ok, true, JSON.stringify(e.steps, null, 1));
+    const status = async key => (await fetch(`${senderUrl}/v1/status`, {headers: {Authorization: `Bearer ${token(key, 'status')}`}})).status;
+    assert.deepEqual([await status(other), await status(CONTROL)], [200, 401], 'the other key\'s token works, the old one no longer does');
+    assert(!JSON.stringify(e).includes(token(other, 'owner')), 'no token in the evidence');
+    assert.equal((await adopt(CONTROL)).ok, true, 'back to the rehearsal key for the scenarios that follow');
+    assert.equal(await status(CONTROL), 200);
   });
 
   await scenario('rollback rehearsal: database level pauses, disables the trigger, stops the sender, removes 007 then 006 exactly; stage restores it all', async () => {
