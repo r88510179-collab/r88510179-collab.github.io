@@ -418,7 +418,9 @@ export async function run(argv, {env = process.env, fetcher = fetch, print = con
       };
       const [row] = await sql.query(statements[options.action], [season, week]);
       if (!row) fail('staging-publish', `week ${season}/${week} is not ${options.action === 'publish' ? 'a draft' : 'published'} on staging`);
-      const [event] = await sql.query(`SELECT id::text AS id, action, revision::text AS revision FROM pool_alerts.publication_events WHERE season = $1 AND week = $2 ORDER BY id DESC LIMIT 1`, [season, week]);
+      // Ordered by the numeric id (the text alias would sort '9' after '10').
+      const [event] = await sql.query(`SELECT e.id::text AS id, e.action, e.revision::text AS revision FROM pool_alerts.publication_events e
+          WHERE e.season = $1 AND e.week = $2 ORDER BY e.id DESC LIMIT 1`, [season, week]);
       step('synthetic publication', 'ok', {note: `${options.action} ${season} week ${week}: revision ${row.revision}, ${row.status}; captured as event ${event?.id ?? 'none'} (${event?.action ?? '-'})`});
       const dispatched = await http(`${target.sender.url}/v1/dispatch`, {method: 'POST', token: tokens('owner'), body: {}, fetcher});
       step('dispatch', dispatched.status === 200 ? 'ok' : 'fail', {note: dispatched.status === 200 ? `${dispatched.data.outcome}: ${dispatched.data.sent} sent, ${dispatched.data.retrying} retrying, ${dispatched.data.failed} failed${dispatched.data.paused ? ' (sending paused)' : ''}` : `dispatch answered ${dispatched.status}`});

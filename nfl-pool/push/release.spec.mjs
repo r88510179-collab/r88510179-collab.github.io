@@ -223,6 +223,8 @@ try {
 
   await scenario('staging-publish: a synthetic publication, correction and withdrawal, each captured by the trigger and dispatched at once', async () => {
     const c = new pg.Client({connectionString: url(DB)}); await c.connect();
+    // Ten earlier events of another week first, so a text sort of event ids would pick the wrong one ('9' > '10').
+    for (let i = 0; i < 10; i++) await c.query("INSERT INTO pool_alerts.publication_events (season, week, revision, action, content_changed, published_at, source) VALUES (2026, 12, $1, 'publish', true, now(), 'trigger')", [i + 1]);
     await c.query(`INSERT INTO public.nfl_pool_weeks (season, week, status, config, revision) VALUES (2026, 12, 'draft', $1, 3)`,
       [JSON.stringify({schemaVersion: 1, season: 2026, week: 12, games: [], participants: []})]);
     const events = async () => (await c.query("SELECT action, revision FROM pool_alerts.publication_events WHERE season = 2026 AND week = 12 ORDER BY id")).rows.map(r => `${r.action}:${r.revision}`);
@@ -231,8 +233,10 @@ try {
         const evidence = await release('staging-publish', '--target', 'staging', '--confirm', 'staging-publish-staging', '--action', action, '--week', '12');
         assert.equal(evidence.ok, true, JSON.stringify(evidence.steps, null, 1));
         assert.match(evidence.steps.find(s => s.name === 'dispatch').note, /^ok|^paused/);
+        const [latest] = (await c.query('SELECT id FROM pool_alerts.publication_events ORDER BY id DESC LIMIT 1')).rows;
+        assert.match(evidence.steps.find(s => s.name === 'synthetic publication').note, new RegExp(`captured as event ${latest.id} \\(${action === 'withdraw' ? 'withdraw' : 'publish'}\\)`), 'the evidence names the event it created');
       }
-      assert.deepEqual(await events(), ['publish:4', 'publish:5', 'withdraw:5'], 'the capture trigger recorded each one');
+      assert.deepEqual((await events()).slice(-3), ['publish:4', 'publish:5', 'withdraw:5'], 'the capture trigger recorded each one');
       const again = await release('staging-publish', '--target', 'staging', '--confirm', 'staging-publish-staging', '--action', 'withdraw', '--week', '12');
       assert.equal(again.ok, false, 'a week that is not published cannot be withdrawn');
       const unconfirmed = await release('staging-publish', '--target', 'staging', '--confirm', 'yes', '--action', 'publish', '--week', '12');
