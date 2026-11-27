@@ -175,4 +175,23 @@ await group('Admin status summary is plain language and flags what needs attenti
   assert.deepEqual(describeStatus(null), ['Status unavailable.']);
 });
 
-console.log(`Pool Alerts client: ${groups} groups passed (release card, unread history, sharing, site mapping, platform detection, device store)`);
+await group('Admin never runs on a Vercel preview: every Admin module stops before any Neon client exists', async () => {
+  const GUARD = "if(/^https:\\/\\/nfl-pool-personal-[a-z0-9-]{1,60}-r88510179-collabs-projects\\.vercel\\.app$/.test(globalThis.location?.origin??'')){document.body.textContent='Admin is switched off on preview deployments: from here it would change the live pool. Use Admin at picks.smokkeventures.com.';throw new Error('Admin is disabled on preview deployments');}";
+  for (const file of ['admin/admin.js', 'admin/organizer-corrections.js', 'admin/rulings-admin.js', 'admin/survivor-admin.js', 'admin/pool-alerts-admin.js']) {
+    const source = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
+    const at = source.indexOf(GUARD);
+    assert(at > 0, `${file} carries the preview guard`);
+    assert(at < source.indexOf('createClient('), `${file}: the guard runs before any Neon client is created`);
+    assert(!/^import /m.test(source.slice(at)), `${file}: the guard follows every import`);
+  }
+  const preview = new RegExp(GUARD.slice(4, GUARD.indexOf('.test(')).replace(/^\/|\/$/g, '').replace(/\\\//g, '/'));
+  for (const origin of ['https://nfl-pool-personal-git-ccr-161-71e00c-r88510179-collabs-projects.vercel.app', 'https://nfl-pool-personal-46vl2mrtp-r88510179-collabs-projects.vercel.app']) assert(preview.test(origin), origin);
+  for (const origin of ['https://r88510179-collab.github.io', 'https://picks.smokkeventures.com', 'http://localhost:8080', 'https://nfl-pool-personal.vercel.app']) assert(!preview.test(origin), origin);
+  // Exactly the origins the app already sends to the staging alert service (push-client.mjs apiFor).
+  for (const origin of ['https://nfl-pool-personal-git-ccr-161-71e00c-r88510179-collabs-projects.vercel.app', 'https://nfl-pool-personal-46vl2mrtp-r88510179-collabs-projects.vercel.app',
+    'https://r88510179-collab.github.io', 'https://picks.smokkeventures.com', 'https://nfl-pool-personal.vercel.app', 'https://evil.example']) {
+    assert.equal(preview.test(origin), apiFor(origin) === STAGING_ALERT_API, origin);
+  }
+});
+
+console.log(`Pool Alerts client: ${groups} groups passed (release card, unread history, sharing, site mapping, platform detection, device store, Admin preview guard)`);

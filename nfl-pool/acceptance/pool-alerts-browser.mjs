@@ -299,6 +299,37 @@ try {
       await context.close();
     }
   });
+  await step('Admin at a Vercel preview origin stops before any Neon client exists; at the production origin it starts', async () => {
+    const PREVIEW = 'https://nfl-pool-personal-git-ccr-161-71e00c-r88510179-collabs-projects.vercel.app';
+    const neonCalls = [];
+    const context = await browser.newContext({viewport: {width: 390, height: 900}});
+    await context.route('**/*', async route => {
+      const url = new URL(route.request().url());
+      if ((url.origin === PREVIEW || url.origin === ORIGIN) && url.pathname.startsWith('/nfl-pool/')) {
+        let rel = url.pathname.slice('/nfl-pool/'.length) || 'index.html';
+        if (rel.endsWith('/')) rel += 'index.html';
+        const file = join(root, rel);
+        if (!file.startsWith(root) || !existsSync(file)) return route.fulfill({status: 404, body: 'not found'});
+        return route.fulfill({status: 200, contentType: TYPES[extname(file)] || 'application/octet-stream', body: readFileSync(file)});
+      }
+      // A stand-in for the Neon SDK, so what stops the page is the guard, never a missing download.
+      if (url.hostname === 'cdn.jsdelivr.net') return route.fulfill({status: 200, contentType: 'text/javascript',
+        body: 'export function createClient(){window.__neonClients=(window.__neonClients||0)+1;const n=()=>new Promise(()=>{});return{auth:{getSession:n,signIn:{emailOtp:n},emailOtp:{sendVerificationOtp:n},signOut:n},from:()=>({select:n}),rpc:n}}'});
+      if (url.hostname.includes('neon')) { neonCalls.push(url.href); return route.fulfill({status: 500, body: ''}); }
+      return route.fulfill({status: 204, body: ''});
+    });
+    const page = await context.newPage();
+    await page.goto(`${PREVIEW}/nfl-pool/admin/`);
+    await page.waitForFunction(() => document.body.textContent.includes('Admin is switched off on preview deployments'), null, {timeout: 15000});
+    await page.waitForTimeout(500);
+    assert.equal(await page.evaluate(() => window.__neonClients || 0), 0, 'no Neon client was created on the preview');
+    assert.deepEqual(neonCalls, [], 'and nothing was sent to Neon');
+    const production = await context.newPage();
+    await production.goto(`${ORIGIN}/nfl-pool/admin/`);
+    await production.waitForFunction(() => (window.__neonClients || 0) >= 1, null, {timeout: 15000});
+    assert.equal(await production.evaluate(() => document.body.textContent.includes('switched off on preview')), false, 'production Admin starts as before');
+    await context.close();
+  });
   console.log(`Pool Alerts browser acceptance: ${results.length} Chromium scenarios passed (push subscription simulated; pushes delivered to the real service worker via DevTools)`);
 } finally {
   await browser.close();
