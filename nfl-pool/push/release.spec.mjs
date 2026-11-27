@@ -221,6 +221,25 @@ try {
     await c.end();
   });
 
+  await scenario('staging-publish: a synthetic publication, correction and withdrawal, each captured by the trigger and dispatched at once', async () => {
+    const c = new pg.Client({connectionString: url(DB)}); await c.connect();
+    await c.query(`INSERT INTO public.nfl_pool_weeks (season, week, status, config, revision) VALUES (2026, 12, 'draft', $1, 3)`,
+      [JSON.stringify({schemaVersion: 1, season: 2026, week: 12, games: [], participants: []})]);
+    const events = async () => (await c.query("SELECT action, revision FROM pool_alerts.publication_events WHERE season = 2026 AND week = 12 ORDER BY id")).rows.map(r => `${r.action}:${r.revision}`);
+    try {
+      for (const action of ['publish', 'correct', 'withdraw']) {
+        const evidence = await release('staging-publish', '--target', 'staging', '--confirm', 'staging-publish-staging', '--action', action, '--week', '12');
+        assert.equal(evidence.ok, true, JSON.stringify(evidence.steps, null, 1));
+        assert.match(evidence.steps.find(s => s.name === 'dispatch').note, /^ok|^paused/);
+      }
+      assert.deepEqual(await events(), ['publish:4', 'publish:5', 'withdraw:5'], 'the capture trigger recorded each one');
+      const again = await release('staging-publish', '--target', 'staging', '--confirm', 'staging-publish-staging', '--action', 'withdraw', '--week', '12');
+      assert.equal(again.ok, false, 'a week that is not published cannot be withdrawn');
+      const unconfirmed = await release('staging-publish', '--target', 'staging', '--confirm', 'yes', '--action', 'publish', '--week', '12');
+      assert.match(unconfirmed.steps[0].note, /staging-publish-staging/);
+    } finally { await c.end(); }
+  });
+
   await scenario('rollback rehearsal: database level pauses, disables the trigger, stops the sender, removes 007 then 006 exactly; stage restores it all', async () => {
     const evidence = await release('rollback', '--target', 'staging', '--level', 'database', '--confirm', 'rollback-staging');
     assert.equal(evidence.ok, true, JSON.stringify(evidence.steps, null, 1));

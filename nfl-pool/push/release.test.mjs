@@ -90,6 +90,10 @@ await test('arguments: an operation, a target and nothing unexpected', () => {
   assert.throws(() => parseArgs(['status', '--target']), /Unexpected argument/);
   assert.throws(() => parseArgs(['rollback', '--target', 'staging']), /--level must be one of/);
   assert.throws(() => parseArgs(['status', '--target', 'staging', '--sql', 'ftp']), /--sql must be/);
+  assert.equal(parseArgs(['staging-publish', '--target', 'staging', '--action', 'correct', '--week', '12']).options.action, 'correct');
+  assert.throws(() => parseArgs(['staging-publish', '--target', 'production', '--action', 'publish', '--week', '12']), /staging only/, 'never production');
+  assert.throws(() => parseArgs(['staging-publish', '--target', 'staging', '--action', 'delete', '--week', '12']), /--action must be/);
+  for (const week of ['0', '23', 'x', '']) assert.throws(() => parseArgs(['staging-publish', '--target', 'staging', '--action', 'publish', '--week', week]), /--week must be 1 to 22/);
   assert.equal(confirmationFor('stage', 'production'), 'stage-production');
   assert.equal(TARGETS.production.sender.sameProjectAsDatabase, false, 'production keeps the sender out of the database project');
   assert.equal(TARGETS.production.env.APP_ORIGINS, 'https://r88510179-collab.github.io,https://picks.smokkeventures.com');

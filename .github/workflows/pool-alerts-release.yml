@@ -20,7 +20,7 @@ on:
         description: 'What to do'
         type: choice
         default: preflight
-        options: [preflight, status, verify, backup, stage, activate, pause, resume, rollback]
+        options: [preflight, status, verify, backup, stage, activate, pause, resume, rollback, staging-publish]
       target:
         description: 'Where'
         type: choice
@@ -39,6 +39,16 @@ on:
         type: choice
         default: pause
         options: [pause, trigger, sender, database]
+      staging_action:
+        description: 'staging-publish only: publish | correct | withdraw a synthetic staging week'
+        type: choice
+        default: publish
+        options: [publish, correct, withdraw]
+      staging_week:
+        description: 'staging-publish only: the synthetic week (1-22)'
+        type: string
+        required: false
+        default: '12'
       confirm:
         description: 'For any change: exactly <operation>-<target>, e.g. stage-production'
         type: string
@@ -88,6 +98,8 @@ jobs:
           APPROVED_COMMIT: ${{ inputs.approved_commit }}
           APPROVED_BUNDLE: ${{ inputs.approved_bundle_sha256 }}
           LEVEL: ${{ inputs.rollback_level }}
+          STAGING_ACTION: ${{ inputs.staging_action }}
+          STAGING_WEEK: ${{ inputs.staging_week }}
           CONFIRM: ${{ inputs.confirm }}
           BUNDLE_SHA: ${{ steps.bundle.outputs.sha256 }}
         run: |
@@ -96,6 +108,7 @@ jobs:
           [ -n "$APPROVED_COMMIT" ] && args+=(--approved-commit "$APPROVED_COMMIT")
           [ -n "$CONFIRM" ] && args+=(--confirm "$CONFIRM")
           [ "$OPERATION" = rollback ] && args+=(--level "$LEVEL")
+          [ "$OPERATION" = staging-publish ] && args+=(--action "$STAGING_ACTION" --week "$STAGING_WEEK")
           if [ -n "$APPROVED_BUNDLE" ]; then
             [ "$APPROVED_BUNDLE" = "$BUNDLE_SHA" ] || { echo "::error::this commit builds $BUNDLE_SHA, not the approved $APPROVED_BUNDLE"; exit 1; }
             args+=(--bundle-sha256 "$APPROVED_BUNDLE")

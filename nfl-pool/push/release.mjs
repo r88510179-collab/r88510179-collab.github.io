@@ -16,6 +16,9 @@
 //   pause / resume   the database switch (immediate)
 //   rollback    --level pause | trigger | sender | database (database: 007 then 006 rollbacks, after a backup)
 //   status      read-only summary for people
+//   staging-publish   staging ONLY: a synthetic publication (--action publish | correct | withdraw, --week N) of a synthetic
+//               week, recorded by the capture trigger and dispatched at once, so a phone enrolled on a preview gets a
+//               real alert without Admin (Admin never runs on previews) and without hand-written SQL
 //
 // Options: --approved-commit <sha> (production stage/activate), --confirm <operation>-<target> (every change),
 //   --bundle <zip> and --bundle-sha256 <hex>, --sql tcp|http (http: Neon's SQL-over-HTTP, for a rehearsal from a host
@@ -38,7 +41,7 @@ import {generateKeys} from './ops.mjs';
 
 const ROOT = new URL('../../', import.meta.url);
 const API = 'https://console.neon.tech/api/v2';
-const OPERATIONS = ['preflight', 'backup', 'stage', 'verify', 'activate', 'pause', 'resume', 'rollback', 'status'];
+const OPERATIONS = ['preflight', 'backup', 'stage', 'verify', 'activate', 'pause', 'resume', 'rollback', 'status', 'staging-publish'];
 const ROLLBACK_LEVELS = ['pause', 'trigger', 'sender', 'database'];
 const FREE_PLAN_CU_HOURS = 100, FREE_PLAN_BRANCHES = 10;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -55,6 +58,11 @@ export function parseArgs(argv, targets = TARGETS) {
   if (!Object.hasOwn(targets, options.target ?? '')) throw new Error(`--target must be ${Object.keys(targets).join(' or ')}`);
   if (options.sql && !['tcp', 'http'].includes(options.sql)) throw new Error('--sql must be tcp or http');
   if (operation === 'rollback' && !ROLLBACK_LEVELS.includes(options.level)) throw new Error(`--level must be one of ${ROLLBACK_LEVELS.join(', ')}`);
+  if (operation === 'staging-publish') {
+    if (options.target !== 'staging') throw new Error('staging-publish runs on staging only');
+    if (!['publish', 'correct', 'withdraw'].includes(options.action)) throw new Error('--action must be publish, correct or withdraw');
+    if (!/^([1-9]|1[0-9]|2[0-2])$/.test(options.week || '')) throw new Error('--week must be 1 to 22');
+  }
   return {operation, options};
 }
 
@@ -200,7 +208,10 @@ export async function run(argv, {env = process.env, fetcher = fetch, print = con
     if (operation === 'backup' && options.confirm !== confirmationFor('backup', target.environment) && options.confirm !== confirmationFor('stage', target.environment)) {
       fail('confirmation', `pass --confirm ${confirmationFor('backup', target.environment)}`);
     }
-    if (['stage', 'activate', 'pause', 'resume', 'rollback'].includes(operation) && !env.POOL_ALERTS_CONTROL_KEY) {
+    if (operation === 'staging-publish' && (target.environment !== 'staging' || options.confirm !== confirmationFor(operation, target.environment))) {
+      fail('confirmation', `pass --confirm ${confirmationFor('staging-publish', 'staging')} (staging only)`);
+    }
+    if (['stage', 'activate', 'pause', 'resume', 'rollback', 'staging-publish'].includes(operation) && !env.POOL_ALERTS_CONTROL_KEY) {
       fail('control key', 'POOL_ALERTS_CONTROL_KEY is required for this operation (the owner and status tokens are derived from it)');
     }
 
@@ -392,6 +403,25 @@ export async function run(argv, {env = process.env, fetcher = fetch, print = con
       const answer = await http(`${target.sender.url}${path}`, {method: 'POST', token: owner, body: {note: `${operation} by release workflow ${head.slice(0, 12)}`}, fetcher});
       if (answer.status !== 200) fail(operation, `the sender answered ${answer.status}`);
       step(operation, 'ok', {groupSending: answer.data?.settings?.sending_enabled ? 'ON' : 'off'});
+    }
+
+    if (operation === 'staging-publish') {
+      if (db.environment !== 'staging') fail('staging-publish', 'the database is not marked staging');
+      const season = Number(options.season || 2026), week = Number(options.week);
+      const statements = {
+        publish: `UPDATE public.nfl_pool_weeks SET status = 'locked', revision = revision + 1, published_at = now(), locked_at = now()
+          WHERE season = $1 AND week = $2 AND status = 'draft' RETURNING revision::text AS revision, status`,
+        correct: `UPDATE public.nfl_pool_weeks SET revision = revision + 1, published_at = now(),
+          config = jsonb_set(config, '{stagingNote}', to_jsonb('synthetic correction ' || now()::text)) WHERE season = $1 AND week = $2 AND status = 'locked'
+          RETURNING revision::text AS revision, status`,
+        withdraw: `UPDATE public.nfl_pool_weeks SET status = 'draft' WHERE season = $1 AND week = $2 AND status = 'locked' RETURNING revision::text AS revision, status`
+      };
+      const [row] = await sql.query(statements[options.action], [season, week]);
+      if (!row) fail('staging-publish', `week ${season}/${week} is not ${options.action === 'publish' ? 'a draft' : 'published'} on staging`);
+      const [event] = await sql.query(`SELECT id::text AS id, action, revision::text AS revision FROM pool_alerts.publication_events WHERE season = $1 AND week = $2 ORDER BY id DESC LIMIT 1`, [season, week]);
+      step('synthetic publication', 'ok', {note: `${options.action} ${season} week ${week}: revision ${row.revision}, ${row.status}; captured as event ${event?.id ?? 'none'} (${event?.action ?? '-'})`});
+      const dispatched = await http(`${target.sender.url}/v1/dispatch`, {method: 'POST', token: tokens('owner'), body: {}, fetcher});
+      step('dispatch', dispatched.status === 200 ? 'ok' : 'fail', {note: dispatched.status === 200 ? `${dispatched.data.outcome}: ${dispatched.data.sent} sent, ${dispatched.data.retrying} retrying, ${dispatched.data.failed} failed${dispatched.data.paused ? ' (sending paused)' : ''}` : `dispatch answered ${dispatched.status}`});
     }
 
     if (operation === 'rollback') {
