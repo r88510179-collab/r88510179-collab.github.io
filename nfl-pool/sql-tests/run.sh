@@ -181,6 +181,48 @@ fi
 [ -n "$alerts_plan" ] && [ "$alerts_ok" -eq "$alerts_plan" ] || problem "Pool Alerts suite: $alerts_ok passed, plan ${alerts_plan:-missing}"
 echo "Pool Alerts: $alerts_ok passed, $alerts_fail failed, plan ${alerts_plan:-missing}"
 
+echo "== Pool Alerts device checks (migration 007)"
+# 007 refuses any role but nfl_pool_owner and a second application; its suite passes; its rollback gives back exactly the
+# catalog 006 alone installs (nfl-pool/push/fingerprint.sql); it then applies again, to the same catalog. It runs before the
+# backup compatibility check, so that check also proves the Personal backup is unaffected by 007.
+m7=007-pool-alerts-device-checks.sql
+checks_ok=0; checks_plan=''
+fingerprint() { docker exec -i "$C" psql -X -At -U postgres -d nfl_pool < "$here/../push/fingerprint.sql" | grep -v '^\(BEGIN\|COMMIT\)$'; }
+if [ -f "$migrations/$m7" ]; then
+  only006="$(fingerprint)"
+  if psql_as postgres nfl_pool < "$migrations/$m7" > "$log/m7-postgres.out" 2>&1; then problem 'migration 007 applied as postgres'; else
+    grep -q 'must be applied as nfl_pool_owner' "$log/m7-postgres.out" && echo "CHECKS-MIGRATION ok: application as postgres is refused" || problem "migration 007 as postgres refused for an unexpected reason"; fi
+  [ "$(fingerprint)" = "$only006" ] || problem 'a refused application of migration 007 changed the catalog'
+  if psql_as nfl_pool_owner nfl_pool < "$migrations/$m7"; then
+    echo "applied $m7"
+    with007="$(fingerprint)"
+    [ "$with007" != "$only006" ] || problem 'migration 007 changed nothing'
+    if psql_as nfl_pool_owner nfl_pool < "$migrations/$m7" > "$log/m7-again.out" 2>&1; then problem 'migration 007 applied a second time'; else
+      grep -q 'already applied' "$log/m7-again.out" && echo "CHECKS-MIGRATION ok: a second application is refused" || problem 'a second application of 007 was refused for an unexpected reason'; fi
+    psql_as postgres nfl_pool < "$here/device-checks.sql" > "$log/checks.out" 2>&1
+    checks_status=$?
+    grep -E '^NOTICE:  CHECKS-TEST ' "$log/checks.out" | sed 's/^NOTICE:  //'
+    checks_ok="$(grep -c '^NOTICE:  CHECKS-TEST ok: ' "$log/checks.out")"
+    checks_fail="$(grep -c '^NOTICE:  CHECKS-TEST FAIL: ' "$log/checks.out")"
+    checks_plan="$(sed -n 's/^ *CHECKS-PLAN \([0-9][0-9]*\)$/\1/p' "$log/checks.out")"
+    [ "$checks_status" -eq 0 ] || { tail -20 "$log/checks.out"; problem "device-checks.sql stopped with exit code $checks_status"; }
+    [ "$checks_fail" -eq 0 ] || problem "$checks_fail device-check assertion(s) failed"
+    [ -n "$checks_plan" ] && [ "$checks_ok" -eq "$checks_plan" ] || problem "device checks: $checks_ok passed, plan ${checks_plan:-missing}"
+    if psql_as nfl_pool_owner nfl_pool < "$migrations/007-pool-alerts-device-checks-rollback.sql"; then
+      [ "$(fingerprint)" = "$only006" ] && echo "CHECKS-MIGRATION ok: the 007 rollback restores exactly the 006 catalog" || problem 'the 007 rollback did not restore the 006 catalog exactly'
+    else problem 'the 007 rollback failed'; fi
+    if psql_as nfl_pool_owner nfl_pool < "$migrations/$m7" > /dev/null; then
+      [ "$(fingerprint)" = "$with007" ] && echo "CHECKS-MIGRATION ok: 007 applies again after its rollback, to the same catalog" || problem '007 re-applied to a different catalog'
+    else problem 'migration 007 could not be re-applied after its rollback'; fi
+    echo "$with007" | head -2
+  else
+    problem "migration $m7 failed"
+  fi
+else
+  problem "migration $m7 is missing: Pool Alerts device checks do not exist"
+fi
+echo "Device checks: $checks_ok passed, plan ${checks_plan:-missing}"
+
 echo "== Personal backup compatibility (public-schema dump and restore with the documented prerequisites)"
 HDC13_PG_CONTAINER="$C" bash "$here/backup-compat.sh" > "$log/backup.out" 2>&1
 backup_status=$?
@@ -209,7 +251,7 @@ fi
 if psql_as postgres nfl_pool < "$migrations/006-pool-alerts-rollback.sql" > "$log/rb.out" 2>&1; then problem 'the rollback ran as postgres'; else
   grep -q 'must be applied as nfl_pool_owner' "$log/rb.out" && echo "ALERTS-ROLLBACK ok: the rollback refuses any role but nfl_pool_owner" && rollback_ok=$((rollback_ok+1)) || problem 'rollback refused for an unexpected reason'; fi
 
-echo "PostgreSQL $version · behavior $behavior_ok/${plan:-?} · full-field guard $guard_ok/${guard_plan:-?} · $(grep -o 'races=[0-9]* passed=[0-9]* failed=[0-9]*' "$log/races.out" || echo 'races: no summary') · alerts $alerts_ok/${alerts_plan:-?} · $(grep -o 'backup-compat passed=[0-9]*' "$log/backup.out" || echo 'backup: no summary') · rollback $rollback_ok/5"
+echo "PostgreSQL $version · behavior $behavior_ok/${plan:-?} · full-field guard $guard_ok/${guard_plan:-?} · $(grep -o 'races=[0-9]* passed=[0-9]* failed=[0-9]*' "$log/races.out" || echo 'races: no summary') · alerts $alerts_ok/${alerts_plan:-?} · device checks $checks_ok/${checks_plan:-?} · $(grep -o 'backup-compat passed=[0-9]*' "$log/backup.out" || echo 'backup: no summary') · rollback $rollback_ok/5"
 [ "$rollback_ok" -eq 5 ] || problem "Pool Alerts rollback checks: $rollback_ok of 5"
 if [ "$problems" -ne 0 ]; then echo "HDC-13 SQL gate FAILED ($problems problem(s))"; exit 1; fi
 echo "HDC-13 SQL gate passed"
