@@ -1,0 +1,496 @@
+#!/usr/bin/env node
+// Pool Alerts release automation (Personal Pool). Run by the "Pool Alerts release" workflow (GitHub environment
+// protection: the owner approves every run that changes production), or locally for a staging rehearsal.
+//
+//   node nfl-pool/push/release.mjs <operation> --target production|staging [options]
+//
+//   preflight   read-only: commit, migration files, Neon project/branch/endpoint/database/roles, the database's own
+//               identity and catalog fingerprint, the sender, the trigger, compute used this month, branch headroom
+//   backup      a Neon branch of the database (no compute), named for this release; reused if it already exists
+//   stage       backup → pending migrations (each verified by fingerprint) → environment marker → sender credentials
+//               (derived tokens, a new database password set as a SCRAM verifier) → the exact reviewed bundle deployed
+//               → health and identity → baseline cycle (nothing historical is sent) → hourly trigger. Group sending
+//               is never switched on here.
+//   verify      read-only: everything stage leaves behind, plus whether the app sites serve this commit
+//   activate    switches group sending on; refused without passed device checks on an Android phone and an iPhone
+//   pause / resume   the database switch (immediate)
+//   rollback    --level pause | trigger | sender | database (database: 007 then 006 rollbacks, after a backup)
+//   status      read-only summary for people
+//
+// Options: --approved-commit <sha> (production stage/activate), --confirm <operation>-<target> (every change),
+//   --bundle <zip> and --bundle-sha256 <hex>, --sql tcp|http (http: Neon's SQL-over-HTTP, for a rehearsal from a host
+//   without PostgreSQL egress), --evidence <dir>, --level <rollback level>, --accept-without-device-evidence "<reason>".
+// Environment: NEON_API_KEY (a Neon API key; never printed), POOL_ALERTS_CONTROL_KEY (operations that need tokens).
+//
+// Every step first looks at what is there, so an interrupted run can simply be run again: a migration already applied is
+// verified, not re-run; the backup, marker, deployment and trigger are reused when they already match; nothing here can
+// send an alert to anyone (group sending stays off until activate). No secret is printed, logged or written to the
+// evidence file (release-lib.mjs scrub).
+import {execFileSync} from 'node:child_process';
+import {existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync} from 'node:fs';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import pg from 'pg';
+import {TARGETS} from './release-targets.mjs';
+import {CHANGING, confirmationFor, deriveToken, fingerprintQuery, loadManifest, migrationPlan, nextCronRun, randomPassword, scramVerifier,
+  scrub, sha256Hex, splitSqlScript} from './release-lib.mjs';
+import {generateKeys} from './ops.mjs';
+
+const ROOT = new URL('../../', import.meta.url);
+const API = 'https://console.neon.tech/api/v2';
+const OPERATIONS = ['preflight', 'backup', 'stage', 'verify', 'activate', 'pause', 'resume', 'rollback', 'status'];
+const ROLLBACK_LEVELS = ['pause', 'trigger', 'sender', 'database'];
+const FREE_PLAN_CU_HOURS = 100, FREE_PLAN_BRANCHES = 10;
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+export function parseArgs(argv, targets = TARGETS) {
+  const [operation, ...rest] = argv;
+  const options = {};
+  for (let i = 0; i < rest.length; i++) {
+    const key = rest[i];
+    if (!key.startsWith('--') || rest[i + 1] === undefined) throw new Error(`Unexpected argument ${key}`);
+    options[key.slice(2).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = rest[++i];
+  }
+  if (!OPERATIONS.includes(operation)) throw new Error(`Operation must be one of ${OPERATIONS.join(', ')}`);
+  if (!Object.hasOwn(targets, options.target ?? '')) throw new Error(`--target must be ${Object.keys(targets).join(' or ')}`);
+  if (options.sql && !['tcp', 'http'].includes(options.sql)) throw new Error('--sql must be tcp or http');
+  if (operation === 'rollback' && !ROLLBACK_LEVELS.includes(options.level)) throw new Error(`--level must be one of ${ROLLBACK_LEVELS.join(', ')}`);
+  return {operation, options};
+}
+
+// ------------------------------------------------------------------------------------------------------------- Neon API
+export function neonApi({apiKey, fetcher = fetch, base = API, wait = sleep}) {
+  if (!apiKey) throw new Error('NEON_API_KEY is required');
+  async function call(method, path, {query, body, form} = {}) {
+    const url = new URL(base + path);
+    for (const [k, v] of Object.entries(query || {})) if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+    for (let attempt = 1; ; attempt++) {
+      const response = await fetcher(url, {method, redirect: 'error', signal: AbortSignal.timeout(60000),
+        headers: {Authorization: `Bearer ${apiKey}`, Accept: 'application/json', ...(body ? {'Content-Type': 'application/json'} : {})},
+        body: form ?? (body ? JSON.stringify(body) : undefined)});
+      // Neon answers 423 while another operation on the project is running, and 429/5xx when busy: wait and retry.
+      if ([423, 429, 500, 502, 503, 504].includes(response.status) && attempt < 8) { await wait(Math.min(30000, 1000 * 2 ** attempt)); continue; }
+      const text = await response.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+      if (!response.ok) throw Object.assign(new Error(`Neon API ${method} ${path} answered ${response.status}${data?.message ? `: ${data.message}` : ''}`), {status: response.status});
+      return data;
+    }
+  }
+  return {
+    call,
+    project: id => call('GET', `/projects/${id}`).then(d => d.project),
+    branch: (p, b) => call('GET', `/projects/${p}/branches/${b}`).then(d => d.branch),
+    branches: p => call('GET', `/projects/${p}/branches`).then(d => d.branches),
+    endpoints: (p, b) => call('GET', `/projects/${p}/branches/${b}/endpoints`).then(d => d.endpoints),
+    databases: (p, b) => call('GET', `/projects/${p}/branches/${b}/databases`).then(d => d.databases),
+    roles: (p, b) => call('GET', `/projects/${p}/branches/${b}/roles`).then(d => d.roles),
+    connectionUri: (p, {branchId, database, role}) => call('GET', `/projects/${p}/connection_uri`,
+      {query: {branch_id: branchId, database_name: database, role_name: role, pooled: false}}).then(d => d.uri),
+    createBranch: (p, body) => call('POST', `/projects/${p}/branches`, {body}),
+    operations: p => call('GET', `/projects/${p}/operations`, {query: {limit: 20}}).then(d => d.operations),
+    fn: (p, b, slug) => call('GET', `/projects/${p}/branches/${b}/functions/${slug}`).then(d => d.function).catch(e => { if (e.status === 404) return null; throw e; }),
+    deploy: (p, b, slug, {zip, environment}) => {
+      const form = new FormData();
+      if (zip) form.append('zip', new Blob([zip], {type: 'application/zip'}), 'poolalerts.zip');
+      if (zip) form.append('runtime', 'nodejs24');
+      form.append('environment', JSON.stringify(environment));
+      return call('POST', `/projects/${p}/branches/${b}/functions/${slug}/deployments`, {form});
+    },
+    triggers: (p, b) => call('GET', `/projects/${p}/branches/${b}/triggers`).then(d => d.triggers),
+    createTrigger: (p, b, body) => call('POST', `/projects/${p}/branches/${b}/triggers`, {body}),
+    updateTrigger: (p, b, id, body) => call('PATCH', `/projects/${p}/branches/${b}/triggers/${id}`, {body})
+  };
+}
+
+// ------------------------------------------------------------------------------------------------------------- SQL
+// One connection as the database owner. tcp: node-postgres (the workflow; a migration file goes as one simple query,
+// byte for byte). http: Neon's SQL-over-HTTP (statements of a file as one batch, one transaction).
+export async function ownerSql({uri, transport = 'tcp', fetcher = fetch}) {
+  if (transport === 'tcp') {
+    const client = new pg.Client({connectionString: uri, statement_timeout: 120000, connectionTimeoutMillis: 20000});
+    await client.connect();
+    return {
+      query: async (text, params = []) => (await client.query(text, params)).rows,
+      script: async text => { await client.query(text); },
+      close: () => client.end()
+    };
+  }
+  const host = new URL(uri).hostname;
+  const post = async body => {
+    const response = await fetcher(`https://${host}/sql`, {method: 'POST', redirect: 'error', signal: AbortSignal.timeout(120000),
+      headers: {'Content-Type': 'application/json', 'Neon-Connection-String': uri, 'Neon-Raw-Text-Output': 'true', 'Neon-Array-Mode': 'true',
+        ...(body.queries ? {'Neon-Batch-Isolation-Level': 'ReadCommitted', 'Neon-Batch-Read-Only': 'false', 'Neon-Batch-Deferrable': 'false'} : {})},
+      body: JSON.stringify(body)});
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw Object.assign(new Error(data?.message || `SQL over HTTP answered ${response.status}`), {code: data?.code});
+    return data;
+  };
+  const objects = result => result.rows.map(row => Object.fromEntries(result.fields.map((f, i) => [f.name, row[i]])));
+  return {
+    query: async (text, params = []) => objects(await post({query: text, params: params.map(p => (p === null || p === undefined ? null : String(p)))})),
+    script: async text => { await post({queries: splitSqlScript(text).map(query => ({query, params: []}))}); },
+    close: async () => {}
+  };
+}
+
+// Values as text whichever transport ran the query.
+const text = v => (v === null || v === undefined ? null : String(v));
+
+export async function readDatabase(sql, target) {
+  const [identity] = await sql.query(`SELECT current_user AS role, current_database() AS database,
+      (SELECT count(*) FROM pg_tables WHERE schemaname = 'public')::text AS public_tables,
+      (to_regnamespace('pool_alerts') IS NOT NULL)::text AS alerts_schema,
+      (to_regclass('pool_alerts.device_checks') IS NOT NULL)::text AS device_checks,
+      (SELECT count(*) FROM pg_roles WHERE rolname = 'pool_alerts_sender')::text AS sender_role,
+      (SELECT rolcanlogin FROM pg_roles WHERE rolname = 'pool_alerts_sender')::text AS sender_can_login`);
+  const out = {role: identity.role, database: identity.database, publicTables: Number(identity.public_tables),
+    alertsSchema: text(identity.alerts_schema) === 'true', deviceChecks: text(identity.device_checks) === 'true',
+    senderRole: Number(identity.sender_role) === 1, senderCanLogin: text(identity.sender_can_login) === 'true'};
+  if (out.alertsSchema) {
+    const [state] = await sql.query(`SELECT (SELECT name FROM pool_alerts.environment) AS environment,
+        (SELECT sending_enabled FROM pool_alerts.settings)::text AS sending_enabled,
+        (SELECT last_event_id FROM pool_alerts.cursor)::text AS cursor,
+        (SELECT count(*) FROM pool_alerts.subscriptions WHERE status = 'active')::text AS devices,
+        (SELECT max(id) FROM pool_alerts.publication_events)::text AS latest_event`);
+    Object.assign(out, {environment: state.environment, sendingEnabled: text(state.sending_enabled) === 'true', cursor: text(state.cursor),
+      activeDevices: Number(state.devices), latestEvent: text(state.latest_event)});
+  }
+  const [fp] = await sql.query(fingerprintQuery());
+  const values = Object.values(fp).map(String);
+  out.fingerprint = values.find(v => v.startsWith('schema_sha256='))?.slice('schema_sha256='.length) ?? null;
+  out.catalog = values.find(v => v.startsWith('functions=')) ?? null;
+  out.identityOk = out.role === target.database.ownerRole && out.database === target.database.database
+    && (target.database.publicTables === null || out.publicTables === target.database.publicTables);
+  return out;
+}
+
+// ------------------------------------------------------------------------------------------------------------- sender
+async function http(url, {method = 'GET', token, body, fetcher = fetch} = {}) {
+  const response = await fetcher(url, {method, redirect: 'error', signal: AbortSignal.timeout(150000),
+    headers: {...(token ? {Authorization: `Bearer ${token}`} : {}), ...(body ? {'Content-Type': 'application/json'} : {})},
+    body: body ? JSON.stringify(body) : undefined});
+  const data = await response.json().catch(() => null);
+  return {status: response.status, data};
+}
+
+// ------------------------------------------------------------------------------------------------------------- run
+export async function run(argv, {env = process.env, fetcher = fetch, print = console.log, now = () => Date.now(), wait = sleep, git, sqlFactory = ownerSql,
+  targets = TARGETS} = {}) {
+  const {operation, options} = parseArgs(argv, targets);
+  const target = targets[options.target];
+  const secrets = [env.NEON_API_KEY, env.POOL_ALERTS_CONTROL_KEY];
+  const evidence = {tool: 'nfl-pool/push/release.mjs', operation, target: target.environment, startedAt: new Date(now()).toISOString(), steps: [], ok: false};
+  const step = (name, status, detail = {}) => { evidence.steps.push({name, status, ...detail}); print(`${status === 'ok' ? 'ok  ' : status === 'skip' ? 'skip' : status === 'warn' ? 'WARN' : 'FAIL'} ${name}${detail.note ? ` — ${detail.note}` : ''}`); };
+  const fail = (name, note, detail = {}) => { step(name, 'fail', {note, ...detail}); throw Object.assign(new Error(note), {stepFailure: true}); };
+  const neon = neonApi({apiKey: env.NEON_API_KEY, fetcher, wait});
+  const gitRun = git || (args => execFileSync('git', args, {cwd: ROOT, encoding: 'utf8'}).trim());
+  const tokens = purpose => {
+    const token = deriveToken(env.POOL_ALERTS_CONTROL_KEY, {app: target.app, environment: target.environment, purpose});
+    secrets.push(token);
+    return token;
+  };
+  let sql = null;
+  try {
+    if (CHANGING.includes(operation) && operation !== 'backup' && options.confirm !== confirmationFor(operation, target.environment)) {
+      fail('confirmation', `this operation changes ${target.environment}: pass --confirm ${confirmationFor(operation, target.environment)}`);
+    }
+    if (operation === 'backup' && options.confirm !== confirmationFor('backup', target.environment) && options.confirm !== confirmationFor('stage', target.environment)) {
+      fail('confirmation', `pass --confirm ${confirmationFor('backup', target.environment)}`);
+    }
+    if (['stage', 'activate', 'pause', 'resume', 'rollback'].includes(operation) && !env.POOL_ALERTS_CONTROL_KEY) {
+      fail('control key', 'POOL_ALERTS_CONTROL_KEY is required for this operation (the owner and status tokens are derived from it)');
+    }
+
+    // ---------------------------------------------------------------- identity and state (every operation)
+    const {manifest, problems} = loadManifest();
+    if (problems.length) fail('release manifest', 'a migration file differs from the release manifest', {problems});
+    step('release manifest', 'ok', {migrations: manifest.migrations.map(m => ({id: m.id, sha256: m.sha256, fingerprintAfter: m.fingerprintAfter}))});
+    const head = gitRun(['rev-parse', 'HEAD']);
+    evidence.commit = head;
+    const needsApproval = target.environment === 'production' && ['stage', 'activate'].includes(operation);
+    if (options.approvedCommit || needsApproval) {
+      if (!/^[0-9a-f]{40}$/.test(options.approvedCommit || '')) fail('approved commit', 'pass --approved-commit with the full reviewed commit SHA');
+      if (options.approvedCommit !== head) fail('approved commit', `checked out ${head}, approved ${options.approvedCommit}`);
+      if (gitRun(['status', '--porcelain', '--untracked-files=no'])) fail('approved commit', 'the working tree has changes');
+      step('approved commit', 'ok', {commit: head});
+    }
+
+    const project = await neon.project(target.database.projectId);
+    const branch = await neon.branch(target.database.projectId, target.database.branchId);
+    const endpoints = await neon.endpoints(target.database.projectId, target.database.branchId);
+    const databases = await neon.databases(target.database.projectId, target.database.branchId);
+    const roles = await neon.roles(target.database.projectId, target.database.branchId);
+    const endpoint = endpoints.find(e => e.id === target.database.endpointId);
+    const neonProblems = [];
+    if (project.id !== target.database.projectId || project.name !== target.database.projectName) neonProblems.push('project');
+    if (branch.id !== target.database.branchId || branch.current_state !== 'ready') neonProblems.push('branch');
+    if (!endpoint || endpoint.host !== target.database.host || endpoint.type !== 'read_write') neonProblems.push('endpoint');
+    if (!databases.some(d => d.name === target.database.database && d.owner_name === target.database.ownerRole)) neonProblems.push('database');
+    if (!roles.some(r => r.name === target.database.ownerRole)) neonProblems.push('owner role');
+    if (neonProblems.length) fail('Neon identity', `Neon does not match ${target.environment}: ${neonProblems.join(', ')}`);
+    const cuHours = Math.round((Number(project.compute_time_seconds ?? branch.compute_time_seconds ?? 0) / 3600) * 10) / 10;
+    step('Neon identity', 'ok', {project: project.id, branch: branch.id, endpoint: endpoint.id, database: target.database.database,
+      computeThisPeriodCuHours: cuHours, quotaResetAt: project.quota_reset_at ?? null});
+    if (cuHours >= FREE_PLAN_CU_HOURS * 0.8) step('compute allowance', 'warn', {note: `${cuHours} of ${FREE_PLAN_CU_HOURS} CU-hours used this period`});
+
+    const uri = await neon.connectionUri(target.database.projectId, {branchId: target.database.branchId, database: target.database.database, role: target.database.ownerRole});
+    secrets.push(uri, new URL(uri).password);
+    sql = await sqlFactory({uri, transport: options.sql || 'tcp', fetcher});
+    let db = await readDatabase(sql, target);
+    if (!db.identityOk) fail('database identity', `connected as ${db.role} to ${db.database} with ${db.publicTables} public tables`);
+    let plan = migrationPlan(manifest, db);
+    evidence.database = {fingerprint: db.fingerprint, catalog: db.catalog, migrationState: plan.state, pending: plan.pending,
+      environmentMarker: db.environment ?? null, sendingEnabled: db.sendingEnabled ?? null, baselineRecorded: db.cursor !== undefined && db.cursor !== null,
+      activeDevices: db.activeDevices ?? 0};
+    if (plan.state === 'unknown') fail('database identity', 'the Pool Alerts catalog matches no reviewed state of this release', {fingerprint: db.fingerprint});
+    if (db.environment && db.environment !== target.environment) fail('database identity', `the database is marked ${db.environment}, not ${target.environment}`);
+    step('database identity', 'ok', {role: db.role, database: db.database, migrationState: plan.state, pending: plan.pending, environmentMarker: db.environment ?? null});
+
+    const fn = await neon.fn(target.sender.projectId, target.sender.branchId, target.sender.slug);
+    if (fn && fn.invocation_url && fn.invocation_url.replace(/\/$/, '') !== target.sender.url) fail('sender identity', `the function answers at ${fn.invocation_url}`);
+    const triggers = await neon.triggers(target.sender.projectId, target.sender.branchId);
+    const trigger = triggers.find(t => t.name === target.trigger.name && !t.inherited) ?? null;
+    evidence.sender = {deployed: !!fn, deployment: fn?.current_deployment ? {id: fn.current_deployment.id, status: fn.current_deployment.status,
+      createdAt: fn.current_deployment.created_at, variables: fn.current_deployment.environment} : null,
+      trigger: trigger ? {cron: trigger.schedule?.cron, path: trigger.function_path, enabled: trigger.enabled, nextRunAt: trigger.next_run_at} : null};
+    let health = null;
+    if (fn) {
+      health = await http(`${target.sender.url}/v1/health`, {fetcher});
+      evidence.sender.health = health.data;
+    }
+    step('sender', 'ok', {deployed: !!fn, version: health?.data?.version ?? null, environment: health?.data?.environment ?? null,
+      trigger: trigger ? `${trigger.schedule?.cron} ${trigger.function_path} ${trigger.enabled ? 'enabled' : 'disabled'}` : 'none'});
+    if (health && health.data?.environment !== target.environment) fail('sender identity', `the sender reports ${health.data?.environment}`);
+
+    if (operation === 'preflight' || operation === 'status' || operation === 'verify') {
+      const branches = await neon.branches(target.database.projectId);
+      evidence.branches = {count: branches.length, limit: FREE_PLAN_BRANCHES};
+      if (branches.length >= FREE_PLAN_BRANCHES) step('branch headroom', 'warn', {note: `${branches.length} of ${FREE_PLAN_BRANCHES} branches: a backup needs one more`});
+      else step('branch headroom', 'ok', {branches: branches.length});
+    }
+
+    // ---------------------------------------------------------------- operations
+    if (operation === 'backup' || operation === 'stage') {
+      const backup = await ensureBackup({neon, target, head, now, wait, step, fail});
+      evidence.backup = backup;
+    }
+
+    if (operation === 'stage') {
+      // Migrations, each verified by fingerprint before the next.
+      for (const id of plan.pending) {
+        const migration = manifest.migrations.find(m => m.id === id);
+        const body = readFileSync(new URL(migration.file, ROOT), 'utf8');
+        if (sha256Hex(body) !== migration.sha256) fail(`migration ${id}`, 'file changed since the manifest was checked');
+        await sql.script(body);
+        db = await readDatabase(sql, target);
+        if (db.fingerprint !== migration.fingerprintAfter) fail(`migration ${id}`, 'the catalog after the migration is not the reviewed one', {fingerprint: db.fingerprint, expected: migration.fingerprintAfter});
+        step(`migration ${id}`, 'ok', {fingerprint: db.fingerprint});
+      }
+      if (!plan.pending.length) step('migrations', 'skip', {note: `already at ${plan.state}`, fingerprint: db.fingerprint});
+      plan = migrationPlan(manifest, db);
+      if (!db.environment) {
+        await sql.query('INSERT INTO pool_alerts.environment (name) VALUES ($1)', [target.environment]);
+        step('environment marker', 'ok', {environment: target.environment});
+      } else step('environment marker', 'skip', {note: `already ${db.environment}`});
+
+      // Credentials: derived tokens (digests only to the sender); a new sender database password, set as a SCRAM verifier.
+      const owner = tokens('owner'), status = tokens('status');
+      const password = randomPassword();
+      secrets.push(password);
+      await sql.query(`ALTER ROLE pool_alerts_sender LOGIN PASSWORD '${scramVerifier(password)}'`);
+      step('sender credentials', 'ok', {note: 'database password replaced (SCRAM verifier); owner and status tokens derived from the control key'});
+
+      // The exact reviewed bundle, then a deployment whose environment is exactly this target's configuration.
+      const bundlePath = options.bundle || new URL('./dist/poolalerts.zip', import.meta.url).pathname;
+      if (!existsSync(bundlePath)) fail('bundle', `no bundle at ${bundlePath}: run npm run bundle`);
+      const zip = readFileSync(bundlePath), zipSha = sha256Hex(zip);
+      if (options.bundleSha256 && options.bundleSha256 !== zipSha) fail('bundle', `bundle sha256 ${zipSha}, approved ${options.bundleSha256}`);
+      if (target.environment === 'production' && !options.bundleSha256) fail('bundle', 'pass --bundle-sha256 with the reviewed bundle digest');
+      const keepVapid = !!fn?.current_deployment?.environment?.includes('VAPID_PUBLIC_KEY');
+      const vapid = keepVapid ? null : generateKeys();
+      if (vapid) secrets.push(vapid.vapidPrivateKey);
+      const environment = {...target.env, POOL_ALERTS_ENV: target.environment,
+        POOL_ALERTS_DATABASE_URL: `postgresql://pool_alerts_sender:${password}@${target.database.host}/${target.database.database}?sslmode=${target.database.sslmode ?? 'require'}`,
+        OWNER_TOKEN_SHA256: sha256Hex(owner), STATUS_TOKEN_SHA256: sha256Hex(status), POOL_ALERTS_SENDING: 'enabled', POOL_ALERTS_VERSION: head,
+        ...(vapid ? {VAPID_PUBLIC_KEY: vapid.vapidPublicKey, VAPID_PRIVATE_KEY: vapid.vapidPrivateKey} : {}),
+        ...(target.sender.sameProjectAsDatabase ? {DATABASE_URL: 'unused', DATABASE_URL_UNPOOLED: 'unused'} : {})};
+      if (!fn && (!environment.PUBLISHER_EMAIL || !environment.VAPID_SUBJECT)) fail('deployment', 'a first deployment needs PUBLISHER_EMAIL and VAPID_SUBJECT in the target');
+      const deployed = await neon.deploy(target.sender.projectId, target.sender.branchId, target.sender.slug, {zip, environment});
+      const deploymentId = deployed?.deployment?.id ?? deployed?.id ?? null;
+      step('deployment', 'ok', {bundleSha256: zipSha, deploymentId, vapid: keepVapid ? 'kept' : 'new pair', variables: Object.keys(environment).sort()});
+      await waitFor('deployment complete', async () => {
+        const current = (await neon.fn(target.sender.projectId, target.sender.branchId, target.sender.slug))?.current_deployment;
+        return current && (deploymentId === null || current.id === deploymentId) && current.status === 'completed' ? current : null;
+      }, {wait, step, fail, timeoutMs: 300000});
+      // Running instances are replaced within about a minute: wait until the sender reports this commit.
+      const ready = await waitFor('sender reports this release', async () => {
+        const h = await http(`${target.sender.url}/v1/health`, {fetcher}).catch(() => null);
+        return h?.status === 200 && h.data?.version === head && h.data?.environment === target.environment && h.data?.ownerTokenConfigured ? h.data : null;
+      }, {wait, step, fail, timeoutMs: 300000});
+      evidence.sender.health = ready;
+      const statusAnswer = await waitFor('sender reaches its database as pool_alerts_sender', async () => {
+        const s = await http(`${target.sender.url}/v1/status`, {token: status, fetcher}).catch(() => null);
+        return s?.status === 200 && s.data?.environment === target.environment ? s.data : null;
+      }, {wait, step, fail, timeoutMs: 180000});
+      const baseline = await http(`${target.sender.url}/v1/dispatch`, {method: 'POST', token: owner, body: {}, fetcher});
+      if (baseline.status !== 200) fail('baseline cycle', `dispatch answered ${baseline.status}`);
+      db = await readDatabase(sql, target);
+      if (db.cursor === null) fail('baseline cycle', 'no baseline was recorded');
+      step('baseline cycle', 'ok', {outcome: baseline.data?.outcome, sent: baseline.data?.sent ?? 0, groupSending: db.sendingEnabled ? 'ON (was already on)' : 'off'});
+      if (!db.sendingEnabled && (baseline.data?.sent ?? 0) > 0) fail('baseline cycle', 'something was sent while group sending is off');
+      await ensureTrigger({neon, target, step});
+      evidence.statusAfter = {sendingConfigured: statusAnswer.sendingConfigured, sendingEnabled: statusAnswer.sendingEnabled, enrollment: statusAnswer.enrollment};
+    }
+
+    if (operation === 'verify' || operation === 'status') {
+      const status = env.POOL_ALERTS_CONTROL_KEY ? await http(`${target.sender.url}/v1/status`, {token: tokens('status'), fetcher}) : null;
+      if (status && status.status !== 200) step('sender status', 'fail', {note: `status answered ${status.status}`});
+      else if (status) {
+        const s = status.data;
+        evidence.status = {sendingConfigured: s.sendingConfigured, sendingEnabled: s.sendingEnabled, enrollment: s.enrollment, devices: s.subscriptions,
+          lastRun: s.lastRun, lastOkRunAt: s.lastOkRunAt, lastCronRunAt: s.lastCronRunAt, eventsWaiting: s.eventsWaiting, latency7d: s.latency7d,
+          checks7d: s.checks7d, failures7d: s.failures7d};
+        const cronLate = trigger?.enabled && s.lastCronRunAt && now() - Date.parse(s.lastCronRunAt) > 3 * 3600000;
+        step('sender status', cronLate ? 'warn' : 'ok', {note: `group sending ${s.sendingEnabled ? 'ON' : 'off'}; last scheduled run ${s.lastCronRunAt ?? 'none'}${cronLate ? ' (late)' : ''}`});
+      } else step('sender status', 'skip', {note: 'POOL_ALERTS_CONTROL_KEY not set'});
+      if (trigger) step('trigger', trigger.enabled ? 'ok' : 'warn', {cron: trigger.schedule?.cron, nextRunAt: trigger.next_run_at ?? nextCronRun(trigger.schedule?.cron, now())});
+      const expected = latestOf(manifest);
+      if (db.fingerprint !== expected) step('catalog', operation === 'verify' ? 'fail' : 'warn', {note: `at ${plan.state}, release is ${manifest.migrations.at(-1).id}`});
+      else step('catalog', 'ok', {fingerprint: db.fingerprint});
+      if (operation === 'verify') await verifyApps({target, head, fetcher, step});
+    }
+
+    if (operation === 'pause' || operation === 'resume' || operation === 'activate') {
+      const owner = tokens('owner');
+      if (operation === 'activate') {
+        const checks = await http(`${target.sender.url}/v1/owner/checks`, {token: owner, fetcher});
+        if (checks.status !== 200) fail('device acceptance', `checks answered ${checks.status}`);
+        const passed = platform => (checks.data.checks || []).some(c => c.platform === platform && c.owner_result === 'pass' && c.opened_at && c.state === 'sent');
+        const evidenceOk = passed('android') && passed('ios');
+        evidence.deviceAcceptance = {android: passed('android'), ios: passed('ios'), checks: (checks.data.checks || []).map(c => ({id: c.id, code: c.code, platform: c.platform,
+          scenario: c.scenario, state: c.state, received: !!c.received_at, opened: !!c.opened_at, repeat: c.received_repeat, verdict: c.owner_result}))};
+        if (!evidenceOk && !options.acceptWithoutDeviceEvidence) fail('device acceptance', 'no passed, opened device check on both an Android phone and an iPhone in the last 48 hours (run the acceptance in the Maintenance Center first)');
+        step('device acceptance', evidenceOk ? 'ok' : 'warn', evidenceOk ? {} : {note: `accepted without full device evidence: ${options.acceptWithoutDeviceEvidence}`});
+      }
+      const path = operation === 'pause' ? '/v1/owner/pause' : '/v1/owner/resume';
+      const answer = await http(`${target.sender.url}${path}`, {method: 'POST', token: owner, body: {note: `${operation} by release workflow ${head.slice(0, 12)}`}, fetcher});
+      if (answer.status !== 200) fail(operation, `the sender answered ${answer.status}`);
+      step(operation, 'ok', {groupSending: answer.data?.settings?.sending_enabled ? 'ON' : 'off'});
+    }
+
+    if (operation === 'rollback') {
+      const owner = tokens('owner');
+      const pause = await http(`${target.sender.url}/v1/owner/pause`, {method: 'POST', token: owner, body: {note: 'rollback'}, fetcher}).catch(() => null);
+      step('pause', pause?.status === 200 ? 'ok' : 'warn', {note: pause?.status === 200 ? 'group sending off' : 'the sender could not be reached to pause'});
+      if (['trigger', 'sender', 'database'].includes(options.level) && trigger) {
+        await neon.updateTrigger(target.sender.projectId, target.sender.branchId, trigger.trigger_id, {type: 'schedule', enabled: false});
+        step('trigger', 'ok', {note: 'hourly trigger disabled'});
+      }
+      if (['sender', 'database'].includes(options.level) && fn) {
+        await neon.deploy(target.sender.projectId, target.sender.branchId, target.sender.slug, {environment: {POOL_ALERTS_SENDING: ''}});
+        step('sender', 'ok', {note: 'deployment switch off (config-only redeploy; within about a minute)'});
+      }
+      if (options.level === 'database') {
+        const backups = (await neon.branches(target.database.projectId)).filter(b => b.name.startsWith(`${target.backupPrefix}-`) && now() - Date.parse(b.created_at) < 7 * 86400000);
+        if (!backups.length) fail('database rollback', 'no backup branch of this database in the last 7 days: run backup first');
+        for (const migration of [...manifest.migrations].reverse()) {
+          db = await readDatabase(sql, target);
+          plan = migrationPlan(manifest, db);
+          const applied = plan.state !== 'none' && manifest.migrations.findIndex(m => m.id === plan.state) >= manifest.migrations.findIndex(m => m.id === migration.id);
+          if (!applied) { step(`rollback ${migration.id}`, 'skip', {note: 'not applied'}); continue; }
+          await sql.script(readFileSync(new URL(migration.rollback, ROOT), 'utf8'));
+          db = await readDatabase(sql, target);
+          const index = manifest.migrations.findIndex(m => m.id === migration.id);
+          const expected = index === 0 ? manifest.fingerprintBefore : manifest.migrations[index - 1].fingerprintAfter;
+          if (db.fingerprint !== expected) fail(`rollback ${migration.id}`, 'the catalog after the rollback is not the reviewed one');
+          step(`rollback ${migration.id}`, 'ok', {fingerprint: db.fingerprint});
+        }
+      }
+    }
+    evidence.ok = !evidence.steps.some(s => s.status === 'fail');
+  } catch (error) {
+    if (!error.stepFailure) evidence.steps.push({name: 'unexpected error', status: 'fail', note: String(error?.message || error).slice(0, 300)});
+    evidence.ok = false;
+  } finally {
+    await sql?.close().catch(() => {});
+    evidence.finishedAt = new Date(now()).toISOString();
+    const clean = scrub(evidence, secrets);
+    const dir = options.evidence || join(tmpdir(), 'pool-alerts-release-evidence');
+    mkdirSync(dir, {recursive: true});
+    const file = join(dir, `personal-${target.environment}-${operation}-${clean.startedAt.replace(/[:.]/g, '-')}.json`);
+    writeFileSync(file, `${JSON.stringify(clean, null, 2)}\n`);
+    if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, summary(clean));
+    print(`${clean.ok ? 'RESULT ok' : 'RESULT FAILED'} · ${operation} ${target.environment} · evidence ${file}`);
+    evidence.file = file;
+  }
+  return evidence;
+}
+
+const latestOf = manifest => manifest.migrations.at(-1).fingerprintAfter;
+
+async function waitFor(name, probe, {wait, step, fail, timeoutMs, intervalMs = 5000}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await probe();
+    if (value) { step(name, 'ok'); return value; }
+    if (Date.now() > deadline) fail(name, `not reached within ${Math.round(timeoutMs / 1000)} s`);
+    await wait(intervalMs);
+  }
+}
+
+async function ensureBackup({neon, target, head, now, wait, step, fail}) {
+  const day = new Date(now()).toISOString().slice(0, 10).replace(/-/g, '');
+  const name = `${target.backupPrefix}-${day}-${head.slice(0, 7)}`;
+  const branches = await neon.branches(target.database.projectId);
+  let backup = branches.find(b => b.name === name);
+  if (backup) {
+    if (backup.parent_id !== target.database.branchId) fail('backup', `${name} exists but was branched from ${backup.parent_id}`);
+    step('backup', 'skip', {note: `reusing ${name}`, branch: backup.id});
+  } else {
+    if (branches.length >= FREE_PLAN_BRANCHES) fail('backup', `the project already has ${branches.length} branches (Free plan limit ${FREE_PLAN_BRANCHES}): delete an old backup branch first`);
+    const created = await neon.createBranch(target.database.projectId, {branch: {parent_id: target.database.branchId, name}});
+    backup = created.branch;
+    step('backup', 'ok', {note: `created ${name} (no compute)`, branch: backup.id});
+  }
+  const ready = await waitFor('backup ready', async () => {
+    const b = await neon.branch(target.database.projectId, backup.id);
+    return b.current_state === 'ready' ? b : null;
+  }, {wait, step, fail, timeoutMs: 300000, intervalMs: 3000});
+  return {branchId: ready.id, name: ready.name, parentId: ready.parent_id, parentLsn: ready.parent_lsn ?? null, parentTimestamp: ready.parent_timestamp ?? null, createdAt: ready.created_at};
+}
+
+async function ensureTrigger({neon, target, step}) {
+  const triggers = await neon.triggers(target.sender.projectId, target.sender.branchId);
+  const named = triggers.filter(t => t.name === target.trigger.name && !t.inherited);
+  const want = {type: 'schedule', function_slug: target.sender.slug, function_path: target.trigger.path, schedule: {cron: target.trigger.cron}, enabled: true};
+  if (named.length > 1) throw new Error(`${named.length} triggers named ${target.trigger.name}: remove the extra ones in the Neon Console`);
+  const existing = named[0];
+  if (!existing) {
+    await neon.createTrigger(target.sender.projectId, target.sender.branchId, {...want, name: target.trigger.name});
+    step('hourly trigger', 'ok', {note: `created ${target.trigger.cron} ${target.trigger.path}`});
+  } else if (existing.function_slug !== want.function_slug || existing.function_path !== want.function_path || existing.schedule?.cron !== want.schedule.cron || !existing.enabled) {
+    await neon.updateTrigger(target.sender.projectId, target.sender.branchId, existing.trigger_id, want);
+    step('hourly trigger', 'ok', {note: 'corrected to the reviewed schedule and enabled'});
+  } else step('hourly trigger', 'skip', {note: `already ${existing.schedule.cron} ${existing.function_path}, next ${existing.next_run_at}`});
+}
+
+// Whether each app site serves this commit's Pool Alerts client (it does only after the app is merged and published).
+async function verifyApps({target, head, fetcher, step}) {
+  const local = readFileSync(new URL('../push-client.mjs', import.meta.url));
+  for (const site of target.apps) {
+    const answer = await fetcher(`${site}push-client.mjs?v=2`, {redirect: 'follow', signal: AbortSignal.timeout(20000)}).catch(() => null);
+    const body = answer?.ok ? Buffer.from(await answer.arrayBuffer()) : null;
+    const same = body && sha256Hex(body) === sha256Hex(local);
+    step(`app ${new URL(site).host}`, same ? 'ok' : 'warn', {note: same ? `serves this commit's alert client (${head.slice(0, 12)})` : 'does not serve this commit\'s alert client yet (expected before the app release)'});
+  }
+}
+
+function summary(evidence) {
+  const rows = evidence.steps.map(s => `| ${s.status} | ${s.name} | ${String(s.note ?? '').replace(/\|/g, '/')} |`).join('\n');
+  return `## Pool Alerts ${evidence.operation} · ${evidence.target} · ${evidence.ok ? 'ok' : 'FAILED'}\n\nCommit \`${evidence.commit ?? '?'}\`\n\n| Result | Step | Note |\n|---|---|---|\n${rows}\n\n`;
+}
+
+if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+  run(process.argv.slice(2)).then(evidence => { process.exitCode = evidence.ok ? 0 : 1; }, error => { console.error(`release: ${error.message}`); process.exitCode = 2; });
+}

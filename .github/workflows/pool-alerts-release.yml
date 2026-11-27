@@ -1,0 +1,111 @@
+name: Pool Alerts release
+
+# The guarded Pool Alerts release for the Personal Pool (nfl-pool/push/release.mjs; manual: nfl-pool/push/DEPLOY.md).
+# Works from a phone: Actions → Pool Alerts release → Run workflow.
+#  * Read-only operations (preflight, status, verify) change nothing.
+#  * Every operation that changes something needs the confirmation box to hold exactly <operation>-<target>, e.g.
+#    stage-production. Production runs also wait for the owner's approval in the GitHub environment
+#    "pool-alerts-production" (Settings → Environments → Required reviewers), so no production change happens without
+#    an explicit approval of that very run.
+#  * Production stage and activate also need the reviewed commit SHA, and stage the reviewed bundle SHA-256 (both printed
+#    by the NFL Pool Tests "push-alerts-isolated" job of that commit).
+#  * Secrets: NEON_API_KEY and POOL_ALERTS_CONTROL_KEY, as environment secrets of pool-alerts-production and
+#    pool-alerts-staging. They are never printed; the evidence artifact is scrubbed.
+#  * One release per target at a time (concurrency), so migrations, deployments and triggers are never raced; any step
+#    can be run again after an interruption (each step checks what is already there).
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'What to do'
+        type: choice
+        default: preflight
+        options: [preflight, status, verify, backup, stage, activate, pause, resume, rollback]
+      target:
+        description: 'Where'
+        type: choice
+        default: staging
+        options: [staging, production]
+      approved_commit:
+        description: 'Reviewed commit SHA (production stage and activate)'
+        type: string
+        required: false
+      approved_bundle_sha256:
+        description: 'Reviewed sender bundle SHA-256 (production stage)'
+        type: string
+        required: false
+      rollback_level:
+        description: 'Rollback only: pause | trigger | sender | database'
+        type: choice
+        default: pause
+        options: [pause, trigger, sender, database]
+      confirm:
+        description: 'For any change: exactly <operation>-<target>, e.g. stage-production'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pool-alerts-release-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: ${{ inputs.operation }} ${{ inputs.target }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: ${{ inputs.target == 'production' && 'pool-alerts-production' || 'pool-alerts-staging' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.approved_commit || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Install the lockfile-pinned sender dependencies
+        working-directory: nfl-pool/push
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build the sender bundle twice and require identical bytes
+        id: bundle
+        working-directory: nfl-pool/push
+        run: |
+          set -euo pipefail
+          npm run --silent bundle > first.txt
+          npm run --silent bundle > second.txt
+          cmp first.txt second.txt
+          sha="$(sha256sum dist/poolalerts.zip | cut -d' ' -f1)"
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+          echo "Bundle dist/poolalerts.zip sha256 $sha" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Run
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          POOL_ALERTS_CONTROL_KEY: ${{ secrets.POOL_ALERTS_CONTROL_KEY }}
+          OPERATION: ${{ inputs.operation }}
+          TARGET: ${{ inputs.target }}
+          APPROVED_COMMIT: ${{ inputs.approved_commit }}
+          APPROVED_BUNDLE: ${{ inputs.approved_bundle_sha256 }}
+          LEVEL: ${{ inputs.rollback_level }}
+          CONFIRM: ${{ inputs.confirm }}
+          BUNDLE_SHA: ${{ steps.bundle.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          args=("$OPERATION" --target "$TARGET" --evidence "$RUNNER_TEMP/evidence" --bundle nfl-pool/push/dist/poolalerts.zip)
+          [ -n "$APPROVED_COMMIT" ] && args+=(--approved-commit "$APPROVED_COMMIT")
+          [ -n "$CONFIRM" ] && args+=(--confirm "$CONFIRM")
+          [ "$OPERATION" = rollback ] && args+=(--level "$LEVEL")
+          if [ -n "$APPROVED_BUNDLE" ]; then
+            [ "$APPROVED_BUNDLE" = "$BUNDLE_SHA" ] || { echo "::error::this commit builds $BUNDLE_SHA, not the approved $APPROVED_BUNDLE"; exit 1; }
+            args+=(--bundle-sha256 "$APPROVED_BUNDLE")
+          fi
+          node nfl-pool/push/release.mjs "${args[@]}"
+      - name: Keep the evidence (scrubbed: no secret is ever written to it)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pool-alerts-${{ inputs.target }}-${{ inputs.operation }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/evidence
+          if-no-files-found: ignore
+          retention-days: 90

@@ -37,3 +37,24 @@ SQL
 export PUSH_IT_ADMIN_URL="postgresql://postgres@127.0.0.1:$port/nfl_pool"
 export PUSH_IT_SENDER_URL="postgresql://pool_alerts_sender@127.0.0.1:$port/nfl_pool"
 node "$here/integration.spec.mjs"
+
+# The release rehearsal (release.spec.mjs) on its own throwaway cluster: the sender role is cluster-wide, and the
+# rehearsal needs the true "nothing installed" state. Three production-shaped copies taken before migration 006; on
+# them the sender role must authenticate with SCRAM (trust everywhere else), so the password the release sets is
+# really checked.
+R="pool-alerts-release-$$"
+cleanup() { docker rm -f "$C" "$R" > /dev/null 2>&1 || true; }
+docker run -d --name "$R" -e POSTGRES_HOST_AUTH_METHOD=trust -p 127.0.0.1::5432 "$IMAGE" -c TimeZone=GMT -c max_connections=100 > /dev/null
+for _ in $(seq 1 120); do
+  if docker logs "$R" 2>&1 | grep -q 'PostgreSQL init process complete' && docker exec "$R" pg_isready -U postgres -q 2>/dev/null; then break; fi
+  sleep 1
+done
+docker exec "$R" pg_isready -U postgres -q || { docker logs "$R" | tail -20; echo 'PostgreSQL did not become ready'; exit 1; }
+rport="$(docker port "$R" 5432/tcp | head -1 | sed 's/.*://')"
+rpsql() { docker exec -i "$R" psql -X -q -v ON_ERROR_STOP=1 -U "$1" -d "$2"; }
+rpsql postgres postgres < "$root/sql-tests/neon-shape.sql"
+rpsql nfl_pool_owner nfl_pool < "$root/migrations/20261108_full_field_publish_guard.sql"
+for d in a b c; do echo "CREATE DATABASE nfl_pool_release_$d TEMPLATE nfl_pool OWNER nfl_pool_owner;" | rpsql postgres postgres; done
+docker exec "$R" sh -ec 'sed -i "1i host nfl_pool_release_a,nfl_pool_release_c pool_alerts_sender all scram-sha-256" "$PGDATA/pg_hba.conf"'
+echo "SELECT pg_reload_conf();" | rpsql postgres postgres > /dev/null
+PUSH_IT_RELEASE_ADMIN="postgresql://postgres@127.0.0.1:$rport/postgres" node "$here/release.spec.mjs"

@@ -127,6 +127,12 @@ echo "Behavior: $behavior_ok passed, $behavior_fail failed, plan ${plan:-missing
 # exist when 006 is applied (no event, so no historical notification). It refuses any role but nfl_pool_owner and a
 # second application, changing nothing when it refuses.
 m6=006-pool-alerts.sql
+# The release manifest (nfl-pool/push/release-manifest.json) names the catalog fingerprint before 006 and after each
+# migration; the release automation refuses any other state, so these must be exactly what a fresh database shows.
+manifest_value() { node -e "const m=require(process.argv[1]);const k=process.argv[2];console.log(k==='before'?m.fingerprintBefore:m.migrations.find(x=>x.id===k).fingerprintAfter)" "$here/../push/release-manifest.json" "$1"; }
+schema_fingerprint() { docker exec -i "$C" psql -X -At -U postgres -d nfl_pool < "$here/../push/fingerprint.sql" | grep -o 'schema_sha256=[0-9a-f]*' | cut -d= -f2; }
+manifest_ok=0
+[ "$(schema_fingerprint)" = "$(manifest_value before)" ] && { echo "MANIFEST ok: the catalog before 006 is the manifest's"; manifest_ok=$((manifest_ok+1)); } || problem 'the catalog before 006 differs from release-manifest.json fingerprintBefore'
 if [ -f "$migrations/$m6" ]; then
   alerts_state() { docker exec "$C" psql -X -At -U postgres -d nfl_pool -c "SELECT md5(string_agg(x, '|' ORDER BY x)) FROM (
     SELECT n.nspname || '.' || c.relname || ':' || c.relkind AS x FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname IN ('public', 'pool_alerts')
@@ -144,6 +150,7 @@ if [ -f "$migrations/$m6" ]; then
   [ "$(alerts_state)" = "$before" ] || problem 'a refused application of migration 006 changed the schema'
   if psql_as nfl_pool_owner nfl_pool < "$migrations/$m6"; then
     echo "applied $m6"
+    [ "$(schema_fingerprint)" = "$(manifest_value 006)" ] && { echo "MANIFEST ok: the catalog after 006 is the manifest's"; manifest_ok=$((manifest_ok+1)); } || problem 'the catalog after 006 differs from release-manifest.json'
     before="$(alerts_state)"
     if psql_as nfl_pool_owner nfl_pool < "$migrations/$m6" > "$log/m6-again.out" 2>&1; then
       problem 'migration 006 applied a second time: its preconditions must refuse it'
@@ -196,6 +203,7 @@ if [ -f "$migrations/$m7" ]; then
   if psql_as nfl_pool_owner nfl_pool < "$migrations/$m7"; then
     echo "applied $m7"
     with007="$(fingerprint)"
+    [ "$(schema_fingerprint)" = "$(manifest_value 007)" ] && { echo "MANIFEST ok: the catalog after 007 is the manifest's"; manifest_ok=$((manifest_ok+1)); } || problem 'the catalog after 007 differs from release-manifest.json'
     [ "$with007" != "$only006" ] || problem 'migration 007 changed nothing'
     if psql_as nfl_pool_owner nfl_pool < "$migrations/$m7" > "$log/m7-again.out" 2>&1; then problem 'migration 007 applied a second time'; else
       grep -q 'already applied' "$log/m7-again.out" && echo "CHECKS-MIGRATION ok: a second application is refused" || problem 'a second application of 007 was refused for an unexpected reason'; fi
@@ -251,7 +259,8 @@ fi
 if psql_as postgres nfl_pool < "$migrations/006-pool-alerts-rollback.sql" > "$log/rb.out" 2>&1; then problem 'the rollback ran as postgres'; else
   grep -q 'must be applied as nfl_pool_owner' "$log/rb.out" && echo "ALERTS-ROLLBACK ok: the rollback refuses any role but nfl_pool_owner" && rollback_ok=$((rollback_ok+1)) || problem 'rollback refused for an unexpected reason'; fi
 
-echo "PostgreSQL $version · behavior $behavior_ok/${plan:-?} · full-field guard $guard_ok/${guard_plan:-?} · $(grep -o 'races=[0-9]* passed=[0-9]* failed=[0-9]*' "$log/races.out" || echo 'races: no summary') · alerts $alerts_ok/${alerts_plan:-?} · device checks $checks_ok/${checks_plan:-?} · $(grep -o 'backup-compat passed=[0-9]*' "$log/backup.out" || echo 'backup: no summary') · rollback $rollback_ok/5"
+echo "PostgreSQL $version · behavior $behavior_ok/${plan:-?} · full-field guard $guard_ok/${guard_plan:-?} · $(grep -o 'races=[0-9]* passed=[0-9]* failed=[0-9]*' "$log/races.out" || echo 'races: no summary') · alerts $alerts_ok/${alerts_plan:-?} · device checks $checks_ok/${checks_plan:-?} · manifest $manifest_ok/3 · $(grep -o 'backup-compat passed=[0-9]*' "$log/backup.out" || echo 'backup: no summary') · rollback $rollback_ok/5"
 [ "$rollback_ok" -eq 5 ] || problem "Pool Alerts rollback checks: $rollback_ok of 5"
+[ "$manifest_ok" -eq 3 ] || problem "release manifest checks: $manifest_ok of 3"
 if [ "$problems" -ne 0 ]; then echo "HDC-13 SQL gate FAILED ($problems problem(s))"; exit 1; fi
 echo "HDC-13 SQL gate passed"

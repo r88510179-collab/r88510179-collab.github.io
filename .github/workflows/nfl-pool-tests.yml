@@ -31,7 +31,7 @@ jobs:
       # nfl-pool/**/*.test.mjs files are exactly these paths, so adding,
       # removing or renaming a suite means updating this list and the count in
       # the same change.
-      EXPECTED_SUITE_COUNT: '20'
+      EXPECTED_SUITE_COUNT: '21'
       EXPECTED_SUITES: |
         nfl-pool/admin/incident-rulings.test.mjs
         nfl-pool/admin/organizer-correction-core.test.mjs
@@ -44,6 +44,7 @@ jobs:
         nfl-pool/pool-alerts.test.mjs
         nfl-pool/public-math.test.mjs
         nfl-pool/push/core.test.mjs
+        nfl-pool/push/release.test.mjs
         nfl-pool/pwa.test.mjs
         nfl-pool/score-feed-proxy.test.mjs
         nfl-pool/score-proxy/index.test.mjs
@@ -126,7 +127,7 @@ jobs:
           fi
           echo "Inventory guard passed: the discovered suites are exactly the $count approved suites."
 
-      - name: Run 20 suites
+      - name: Run 21 suites
         run: |
           set -euo pipefail
           work="$(mktemp -d)"
@@ -235,8 +236,6 @@ jobs:
         run: |
           set -euo pipefail
           for f in nfl-pool/push/*.mjs nfl-pool/push/test-support/*.mjs nfl-pool/push-client.mjs nfl-pool/pool-alerts.mjs; do node --check "$f"; done
-      - name: End-to-end scenarios on disposable PostgreSQL 17.11
-        run: bash nfl-pool/push/test-integration.sh
       - name: Build the deployment bundle twice and require identical bytes
         working-directory: nfl-pool/push
         run: |
@@ -245,3 +244,6 @@ jobs:
           npm run --silent bundle | tee second.txt
           cmp first.txt second.txt
           sha256sum dist/poolalerts.zip >> "$GITHUB_STEP_SUMMARY"
+      # After the bundle: the release rehearsal (release.spec.mjs) stages that exact zip.
+      - name: End-to-end scenarios and the release rehearsal on disposable PostgreSQL 17.11
+        run: bash nfl-pool/push/test-integration.sh"
