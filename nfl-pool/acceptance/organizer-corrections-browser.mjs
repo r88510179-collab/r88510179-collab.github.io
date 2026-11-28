@@ -80,13 +80,18 @@ try{
     try{bin=execFileSync('which',[name],{encoding:'utf8'}).trim();if(bin)break}catch{}
   }
   assert(bin,'Chrome/Chromium not present');
-  browser=await chromium.launch({executablePath:bin,headless:true,args:['--no-sandbox']});
+  // No host name resolves: a request the routes below do not answer fails instead of reaching a real (production) site.
+  browser=await chromium.launch({executablePath:bin,headless:true,args:['--no-sandbox','--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost']});
   const page=await browser.newPage({viewport:{width:1280,height:850}});
   const errors=[];page.on('pageerror',e=>errors.push(String(e)));
   await page.addInitScript(row=>{window.__testDb={row,writes:0}},initial);
   await page.route(/neon-js@0\.7\.0-beta/,route=>route.fulfill({status:200,contentType:'text/javascript',
     headers:{'access-control-allow-origin':'*'},body:neonStub}));
   await page.route(/neonauth\./,r=>r.abort());await page.route(/apirest\./,r=>r.abort());
+  // The page reads a workbook with SheetJS 0.18.5 imported from jsDelivr: the same package version, installed for this
+  // test, is served from here (no host name resolves, so the CDN itself is never reached).
+  await page.route('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/xlsx.mjs',route=>route.fulfill({status:200,contentType:'text/javascript',
+    headers:{'access-control-allow-origin':'*'},body:readFileSync(fileURLToPath(import.meta.resolve('xlsx/xlsx.mjs')),'utf8')}));
   await page.goto('http://127.0.0.1:'+port+'/nfl-pool/admin/organizer-corrections.html',{waitUntil:'networkidle'});
   await page.locator('#authState').getByText('AUTHORIZED').waitFor({timeout:15000});
   await page.locator('#season').fill('2026');await page.locator('#week').fill('9');

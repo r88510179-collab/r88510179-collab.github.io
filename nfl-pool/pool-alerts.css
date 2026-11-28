@@ -1,0 +1,38 @@
+/* Pool Alerts card (Home): latest official release, release history, this device's alerts and the phone-alert controls.
+   Every control is at least 44px tall; text inputs are 16px so iOS does not zoom. */
+.pa-body{display:grid;gap:12px;padding:0 15px 15px}
+.pa-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.pa-text{margin:0;color:var(--text);font-size:12px;line-height:1.5}
+.pa-muted{margin:0;color:var(--muted);font-size:11px;line-height:1.5}
+.pa-tag{display:inline-flex;align-items:center;margin-left:6px;padding:2px 7px;border-radius:999px;background:#c52b32;color:#fff;font-size:9px;font-weight:950;letter-spacing:.06em;text-transform:uppercase;vertical-align:middle}
+.pa-tag.pa-updated{background:#f3bd42;color:#1d1500}
+.pa-count{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 6px;margin-left:8px;border-radius:999px;background:#c52b32;color:#fff;font-size:11px;font-weight:950;vertical-align:middle}
+.pa-section{display:grid;gap:8px;border-top:1px solid var(--line);padding-top:12px}
+.pa-section>h3,.pa-details>summary{margin:0;color:var(--silver);font-size:12px;font-weight:900;letter-spacing:.02em}
+.pa-details>summary{display:flex;align-items:center;gap:10px;min-height:44px;cursor:pointer;list-style:none}
+.pa-details>summary::-webkit-details-marker{display:none}
+.pa-details>summary::after{content:'';flex:none;width:7px;height:7px;margin:0 4px 3px auto;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(45deg);transition:transform .15s}
+.pa-details[open]>summary::after{transform:rotate(225deg);margin-bottom:-3px}
+.pa-details[open]>summary{margin-bottom:4px}
+.pa-list{display:grid;gap:6px;margin:0;padding:0;list-style:none}
+.pa-list li{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:10px;min-height:44px;padding:0 11px;border:1px solid var(--line);border-radius:12px;background:#0c1015;color:var(--text);font-size:12px;line-height:1.4}
+.pa-list li a,.pa-list li>span{display:flex;flex-wrap:wrap;align-items:center;min-height:44px;color:var(--text);font-weight:850;text-decoration:none}
+.pa-list li a:hover{text-decoration:underline}
+.pa-list li small{color:var(--muted);font-size:11px}
+.pa-check{display:flex;align-items:center;gap:10px;min-height:44px;color:var(--text);font-size:12px;cursor:pointer}
+.pa-check input{flex:none;width:20px;height:20px;margin:0;accent-color:#d52d34}
+.pa-input{box-sizing:border-box;width:100%;max-width:340px;min-height:44px;padding:0 12px;border:1px solid var(--line2);border-radius:10px;background:#0b0e12;color:var(--text);font-size:16px}
+.dash-tool.pa-primary{border-color:#ef4b52;background:#b8262d}
+.dash-tool.pa-primary:hover{background:#cf3038}
+.dash-tool[disabled]{opacity:.55;cursor:default}
+.pa-status{margin:0;min-height:18px;color:var(--text);font-size:12px;line-height:1.5}
+.pa-status:empty{min-height:0;margin-top:-12px}
+.pa-status.pa-warn{color:var(--gold)}
+.pa-status.pa-bad{color:#ff8a8f}
+.pa-status.pa-good{color:var(--green)}
+.pa-help{display:grid;gap:4px}
+.pa-help h4{margin:8px 0 0;color:var(--silver);font-size:12px}
+.pa-help ol,.pa-help ul{margin:2px 0 4px;padding-left:20px;color:var(--text);font-size:12px;line-height:1.55}
+.pa-help li{margin:2px 0}
+.pa-help p{margin:4px 0;color:var(--muted);font-size:11px;line-height:1.5}
+@media (max-width:420px){.pa-body{padding:0 12px 13px}.pa-row .dash-tool{flex:1 1 auto}.pa-list li{grid-template-columns:minmax(0,1fr)}.pa-list li small{margin:-8px 0 9px}}

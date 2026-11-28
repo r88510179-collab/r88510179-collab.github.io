@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="preconnect" href="https://a.espncdn.com">
 <link rel="icon" href="assets/pool-center-icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="assets/pool-center-touch-180.png">
 <link rel="stylesheet" href="style.css?v=premium-v3">
 <link rel="stylesheet" href="slate.css?v=slate-v1">
 <link rel="stylesheet" href="weekly.css?v=premium-v3">
@@ -21,6 +22,7 @@
 <link rel="stylesheet" href="picks-mobile.css?v=5">
 <link rel="stylesheet" href="season-record.css?v=1">
 <link rel="stylesheet" href="week-selector.css?v=1">
+<link rel="stylesheet" href="pool-alerts.css?v=1">
 <style>
 /* Closeout mobile touch targets (overlay, keep historical stylesheet immutable). */
 .app-menu summary{width:44px;height:44px}
@@ -83,6 +85,9 @@ body[data-survivor-archived="true"] #svFeed{display:none!important}
         </div>
       </div>
 
+      <section class="card" aria-label="Pool Alerts">
+        <div class="head"><div><span class="section-kicker">Pool Alerts</span><h2 id="poolAlertsTitle" role="status">Checking official picks…</h2><div class="meta" id="poolAlertsNote">Checking the latest release.</div></div><a class="dash-tool" id="poolAlertsLink" hidden>View picks</a></div>
+      </section>
       <div class="dash-sections" id="dashSections">
         <section class="dash-section dash-overview" data-dash-section="overview" aria-labelledby="dash-overview-title">
           <div class="dash-head">
@@ -267,6 +272,8 @@ body[data-survivor-archived="true"] #svFeed{display:none!important}
 <script type="module" src="picks-mobile.js?v=5"></script>
 <script type="module" src="season-record.js?v=1"></script>
 <script type="module" src="week-date-range.js?v=2"></script>
+<script type="module" src="pool-alerts.mjs?v=2"></script>
+<script type="module" src="push-client.mjs?v=2"></script>
 <script src="pwa.js?v=1" defer></script>
 </body>
 </html>

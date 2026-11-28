@@ -63,6 +63,7 @@ if [ -f "$migrations/$m5" ]; then
       SELECT p.oid::regprocedure::text || ':' || md5(p.prosrc) || ':' || COALESCE(p.proacl::text, '') AS x FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace
       UNION ALL SELECT c.conname || ':' || pg_get_constraintdef(c.oid) FROM pg_constraint c WHERE c.conrelid = 'public.nfl_incident_rulings'::regclass) q"; }
     before="$(schema_state)"
+    [ -n "$before" ] || problem 'the HDC-14 catalog snapshot (schema_state) returned nothing: its query failed'
     for role in nfl_pool_owner postgres; do
       if psql_as "$role" nfl_pool < "$migrations/$m5" > "$log/m5-$role.out" 2>&1; then
         problem "migration 005 applied a second time as $role: its preconditions must refuse it"
@@ -121,12 +122,154 @@ fi
 [ -n "$plan" ] && [ "$behavior_ok" -eq "$plan" ] || problem "behavior suite: $behavior_ok passed, plan ${plan:-missing}"
 echo "Behavior: $behavior_ok passed, $behavior_fail failed, plan ${plan:-missing}"
 
+# Pool Alerts (migration 006): applied AFTER the unchanged behavior suite (whose shape assertions pin the HDC-12..14
+# function set exactly) and BEFORE the race suite, so the concurrent publish/republish races run with the capture trigger
+# live and prove that publishing is unaffected. The fixtures already in the database play the production weeks that
+# exist when 006 is applied (no event, so no historical notification). It refuses any role but nfl_pool_owner and a
+# second application, changing nothing when it refuses.
+m6=006-pool-alerts.sql
+# The release manifest (nfl-pool/push/release-manifest.json) names the catalog fingerprint before 006 and after each
+# migration; the release automation refuses any other state, so these must be exactly what a fresh database shows.
+manifest_value() { node -e "const m=require(process.argv[1]);const k=process.argv[2];console.log(k==='before'?m.fingerprintBefore:m.migrations.find(x=>x.id===k).fingerprintAfter)" "$here/../push/release-manifest.json" "$1"; }
+schema_fingerprint() { docker exec -i "$C" psql -X -At -U postgres -d nfl_pool < "$here/../push/fingerprint.sql" | grep -o 'schema_sha256=[0-9a-f]*' | cut -d= -f2; }
+manifest_ok=0
+# manifest_check <manifest key> <label>: the database's fingerprint must be the manifest's (printed both ways when not).
+manifest_check() {
+  local got want; got="$(schema_fingerprint)"; want="$(manifest_value "$1")"
+  if [ -n "$got" ] && [ "$got" = "$want" ]; then echo "MANIFEST ok: the catalog $2 is the manifest's"; manifest_ok=$((manifest_ok+1))
+  else problem "the catalog $2 differs from release-manifest.json: database ${got:-<no fingerprint>}, manifest ${want:-<none>}"; fi
+}
+manifest_check before 'before 006'
+if [ -f "$migrations/$m6" ]; then
+  alerts_state() { docker exec "$C" psql -X -At -U postgres -d nfl_pool -c "SELECT md5(string_agg(x, '|' ORDER BY x)) FROM (
+    SELECT n.nspname || '.' || c.relname || ':' || c.relkind::text AS x FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname IN ('public', 'pool_alerts')
+    UNION ALL SELECT p.oid::regprocedure::text || ':' || md5(p.prosrc) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace
+    UNION ALL SELECT t.tgname FROM pg_trigger t WHERE NOT t.tgisinternal
+    UNION ALL SELECT r.rolname FROM pg_roles r) q"; }
+  before="$(alerts_state)"
+  [ -n "$before" ] || problem 'the Pool Alerts catalog snapshot (alerts_state) returned nothing: its query failed'
+  if psql_as postgres nfl_pool < "$migrations/$m6" > "$log/m6-postgres.out" 2>&1; then
+    problem "migration 006 applied as postgres: it must refuse every role but nfl_pool_owner"
+  else
+    refusal="$(grep -m1 -o 'ERROR: .*' "$log/m6-postgres.out")"
+    case "$refusal" in *'must be applied as nfl_pool_owner'*) echo "ALERTS-MIGRATION ok: application as postgres is refused ($refusal)";;
+      *) problem "migration 006 as postgres was refused for an unexpected reason: ${refusal:-no error}";; esac
+  fi
+  [ "$(alerts_state)" = "$before" ] || problem 'a refused application of migration 006 changed the schema'
+  if psql_as nfl_pool_owner nfl_pool < "$migrations/$m6"; then
+    echo "applied $m6"
+    manifest_check 006 'after 006'
+    before="$(alerts_state)"
+    if psql_as nfl_pool_owner nfl_pool < "$migrations/$m6" > "$log/m6-again.out" 2>&1; then
+      problem 'migration 006 applied a second time: its preconditions must refuse it'
+    else
+      refusal="$(grep -m1 -o 'ERROR: .*' "$log/m6-again.out")"
+      case "$refusal" in *'already applied'*) echo "ALERTS-MIGRATION ok: a second application is refused ($refusal)";;
+        *) problem "a second application of migration 006 was refused for an unexpected reason: ${refusal:-no error}";; esac
+    fi
+    [ "$(alerts_state)" = "$before" ] || problem 'a refused second application of migration 006 changed the schema'
+  else
+    problem "migration $m6 failed"
+  fi
+else
+  problem "migration $m6 is missing: the Pool Alerts capture does not exist"
+fi
+
 echo "== Race suite"
 HDC13_PG_CONTAINER="$C" bash "$here/races.sh" > "$log/races.out" 2>&1
 races_status=$?
 cat "$log/races.out"
 [ "$races_status" -eq 0 ] || problem "race suite failed (exit $races_status)"
 
-echo "PostgreSQL $version · behavior $behavior_ok/${plan:-?} · full-field guard $guard_ok/${guard_plan:-?} · $(grep -o 'races=[0-9]* passed=[0-9]* failed=[0-9]*' "$log/races.out" || echo 'races: no summary')"
+echo "== Pool Alerts capture suite"
+psql_as postgres nfl_pool < "$here/pool-alerts.sql" > "$log/alerts.out" 2>&1
+alerts_status=$?
+grep -E '^NOTICE:  ALERTS-TEST ' "$log/alerts.out" | sed 's/^NOTICE:  //'
+alerts_ok="$(grep -c '^NOTICE:  ALERTS-TEST ok: ' "$log/alerts.out")"
+alerts_fail="$(grep -c '^NOTICE:  ALERTS-TEST FAIL: ' "$log/alerts.out")"
+alerts_plan="$(sed -n 's/^ALERTS-PLAN \([0-9][0-9]*\)$/\1/p' "$log/alerts.out")"
+if [ "$alerts_status" -ne 0 ]; then
+  grep -v '^NOTICE:  ALERTS-TEST ' "$log/alerts.out" | tail -20
+  problem "pool-alerts.sql stopped with exit code $alerts_status"
+fi
+[ "$alerts_fail" -eq 0 ] || problem "$alerts_fail Pool Alerts assertion(s) failed"
+[ -n "$alerts_plan" ] && [ "$alerts_ok" -eq "$alerts_plan" ] || problem "Pool Alerts suite: $alerts_ok passed, plan ${alerts_plan:-missing}"
+echo "Pool Alerts: $alerts_ok passed, $alerts_fail failed, plan ${alerts_plan:-missing}"
+
+echo "== Pool Alerts device checks (migration 007)"
+# 007 refuses any role but nfl_pool_owner and a second application; its suite passes; its rollback gives back exactly the
+# catalog 006 alone installs (nfl-pool/push/fingerprint.sql); it then applies again, to the same catalog. It runs before the
+# backup compatibility check, so that check also proves the Personal backup is unaffected by 007.
+m7=007-pool-alerts-device-checks.sql
+checks_ok=0; checks_plan=''
+fingerprint() { docker exec -i "$C" psql -X -At -U postgres -d nfl_pool < "$here/../push/fingerprint.sql" | grep -v '^\(BEGIN\|COMMIT\)$'; }
+if [ -f "$migrations/$m7" ]; then
+  only006="$(fingerprint)"
+  case "$only006" in schema_sha256=*) ;; *) problem 'fingerprint.sql returned no fingerprint before 007';; esac
+  if psql_as postgres nfl_pool < "$migrations/$m7" > "$log/m7-postgres.out" 2>&1; then problem 'migration 007 applied as postgres'; else
+    grep -q 'must be applied as nfl_pool_owner' "$log/m7-postgres.out" && echo "CHECKS-MIGRATION ok: application as postgres is refused" || problem "migration 007 as postgres refused for an unexpected reason"; fi
+  [ "$(fingerprint)" = "$only006" ] || problem 'a refused application of migration 007 changed the catalog'
+  if psql_as nfl_pool_owner nfl_pool < "$migrations/$m7"; then
+    echo "applied $m7"
+    with007="$(fingerprint)"
+    manifest_check 007 'after 007'
+    [ "$with007" != "$only006" ] || problem 'migration 007 changed nothing'
+    if psql_as nfl_pool_owner nfl_pool < "$migrations/$m7" > "$log/m7-again.out" 2>&1; then problem 'migration 007 applied a second time'; else
+      grep -q 'already applied' "$log/m7-again.out" && echo "CHECKS-MIGRATION ok: a second application is refused" || problem 'a second application of 007 was refused for an unexpected reason'; fi
+    psql_as postgres nfl_pool < "$here/device-checks.sql" > "$log/checks.out" 2>&1
+    checks_status=$?
+    grep -E '^NOTICE:  CHECKS-TEST ' "$log/checks.out" | sed 's/^NOTICE:  //'
+    checks_ok="$(grep -c '^NOTICE:  CHECKS-TEST ok: ' "$log/checks.out")"
+    checks_fail="$(grep -c '^NOTICE:  CHECKS-TEST FAIL: ' "$log/checks.out")"
+    checks_plan="$(sed -n 's/^ *CHECKS-PLAN \([0-9][0-9]*\)$/\1/p' "$log/checks.out")"
+    [ "$checks_status" -eq 0 ] || { tail -20 "$log/checks.out"; problem "device-checks.sql stopped with exit code $checks_status"; }
+    [ "$checks_fail" -eq 0 ] || problem "$checks_fail device-check assertion(s) failed"
+    [ -n "$checks_plan" ] && [ "$checks_ok" -eq "$checks_plan" ] || problem "device checks: $checks_ok passed, plan ${checks_plan:-missing}"
+    if psql_as nfl_pool_owner nfl_pool < "$migrations/007-pool-alerts-device-checks-rollback.sql"; then
+      [ "$(fingerprint)" = "$only006" ] && echo "CHECKS-MIGRATION ok: the 007 rollback restores exactly the 006 catalog" || problem 'the 007 rollback did not restore the 006 catalog exactly'
+    else problem 'the 007 rollback failed'; fi
+    if psql_as nfl_pool_owner nfl_pool < "$migrations/$m7" > /dev/null; then
+      [ "$(fingerprint)" = "$with007" ] && echo "CHECKS-MIGRATION ok: 007 applies again after its rollback, to the same catalog" || problem '007 re-applied to a different catalog'
+    else problem 'migration 007 could not be re-applied after its rollback'; fi
+    echo "$with007" | head -2
+  else
+    problem "migration $m7 failed"
+  fi
+else
+  problem "migration $m7 is missing: Pool Alerts device checks do not exist"
+fi
+echo "Device checks: $checks_ok passed, plan ${checks_plan:-missing}"
+
+echo "== Personal backup compatibility (public-schema dump and restore with the documented prerequisites)"
+HDC13_PG_CONTAINER="$C" bash "$here/backup-compat.sh" > "$log/backup.out" 2>&1
+backup_status=$?
+cat "$log/backup.out"
+[ "$backup_status" -eq 0 ] || problem "backup compatibility check failed (exit $backup_status)"
+
+echo "== Pool Alerts rollback and re-application"
+rollback_ok=0
+if psql_as nfl_pool_owner nfl_pool < "$migrations/006-pool-alerts-rollback.sql"; then
+  state="$(docker exec "$C" psql -X -At -U postgres -d nfl_pool -c "SELECT (SELECT count(*) FROM pg_namespace WHERE nspname='pool_alerts')||':'||
+    (SELECT count(*) FROM pg_trigger WHERE tgname='nfl_pool_alerts_capture')||':'||(SELECT count(*) FROM pg_roles WHERE rolname='pool_alerts_sender')||':'||
+    (SELECT count(*) FROM pg_proc WHERE proname='nfl_pool_alerts_capture')||':'||(SELECT count(*) FROM pg_tables WHERE schemaname='public')")"
+  [ "$state" = "0:0:0:0:5" ] && echo "ALERTS-ROLLBACK ok: schema, trigger, function and role removed; public keeps its five tables" && rollback_ok=$((rollback_ok+1)) || problem "rollback left objects behind ($state)"
+  if printf "%s\n" "BEGIN; SELECT set_config('request.jwt.claims', '{\"sub\":\"00000000-0000-4000-8000-000000000001\",\"role\":\"authenticated\"}', true); SET LOCAL ROLE authenticated;" \
+     "INSERT INTO public.nfl_pool_weeks (season, week, status, config, revision, published_at, locked_at) VALUES (2095, 1, 'locked', '{\"schemaVersion\":1,\"season\":2095,\"week\":1,\"games\":[],\"participants\":[]}', 1, now(), now());" \
+     "COMMIT;" | psql_as postgres nfl_pool > /dev/null; then echo "ALERTS-ROLLBACK ok: publishing works after the rollback"; rollback_ok=$((rollback_ok+1)); else problem 'publishing failed after the Pool Alerts rollback'; fi
+  if psql_as nfl_pool_owner nfl_pool < "$migrations/$m6" > /dev/null; then echo "ALERTS-ROLLBACK ok: migration 006 applies again after the rollback"; rollback_ok=$((rollback_ok+1)); else problem 'migration 006 could not be re-applied after the rollback'; fi
+  if printf "%s\n" "BEGIN; SELECT set_config('request.jwt.claims', '{\"sub\":\"00000000-0000-4000-8000-000000000001\",\"role\":\"authenticated\"}', true); SET LOCAL ROLE authenticated;" \
+     "UPDATE public.nfl_pool_weeks SET revision = 2, config = jsonb_set(config, '{label}', '\"re-applied\"') WHERE season = 2095 AND week = 1;" "COMMIT;" | psql_as postgres nfl_pool > /dev/null \
+     && [ "$(docker exec "$C" psql -X -At -U postgres -d nfl_pool -c "SELECT count(*) FROM pool_alerts.publication_events WHERE season = 2095 AND revision = 2")" = 1 ]; then
+    echo "ALERTS-ROLLBACK ok: the re-applied trigger captures the next publication"; rollback_ok=$((rollback_ok+1))
+  else problem 'the re-applied trigger did not capture the next publication'; fi
+else
+  problem 'the Pool Alerts rollback failed'
+fi
+if psql_as postgres nfl_pool < "$migrations/006-pool-alerts-rollback.sql" > "$log/rb.out" 2>&1; then problem 'the rollback ran as postgres'; else
+  grep -q 'must be applied as nfl_pool_owner' "$log/rb.out" && echo "ALERTS-ROLLBACK ok: the rollback refuses any role but nfl_pool_owner" && rollback_ok=$((rollback_ok+1)) || problem 'rollback refused for an unexpected reason'; fi
+
+echo "PostgreSQL $version · behavior $behavior_ok/${plan:-?} · full-field guard $guard_ok/${guard_plan:-?} · $(grep -o 'races=[0-9]* passed=[0-9]* failed=[0-9]*' "$log/races.out" || echo 'races: no summary') · alerts $alerts_ok/${alerts_plan:-?} · device checks $checks_ok/${checks_plan:-?} · manifest $manifest_ok/3 · $(grep -o 'backup-compat passed=[0-9]*' "$log/backup.out" || echo 'backup: no summary') · rollback $rollback_ok/5"
+[ "$rollback_ok" -eq 5 ] || problem "Pool Alerts rollback checks: $rollback_ok of 5"
+[ "$manifest_ok" -eq 3 ] || problem "release manifest checks: $manifest_ok of 3"
 if [ "$problems" -ne 0 ]; then echo "HDC-13 SQL gate FAILED ($problems problem(s))"; exit 1; fi
 echo "HDC-13 SQL gate passed"

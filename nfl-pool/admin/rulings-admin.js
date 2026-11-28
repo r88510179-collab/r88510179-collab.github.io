@@ -16,6 +16,8 @@ import {PUBLIC_COLUMNS,RPC_FUNCTION,ACTIONS,scoreboardUrl,evidenceSourceFor,read
   pickemCandidates,survivorCandidates,buildRequest,writeProbeRequest,pickemPreview,survivorPreview,pickemState,survivorState,
   previewOutcome,sameOutcome,confirmationPhrase,confirmationMatches,preflightKey,rpcErrorInfo,classifyReadBack,probeOutcome,
   ABSENT_RPC_FUNCTION,ABSENCE_LABEL,buildAbsentRequest,absentWriteProbeRequest,absentActionPhrase,classifyAbsentReadBack,absentProbeOutcome} from './incident-rulings.js?v=2';
+// Admin never runs on a Vercel preview: from there it would change the live pool (synthetic staging publications: nfl-pool/push/release.mjs staging-publish).
+if(/^https:\/\/nfl-pool-personal-[a-z0-9-]{1,60}-r88510179-collabs-projects\.vercel\.app$/.test(globalThis.location?.origin??'')){document.body.textContent='Admin is switched off on preview deployments: from here it would change the live pool. Use Admin at picks.smokkeventures.com.';throw new Error('Admin is disabled on preview deployments');}
 
 const NEON_AUTH_URL='https://ep-muddy-forest-au7eygkw.neonauth.c-10.us-east-1.aws.neon.tech/nfl_pool/auth';
 const NEON_DATA_URL='https://ep-muddy-forest-au7eygkw.apirest.c-10.us-east-1.aws.neon.tech/nfl_pool/rest/v1';

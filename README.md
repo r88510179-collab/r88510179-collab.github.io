@@ -14,6 +14,7 @@
 | [nfl-pool/index.html](nfl-pool/index.html) | The Pool Center's public application |
 | [nfl-pool/README.md](nfl-pool/README.md) | Owner's step-by-step guide and system explanation |
 | [nfl-pool/admin/](nfl-pool/admin/) | Restricted weekly publication and incident-ruling interfaces; **not** ordinary participant login |
+| [nfl-pool/push/](nfl-pool/push/) | Pool Alerts: phone notifications when official picks are published or corrected (sender, owner tool, manual, runbook) |
 | [nfl-pool/ops/](nfl-pool/ops/) | Public health checks and branch review |
 | [nfl-pool/acceptance/](nfl-pool/acceptance/) | Verification procedures and independent score comparisons |
 | [.github/workflows/](.github/workflows/) | Automated code tests, score checks and public uptime monitoring |
