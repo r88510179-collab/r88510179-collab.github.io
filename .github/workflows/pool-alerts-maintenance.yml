@@ -1,0 +1,86 @@
+name: Pool Alerts maintenance
+
+# Owner-run Pool Alerts operations from GitHub (works from a phone: Actions → Pool Alerts maintenance → Run workflow).
+# It calls the deployed sender with the owner token; it has no database credentials. Changing actions (notify, pause,
+# resume, retry, test, enrollment) require the confirmation box. Nothing runs on a schedule. The Maintenance Center's
+# Pool Alerts operations page does the same from a phone; this workflow is the fallback.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'What to do'
+        type: choice
+        default: status
+        options:
+          - health
+          - status
+          - notify
+          - pause
+          - resume
+          - retry-failed
+          - test-device
+          - enrollment-open
+          - enrollment-invite
+          - enrollment-closed
+          - devices
+          - check-test
+          - check-release
+          - check-repeat
+          - check-correction
+          - checks
+          - confirm-pass
+          - confirm-fail
+      device_id:
+        description: 'Device id (test-device and check-*: from "devices") or check number (confirm-*: from "checks")'
+        type: string
+        required: false
+      confirm:
+        description: 'I confirm this changes Pool Alerts (required for every action except health and status)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  operate:
+    name: Pool Alerts ${{ inputs.action }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The owner credential (the control key) is a secret of pool-alerts-production, the release environment: every run
+    # waits for the owner's approval there, as a release does. The scheduled monitor never holds it.
+    environment: pool-alerts-production
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Run
+        env:
+          POOL_ALERTS_URL: ${{ vars.POOL_ALERTS_URL }}
+          POOL_ALERTS_OWNER_TOKEN: ${{ secrets.POOL_ALERTS_OWNER_TOKEN }}
+          # Or, with no POOL_ALERTS_OWNER_TOKEN: the owner token is derived from the control key (as the release workflow does).
+          POOL_ALERTS_CONTROL_KEY: ${{ secrets.POOL_ALERTS_CONTROL_KEY }}
+          POOL_ALERTS_INVITE_CODE: ${{ secrets.POOL_ALERTS_INVITE_CODE }}
+          ACTION: ${{ inputs.action }}
+          DEVICE_ID: ${{ inputs.device_id }}
+          CONFIRMED: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          case "$ACTION" in
+            health|status|devices|checks) ;;
+            *) if [ "$CONFIRMED" != "true" ]; then echo "::error::Tick the confirmation box for '$ACTION'."; exit 1; fi ;;
+          esac
+          case "$ACTION" in
+            test-device) set -- test "$DEVICE_ID" ;;
+            check-*) set -- check "$DEVICE_ID" "${ACTION#check-}" ;;
+            confirm-*) set -- confirm "$DEVICE_ID" "${ACTION#confirm-}" "confirmed from GitHub Actions" ;;
+            enrollment-open) set -- enrollment open ;;
+            enrollment-invite) set -- enrollment invite ;;
+            enrollment-closed) set -- enrollment closed ;;
+            *) set -- "$ACTION" ;;
+          esac
+          node nfl-pool/push/ops.mjs "$@" | tee result.txt
+          { echo "## Pool Alerts: $ACTION"; echo; echo '```'; cat result.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
